@@ -52,3 +52,18 @@ _render_history_fn.js
 
 # Local patch/scratch scripts (optional keep - we will still add useful source)
 # keep project root patches if small; ignore session dumps
+
+# ---- Private / local strategy materials (do not publish) ----
+/指标/
+/735与八卦策略回测总结报告.docx
+/A股前台回测展示系统实施计划.md
+/A股多周期TN6指标与八卦回测实施计划.md
+/GROK_IMPLEMENTATION_REPORT.md
+/GROK实施提示词.md
+/开始命令.txt
+*.docx
+/_to_untrack.txt
+/_tracked.txt
+/_hist_out.txt
+/_render_history_fn.js
+
