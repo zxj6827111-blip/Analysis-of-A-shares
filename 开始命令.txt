@@ -1,4 +1,0 @@
-python -m wtpy.apps.astock serve --host 127.0.0.1 --port 8765
-# 推荐双击运行（窗口需保持打开）：
-start_astock_serve.bat
-
