@@ -1,0 +1,54 @@
+*/__pycache__
+*.pyc
+.DS_Store
+node_modules/
+/dist/
+/build/*
+/wtpy.egg-info/*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.xlsx
+BtLogs
+Logs
+outputs_bt
+bin
+FUT_Data
+DtLogs
+ParserCTPFlow
+*.con
+*.dmb
+*.dsb
+
+# Local A-stock data & backtest outputs (regenerate locally)
+/storage/
+/outputs/
+/outputs_astock/
+*.log
+.pytest_cache/
+.codegraph/
+.codex/
+.agents/
+__pycache__/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.env
+.env.*
+*.xls
+*.xlsx
+*.tmp
+summary.xlsx.failed
+_hist_out.txt
+_render_history_fn.js
+
+# Local patch/scratch scripts (optional keep - we will still add useful source)
+# keep project root patches if small; ignore session dumps

@@ -1,0 +1,2458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>A 股研究工作台 · 回测 / 预测</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4d;
+      --text: #e7ecf3;
+      --muted: #8b9bb4;
+      --accent: #3d8bfd;
+      --ok: #3dd68c;
+      --warn: #f5a524;
+      --bad: #f31260;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.45;
+    }
+    header {
+      padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      background: #121a24;
+    }
+    header h1 { margin: 0; font-size: 1.15rem; font-weight: 600; }
+    .mod-tab.active { background: var(--accent); }
+    .mod-tab { font-size: 0.85rem; padding: 0.35rem 0.85rem; }
+    .fc-match-ok { color: var(--ok); }
+    .fc-match-warn { color: var(--warn); }
+    .fc-match-bad { color: var(--bad); }
+    .fc-grid { display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; }
+    @media (max-width:900px){ .fc-grid { grid-template-columns:1fr; } }
+    table.fc-table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+    table.fc-table th, table.fc-table td { border:1px solid var(--border); padding:0.35rem 0.45rem; text-align:left; }
+    table.fc-table th { color: var(--muted); font-weight:600; }
+    .fc-signal { display:inline-block; font-weight:700; padding:0.15rem 0.55rem; border-radius:6px; font-size:0.9rem; }
+    /* 红涨绿跌：加仓/新开仓偏多→红；减仓/清仓偏空→绿 */
+    .fc-signal-新开仓, .fc-signal-加仓 { background:#3a1520; color:#f31260; }
+    .fc-signal-持有 { background:#1a2a44; color:var(--accent); }
+    .fc-signal-减仓 { background:#143528; color:#3dd68c; }
+    .fc-signal-清仓 { background:#0f2a1c; color:#2eb872; }
+    .fc-signal-empty { background:#243044; color:var(--muted); }
+
+    /* Forecast stock cards — calm accent palette, clear hierarchy */
+    .fc-stock-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0;
+      margin-bottom: 1rem;
+      background: var(--panel);
+      overflow: hidden;
+      border-left: 4px solid var(--fc-accent, var(--accent));
+      box-shadow: 0 1px 0 rgba(0,0,0,0.18);
+    }
+    .fc-stock-card.tone-0 { --fc-accent: #3d8bfd; --fc-head-bg: #152033; }
+    .fc-stock-card.tone-1 { --fc-accent: #3dd68c; --fc-head-bg: #12261c; }
+    .fc-stock-card.tone-2 { --fc-accent: #f5a524; --fc-head-bg: #2a2112; }
+    .fc-stock-card.tone-3 { --fc-accent: #a78bfa; --fc-head-bg: #1e1830; }
+    .fc-stock-card.tone-4 { --fc-accent: #38bdf8; --fc-head-bg: #12242e; }
+    .fc-stock-card.tone-5 { --fc-accent: #f472b6; --fc-head-bg: #2a1522; }
+
+    .fc-stock-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.65rem 1rem;
+      padding: 0.85rem 1rem;
+      background: linear-gradient(90deg, var(--fc-head-bg, #152033) 0%, transparent 100%);
+      border-bottom: 1px solid var(--border);
+    }
+    .fc-stock-title-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.45rem 0.65rem;
+      min-width: 0;
+    }
+    .fc-stock-name {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: 0.02em;
+      line-height: 1.25;
+    }
+    .fc-stock-code {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--fc-accent, var(--accent));
+      background: rgba(0,0,0,0.22);
+      border: 1px solid color-mix(in srgb, var(--fc-accent, var(--accent)) 35%, var(--border));
+      border-radius: 6px;
+      padding: 0.12rem 0.45rem;
+    }
+    .fc-stock-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem 0.75rem;
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin-top: 0.35rem;
+    }
+    .fc-stock-meta span b {
+      color: #b8c4d6;
+      font-weight: 600;
+    }
+    .fc-stock-signals {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.45rem 0.7rem;
+      flex-shrink: 0;
+    }
+    .fc-stock-signals .sig-lab {
+      color: var(--muted);
+      font-size: 0.78rem;
+      margin-right: 0.15rem;
+    }
+    .fc-stock-body { padding: 0.85rem 1rem 1rem; }
+    .fc-stock-card .fc-grid { margin-top: 0; }
+    .fc-stock-card .card {
+      background: #121a24;
+      border-color: #2a3648;
+    }
+    .fc-stock-card.not-found {
+      border-left-color: var(--bad);
+      --fc-head-bg: #2a151c;
+    }
+    .fc-stock-card.not-found .fc-stock-name { color: var(--bad); }
+
+    header .sub { color: var(--muted); font-size: 0.85rem; }
+    main { display: grid; grid-template-columns: 320px 1fr; gap: 0; min-height: calc(100vh - 64px); }
+    aside {
+      border-right: 1px solid var(--border); padding: 1rem;
+      overflow: auto; max-height: calc(100vh - 64px); background: #121a24;
+    }
+    section.workspace { padding: 1rem 1.25rem; overflow: auto; max-height: calc(100vh - 64px); }
+    h2 { font-size: 0.95rem; margin: 0 0 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 10px; padding: 1rem; margin-bottom: 1rem;
+    }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem; }
+    input, select, textarea {
+      width: 100%; background: #0d1218; border: 1px solid var(--border);
+      color: var(--text); border-radius: 6px; padding: 0.45rem 0.55rem; margin-bottom: 0.65rem;
+    }
+    textarea { min-height: 120px; font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem; }
+    button {
+      background: var(--accent); color: #fff; border: none; border-radius: 6px;
+      padding: 0.5rem 0.9rem; cursor: pointer; font-weight: 600;
+    }
+    button.secondary { background: #2a3548; }
+    button.danger { background: var(--bad); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+    .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; }
+    .param-pair {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;
+      align-items: start;
+    }
+    .param-pair .field { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+    .param-pair .field label { min-height: 2.6em; line-height: 1.3; }
+    .param-pair .field input[type=number] { width: 100%; box-sizing: border-box; }
+    .param-pair .field .hint { font-size: 12px; opacity: 0.8; min-height: 2.4em; }
+    .acct-mode {
+      display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem;
+      padding: 0.65rem 0.75rem; border: 1px solid var(--border);
+      border-radius: 8px; background: #121a28; margin: 0.5rem 0 0.75rem;
+    }
+    .acct-mode label { display: flex; align-items: flex-start; gap: 0.4rem;
+      cursor: pointer; color: var(--text); font-size: 0.92rem; max-width: 48%; }
+    .acct-mode small { display: block; color: var(--muted); font-size: 0.8rem; margin-top: 0.15rem; }
+
+    .rule {
+      border: 1px solid var(--border); border-radius: 8px; padding: 0.55rem 0.65rem;
+      margin-bottom: 0.45rem; cursor: pointer; display: flex; gap: 0.5rem; align-items: flex-start;
+    }
+    .rule:hover { border-color: var(--accent); }
+    .rule.selected { border-color: var(--accent); background: #1a2a44; }
+    .badge {
+      display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.4rem;
+      border-radius: 4px; background: #243044; color: var(--muted); margin-right: 0.25rem;
+    }
+    .badge.ok { background: #143528; color: var(--ok); }
+    .badge.warn { background: #3a2a10; color: var(--warn); }
+    .badge.user { background: #2a2040; color: #c4b5fd; }
+    .timeline {
+      font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;
+      background: #0d1218; border-radius: 8px; padding: 0.75rem; border: 1px solid var(--border);
+    }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.6rem; }
+    .metric {
+      background: #0d1218; border-radius: 8px; padding: 0.65rem; border: 1px solid var(--border);
+    }
+    .metric .k { font-size: 0.75rem; color: var(--muted); }
+    .metric .v { font-size: 1.1rem; font-weight: 600; margin-top: 0.2rem; }
+    pre {
+      background: #0d1218; border: 1px solid var(--border); border-radius: 8px;
+      padding: 0.75rem; overflow: auto; max-height: 320px; font-size: 0.8rem;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.25rem; align-items: center; }
+    .err { color: var(--bad); font-size: 0.9rem; }
+    .okmsg { color: var(--ok); font-size: 0.9rem; }
+    canvas { width: 100%; max-height: 220px; background: #0d1218; border-radius: 8px; border: 1px solid var(--border); }
+    .pool-mode {
+      display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.65rem;
+      padding: 0.55rem 0.65rem; background: #0d1218; border-radius: 8px; border: 1px solid var(--border);
+    }
+    .pool-mode label {
+      display: flex; align-items: center; gap: 0.35rem; margin: 0; color: var(--text); font-size: 0.9rem;
+      cursor: pointer; width: auto;
+    }
+    .pool-mode input { width: auto; margin: 0; }
+    .date-grid { display: grid; grid-template-columns: 1.1fr 0.8fr 0.8fr; gap: 0.4rem; }
+    .hint { font-size: 0.78rem; color: var(--muted); margin: -0.35rem 0 0.65rem; }
+    .warn-box {
+      display: none; margin-bottom: 0.65rem; padding: 0.55rem 0.7rem;
+      border-radius: 8px; border: 1px solid #5a4010; background: #2a220f; color: var(--warn); font-size: 0.85rem;
+    }
+  
+    .progress-wrap {
+      margin: 0.75rem 0 0.5rem;
+      display: none;
+    }
+    .progress-wrap.active { display: block; }
+    .progress-meta {
+      display: flex; justify-content: space-between; gap: 0.75rem;
+      font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem;
+    }
+    .progress-meta strong { color: var(--text); font-weight: 600; }
+    .progress-bar {
+      height: 12px; background: #0c121a; border: 1px solid var(--border);
+      border-radius: 999px; overflow: hidden; position: relative;
+    }
+    .progress-bar > i {
+      display: block; height: 100%; width: 0%;
+      background: linear-gradient(90deg, #1f6feb, #3dd68c);
+      transition: width 0.35s ease;
+    }
+    .progress-bar.indeterminate > i {
+      width: 35% !important;
+      animation: progslide 1.2s ease-in-out infinite;
+    }
+    @keyframes progslide {
+      0% { transform: translateX(-120%); }
+      100% { transform: translateX(320%); }
+    }
+    .progress-detail {
+      margin-top: 0.4rem; font-size: 0.82rem; color: var(--muted);
+      word-break: break-all;
+    }
+
+    /* ===== 历史任务列表（专业回测对照表） ===== */
+    .history-actions {
+      margin: 0 0 0.75rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem 0.55rem;
+      align-items: center;
+    }
+    .history-actions .sel-info {
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin-left: 0.15rem;
+    }
+    .history-wrap {
+      overflow-x: auto;
+      max-width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #121a28;
+    }
+    .history-table {
+      width: 100%;
+      min-width: 1100px;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 0.84rem;
+      table-layout: fixed;
+    }
+    .history-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #182233;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.78rem;
+      letter-spacing: 0.02em;
+      border-bottom: 1px solid var(--border);
+      padding: 0.65rem 0.55rem;
+      text-align: left;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .history-table tbody td {
+      border-bottom: 1px solid rgba(45, 58, 77, 0.85);
+      padding: 0.7rem 0.55rem;
+      text-align: left;
+      vertical-align: middle;
+    }
+    .history-table tbody tr.hist-row {
+      cursor: pointer;
+      transition: background 0.12s ease;
+    }
+    .history-table tbody tr.hist-row:hover td {
+      background: rgba(61, 139, 253, 0.07);
+    }
+    .history-table tbody tr.hist-row.active td {
+      background: rgba(61, 139, 253, 0.12);
+    }
+    .history-table th.col-check,
+    .history-table td.col-check {
+      width: 2.4rem;
+      min-width: 2.4rem;
+      max-width: 2.4rem;
+      text-align: center;
+      padding-left: 0.45rem;
+      padding-right: 0.25rem;
+    }
+    .history-table th.col-strategy,
+    .history-table td.col-strategy {
+      width: 28%;
+      min-width: 16rem;
+    }
+    .history-table th.col-time,
+    .history-table td.col-time {
+      width: 8.2rem;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    .history-table th.col-status,
+    .history-table td.col-status {
+      width: 4.6rem;
+      white-space: nowrap;
+      text-align: center;
+    }
+    .history-table th.col-period,
+    .history-table td.col-period {
+      width: 4.2rem;
+      white-space: nowrap !important;
+      text-align: center;
+      word-break: keep-all;
+    }
+    .history-table th.col-mode,
+    .history-table td.col-mode {
+      width: 6.2rem;
+      white-space: nowrap;
+      text-align: center;
+    }
+    .history-table th.num,
+    .history-table td.num {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum";
+      width: 6.2rem;
+      min-width: 5.2rem;
+      padding-left: 0.4rem;
+      padding-right: 0.7rem;
+    }
+    .history-table th.col-ops,
+    .history-table td.col-ops {
+      width: 8.5rem;
+      min-width: 8.5rem;
+      white-space: nowrap;
+      text-align: right;
+      padding-right: 0.65rem;
+    }
+    .history-table td.col-ops .ops-row {
+      display: inline-flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.35rem;
+    }
+    .hist-check {
+      width: 1.05rem;
+      height: 1.05rem;
+      cursor: pointer;
+      vertical-align: middle;
+    }
+    .hist-title {
+      font-weight: 650;
+      color: var(--text);
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      word-break: break-word;
+    }
+    .hist-tags {
+      margin-top: 0.28rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.28rem;
+      align-items: center;
+    }
+    .hist-tag {
+      display: inline-block;
+      padding: 0.08rem 0.38rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      line-height: 1.35;
+      color: #a8b7ce;
+      background: rgba(61, 139, 253, 0.08);
+      border: 1px solid rgba(61, 139, 253, 0.18);
+      white-space: nowrap;
+    }
+    .hist-tag.mode-per {
+      color: #f5c26b;
+      background: rgba(245, 165, 36, 0.1);
+      border-color: rgba(245, 165, 36, 0.28);
+    }
+    .hist-tag.mode-pool {
+      color: #7eb6ff;
+      background: rgba(61, 139, 253, 0.1);
+      border-color: rgba(61, 139, 253, 0.28);
+    }
+    .hist-id {
+      margin-top: 0.22rem;
+      color: #6d7d96;
+      font-size: 0.72rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .hist-extra {
+      margin-top: 0.18rem;
+      color: #6d7d96;
+      font-size: 0.72rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .mode-pill {
+      display: inline-block;
+      padding: 0.12rem 0.42rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      white-space: nowrap;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .mode-pill.per { color: #f5c26b; border-color: rgba(245,165,36,.35); }
+    .mode-pill.pool { color: #7eb6ff; border-color: rgba(61,139,253,.35); }
+    /* A股：红涨绿跌 */
+    .history-table td.num .pct-pos { color: #f31260; font-weight: 600; }
+    .history-table td.num .pct-neg { color: #3dd68c; font-weight: 600; }
+    .history-table td.num .pct-zero { color: var(--muted); }
+    .history-table td.num .pct-mdd { color: #f5a524; font-weight: 600; }
+    .history-table td.num .pct-note { display: none; } /* 主列表隐藏调试小数 */
+    .btn-op {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 1.7rem;
+      padding: 0 0.55rem;
+      font-size: 0.75rem;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: #1c2838;
+      color: var(--text);
+      white-space: nowrap;
+      line-height: 1;
+    }
+    .btn-op:hover { border-color: var(--accent); color: #fff; }
+    .btn-op.btn-del,
+    .btn-del {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 1.7rem;
+      margin: 0;
+      padding: 0 0.55rem;
+      font-size: 0.75rem;
+      border-radius: 6px;
+      cursor: pointer;
+      background: rgba(243, 18, 96, 0.1);
+      color: #f07178;
+      border: 1px solid rgba(243, 18, 96, 0.35);
+      white-space: nowrap;
+      line-height: 1;
+    }
+    .btn-op.btn-del:hover { background: rgba(243, 18, 96, 0.18); }
+    .badge-status {
+      display: inline-block;
+      padding: 0.12rem 0.45rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .history-empty {
+      color: var(--muted);
+      padding: 1.25rem 0.5rem;
+      text-align: center;
+    }
+    #equityChart { display: none; width: 100%; max-width: 100%; }
+    #equityChart.visible { display: block; }
+    #resultJsonWrap { display: none; margin-top: 0.75rem; }
+    #resultJsonWrap.open { display: block; }
+    .history-table tr { cursor: pointer; }
+    .history-table tr.active td {
+      background: rgba(61,139,253,0.14);
+    }
+    .history-table tr:hover td { background: rgba(61,139,253,0.08); }
+    .muted-note { color: var(--muted); font-size: 0.82rem; margin: 0.25rem 0 0.5rem; }
+
+  
+    .data-banner {
+      margin: 0 0 0.85rem; padding: 0.55rem 0.75rem;
+      background: rgba(61,139,253,0.12); border: 1px solid rgba(61,139,253,0.35);
+      border-radius: 8px; font-size: 0.88rem; color: var(--text);
+    }
+    .data-banner strong { color: #9ec5ff; }
+    .data-banner .warn { color: var(--warn); }
+    .result-kv { display: grid; grid-template-columns: 120px 1fr; gap: 0.25rem 0.75rem;
+      font-size: 0.88rem; margin: 0.5rem 0 0.75rem; }
+    .result-kv .k { color: var(--muted); }
+    .result-kv .v { color: var(--text); word-break: break-all; }
+    .hist-title { font-weight: 600; color: var(--text); }
+    .hist-sub { color: var(--muted); font-size: 0.78rem; margin-top: 0.15rem; }
+
+  
+    .btn-del {
+      display: inline-block; margin-left: 0.35rem; padding: 0.12rem 0.4rem;
+      font-size: 0.72rem; border-radius: 4px; cursor: pointer;
+      background: rgba(243,18,96,0.12); color: #f31260;
+      border: 1px solid rgba(243,18,96,0.4);
+    }
+    .btn-del:hover { background: rgba(243,18,96,0.25); }
+    .rule .rule-actions { margin-top: 0.35rem; }
+    .history-actions { margin: 0 0 0.5rem; display:flex; gap:0.5rem; align-items:center; }
+
+  
+    .hist-check { width: 1.1rem; height: 1.1rem; cursor: pointer; }
+    .history-actions .sel-info { color: var(--muted); font-size: 0.85rem; margin-left: 0.25rem; }
+    .btn-del-batch {
+      background: rgba(243,18,96,0.18) !important;
+      border-color: rgba(243,18,96,0.5) !important;
+      color: #ff6b8a !important;
+    }
+
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>A 股研究工作台</h1>
+      <div class="sub">回测：规则叠加 · T+N · 全市场 · 60分钟　|　预测：周报变卦 · 行情简判</div>
+      <div class="mod-tabs" style="margin-top:0.55rem;display:flex;gap:0.5rem">
+        <button type="button" id="tabBacktest" class="mod-tab active">回测</button>
+        <button type="button" id="tabForecast" class="mod-tab secondary">预测</button>
+      </div>
+    </div>
+    <div class="sub" id="health">连接中…</div>
+  </header>
+  <main id="viewBacktest">
+    <aside>
+      <h2>规则库</h2>
+      <div class="actions" style="margin-bottom:0.75rem">
+        <button type="button" class="secondary" id="btnRefresh">刷新</button>
+        <button type="button" id="btnShowCreate">新建规则</button>
+      </div>
+      <div id="ruleList"></div>
+    </aside>
+    <section class="workspace">
+      <div class="data-banner" id="dataBanner">正在读取本地行情数据范围…</div>
+
+      <div class="card" id="createPanel" style="display:none">
+        <h2>自定义规则</h2>
+        <label>名称</label>
+        <input id="newName" placeholder="例如：均线金叉" />
+        <label>说明</label>
+        <input id="newDesc" placeholder="可选" />
+        <label>公式（需含 XG: 选股输出）</label>
+        <textarea id="newFormula">MA5:=MA(C,5);
+MA10:=MA(C,10);
+XG:CROSS(MA5,MA10);</textarea>
+        <div class="actions">
+          <button type="button" class="secondary" id="btnValidate">校验</button>
+          <button type="button" id="btnSaveRule">保存到系统</button>
+          <button type="button" class="secondary" id="btnHideCreate">收起</button>
+        </div>
+        <div id="createMsg"></div>
+      </div>
+
+      <div class="card">
+        <h2>回测配置</h2>
+        <p class="sub" style="margin-top:0">已选规则：<span id="selectedLabel">无</span> <span class="sub" style="font-size:0.8rem">（八卦OHLC 为分类标注，需配合选股规则一起回测）</span></p>
+        <h2 style="margin-top:0.25rem">回测账户模式</h2>
+        <div class="acct-mode" id="accountModeBox">
+          <label>
+            <input type="radio" name="accountMode" value="portfolio" checked />
+            <span><b>组合账户</b>（默认）
+              <small>全市场共享约 100 万资金，单票约 10% 上限；接近真实可执行组合。</small>
+            </span>
+          </label>
+          <label>
+            <input type="radio" name="accountMode" value="per_symbol" />
+            <span><b>通达信对照 · 单票独立资金</b>
+              <small>每只股票各自独立本金、互不挤兑；汇总含等权平均单票收益，便于与通达信导出表对照。</small>
+            </span>
+          </label>
+        </div>
+        <div class="row">
+          <div>
+            <label>组合方式（多规则）</label>
+            <select id="combine">
+              <option value="">分别信号（不合并）</option>
+              <option value="all">全部满足 AND</option>
+              <option value="any">任一满足 OR</option>
+            </select>
+          </div>
+          <div>
+            <label>K线周期</label>
+            <select id="period">
+              <option value="DAY">日线</option>
+              <option value="WEEK">周线</option>
+              <option value="MONTH">月线</option>
+              <option value="DWM">日周月共振</option>
+              <option value="MIN60">60分钟线</option>
+            </select>
+          </div>
+        </div>
+        <div class="param-pair">
+          <div class="field">
+            <label>买入延迟 entry_lag<br/><span style="font-weight:400;opacity:.85">信号后第 N 个交易日 · 开盘买入</span></label>
+            <input type="number" id="entryLag" min="1" value="1" />
+            <div class="hint">例：N=1 → 信号次日开盘买（默认）。</div>
+          </div>
+          <div class="field">
+            <label>强制平仓 hold<br/><span style="font-weight:400;opacity:.85">开仓后 N 周期 · 无论涨跌 · 收盘价平仓</span></label>
+            <input type="number" id="hold" min="1" value="1" title="日线=N个交易日；周/月线=N个完整周期。A股T+1：不能开仓当日卖出。到期强制平仓用收盘价；止损/止盈仍为次日开盘。" />
+            <div class="hint">例：日线 hold=5 → 计满后可卖日按收盘价强平（未触发止损止盈时）。</div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:0.65rem">
+          <div>
+            <label>止损 / 止盈（比例，可空）</label>
+            <div class="row">
+              <input id="sl" placeholder="止损 0.03" />
+              <input id="tp" placeholder="止盈 0.08" />
+            </div>
+          </div>
+          <div></div>
+        </div>
+        <div class="timeline" id="timeline"></div>
+
+        <h2 style="margin-top:1rem">股票池</h2>
+        <div class="pool-mode" id="poolMode">
+          <label><input type="radio" name="poolMode" value="demo" checked /> 演示小池</label>
+          <label><input type="radio" name="poolMode" value="custom" /> 自定义代码</label>
+          <label><input type="radio" name="poolMode" value="full" /> 全部 A 股 / 全市场</label>
+        </div>
+        <div class="warn-box" id="fullMarketWarn">
+          已选择<strong>全市场</strong>：将使用本地 universe 中的全部 A 股（约 <span id="univCount">?</span> 只）。
+          耗时与内存显著增加，建议先缩小日期区间；长任务将以异步方式提交。
+        </div>
+        <div id="codesWrap">
+          <label>股票代码（逗号分隔，如 sh600000,sz000001）</label>
+          <input id="codes" value="sh600000,sz000001" />
+          <div class="hint" id="poolHint">演示池默认两只股票，便于快速验证。</div>
+        </div>
+
+        <h2 style="margin-top:0.5rem">回测区间（下拉选择）</h2>
+        <div class="row">
+          <div>
+            <label>开始日期</label>
+            <div class="date-grid">
+              <select id="startYear"></select>
+              <select id="startMonth"></select>
+              <select id="startDay"></select>
+            </div>
+            <div class="hint">也可清空年=不限制起点</div>
+          </div>
+          <div>
+            <label>结束日期</label>
+            <div class="date-grid">
+              <select id="endYear"></select>
+              <select id="endMonth"></select>
+              <select id="endDay"></select>
+            </div>
+            <div class="hint">年选「不限」表示不限制终点</div>
+          </div>
+        </div>
+        <div class="hint" id="calHint">交易日历加载中…</div>
+
+        <div class="actions">
+          <label style="display:flex;align-items:center;gap:0.4rem;color:var(--muted);width:auto;margin:0">
+            <input type="checkbox" id="researchUnadj" style="width:auto;margin:0" /> 研究未复权<span style="color:var(--muted);font-size:0.85em">（复权因子不全时可勾选以继续回测）</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:0.4rem;color:var(--muted);width:auto;margin:0">
+            <input type="checkbox" id="researchUnconf" style="width:auto;margin:0" /> 允许未确认公式（研究）
+          </label>
+        </div>
+        <div class="actions" style="margin-top:0.75rem">
+          <button type="button" id="btnRun">开始回测</button>
+          <button type="button" class="secondary" id="btnLoadRuns">历史任务</button>
+        </div>
+        <div id="runMsg" style="margin-top:0.5rem"></div>
+        <div id="progressWrap" class="progress-wrap">
+          <div class="progress-meta">
+            <span id="progressLabel"><strong>进度</strong></span>
+            <span id="progressPct">0%</span>
+          </div>
+          <div class="progress-bar" id="progressBar"><i id="progressFill"></i></div>
+          <div class="progress-detail" id="progressDetail">—</div>
+        </div>
+      </div>
+
+      <div class="card" id="resultCard">
+        <h2>回测结果 <span id="resultRunId" style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0"></span></h2>
+        <p class="muted-note" id="resultHint">回测完成后在此展示指标、曲线与下载。</p>
+        <div class="result-toolbar" id="resultToolbar" style="display:none">
+          <a class="dl-btn primary" id="dlExcel" href="#" target="_blank" rel="noopener">下载回测Excel（汇总+交易明细）</a>
+          <a class="dl-btn" id="dlTrades" href="#" target="_blank" rel="noopener">交易明细 trades.csv</a>
+          <a class="dl-btn" id="dlFills" href="#" target="_blank" rel="noopener">成交 fills.csv</a>
+          <a class="dl-btn" id="dlSignals" href="#" target="_blank" rel="noopener">信号 signals.csv</a>
+          <a class="dl-btn" id="dlMetrics" href="#" target="_blank" rel="noopener">指标 metrics.json</a>
+          <a class="dl-btn" id="dlMeta" href="#" target="_blank" rel="noopener">元数据 run_meta.json</a>
+          <button type="button" class="dl-btn" id="btnToggleJson">显示/隐藏原始 JSON</button>
+          <div class="path-hint" id="resultPathHint"></div>
+        </div>
+        <div class="metrics" id="metrics"></div>
+        <canvas id="equityChart" height="200"></canvas>
+        <div id="resultJsonWrap">
+          <pre id="resultJson"></pre>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>历史任务</h2>
+        <div class="history-actions">
+          <button type="button" class="secondary" id="btnLoadRuns">刷新历史</button>
+          <button type="button" class="secondary" id="btnHistSelectAll">全选</button>
+          <button type="button" class="secondary" id="btnHistSelectNone">取消全选</button>
+          <button type="button" class="secondary btn-del-batch" id="btnDeleteSelected">删除所选</button>
+          <button type="button" class="secondary" id="btnClearHistory" title="删除当前列表全部记录及结果文件">全部删除</button>
+          <span class="sel-info" id="histSelInfo">已选 0 条</span>
+        </div>
+
+        <div id="history" class="history-empty">点击「历史任务」加载</div>
+      </div>
+    </section>
+  </main>
+
+  <main id="viewForecast" style="display:none;grid-template-columns:320px 1fr">
+    <aside>
+      <h2>简判知识库</h2>
+      <div class="card">
+        <div id="fcKbStatus" class="sub">系统默认加载中…</div>
+        <div class="sub" style="margin:0.4rem 0;font-size:0.8rem;line-height:1.4">
+          默认使用项目内 64卦384爻行情简判（与回测 bagua_384 同源），<b>无需每次导入</b>。仅当表格更新时再上传覆盖。
+        </div>
+        <details style="margin-top:0.35rem">
+          <summary style="cursor:pointer;color:var(--muted);font-size:0.85rem">高级：更新简判表</summary>
+          <label style="margin-top:0.5rem">上传新版简判表 (.xlsx)</label>
+          <input type="file" id="fcKbFile" accept=".xlsx,.xlsm" />
+          <div class="actions" style="margin-top:0.5rem">
+            <button type="button" id="fcKbUpload">覆盖导入简判库</button>
+            <button type="button" class="secondary" id="fcKbSeed">重新从回测库种子</button>
+          </div>
+        </details>
+      </div>
+      <h2>周报</h2>
+      <div class="card">
+        <div id="fcWeekStatus" class="sub">未导入</div>
+        <label style="margin-top:0.5rem">上传 weekly_analysis_v2_*.xlsx</label>
+        <input type="file" id="fcWeekFile" accept=".xlsx,.xlsm" />
+        <div class="actions" style="margin-top:0.5rem">
+          <button type="button" id="fcWeekUpload">导入周报</button>
+        </div>
+        <label style="margin-top:0.65rem">已导入周</label>
+        <select id="fcWeekSelect"></select>
+        <button type="button" class="secondary" id="fcWeekActivate" style="margin-top:0.4rem;width:100%">设为当前周</button>
+      </div>
+    </aside>
+    <section class="workspace">
+      <div class="card">
+        <h2>个股 / 批量查询</h2>
+        <label>代码 / 名称 / 拼音（多个代码请用英文或中文逗号分隔）</label>
+        <div style="display:flex;gap:0.5rem;align-items:flex-start">
+          <input id="fcQuery" placeholder="单个：000001 / 平安银行 / payh　批量：000001,000002,600000" style="flex:1;margin-bottom:0" />
+          <button type="button" id="fcSearchBtn">查询</button>
+          <button type="button" class="secondary" id="fcExportBtn">导出全市场</button>
+        </div>
+        <div class="sub" style="margin-top:0.4rem;font-size:0.8rem">提示：输入一个条件按卡片展示；用逗号分隔多个代码则批量查询，结果同样用卡片列出。</div>
+        <div id="fcCandidates" style="margin-top:0.5rem"></div>
+      </div>
+      <div class="card" id="fcResultCard" style="display:none">
+        <h2 id="fcResultTitle">预测结果</h2>
+        <div id="fcResult"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const selected = new Set();
+    const selectedRuns = new Set();
+    let rulesCache = [];
+    let calMeta = { years: [], min_date: null, max_date: null };
+    let univMeta = { global_universe_count: 0 };
+
+    async function api(path, opts) {
+      let r;
+      try {
+        r = await fetch(path, {
+          headers: { "Content-Type": "application/json", ...(opts && opts.headers || {}) },
+          ...opts,
+        });
+      } catch (netErr) {
+        // Firefox: "NetworkError when attempting to fetch resource."
+        // Chrome: "Failed to fetch" — usually server down / restarted / CORS / offline
+        throw new Error(
+          "网络请求失败（无法连接后端服务）。常见原因：回测服务已停止或正在重启；" +
+          "页面仍在轮询进度时服务中断。请确认已执行 python -m wtpy.apps.astock serve " +
+          "--host 127.0.0.1 --port 8765 ，然后刷新页面。原始错误: " +
+          String(netErr && netErr.message ? netErr.message : netErr)
+        );
+      }
+      const text = await r.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { raw: text }; }
+      if (!r.ok) {
+        let detail = data && (data.detail || data.error);
+        if (Array.isArray(detail)) detail = detail.map(x => x.msg || JSON.stringify(x)).join("; ");
+        if (typeof detail === "object") detail = JSON.stringify(detail);
+        const msg = detail || data.message || text || r.statusText || ("HTTP " + r.status);
+        throw new Error(msg);
+      }
+      return data;
+    }
+
+    function daysInMonth(y, m) {
+      if (!y || !m) return 31;
+      return new Date(y, m, 0).getDate();
+    }
+
+    function fillSelect(sel, items, { emptyLabel, selected } = {}) {
+      sel.innerHTML = "";
+      if (emptyLabel !== undefined) {
+        const o = document.createElement("option");
+        o.value = "";
+        o.textContent = emptyLabel;
+        sel.appendChild(o);
+      }
+      items.forEach(v => {
+        const o = document.createElement("option");
+        o.value = String(v);
+        o.textContent = String(v).padStart ? String(v).padStart(2, "0") : String(v);
+        if (typeof v === "number" && v < 10 && sel.id.includes("Month") || sel.id.includes("Day")) {
+          o.textContent = String(v).padStart(2, "0");
+        }
+        if (selected != null && String(selected) === String(v)) o.selected = true;
+        sel.appendChild(o);
+      });
+    }
+
+    function ymdFromParts(ySel, mSel, dSel) {
+      const y = ySel.value;
+      if (!y) return null;
+      const m = mSel.value || "1";
+      const d = dSel.value || "1";
+      const yi = parseInt(y, 10), mi = parseInt(m, 10), di = parseInt(d, 10);
+      const maxD = daysInMonth(yi, mi);
+      const day = Math.min(di, maxD);
+      return yi * 10000 + mi * 100 + day;
+    }
+
+    function setDateParts(prefix, yyyymmdd) {
+      const y = document.getElementById(prefix + "Year");
+      const m = document.getElementById(prefix + "Month");
+      const d = document.getElementById(prefix + "Day");
+      if (!yyyymmdd) {
+        y.value = "";
+        return;
+      }
+      const s = String(yyyymmdd);
+      const yi = parseInt(s.slice(0, 4), 10);
+      const mi = parseInt(s.slice(4, 6), 10);
+      const di = parseInt(s.slice(6, 8), 10);
+      y.value = String(yi);
+      rebuildDayOptions(prefix);
+      m.value = String(mi);
+      d.value = String(di);
+    }
+
+    function rebuildDayOptions(prefix) {
+      const y = parseInt(document.getElementById(prefix + "Year").value || "0", 10);
+      const m = parseInt(document.getElementById(prefix + "Month").value || "1", 10);
+      const dSel = document.getElementById(prefix + "Day");
+      const cur = dSel.value;
+      const n = daysInMonth(y || 2000, m || 1);
+      fillSelect(dSel, Array.from({ length: n }, (_, i) => i + 1), { selected: cur || 1 });
+      if (cur && parseInt(cur, 10) <= n) dSel.value = cur;
+    }
+
+    function initDateDropdowns() {
+      const years = calMeta.years && calMeta.years.length
+        ? calMeta.years
+        : Array.from({ length: 20 }, (_, i) => 2008 + i);
+      ["start", "end"].forEach(prefix => {
+        fillSelect(document.getElementById(prefix + "Year"), years, { emptyLabel: "不限" });
+        fillSelect(document.getElementById(prefix + "Month"), Array.from({ length: 12 }, (_, i) => i + 1), { selected: 1 });
+        rebuildDayOptions(prefix);
+        document.getElementById(prefix + "Year").onchange = () => rebuildDayOptions(prefix);
+        document.getElementById(prefix + "Month").onchange = () => rebuildDayOptions(prefix);
+      });
+      // sensible defaults: last 2 years of calendar if available
+      if (calMeta.max_date && calMeta.min_date) {
+        const maxY = Math.floor(calMeta.max_date / 10000);
+        const startY = Math.max(years[0], maxY - 2);
+        setDateParts("start", startY * 10000 + 101);
+        setDateParts("end", calMeta.max_date);
+      }
+      document.getElementById("calHint").textContent =
+        "交易日历范围：" + (calMeta.min_date || "?") + " ~ " + (calMeta.max_date || "?") +
+        "（下拉按年/月/日选择；将按日历日写入 YYYYMMDD）";
+    }
+
+    function getPoolMode() {
+      const el = document.querySelector('input[name="poolMode"]:checked');
+      return el ? el.value : "demo";
+    }
+
+    function syncPoolUI() {
+      const mode = getPoolMode();
+      const codes = document.getElementById("codes");
+      const wrap = document.getElementById("codesWrap");
+      const warn = document.getElementById("fullMarketWarn");
+      const hint = document.getElementById("poolHint");
+      if (mode === "full") {
+        codes.disabled = true;
+        codes.value = "";
+        codes.placeholder = "全市场：使用本地全部 A 股，无需填写";
+        warn.style.display = "block";
+        document.getElementById("univCount").textContent = String(univMeta.global_universe_count || "?");
+        hint.textContent = "将请求 use_full_market=true，服务端加载 universe.json 全部标的。";
+      } else if (mode === "demo") {
+        codes.disabled = false;
+        if (!codes.value.trim()) codes.value = "sh600000,sz000001";
+        codes.placeholder = "sh600000,sz000001";
+        warn.style.display = "none";
+        hint.textContent = "演示小池：默认两只股票，便于快速验证。";
+      } else {
+        codes.disabled = false;
+        codes.placeholder = "sh600000,sz000001,sz300750";
+        warn.style.display = "none";
+        hint.textContent = "自定义：粘贴逗号分隔代码（支持 sh/sz 或 SSE.STK. 格式）。";
+      }
+    }
+
+    function updateTimeline() {
+      const lag = Math.max(1, parseInt(document.getElementById("entryLag").value || "1", 10));
+      const hold = Math.max(1, parseInt(document.getElementById("hold").value || "1", 10));
+      const buy = "T+" + lag;
+      const sellFromSignal = "T+" + (lag + hold);
+      document.getElementById("timeline").textContent =
+        "时间轴（交易日，DAY 示意）：信号日收盘确认 → " + buy + " 开盘买入 → 持有 hold=" + hold +
+        " → 约 " + sellFromSignal + " 开盘卖出（与引擎 hold 语义一致；涨跌停会 defer）。\n" +
+        "例：entry_lag=1, hold=1 → 信号 D1 → 买 D2 开 → 卖 D3 开。";
+    }
+
+    function renderRules() {
+      const box = document.getElementById("ruleList");
+      box.innerHTML = "";
+      rulesCache.forEach(r => {
+        const div = document.createElement("div");
+        div.className = "rule" + (selected.has(r.id) ? " selected" : "");
+        const bt = r.backtestable ? '<span class="badge ok">可回测</span>' : '<span class="badge warn">不可回测</span>';
+        const src = r.source === "user" ? '<span class="badge user">自定义</span>' : '<span class="badge">内置</span>';
+        const delLabel = (r.delete_mode === "hard" || (r.id || "").startsWith("user_")) ? "删除" : "从列表移除";
+        div.innerHTML = `<input type="checkbox" ${selected.has(r.id) ? "checked" : ""} style="width:auto;margin-top:0.2rem" />
+          <div style="flex:1;min-width:0">
+            <div><strong>${r.name}</strong> ${src} ${bt}</div>
+            <div class="sub" style="font-size:0.75rem;color:var(--muted)">${r.id}</div>
+            <div class="sub" style="font-size:0.75rem;color:var(--muted)">${r.compile_status}${r.failure_reason ? " · " + r.failure_reason : ""}</div>
+            <div class="rule-actions">
+              <button type="button" class="btn-del" data-del-rule="${r.id}">${delLabel}</button>
+            </div>
+          </div>`;
+        div.onclick = (ev) => {
+          if (ev.target.tagName === "INPUT" || ev.target.tagName === "BUTTON" || (ev.target.closest && ev.target.closest("button"))) return;
+          if (selected.has(r.id)) selected.delete(r.id); else selected.add(r.id);
+          renderRules();
+          updateSelectedLabel();
+        };
+        const cb = div.querySelector("input");
+        cb.onchange = () => {
+          if (cb.checked) selected.add(r.id); else selected.delete(r.id);
+          renderRules();
+          updateSelectedLabel();
+        };
+        const delBtn = div.querySelector("[data-del-rule]");
+        if (delBtn) {
+          delBtn.onclick = async (ev) => {
+            ev.stopPropagation();
+            const id = delBtn.getAttribute("data-del-rule");
+            const hard = (id || "").startsWith("user_");
+            const msg = hard
+              ? ("确定永久删除自定义规则「" + r.name + "」？此操作不可恢复。")
+              : ("确定从列表中移除规则「" + r.name + "」？\\n（内置/导入规则仅隐藏，源文件仍保留）");
+            if (!confirm(msg)) return;
+            try {
+              await api("/api/v1/rules/" + encodeURIComponent(id) + "?permanent=true", { method: "DELETE" });
+              selected.delete(id);
+              await loadRules();
+              updateSelectedLabel();
+            } catch (e) {
+              alert("删除失败: " + e.message);
+            }
+          };
+        }
+        box.appendChild(div);
+      });
+    }
+
+    function updateSelectedLabel() {
+      document.getElementById("selectedLabel").textContent =
+        selected.size ? Array.from(selected).join(", ") : "无";
+    }
+
+    async function loadRules() {
+      rulesCache = await api("/api/v1/rules");
+      renderRules();
+    }
+
+    async function loadHealth() {
+      try {
+        const h = await api("/api/v1/health");
+        document.getElementById("health").textContent = h.ok ? "API 正常 · " + h.storage_root : "异常";
+      } catch (e) {
+        document.getElementById("health").textContent = "API 失败: " + e.message;
+      }
+    }
+
+    async function loadUniverseAndCalendar() {
+      try {
+        univMeta = await api("/api/v1/universe/summary");
+        document.getElementById("univCount").textContent = String(univMeta.global_universe_count || "?");
+        const ban = document.getElementById("dataBanner");
+        if (ban) {
+          const dmin = univMeta.data_min_date || univMeta.calendar_min;
+          const dmax = univMeta.data_max_date || univMeta.calendar_max;
+          const n = univMeta.global_universe_count || "?";
+          let m60 = "";
+          if (univMeta.min60 && univMeta.min60.available) {
+            m60 = "；60分钟样本约 " + fmtYmd(univMeta.min60.min_date) + " ~ " + fmtYmd(univMeta.min60.max_date)
+              + "（通达信 minline，通常短于日线）";
+          } else {
+            m60 = "；本地未检测到可用60分钟样本时，60分钟回测可能无信号";
+          }
+          ban.innerHTML = "<strong>本地行情范围</strong>：日线/交易日历 "
+            + fmtYmd(dmin) + " ~ " + fmtYmd(dmax)
+            + "，股票约 <strong>" + n + "</strong> 只"
+            + m60
+            + "。回测区间请落在此范围内。";
+        }
+      } catch (e) {
+        console.warn(e);
+        const ban = document.getElementById("dataBanner");
+        if (ban) ban.innerHTML = "<span class='warn'>无法读取本地数据范围，请检查 storage 与服务是否正常。</span>";
+      }
+      try {
+        calMeta = await api("/api/v1/calendar/range");
+      } catch (e) {
+        calMeta = { years: Array.from({ length: 16 }, (_, i) => 2010 + i), min_date: 20100104, max_date: 20251231 };
+      }
+      initDateDropdowns();
+      syncPoolUI();
+    }
+
+    function drawEquity(points) {
+      const canvas = document.getElementById("equityChart");
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width = canvas.clientWidth * devicePixelRatio;
+      const h = canvas.height = 200 * devicePixelRatio;
+      ctx.clearRect(0, 0, w, h);
+      if (!points || points.length < 2) return;
+      const ys = points.map(p => p.equity);
+      const min = Math.min(...ys), max = Math.max(...ys);
+      const pad = 10 * devicePixelRatio;
+      ctx.strokeStyle = "#3d8bfd";
+      ctx.lineWidth = 2 * devicePixelRatio;
+      ctx.beginPath();
+      points.forEach((p, i) => {
+        const x = pad + (i / (points.length - 1)) * (w - 2 * pad);
+        const y = h - pad - ((p.equity - min) / (max - min || 1)) * (h - 2 * pad);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    
+    function hideResultPanel() {
+      const card = document.getElementById("resultCard");
+      if (card) card.classList.remove("visible");
+      const chart = document.getElementById("equityChart");
+      if (chart) chart.classList.remove("visible");
+      const jw = document.getElementById("resultJsonWrap");
+      if (jw) jw.classList.remove("open");
+    }
+
+    function artifactUrl(runId, name) {
+      return "/api/v1/backtests/" + encodeURIComponent(runId) + "/artifacts/" + encodeURIComponent(name);
+    }
+
+    function setupDownloads(runId, artifacts) {
+      const tb = document.getElementById("resultToolbar");
+      if (!tb || !runId) {
+        if (tb) tb.style.display = "none";
+        return;
+      }
+      tb.style.display = "flex";
+      const arts = new Set(artifacts || []);
+      const bind = (id, file, primary) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const ok = !arts.size || arts.has(file);
+        el.style.display = ok ? "inline-block" : "none";
+        el.href = artifactUrl(runId, file);
+        el.setAttribute("download", file);
+        if (primary) el.classList.add("primary");
+      };
+      bind("dlExcel", "summary.xlsx", true);
+      bind("dlFills", "fills.csv", false);
+      bind("dlSignals", "signals.csv", false);
+      bind("dlMetrics", "metrics.json", false);
+      bind("dlMeta", "run_meta.json", false);
+      bind("dlTrades", "trades.csv", false);
+      // if excel failed file exists, still try summary.xlsx first; server 404 handled by browser
+      const hint = document.getElementById("resultPathHint");
+      if (hint) {
+        hint.textContent = "服务器路径: outputs/astock/" + runId + "/  （主文件 summary.xlsx：含「汇总」「交易明细」两表）";
+      }
+      const ridEl = document.getElementById("resultRunId");
+      if (ridEl) ridEl.textContent = "· " + runId;
+    }
+
+    async function showRunResult(summary, { fromHistory = false } = {}) {
+      const card = document.getElementById("resultCard");
+      if (card) card.classList.add("visible");
+      const runId = summary.run_id || (summary.meta && summary.meta.run_id) || null;
+      let detail = summary;
+      let artifacts = summary.artifacts || [];
+      let equity = (summary.meta && summary.meta.equity_curve) || summary.equity_curve || [];
+      let metrics = summary.metrics || (summary.meta && summary.meta.metrics) || {};
+
+      if (runId && (fromHistory || !artifacts.length || !Object.keys(metrics).length)) {
+        try {
+          detail = await api("/api/v1/backtests/" + encodeURIComponent(runId));
+          artifacts = detail.artifacts || artifacts;
+          if (detail.metrics) metrics = detail.metrics;
+          equity = (detail.meta && detail.meta.equity_curve) || equity;
+          summary = { ...summary, ...detail, run_id: runId, metrics };
+        } catch (e) {
+          console.warn("加载回测详情失败", e);
+        }
+      }
+
+      showMetrics(metrics);
+      setupDownloads(runId, artifacts);
+
+      const repro = (detail.meta && detail.meta.repro) || summary.repro || {};
+      const title = summary.title || repro.title || runId || "回测结果";
+      const ridEl = document.getElementById("resultRunId");
+      if (ridEl) ridEl.textContent = "· " + (title.length > 40 ? title.slice(0, 40) + "…" : title);
+
+      // Chinese key-value summary strip
+      let kv = document.getElementById("resultKv");
+      if (!kv) {
+        kv = document.createElement("div");
+        kv.id = "resultKv";
+        kv.className = "result-kv";
+        const metricsEl = document.getElementById("metrics");
+        if (metricsEl && metricsEl.parentNode) {
+          metricsEl.parentNode.insertBefore(kv, metricsEl);
+        }
+      }
+      const inds = summary.indicator_names || repro.indicator_ids || summary.indicator_ids || [];
+      const indText = Array.isArray(inds) ? inds.join("、") : String(inds || "—");
+      const rows = [
+        ["任务名称", title],
+        ["运行编号", runId || "—"],
+        ["状态", statusLabel(summary.status || detail.status)],
+        ["规则", indText],
+        ["周期", periodLabel(summary.period || repro.period)],
+        ["持有期", summary.hold != null ? summary.hold : (repro.hold != null ? repro.hold : "—")],
+        ["买入延迟", summary.entry_lag != null ? summary.entry_lag : (repro.entry_lag != null ? repro.entry_lag : "—")],
+        ["区间", fmtYmd(summary.start || repro.start) + " ~ " + fmtYmd(summary.end || repro.end)],
+        ["信号数", summary.n_events != null ? summary.n_events : "—"],
+        ["成交笔数", summary.n_fills != null ? summary.n_fills : "—"],
+      ];
+      kv.innerHTML = rows.map(([k, v]) => `<div class="k">${k}</div><div class="v">${v}</div>`).join("");
+
+      const chart = document.getElementById("equityChart");
+      if (equity && equity.length) {
+        if (chart) chart.classList.add("visible");
+        drawEquity(equity);
+      } else if (chart) {
+        chart.classList.remove("visible");
+      }
+
+      const pre = document.getElementById("resultJson");
+      if (pre) {
+        // Chinese-oriented view for optional JSON
+        const view = {
+          "任务名称": title,
+          "运行编号": runId,
+          "状态": statusLabel(summary.status),
+          "规则": indText,
+          "周期": periodLabel(summary.period || repro.period),
+          "持有期": summary.hold != null ? summary.hold : repro.hold,
+          "买入延迟": summary.entry_lag != null ? summary.entry_lag : repro.entry_lag,
+          "开始日期": summary.start || repro.start,
+          "结束日期": summary.end || repro.end,
+          "指标": {},
+          "信号数": summary.n_events,
+          "成交笔数": summary.n_fills,
+          "文件": artifacts,
+        };
+        const mk = metrics || {};
+        Object.keys(mk).forEach(k => { view["指标"][metricLabel(k)] = mk[k]; });
+        pre.textContent = JSON.stringify(view, null, 2);
+      }
+      const hint = document.getElementById("resultHint");
+      if (hint) {
+        hint.textContent = fromHistory
+          ? "当前为历史回测详情（中文）。可下载 Excel 查看逐笔交易。"
+          : ("回测已完成：" + statusLabel(summary.status) + (runId ? ("，编号 " + runId) : ""));
+      }
+      if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      return summary;
+    }
+
+    function metricLabel(k) {
+      const map = {
+        total_return: "总收益率",
+        mean_symbol_return: "等权平均单票收益",
+        median_symbol_return: "单票收益中位数",
+        annual_return: "年化收益率",
+        account_mode: "账户模式",
+        n_symbol_accounts: "单票账户数",
+        max_drawdown: "最大回撤",
+        volatility: "波动率",
+        sharpe: "夏普比率",
+        final_equity: "期末权益",
+        n_days: "交易日数",
+        n_buys: "买入次数",
+        n_sells: "卖出次数",
+        n_round_trips: "完整回合",
+        win_rate: "胜率",
+        turnover: "换手",
+        cost_total: "总成本",
+        n_open_positions: "未平仓数",
+        open_market_value: "未平仓市值",
+        zero_cost_return: "不计成本收益",
+        cost_impact: "成本拖累",
+        n_events: "信号条数",
+        n_fills: "成交笔数",
+      };
+      return map[k] || k;
+    }
+
+    function statusLabel(st) {
+      const map = {
+        ok: "完成",
+        succeeded: "完成",
+        research_unadjusted: "完成（未复权研究）",
+        research_unconfirmed_formula: "完成（公式未确认）",
+        no_go: "未通过",
+        failed: "失败",
+        running: "运行中",
+        queued: "排队中",
+      };
+      return map[st] || st || "—";
+    }
+
+    function periodLabel(p) {
+      const map = { DAY: "日线", WEEK: "周线", MONTH: "月线", DWM: "日周月共振", MIN60: "60分钟" };
+      return map[String(p || "").toUpperCase()] || p || "—";
+    }
+
+    function fmtYmd(n) {
+      if (!n) return "—";
+      const s = String(n);
+      if (s.length === 8) return s.slice(0,4) + "-" + s.slice(4,6) + "-" + s.slice(6,8);
+      return s;
+    }
+
+    function showMetrics(m) {
+      const box = document.getElementById("metrics");
+      box.innerHTML = "";
+      if (!m) return;
+      const keys = [
+        "total_return", "mean_symbol_return", "median_symbol_return", "annual_return", "max_drawdown", "final_equity",
+        "n_buys", "n_sells", "n_round_trips", "win_rate",
+        "n_days", "cost_total", "n_open_positions", "n_symbol_accounts", "zero_cost_return", "account_mode"
+      ];
+      keys.forEach(k => {
+        if (m[k] === undefined || m[k] === null) return;
+        const d = document.createElement("div");
+        d.className = "metric";
+        let v = m[k];
+        let vHtml = null;
+        if (typeof v === "number" && (k.includes("return") || k.includes("drawdown") || k === "win_rate" || k === "volatility" || k === "cost_impact" || k === "pct_symbols_profitable")) {
+          // 统一：小数 → 百分比（0.0046 → +0.46%）
+          vHtml = fmtPct(v, { html: true, showRaw: true });
+          v = null;
+        } else if (k === "account_mode") {
+          const mode = String(v || "").toLowerCase();
+          v = (mode === "per_symbol" || mode === "tdx")
+            ? "通达信对照·单票独立资金"
+            : (mode === "portfolio" ? "组合账户·共享资金" : String(v));
+        } else if (typeof v === "number") {
+          if (k === "final_equity" || k === "cost_total" || k === "open_market_value" || k === "capital_base") {
+            v = Number(v).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+          } else if (Number.isInteger(v) || Math.abs(v - Math.round(v)) < 1e-9) {
+            v = Math.round(v).toLocaleString("zh-CN");
+          } else {
+            v = Number(v).toFixed(2);
+          }
+        }
+        d.innerHTML = `<div class="k">${metricLabel(k)}</div><div class="v">${vHtml != null ? vHtml : v}</div>`;
+        box.appendChild(d);
+      });
+    }
+
+
+    function fmtElapsed(sec) {
+      sec = Math.max(0, Math.floor(sec));
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      if (m >= 60) {
+        const h = Math.floor(m / 60);
+        return h + "小时" + (m % 60) + "分" + s + "秒";
+      }
+      return m + "分" + s + "秒";
+    }
+
+    function setProgressUI(pct, label, detail, { indeterminate = false, active = true } = {}) {
+      const wrap = document.getElementById("progressWrap");
+      const fill = document.getElementById("progressFill");
+      const bar = document.getElementById("progressBar");
+      const pctEl = document.getElementById("progressPct");
+      const labEl = document.getElementById("progressLabel");
+      const detEl = document.getElementById("progressDetail");
+      if (!wrap) return;
+      if (active) wrap.classList.add("active");
+      else wrap.classList.remove("active");
+      const p = Math.max(0, Math.min(100, Number(pct) || 0));
+      if (fill) fill.style.width = p + "%";
+      if (pctEl) pctEl.textContent = (indeterminate ? "…" : (p.toFixed(1).replace(/\.0$/, "") + "%"));
+      if (labEl) labEl.innerHTML = "<strong>" + (label || "进度") + "</strong>";
+      if (detEl) detEl.textContent = detail || "—";
+      if (bar) {
+        if (indeterminate) bar.classList.add("indeterminate");
+        else bar.classList.remove("indeterminate");
+      }
+    }
+
+    function hideProgressSoon() {
+      setTimeout(() => {
+        const wrap = document.getElementById("progressWrap");
+        if (wrap) wrap.classList.remove("active");
+      }, 2500);
+    }
+
+    function showJobProgress(job, startedAt) {
+      const elapsed = (Date.now() / 1000) - (job.created_at || startedAt);
+      const prog = job.progress || {};
+      let pct = prog.pct;
+      if (pct === undefined || pct === null) {
+        if (job.status === "succeeded") pct = 100;
+        else if (job.status === "failed") pct = prog.pct || 0;
+        else if (job.status === "queued") pct = 0;
+        else pct = Math.min(95, 5 + elapsed * 0.15);
+      }
+      const phaseMap = {
+        queued: "排队中", starting: "启动中", prepare: "准备",
+        signals: "计算信号", factors: "校验复权", portfolio: "组合回测",
+        writing: "写结果", done: "完成", failed: "失败"
+      };
+      const phase = phaseMap[prog.phase] || prog.phase || job.status || "running";
+      const cur = prog.current || 0;
+      const total = prog.total || 0;
+      const code = prog.code ? (" · " + prog.code) : "";
+      const msg = prog.message || "";
+      const detail = [phase, total ? (cur + "/" + total) : "", msg, code,
+        "已运行 " + fmtElapsed(elapsed), job.job_id || ""].filter(Boolean).join(" · ");
+      setProgressUI(pct, phase + (total ? (" " + cur + "/" + total) : ""), detail, { active: true });
+      // keep result panel hidden while running
+      hideResultPanel();
+      return "异步任务 " + job.status + " · " + Number(pct).toFixed(1) + "% · 已运行 " + fmtElapsed(elapsed);
+    }
+
+    async function pollJob(jobId, msg) {
+      const startedAt = Date.now() / 1000;
+      setProgressUI(0, "排队/启动", "job " + jobId, { active: true });
+      try {
+        const j0 = await api("/api/v1/backtests/jobs/" + jobId);
+        msg.textContent = showJobProgress(j0, j0.created_at || startedAt);
+        if (j0.status === "succeeded") {
+          setProgressUI(100, "完成", "run_id=" + (j0.run_id || ""), { active: true });
+          hideProgressSoon();
+          return j0.result || j0;
+        }
+        if (j0.status === "failed") {
+          setProgressUI((j0.progress && j0.progress.pct) || 0, "失败", j0.error || "job failed", { active: true });
+          const box = document.getElementById("resultJson");
+          if (box) {
+            box.textContent = JSON.stringify({
+              status: "failed",
+              job_id: jobId,
+              run_id: j0.run_id,
+              error: j0.error,
+              progress: j0.progress || null,
+              result: j0.result || null
+            }, null, 2);
+          }
+          throw new Error(j0.error || "job failed");
+        }
+      } catch (e) {
+        if (String(e.message || e).indexOf("job failed") >= 0 ||
+            String(e.message || e).indexOf("adjustment") >= 0 ||
+            String(e.message || e).indexOf("No-Go") >= 0 ||
+            String(e.message || e).indexOf("blocked") >= 0) {
+          throw e;
+        }
+        msg.textContent = "任务 " + jobId + " 已提交，等待状态…";
+      }
+      let netFail = 0;
+      for (let i = 0; i < 3600; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        let j;
+        try {
+          j = await api("/api/v1/backtests/jobs/" + jobId);
+          netFail = 0;
+        } catch (e) {
+          const em = String(e.message || e);
+          const isNet = em.indexOf("网络请求失败") >= 0 || em.indexOf("Failed to fetch") >= 0 || em.indexOf("NetworkError") >= 0;
+          if (isNet && netFail < 15) {
+            netFail += 1;
+            msg.textContent = "与服务器短暂失联，重试中 (" + netFail + "/15)… job=" + jobId;
+            setProgressUI(
+              (document.getElementById("progressFill") && parseFloat(document.getElementById("progressFill").style.width)) || 0,
+              "重连中",
+              "服务可能正在重启；若任务已跑完，请刷新后在历史中查看。",
+              { active: true }
+            );
+            continue;
+          }
+          throw e;
+        }
+        msg.textContent = showJobProgress(j, j.created_at || startedAt);
+        if (j.status === "succeeded") {
+          setProgressUI(100, "完成", "run_id=" + (j.run_id || ""), { active: true });
+          hideProgressSoon();
+          return j.result || j;
+        }
+        if (j.status === "failed") {
+          setProgressUI((j.progress && j.progress.pct) || 0, "失败", j.error || "job failed", { active: true });
+          const box = document.getElementById("resultJson");
+          if (box) {
+            box.textContent = JSON.stringify({
+              status: "failed",
+              job_id: jobId,
+              run_id: j.run_id,
+              error: j.error,
+              progress: j.progress || null,
+              result: j.result || null
+            }, null, 2);
+          }
+          throw new Error(j.error || "job failed");
+        }
+      }
+      throw new Error("任务超时");
+    }
+
+    /** Metrics store fractions (0.05 = 5%). Never treat them as already-percent. */
+    function fracToPctNumber(x) {
+      const n = Number(x);
+      if (x === undefined || x === null || Number.isNaN(n)) return null;
+      return n * 100;
+    }
+    function fmtPct(x, opts) {
+      const p = fracToPctNumber(x);
+      if (p === null) return "—";
+      const abs = Math.abs(p);
+      // 后端存 0~1 小数：0.0046 → +0.46%，0.46 → +46.00%
+      let digits = 2;
+      if (abs > 0 && abs < 0.1) digits = 4;
+      else if (abs > 0 && abs < 1) digits = 3;
+      const sign = p > 0 ? "+" : (p < 0 ? "" : "");
+      const body = sign + p.toFixed(digits) + "%";
+      const raw = Number(x);
+      const rawStr = (Math.abs(raw) > 0 && Math.abs(raw) < 0.01)
+        ? raw.toExponential(3)
+        : String(Math.round(raw * 1e8) / 1e8);
+      const tip = (opts && opts.title) ? opts.title : ("百分比 = 小数×100。原始小数 " + rawStr);
+      if (opts && opts.html) {
+        const cls = p > 1e-12 ? "pct-pos" : (p < -1e-12 ? "pct-neg" : "pct-zero");
+        const showRaw = !!(opts && opts.showRaw);
+        const extra = showRaw
+          ? ("<span class='pct-note'>小数 " + rawStr + "</span>")
+          : "";
+        return "<span class='" + cls + "' title='" + tip.replace(/'/g, "&#39;") + "'>" + body + "</span>" + extra;
+      }
+      return body;
+    }
+    function fmtInt(x) {
+      if (x === undefined || x === null || Number.isNaN(Number(x))) return "—";
+      try { return Number(x).toLocaleString("zh-CN"); } catch (e) { return String(x); }
+    }
+
+    // ---------- 历史任务列表：字段口径与分层展示 ----------
+    function isPerSymbolMode(m, r) {
+      const mode = String(
+        (m && m.account_mode) || (r && r.account_mode) || ""
+      ).toLowerCase();
+      return mode === "per_symbol" || mode === "tdx" || mode === "per_stock";
+    }
+    function accountModeLabel(m, r) {
+      return isPerSymbolMode(m, r) ? "单票独立资金" : "共享资金池";
+    }
+    function accountModeShort(m, r) {
+      return isPerSymbolMode(m, r) ? "单票独立" : "组合资金";
+    }
+    /** 列表主收益字段：单票模式用等权平均，否则用总收益 */
+    function primaryReturnValue(m, r) {
+      if (isPerSymbolMode(m, r) && m.mean_symbol_return != null && !Number.isNaN(Number(m.mean_symbol_return))) {
+        return { value: m.mean_symbol_return, label: "单票平均收益", tip: "等权平均各单票账户总收益率（通达信对照口径）" };
+      }
+      return { value: m.total_return, label: "总收益", tip: "共享资金池组合账户总收益率" };
+    }
+    /** 最大回撤：列表用正数幅度展示（5.18%），tooltip 说明为回撤幅度 */
+    function fmtMaxDrawdownAbs(x, opts) {
+      if (x === undefined || x === null || Number.isNaN(Number(x))) return "—";
+      const n = Math.abs(Number(x)) * 100;
+      const body = n.toFixed(2) + "%";
+      const tip = (opts && opts.title) || ("最大回撤幅度（由权益峰值到谷底）。原始小数 " + x);
+      if (opts && opts.html) {
+        return "<span class='pct-mdd' title='" + String(tip).replace(/'/g, "&#39;") + "'>" + body + "</span>";
+      }
+      return body;
+    }
+    /** 策略名：优先 indicator_names，去掉技术前缀；否则从 title 取主段 */
+    function strategyPrimaryName(r) {
+      let names = r.indicator_names || r.indicator_ids || [];
+      if (typeof names === "string") names = [names];
+      if (Array.isArray(names) && names.length) {
+        const nice = names.map((n) => {
+          let s = String(n || "");
+          ["tn6_", "txt_", "user_"].forEach((p) => {
+            if (s.startsWith(p)) s = s.slice(p.length);
+          });
+          return s;
+        }).filter(Boolean);
+        if (nice.length) return nice.join(" + ");
+      }
+      const title = String(r.title || "");
+      if (!title) return r.run_id || "回测任务";
+      // title 形如：策略 · 模式 · 日线 · 持有1 · 区间
+      const head = title.split(" · ")[0].trim();
+      return head || title;
+    }
+    function strategyParamTags(r, m) {
+      const tags = [];
+      const pl = r.period_label || periodLabel(r.period);
+      if (pl) tags.push(pl);
+      if (r.hold != null && r.hold !== "") tags.push("持有" + r.hold + "期");
+      if (r.entry_lag != null && r.entry_lag !== "") tags.push("延迟" + r.entry_lag);
+      tags.push(accountModeShort(m, r));
+      if (r.start || r.end) {
+        tags.push(fmtYmd(r.start) + " ~ " + fmtYmd(r.end));
+      }
+      return tags;
+    }
+    function strategyExtraMetrics(m) {
+      const bits = [];
+      if (m.annual_return != null && !Number.isNaN(Number(m.annual_return))) {
+        bits.push("年化 " + fmtPct(m.annual_return));
+      }
+      if (m.sharpe != null && !Number.isNaN(Number(m.sharpe))) {
+        bits.push("夏普 " + Number(m.sharpe).toFixed(2));
+      }
+      if (m.profit_factor != null && !Number.isNaN(Number(m.profit_factor))) {
+        bits.push("盈亏比 " + Number(m.profit_factor).toFixed(2));
+      }
+      return bits.join(" ｜ ");
+    }
+    function tradeCountValue(m) {
+      // 优先完整回合；否则买入次数
+      if (m.n_round_trips != null) return m.n_round_trips;
+      if (m.n_buys != null) return m.n_buys;
+      return null;
+    }
+    function escAttr(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+
+
+    function fmtTime(ts) {
+      if (!ts) return "—";
+      try {
+        const d = new Date((Number(ts) < 1e12 ? Number(ts) * 1000 : Number(ts)));
+        if (Number.isNaN(d.getTime())) return String(ts);
+        return d.toLocaleString();
+      } catch (_) {
+        return String(ts);
+      }
+    }
+
+    function statusClass(st) {
+      const s = String(st || "");
+      if (s === "ok" || s === "succeeded") return "ok";
+      if (s === "no_go" || s === "failed" || s.indexOf("reject") >= 0) return "bad";
+      if (s.indexOf("research") >= 0) return "warn";
+      return "";
+    }
+
+    function updateHistSelInfo() {
+      const el = document.getElementById("histSelInfo");
+      if (el) el.textContent = "已选 " + selectedRuns.size + " 条";
+    }
+
+    function getCheckedRunIds() {
+      return Array.from(selectedRuns);
+    }
+
+    async function deleteRunsByIds(ids) {
+      const list = (ids || []).filter(Boolean);
+      if (!list.length) {
+        alert("请先勾选要删除的历史记录");
+        return { ok: 0, fail: 0 };
+      }
+      if (!confirm("确定删除所选 " + list.length + " 条历史记录及其结果文件？\\n此操作不可恢复。")) {
+        return { ok: 0, fail: 0, cancelled: true };
+      }
+      const msg = document.getElementById("runMsg");
+      let ok = 0, fail = 0;
+      for (const rid of list) {
+        try {
+          await api("/api/v1/runs/" + encodeURIComponent(rid) + "?remove_files=true", { method: "DELETE" });
+          selectedRuns.delete(rid);
+          ok += 1;
+        } catch (e) {
+          fail += 1;
+        }
+      }
+      // hide result panel if current result deleted
+      const ridEl = document.getElementById("resultRunId");
+      if (ridEl) {
+        const txt = ridEl.textContent || "";
+        if (list.some(id => txt.indexOf(id) >= 0)) hideResultPanel();
+      }
+      await refreshHistory();
+      updateHistSelInfo();
+      if (msg) {
+        msg.innerHTML = '<span class="okmsg">已删除 ' + ok + " 条" + (fail ? ("，失败 " + fail) : "") + "</span>";
+      }
+      return { ok, fail };
+    }
+
+    function renderHistory(rows, activeRunId) {
+      const box = document.getElementById("history");
+      if (!box) return;
+      window.__historyRows = rows || [];
+      const alive = new Set((rows || []).map((r) => r.run_id).filter(Boolean));
+      Array.from(selectedRuns).forEach((id) => {
+        if (!alive.has(id)) selectedRuns.delete(id);
+      });
+      if (!rows || !rows.length) {
+        box.className = "history-empty";
+        box.textContent = "暂无历史任务（完成后会出现在这里）";
+        updateHistSelInfo();
+        return;
+      }
+      box.className = "";
+
+      // 统一列定义：表头与单元格共用，避免错位
+      // 主列表：策略分层 | 时间 | 状态 | 周期 | 资金模式 | 收益 | 年化 | 最大回撤 | 交易笔数 | 胜率 | 操作
+      const head =
+        "<div class='history-wrap'><table class='history-table'>" +
+        "<thead><tr>" +
+        "<th class='col-check'><input type='checkbox' class='hist-check' id='histCheckAll' title='全选/取消全选' /></th>" +
+        "<th class='col-strategy'>策略/参数</th>" +
+        "<th class='col-time'>创建时间</th>" +
+        "<th class='col-status'>状态</th>" +
+        "<th class='col-period'>周期</th>" +
+        "<th class='col-mode'>资金模式</th>" +
+        "<th class='num' title='组合=总收益；单票独立=等权平均单票收益'>收益</th>" +
+        "<th class='num' title='年化收益率'>年化</th>" +
+        "<th class='num' title='最大回撤幅度（正数）'>最大回撤</th>" +
+        "<th class='num' title='优先完整回合数，否则买入次数'>交易笔数</th>" +
+        "<th class='num' title='盈利回合/已平仓回合'>胜率</th>" +
+        "<th class='col-ops'>操作</th>" +
+        "</tr></thead><tbody>";
+
+      const body = rows
+        .map((r, idx) => {
+          const m = Object.assign({}, r.metrics_brief || {}, r.metrics || {});
+          const primary = strategyPrimaryName(r);
+          const tags = strategyParamTags(r, m);
+          const extra = strategyExtraMetrics(m);
+          const retMeta = primaryReturnValue(m, r);
+          const modeLabel = accountModeLabel(m, r);
+          const modeCls = isPerSymbolMode(m, r) ? "per" : "pool";
+          const active = activeRunId && r.run_id === activeRunId ? " active" : "";
+          const checked = selectedRuns.has(r.run_id) ? " checked" : "";
+          const periodText = r.period_label || periodLabel(r.period) || "—";
+          const fullTitle = escAttr(
+            primary +
+              " | " +
+              tags.join(" · ") +
+              (r.run_id ? " | " + r.run_id : "") +
+              (extra ? " | " + extra : "")
+          );
+
+          const tagHtml = tags
+            .map((tg) => {
+              let cls = "hist-tag";
+              if (tg.indexOf("单票") >= 0) cls += " mode-per";
+              if (tg.indexOf("组合") >= 0 || tg.indexOf("共享") >= 0) cls += " mode-pool";
+              return "<span class='" + cls + "'>" + tg + "</span>";
+            })
+            .join("");
+
+          const retHtml = fmtPct(retMeta.value, {
+            html: true,
+            showRaw: false,
+            title: retMeta.tip + " · 表头口径：" + retMeta.label,
+          });
+          const annHtml = fmtPct(m.annual_return, {
+            html: true,
+            showRaw: false,
+            title: "年化收益率",
+          });
+          const mddHtml = fmtMaxDrawdownAbs(m.max_drawdown, {
+            html: true,
+            title: "最大回撤幅度（权益峰值到谷底）",
+          });
+          const winHtml = fmtPct(m.win_rate, {
+            html: true,
+            showRaw: false,
+            title: "胜率 = 盈利已平仓回合 / 已平仓回合",
+          });
+          const nTrade = tradeCountValue(m);
+
+          return (
+            "<tr class='hist-row" +
+            active +
+            "' data-idx='" +
+            idx +
+            "' data-run='" +
+            (r.run_id || "") +
+            "'>" +
+            "<td class='col-check'><input type='checkbox' class='hist-check hist-row-check' data-run='" +
+            (r.run_id || "") +
+            "'" +
+            checked +
+            " /></td>" +
+            "<td class='col-strategy' title=\"" +
+            fullTitle +
+            '">' +
+            "<div class='hist-title'>" +
+            primary +
+            "</div>" +
+            (tagHtml ? "<div class='hist-tags'>" + tagHtml + "</div>" : "") +
+            (extra ? "<div class='hist-extra' title='" + escAttr(extra) + "'>" + extra + "</div>" : "") +
+            (r.run_id ? "<div class='hist-id'>编号 " + r.run_id + "</div>" : "") +
+            "</td>" +
+            "<td class='col-time'>" +
+            fmtTime(r.created_at) +
+            "</td>" +
+            "<td class='col-status'><span class='badge-status " +
+            statusClass(r.status) +
+            "' title='" +
+            escAttr(r.status_label || statusLabel(r.status) || r.status || "") +
+            "'>" +
+            (r.status_label || statusLabel(r.status) || "—") +
+            "</span></td>" +
+            "<td class='col-period'>" +
+            periodText +
+            "</td>" +
+            "<td class='col-mode'><span class='mode-pill " +
+            modeCls +
+            "' title='" +
+            escAttr(modeLabel) +
+            "'>" +
+            accountModeShort(m, r) +
+            "</span></td>" +
+            "<td class='num' title='" +
+            escAttr(retMeta.label) +
+            "'>" +
+            retHtml +
+            "</td>" +
+            "<td class='num'>" +
+            annHtml +
+            "</td>" +
+            "<td class='num'>" +
+            mddHtml +
+            "</td>" +
+            "<td class='num' title='完整回合优先，否则买入次数'>" +
+            fmtInt(nTrade) +
+            "</td>" +
+            "<td class='num'>" +
+            winHtml +
+            "</td>" +
+            "<td class='col-ops'><div class='ops-row'>" +
+            "<button type='button' class='btn-op' data-view-run='" +
+            (r.run_id || "") +
+            "' title='查看回测报告'>查看</button>" +
+            "<button type='button' class='btn-op btn-del' data-del-run='" +
+            (r.run_id || "") +
+            "' title='删除此任务及结果文件'>删除</button>" +
+            "</div></td>" +
+            "</tr>"
+          );
+        })
+        .join("");
+
+      box.innerHTML = head + body + "</tbody></table></div>";
+
+      const checkAll = document.getElementById("histCheckAll");
+      if (checkAll) {
+        const allIds = rows.map((r) => r.run_id).filter(Boolean);
+        checkAll.checked = allIds.length > 0 && allIds.every((id) => selectedRuns.has(id));
+        checkAll.indeterminate = selectedRuns.size > 0 && !checkAll.checked;
+        checkAll.addEventListener("change", () => {
+          if (checkAll.checked) allIds.forEach((id) => selectedRuns.add(id));
+          else allIds.forEach((id) => selectedRuns.delete(id));
+          renderHistory(window.__historyRows || [], activeRunId);
+        });
+      }
+
+      box.querySelectorAll(".hist-row-check").forEach((cb) => {
+        cb.addEventListener("click", (ev) => ev.stopPropagation());
+        cb.addEventListener("change", () => {
+          const rid = cb.getAttribute("data-run");
+          if (!rid) return;
+          if (cb.checked) selectedRuns.add(rid);
+          else selectedRuns.delete(rid);
+          updateHistSelInfo();
+          const allIds = (window.__historyRows || []).map((r) => r.run_id).filter(Boolean);
+          const all = document.getElementById("histCheckAll");
+          if (all) {
+            all.checked = allIds.length > 0 && allIds.every((id) => selectedRuns.has(id));
+            all.indeterminate = selectedRuns.size > 0 && !all.checked;
+          }
+        });
+      });
+
+      const openRun = async (rid) => {
+        if (!rid) return;
+        box.querySelectorAll("tr.hist-row").forEach((x) => x.classList.remove("active"));
+        const tr = box.querySelector("tr.hist-row[data-run='" + rid + "']");
+        if (tr) tr.classList.add("active");
+        const msg = document.getElementById("runMsg");
+        if (msg) msg.textContent = "正在加载：" + rid + " …";
+        try {
+          await showRunResult({ run_id: rid }, { fromHistory: true });
+          if (msg) msg.innerHTML = '<span class="okmsg">已打开历史回测</span>';
+        } catch (e) {
+          if (msg) msg.innerHTML = '<span class="err">' + e.message + "</span>";
+        }
+      };
+
+      box.querySelectorAll("tr.hist-row").forEach((tr) => {
+        tr.addEventListener("click", async (ev) => {
+          if (
+            ev.target &&
+            (ev.target.tagName === "BUTTON" ||
+              ev.target.tagName === "INPUT" ||
+              (ev.target.closest && (ev.target.closest("button") || ev.target.closest("input"))))
+          ) {
+            return;
+          }
+          await openRun(tr.getAttribute("data-run"));
+        });
+      });
+
+      box.querySelectorAll("[data-view-run]").forEach((btn) => {
+        btn.addEventListener("click", async (ev) => {
+          ev.stopPropagation();
+          await openRun(btn.getAttribute("data-view-run"));
+        });
+      });
+
+      box.querySelectorAll("[data-del-run]").forEach((btn) => {
+        btn.addEventListener("click", async (ev) => {
+          ev.stopPropagation();
+          const rid = btn.getAttribute("data-del-run");
+          if (!rid) return;
+          await deleteRunsByIds([rid]);
+        });
+      });
+
+      updateHistSelInfo();
+    }
+
+
+
+    async function refreshHistory() {
+      const box = document.getElementById("history");
+      try {
+        box.className = "history-empty";
+        box.textContent = "加载中…";
+        const rows = await api("/api/v1/runs?limit=50");
+        renderHistory(rows);
+      } catch (e) {
+        box.className = "history-empty";
+        box.textContent = e.message;
+      }
+    }
+    document.querySelectorAll("#btnLoadRuns").forEach(btn => {
+      btn.onclick = () => refreshHistory();
+    });
+    const btnDelSel = document.getElementById("btnDeleteSelected");
+    if (btnDelSel) {
+      btnDelSel.onclick = async () => {
+        await deleteRunsByIds(getCheckedRunIds());
+      };
+    }
+    const btnSelAll = document.getElementById("btnHistSelectAll");
+    if (btnSelAll) {
+      btnSelAll.onclick = () => {
+        (window.__historyRows || []).forEach(r => { if (r.run_id) selectedRuns.add(r.run_id); });
+        renderHistory(window.__historyRows || []);
+      };
+    }
+    const btnSelNone = document.getElementById("btnHistSelectNone");
+    if (btnSelNone) {
+      btnSelNone.onclick = () => {
+        selectedRuns.clear();
+        renderHistory(window.__historyRows || []);
+      };
+    }
+    const btnClear = document.getElementById("btnClearHistory");
+    if (btnClear) {
+      btnClear.onclick = async () => {
+        const rows = window.__historyRows || [];
+        const ids = rows.map(r => r.run_id).filter(Boolean);
+        if (!ids.length) {
+          alert("当前没有历史记录");
+          return;
+        }
+        await deleteRunsByIds(ids);
+      };
+    }
+
+
+    // ---- create rule ----
+    document.getElementById("btnShowCreate").onclick = () => {
+      document.getElementById("createPanel").style.display = "block";
+    };
+    document.getElementById("btnHideCreate").onclick = () => {
+      document.getElementById("createPanel").style.display = "none";
+    };
+    document.getElementById("btnRefresh").onclick = () => loadRules().catch(e => alert(e.message));
+
+    document.getElementById("btnValidate").onclick = async () => {
+      const msg = document.getElementById("createMsg");
+      try {
+        const r = await api("/api/v1/rules/validate", {
+          method: "POST",
+          body: JSON.stringify({
+            name: document.getElementById("newName").value || "draft",
+            formula_text: document.getElementById("newFormula").value || "",
+          }),
+        });
+        if (r.ok) {
+          msg.innerHTML = '<span class="okmsg">公式校验通过</span>';
+        } else {
+          msg.innerHTML = '<span class="err">' + (r.error || "校验失败") + "</span>";
+        }
+      } catch (e) {
+        msg.innerHTML = '<span class="err">' + e.message + "</span>";
+      }
+    };
+
+    document.getElementById("btnSaveRule").onclick = async () => {
+      const msg = document.getElementById("createMsg");
+      try {
+        const r = await api("/api/v1/rules", {
+          method: "POST",
+          body: JSON.stringify({
+            name: document.getElementById("newName").value || "",
+            description: document.getElementById("newDesc").value || "",
+            formula_text: document.getElementById("newFormula").value || "",
+          }),
+        });
+        msg.innerHTML = '<span class="okmsg">已保存规则 ' + (r.name || r.id) + "</span>";
+        await loadRules();
+      } catch (e) {
+        msg.innerHTML = '<span class="err">' + e.message + "</span>";
+      }
+    };
+
+    // timeline / pool UI
+    const entryLagEl = document.getElementById("entryLag");
+    const holdEl = document.getElementById("hold");
+    if (entryLagEl) entryLagEl.oninput = updateTimeline;
+    if (holdEl) holdEl.oninput = updateTimeline;
+    document.querySelectorAll('input[name="poolMode"]').forEach(el => {
+      el.onchange = syncPoolUI;
+    });
+    if (typeof updateTimeline === "function") updateTimeline();
+    if (typeof syncPoolUI === "function") syncPoolUI();
+
+    // ---- start backtest ----
+    document.getElementById("btnRun").onclick = async () => {
+      const msg = document.getElementById("runMsg");
+      try {
+        if (!selected.size) {
+          alert("请先在左侧勾选至少一条可回测规则（如 735）。\\n提示：八卦OHLC 是标注分类，需与选股规则一起用。");
+          return;
+        }
+        const ruleIds = Array.from(selected);
+        const hasBagua = ruleIds.some(id => id === "bagua_ohlc" || id.indexOf("bagua") >= 0);
+        const tradeIds = ruleIds.filter(id => id !== "bagua_ohlc");
+        if (!tradeIds.length) {
+          alert("当前只选了八卦OHLC。八卦是分类标注，不能单独回测。\\n请再勾选至少一条选股规则（如 735金叉及趋势）。");
+          return;
+        }
+
+        const mode = (typeof getPoolMode === "function") ? getPoolMode() : "demo";
+        let codes = null;
+        let use_full_market = false;
+        if (mode === "full") {
+          use_full_market = true;
+          codes = ["ALL"];
+        } else if (mode === "custom") {
+          const raw = (document.getElementById("codes").value || "").trim();
+          if (!raw) {
+            alert("请填写股票代码，或改选演示小池/全市场");
+            return;
+          }
+          codes = raw.split(/[,，\\s]+/).map(s => s.trim()).filter(Boolean);
+        } else {
+          codes = ["sh600000", "sz000001"];
+        }
+
+        const start = ymdFromParts(
+          document.getElementById("startYear"),
+          document.getElementById("startMonth"),
+          document.getElementById("startDay")
+        );
+        const end = ymdFromParts(
+          document.getElementById("endYear"),
+          document.getElementById("endMonth"),
+          document.getElementById("endDay")
+        );
+        if (!start || !end) {
+          alert("请选择完整的回测起止日期");
+          return;
+        }
+        if (start > end) {
+          alert("开始日期不能晚于结束日期");
+          return;
+        }
+
+        const body = {
+          rule_ids: tradeIds,
+          period: document.getElementById("period").value,
+          hold: parseInt(document.getElementById("hold").value, 10) || 1,
+          account_mode: (document.querySelector('input[name="accountMode"]:checked') || {}).value || "portfolio",
+          entry_lag: parseInt(document.getElementById("entryLag").value, 10) || 1,
+          combine: document.getElementById("combine").value || null,
+          codes,
+          use_full_market,
+          start,
+          end,
+          with_bagua: hasBagua,
+          bagua_filter_mode: hasBagua ? "best3" : null,
+          research_unadjusted: document.getElementById("researchUnadj").checked,
+          research_unconfirmed_formula: document.getElementById("researchUnconf").checked,
+          stop_loss: document.getElementById("sl").value ? parseFloat(document.getElementById("sl").value) : null,
+          take_profit: document.getElementById("tp").value ? parseFloat(document.getElementById("tp").value) : null,
+          async_mode: use_full_market,
+        };
+
+        hideResultPanel();
+        document.getElementById("metrics").innerHTML = "";
+        msg.textContent = "正在提交回测任务…";
+        setProgressUI(0, "提交中", "正在创建任务…", { active: true, indeterminate: true });
+
+        let r = await api("/api/v1/backtests", { method: "POST", body: JSON.stringify(body) });
+        if (r.mode === "async" && r.job_id) {
+          msg.textContent = "任务已提交 " + r.job_id + "，开始轮询进度…";
+          r = await pollJob(r.job_id, msg);
+          r = { mode: "async", ...r };
+        } else {
+          msg.textContent = "同步回测计算中…";
+        }
+
+        // failed async may throw; success:
+        msg.innerHTML = '<span class="okmsg">回测完成：' + (r.title || r.run_id || "") + " · " + statusLabel(r.status) + "</span>";
+        setProgressUI(100, "完成", "run_id=" + (r.run_id || ""), { active: true });
+        hideProgressSoon();
+        await showRunResult(r, { fromHistory: false });
+        try {
+          const rows = await api("/api/v1/runs?limit=50");
+          renderHistory(rows, r.run_id);
+        } catch (_) {}
+      } catch (e) {
+        msg.innerHTML = '<span class="err">' + e.message + "</span>";
+        hideResultPanel();
+        setProgressUI(0, "失败", String(e.message || e).slice(0, 300), { active: true });
+      }
+    };
+
+
+    const btnJson = document.getElementById("btnToggleJson");
+    if (btnJson) {
+      btnJson.onclick = () => {
+        const w = document.getElementById("resultJsonWrap");
+        if (w) w.classList.toggle("open");
+      };
+    }
+
+    loadHealth().catch(e => { const el=document.getElementById("health"); if(el) el.textContent="API 失败: "+e.message; });
+    loadRules().catch(e => { document.getElementById("ruleList").textContent = e.message; });
+    loadUniverseAndCalendar();
+    hideResultPanel();
+    // auto-load history so recent runs are visible
+    api("/api/v1/runs?limit=50").then(renderHistory).catch(() => {});
+
+    // ----- Forecast module UI -----
+    function setModule(mod) {
+      const bt = document.getElementById("viewBacktest");
+      const fc = document.getElementById("viewForecast");
+      const tabBt = document.getElementById("tabBacktest");
+      const tabFc = document.getElementById("tabForecast");
+      if (!bt || !fc) return;
+      const isFc = mod === "forecast";
+      bt.style.display = isFc ? "none" : "";
+      fc.style.display = isFc ? "grid" : "none";
+      if (tabBt) { tabBt.classList.toggle("active", !isFc); tabBt.classList.toggle("secondary", isFc); }
+      if (tabFc) { tabFc.classList.toggle("active", isFc); tabFc.classList.toggle("secondary", !isFc); }
+      if (isFc) refreshForecastHealth();
+    }
+    document.getElementById("tabBacktest")?.addEventListener("click", () => setModule("backtest"));
+    document.getElementById("tabForecast")?.addEventListener("click", () => setModule("forecast"));
+
+    async function refreshForecastHealth() {
+      try {
+        const h = await api("/api/v1/forecast/health");
+        const kb = document.getElementById("fcKbStatus");
+        const wk = document.getElementById("fcWeekStatus");
+        if (kb) {
+          kb.textContent = h.kb_loaded
+            ? ("已加载 · " + (h.kb_source_file || h.kb_version || "") + " · " + (h.kb_entry_count || 0) + " 爻")
+            : "未加载简判库";
+        }
+        if (wk) {
+          wk.textContent = h.active_week_key
+            ? ("当前周 " + h.active_week_key + " · " + (h.stock_count || 0) + " 只股票")
+            : "未导入周报";
+        }
+        await refreshWeekSelect(h.active_week_key);
+      } catch (e) {
+        const kb = document.getElementById("fcKbStatus");
+        if (kb) kb.textContent = "健康检查失败: " + e.message;
+      }
+    }
+
+    async function refreshWeekSelect(activeKey) {
+      const sel = document.getElementById("fcWeekSelect");
+      if (!sel) return;
+      const weeks = await api("/api/v1/forecast/weekly");
+      const list = weeks.weeks || [];
+      const active = activeKey || weeks.active_week_key;
+      sel.innerHTML = "";
+      if (!list.length) {
+        const o = document.createElement("option");
+        o.value = "";
+        o.textContent = "（暂无周报，请先上传）";
+        sel.appendChild(o);
+        return;
+      }
+      list.forEach(w => {
+        const o = document.createElement("option");
+        o.value = w.week_key;
+        o.textContent = w.label || (w.week_key + (w.source_filename ? (" · " + w.source_filename) : "") + (w.stock_count != null ? (" · " + w.stock_count + "只") : ""));
+        if (w.week_key === active) o.selected = true;
+        sel.appendChild(o);
+      });
+    }
+
+    async function uploadForecastFile(inputId, url) {
+      const inp = document.getElementById(inputId);
+      if (!inp || !inp.files || !inp.files[0]) throw new Error("请先选择文件");
+      const fd = new FormData();
+      fd.append("file", inp.files[0]);
+      const r = await fetch(url, { method: "POST", body: fd });
+      if (!r.ok) {
+        let msg = r.statusText || ("HTTP " + r.status);
+        try {
+          const j = await r.json();
+          if (typeof j.detail === "string") msg = j.detail;
+          else if (Array.isArray(j.detail)) msg = j.detail.map(x => x.msg || JSON.stringify(x)).join("; ");
+          else if (j.detail) msg = JSON.stringify(j.detail);
+          else msg = JSON.stringify(j);
+        } catch (_) {}
+        if (r.status === 404) msg = "接口不存在(404)。请重启预测/回测服务后再试。原始: " + msg;
+        throw new Error(msg);
+      }
+      return r.json();
+    }
+
+    document.getElementById("fcKbUpload")?.addEventListener("click", async () => {
+      try {
+        const j = await uploadForecastFile("fcKbFile", "/api/v1/forecast/kb/import");
+        alert("简判库已导入: " + (j.version_id || "") + " 爻数=" + j.count_yao);
+        refreshForecastHealth();
+      } catch (e) { alert(e.message); }
+    });
+    document.getElementById("fcKbSeed")?.addEventListener("click", async () => {
+      try {
+        const j = await api("/api/v1/forecast/kb/seed", { method: "POST", body: "{}" });
+        alert("已从回测库种子: " + j.version_id);
+        refreshForecastHealth();
+      } catch (e) { alert(e.message); }
+    });
+    document.getElementById("fcWeekUpload")?.addEventListener("click", async () => {
+      try {
+        const j = await uploadForecastFile("fcWeekFile", "/api/v1/forecast/weekly/upload");
+        await refreshForecastHealth();
+        await refreshWeekSelect(j.week_key);
+        const sel = document.getElementById("fcWeekSelect");
+        if (sel && j.week_key) sel.value = j.week_key;
+        alert("周报已导入: " + j.week_key + " 股票=" + j.stock_count + "\n已在下拉框中选中该周报。");
+      } catch (e) { alert(e.message); }
+    });
+    document.getElementById("fcWeekActivate")?.addEventListener("click", async () => {
+      const sel = document.getElementById("fcWeekSelect");
+      if (!sel || !sel.value) return alert("无可用周");
+      try {
+        await api("/api/v1/forecast/weekly/" + encodeURIComponent(sel.value) + "/activate", { method: "POST", body: "{}" });
+        refreshForecastHealth();
+      } catch (e) { alert(e.message); }
+    });
+
+    function matchClass(st) {
+      if (st === "ok") return "fc-match-ok";
+      if (st === "yao_ok_biangua_mismatch") return "fc-match-warn";
+      return "fc-match-bad";
+    }
+    function signalClass(sig) {
+      const s = (sig || "").trim();
+      if (!s) return "fc-signal fc-signal-empty";
+      return "fc-signal fc-signal-" + s;
+    }
+    function renderSignalBadge(sig) {
+      const s = (sig || "").trim();
+      if (!s) return "<span class=\"fc-signal fc-signal-empty\">无信号</span>";
+      return "<span class=\"" + signalClass(s) + "\">" + s + "</span>";
+    }
+    function renderMatchBlock(title, m) {
+      if (!m) return "";
+      const st = m.match_status || "";
+      return "<div class=card style=margin:0>" +
+        "<h2>" + title + " <span class=\"" + matchClass(st) + "\">" + st + "</span></h2>" +
+        "<div style=margin-bottom:0.45rem><b>操作信号</b> " + renderSignalBadge(m.operation_signal) + "</div>" +
+        "<div><b>本卦</b> " + (m.raw_ben || m.ben_norm || "—") +
+        "　<b>变卦</b> " + (m.raw_bian || m.bian_norm || "—") +
+        "　<b>爻</b> " + (m.yao_order != null ? m.yao_order : "—") + " " + (m.yao_name || "") + "</div>" +
+        "<div style=margin-top:0.5rem><b>个股行情简判</b><br/>" +
+        (m.judgement ? m.judgement : "<span class=fc-match-bad>空 — 请检查卦象</span>") + "</div>" +
+        (m.note ? "<div style=margin-top:0.35rem;font-size:0.85rem><b>备注</b> " + m.note + "</div>" : "") +
+        (m.core_gang ? "<div style=margin-top:0.4rem;color:var(--muted);font-size:0.85rem>" + m.core_gang + "</div>" : "") +
+        ((m.tips && m.tips.length) ? "<div class=fc-match-warn style=margin-top:0.4rem>" + m.tips.join("；") + "</div>" : "") +
+        "</div>";
+    }
+
+    let _fcCardTone = 0;
+    function nextCardTone(seed) {
+      // stable-ish tone from code if present, else rotate for batch list
+      if (seed) {
+        let h = 0;
+        const s = String(seed);
+        for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+        return h % 6;
+      }
+      const t = _fcCardTone % 6;
+      _fcCardTone += 1;
+      return t;
+    }
+    function escHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+    function fmtPctPoints(v) {
+      if (v == null || v === "" || Number.isNaN(Number(v))) return "—";
+      const n = Number(v);
+      const sign = n > 0 ? "+" : "";
+      return sign + n.toFixed(2) + "%";
+    }
+    function renderQuoteCard(data, toneIdx) {
+      if (!data || !data.found) {
+        const code = data && data.code ? escHtml(data.code) : "";
+        const tips = (data && data.tips) ? data.tips.join("；") : "未找到";
+        return "<div class=\"fc-stock-card not-found tone-0\">" +
+          "<div class=\"fc-stock-head\">" +
+          "<div class=\"fc-stock-title-row\">" +
+          (code ? "<span class=\"fc-stock-code\">" + code + "</span>" : "") +
+          "<span class=\"fc-stock-name\">未命中</span></div></div>" +
+          "<div class=\"fc-stock-body\"><div class=fc-match-bad>" + escHtml(tips) + "</div></div></div>";
+      }
+      const qinfo = data.quote || {};
+      const tone = (toneIdx != null ? toneIdx : nextCardTone(data.code)) % 6;
+      const name = escHtml(data.name || "（无名称）");
+      const code = escHtml(data.code || "");
+      const ret = qinfo.ret_w_pct;
+      // 红涨绿跌
+      const retCls = (ret != null && Number(ret) > 0) ? "fc-match-bad" : ((ret != null && Number(ret) < 0) ? "fc-match-ok" : "");
+      const head =
+        "<div class=\"fc-stock-head\">" +
+          "<div>" +
+            "<div class=\"fc-stock-title-row\">" +
+              "<span class=\"fc-stock-code\">" + code + "</span>" +
+              "<span class=\"fc-stock-name\">" + name + "</span>" +
+            "</div>" +
+            "<div class=\"fc-stock-meta\">" +
+              "<span><b>周</b> " + escHtml(data.week_key || "—") + "</span>" +
+              "<span><b>截止</b> " + escHtml(data.week_end || "—") + "</span>" +
+              "<span class=\"" + retCls + "\"><b>涨跌</b> " + fmtPctPoints(ret) + "</span>" +
+              "<span><b>收盘</b> " + escHtml(qinfo.close != null ? qinfo.close : "—") + "</span>" +
+              "<span><b>日柱</b> " + escHtml(qinfo["日柱"] || "—") + "</span>" +
+            "</div>" +
+          "</div>" +
+          "<div class=\"fc-stock-signals\">" +
+            "<span><span class=\"sig-lab\">周信号</span>" + renderSignalBadge(data.week_match && data.week_match.operation_signal) + "</span>" +
+            "<span><span class=\"sig-lab\">月信号</span>" + renderSignalBadge(data.month_match && data.month_match.operation_signal) + "</span>" +
+          "</div>" +
+        "</div>";
+      return "<div class=\"fc-stock-card tone-" + tone + "\">" + head +
+        "<div class=\"fc-stock-body\">" +
+        "<div class=fc-grid>" +
+        renderMatchBlock("本周周线", data.week_match) +
+        renderMatchBlock("上月月线", data.month_match) +
+        "</div>" +
+        ((data.tips && data.tips.length) ? "<div class=fc-match-warn style=margin-top:0.65rem>" + escHtml(data.tips.join("；")) + "</div>" : "") +
+        "</div></div>";
+    }
+
+    function splitQueryTokens(raw) {
+      const s = (raw || "").trim();
+      if (!s) return [];
+      // multi: comma / Chinese comma / semicolon / whitespace with multiple tokens
+      if (/[,，;；\n\r\t]/.test(s) || (s.split(/\s+/).length > 1 && /^[\d\s,，;；]+$/.test(s))) {
+        return s.split(/[,，;；\s]+/).map(x => x.trim()).filter(Boolean);
+      }
+      return [s];
+    }
+
+    async function runForecastQuery(raw) {
+      const card = document.getElementById("fcResultCard");
+      const box = document.getElementById("fcResult");
+      const title = document.getElementById("fcResultTitle");
+      const cand = document.getElementById("fcCandidates");
+      if (cand) cand.innerHTML = "";
+      const tokens = splitQueryTokens(raw);
+      if (!tokens.length) throw new Error("请输入查询");
+
+      // batch mode: multiple codes
+      if (tokens.length > 1) {
+        if (title) title.textContent = "预测结果（批量 " + tokens.length + " 只）";
+        if (card) card.style.display = "block";
+        if (box) box.innerHTML = "<div class=sub>查询中…</div>";
+        _fcCardTone = 0;
+        const j = await api("/api/v1/forecast/batch/query", {
+          method: "POST",
+          body: JSON.stringify({ codes: tokens }),
+        });
+        const rows = j.results || [];
+        // fetch full quote cards for found codes for consistent presentation
+        const htmlParts = [];
+        for (const r of rows) {
+          if (!r.found) {
+            htmlParts.push("<div class=\"fc-stock-card\"><b>" + (r.code || "") + "</b> <span class=fc-match-bad>" +
+              ((r.tips || []).join("；") || "未找到") + "</span></div>");
+            continue;
+          }
+          try {
+            const full = await api("/api/v1/forecast/quote?code=" + encodeURIComponent(r.code));
+            htmlParts.push(renderQuoteCard(full));
+          } catch (e) {
+            // fallback compact card from batch row
+            htmlParts.push("<div class=\"fc-stock-card\"><b>" + r.code + " " + (r.name || "") + "</b>" +
+              "<div style=margin-top:0.4rem>周 " + renderSignalBadge(r.week_match && r.week_match.operation_signal) +
+              " " + ((r.week_match && r.week_match.judgement) || "—") + "</div>" +
+              "<div style=margin-top:0.3rem>月 " + renderSignalBadge(r.month_match && r.month_match.operation_signal) +
+              " " + ((r.month_match && r.month_match.judgement) || "—") + "</div></div>");
+          }
+        }
+        if (box) box.innerHTML = htmlParts.join("") || "<div class=sub>无结果</div>";
+        return;
+      }
+
+      // single mode
+      const q = tokens[0];
+      if (title) title.textContent = "预测结果";
+      const data = await api("/api/v1/forecast/quote?q=" + encodeURIComponent(q));
+      if (data.ambiguous && data.candidates) {
+        if (card) card.style.display = "none";
+        if (cand) {
+          cand.innerHTML = data.candidates.map(c =>
+            "<button type=button class=secondary style=margin:0.2rem data-code=\"" + c.code + "\">" +
+            c.code + " " + c.name + "</button>"
+          ).join("");
+          cand.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+            document.getElementById("fcQuery").value = b.getAttribute("data-code");
+            runForecastQuery(b.getAttribute("data-code"));
+          }));
+        }
+        return;
+      }
+      if (card) card.style.display = "block";
+      if (box) box.innerHTML = renderQuoteCard(data);
+    }
+
+    document.getElementById("fcSearchBtn")?.addEventListener("click", () => {
+      const q = (document.getElementById("fcQuery")?.value || "").trim();
+      if (!q) return alert("请输入查询");
+      runForecastQuery(q).catch(e => alert(e.message));
+    });
+    document.getElementById("fcQuery")?.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") document.getElementById("fcSearchBtn")?.click();
+    });
+
+    document.getElementById("fcExportBtn")?.addEventListener("click", () => {
+      window.location.href = "/api/v1/forecast/export";
+    });
+  </script>
+</body>
+</html>
