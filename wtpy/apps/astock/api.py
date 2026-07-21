@@ -299,6 +299,19 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(500, str(e)) from e
 
+    @app.get("/api/v1/backtests/jobs/queue")
+    def api_jobs_queue() -> dict:
+        """FIFO task-center snapshot: running + queued + recent.
+
+        Must be registered BEFORE ``/jobs/{job_id}`` so ``queue`` is not
+        captured as a job_id path parameter.
+        """
+        return jobs.queue_snapshot()
+
+    @app.get("/api/v1/backtests/jobs")
+    def api_jobs(limit: int = Query(50, ge=1, le=200)) -> List[dict]:
+        return jobs.list_public(limit=limit)
+
     @app.get("/api/v1/backtests/jobs/{job_id}")
     def api_job(job_id: str) -> dict:
         try:
@@ -355,15 +368,6 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
     @app.get("/api/v1/runs")
     def api_runs(limit: int = Query(50, ge=1, le=200)) -> List[dict]:
         return list_runs(cfg, limit=limit)
-
-    @app.get("/api/v1/backtests/jobs")
-    def api_jobs(limit: int = Query(50, ge=1, le=200)) -> List[dict]:
-        return jobs.list_public(limit=limit)
-
-    @app.get("/api/v1/backtests/jobs/queue")
-    def api_jobs_queue() -> dict:
-        """FIFO task-center snapshot: running + queued + recent."""
-        return jobs.queue_snapshot()
 
     @app.delete("/api/v1/runs/{run_id}")
     def api_delete_run(

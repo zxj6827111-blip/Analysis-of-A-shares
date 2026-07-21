@@ -1682,9 +1682,12 @@ XG:CROSS(MA5,MA10);</textarea>
             <div class="progress-bar" id="progressBar"><i id="progressFill"></i></div>
             <div class="progress-detail" id="progressDetail">—</div>
           </div>
-          <div class="task-queue-bar" id="taskQueueBar" style="display:none">
-            <h4>任务队列 <span class="sub" id="taskQueueMeta">（同一时间只跑 1 个，其余自动排队）</span></h4>
-            <div id="taskQueueBody"></div>
+          <div class="task-queue-bar" id="taskQueueBar">
+            <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:0.4rem">
+              <h4 style="margin:0">任务队列 <span class="sub" id="taskQueueMeta">（同一时间只跑 1 个；提交后自动排队）</span></h4>
+              <button type="button" class="secondary" id="btnRefreshTaskQueue" style="padding:0.2rem 0.55rem;font-size:0.78rem">刷新队列</button>
+            </div>
+            <div id="taskQueueBody" class="sub" style="margin-top:0.4rem">暂无进行中任务。点「开始回测」后会出现在这里。</div>
           </div>
         </div>
       </div>
@@ -2977,13 +2980,7 @@ XG:CROSS(MA5,MA10);</textarea>
         const snap = await api("/api/v1/backtests/jobs/queue");
         const nq = snap.n_queued || 0;
         const nr = snap.n_running || 0;
-        if (!nq && !nr && !(snap.recent || []).some((j) => j.status === "queued" || j.status === "running")) {
-          // keep bar visible if we still have local polls
-          if (__activeJobPolls.size === 0) {
-            bar.style.display = "none";
-            return;
-          }
-        }
+        // Always keep the task list visible so users can find it
         bar.style.display = "block";
         if (meta) {
           meta.textContent =
@@ -3023,9 +3020,29 @@ XG:CROSS(MA5,MA10);</textarea>
             "</div>"
           );
         });
-        body.innerHTML = rows.length ? rows.join("") : "<div class='sub'>队列空闲</div>";
+        if (!rows.length) {
+          const recentDone = (snap.recent || []).slice(0, 8);
+          if (recentDone.length) {
+            recentDone.forEach((j) => {
+              rows.push(
+                '<div class="tq-row">' + jobStatusPill(j.status) +
+                " " + escAttr(j.title_hint || j.run_id || j.job_id) +
+                (j.run_id ? " <span class='sub'>" + escAttr(j.run_id) + "</span>" : "") +
+                (j.error ? " <span class='sub'>" + escAttr(String(j.error).slice(0, 100)) + "</span>" : "") +
+                "</div>"
+              );
+            });
+            body.innerHTML = "<div class='sub' style='margin-bottom:0.25rem'>当前无排队；最近任务：</div>" + rows.join("");
+          } else {
+            body.innerHTML = "<div class='sub'>暂无进行中任务。点「开始回测」后会出现在这里（可连续提交多个，自动排队）。</div>";
+          }
+        } else {
+          body.innerHTML = rows.join("");
+        }
       } catch (e) {
-        /* ignore */
+        body.innerHTML = "<div class='sub' style='color:var(--warn)'>队列接口失败：" +
+          escAttr(e.message || e) +
+          "（请重启服务；若仍失败请检查 /api/v1/backtests/jobs/queue）</div>";
       }
     }
 
@@ -4027,7 +4044,7 @@ XG:CROSS(MA5,MA10);</textarea>
           requestAnimationFrame(() => window.scrollTo(0, window.__historyScrollY || 0));
         }
       }
-      if (name === "new") window.scrollTo(0, 0);
+      if (name === "new") { window.scrollTo(0, 0); try { refreshTaskQueueBar(); } catch (e) {} }
     }
 
     async function copyRunParams(runId) {
@@ -5107,6 +5124,9 @@ XG:CROSS(MA5,MA10);</textarea>
 
 
     bindBacktestNav();
+    document.getElementById("btnRefreshTaskQueue")?.addEventListener("click", () => refreshTaskQueueBar());
+    try { refreshTaskQueueBar(); ensureQueueRefresh(); } catch (e) {}
+
 
     document.getElementById("btnCompareSelected")?.addEventListener("click", () => {
       compareSelectedRuns();
