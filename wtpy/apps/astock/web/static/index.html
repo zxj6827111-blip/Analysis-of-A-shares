@@ -529,6 +529,14 @@
     .compare-wrap { overflow: auto; max-height: 70vh; }
     .compare-hint { color: var(--muted); font-size: 0.8rem; margin: 0.35rem 0 0.6rem; }
     #btnCompareSelected:disabled { opacity: 0.45; cursor: not-allowed; }
+    .exp-panel { margin-top: 0.75rem; padding: 0.75rem 0.9rem; border: 1px solid var(--border); border-radius: 10px; background: rgba(61,139,253,0.06); }
+    .exp-panel h3 { margin: 0 0 0.45rem; font-size: 0.95rem; }
+    .exp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem 0.75rem; font-size: 0.82rem; }
+    .exp-grid label { display: flex; gap: 0.35rem; align-items: center; margin: 0; font-weight: 400; }
+    .exp-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 0.5rem; }
+    .exp-table th, .exp-table td { border: 1px solid var(--border); padding: 0.28rem 0.4rem; }
+    .exp-table th { background: rgba(61,139,253,0.12); }
+    .exp-status { font-size: 0.8rem; color: var(--muted); margin-top: 0.35rem; }
     .equity-stats {
       display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem;
       font-size: 0.82rem; color: var(--muted); margin-bottom: 0.45rem;
@@ -1624,6 +1632,34 @@ XG:CROSS(MA5,MA10);</textarea>
             <div class="actions" style="margin-top:0.55rem">
               <button type="button" class="secondary" id="btnCloseCompare">关闭对比</button>
             </div>
+          </div>
+          <div class="exp-panel" id="experimentPanel">
+            <h3>实验中心 MVP <span class="sub">指标 × 卦象方案 × 星期模板</span></h3>
+            <p class="sub" style="margin:0 0 0.45rem;font-size:0.8rem">默认演示池；组合数超上限会拦截。结果写入 SQLite 并可导出 Excel。</p>
+            <div class="exp-grid" id="expAxes">
+              <div>
+                <div class="sub">卦象方案（可多选）</div>
+                <label><input type="checkbox" class="exp-gua" value="none" checked /> 无卦象</label>
+                <label><input type="checkbox" class="exp-gua" value="best3" checked /> 最佳3爻</label>
+                <label><input type="checkbox" class="exp-gua" value="bull" /> 偏多操作信号</label>
+              </div>
+              <div>
+                <div class="sub">星期模板（可多选）</div>
+                <label><input type="checkbox" class="exp-wd" value="fri_signal_mon_buy_thu_exit" checked /> 周五信号·周一买·周四平</label>
+                <label><input type="checkbox" class="exp-wd" value="all_signal_tn12" checked /> 不限信号·T+1开/T+2收</label>
+                <label><input type="checkbox" class="exp-wd" value="fri_signal_fri_buy_mon_exit" /> 周五信号·周五买·下周一平</label>
+              </div>
+            </div>
+            <div class="row" style="margin-top:0.45rem;gap:0.5rem;flex-wrap:wrap">
+              <input id="expName" placeholder="实验名称（可选）" style="min-width:12rem" />
+              <input id="expMax" type="number" min="1" max="200" value="50" title="组合上限" style="width:5rem" />
+              <button type="button" class="secondary" id="btnExpEstimate">估算组合数</button>
+              <button type="button" id="btnExpCreate">创建并启动实验</button>
+              <button type="button" class="secondary" id="btnExpRefresh">刷新实验</button>
+            </div>
+            <div class="exp-status" id="expStatus">使用当前左侧已选规则；未选则无法创建。</div>
+            <div id="expList" style="margin-top:0.5rem"></div>
+            <div class="compare-wrap" id="expResults"></div>
           </div>
         </div>
       </div>
@@ -3651,6 +3687,7 @@ XG:CROSS(MA5,MA10);</textarea>
       }
       if (name === "history") {
         refreshHistory().catch(() => {});
+        try { expRenderList(); } catch (e) {}
         if (window.__historyScrollY != null) {
           requestAnimationFrame(() => window.scrollTo(0, window.__historyScrollY || 0));
         }
@@ -4361,6 +4398,201 @@ XG:CROSS(MA5,MA10);</textarea>
         if (rid) copyRunParams(rid.trim());
       });
     }
+
+    // ---- Stage E: experiment center ----
+    let __activeExperimentId = null;
+    let __expPollTimer = null;
+
+    function _expSelectedRules() {
+      if (typeof selected === "undefined" || !selected || !selected.size) return [];
+      return Array.from(selected).filter((id) => id && id !== "bagua_ohlc");
+    }
+    function _expChecked(sel) {
+      return Array.from(document.querySelectorAll(sel))
+        .filter((el) => el.checked)
+        .map((el) => el.value);
+    }
+    function _expBodyBase() {
+      const start = (typeof ymdFromParts === "function")
+        ? ymdFromParts(document.getElementById("startYear"), document.getElementById("startMonth"), document.getElementById("startDay"))
+        : null;
+      const end = (typeof ymdFromParts === "function")
+        ? ymdFromParts(document.getElementById("endYear"), document.getElementById("endMonth"), document.getElementById("endDay"))
+        : null;
+      return {
+        rule_ids: _expSelectedRules(),
+        gua_keys: _expChecked(".exp-gua"),
+        weekday_keys: _expChecked(".exp-wd"),
+        period: (document.getElementById("period") || {}).value || "DAY",
+        codes: ["sh600000", "sz000001"],
+        start: start || 20240101,
+        end: end || 20241231,
+        account_mode: (document.querySelector('input[name="accountMode"]:checked') || {}).value || "portfolio",
+        research_unadjusted: !!(document.getElementById("researchUnadj") || {}).checked,
+        max_variants: parseInt((document.getElementById("expMax") || {}).value, 10) || 50,
+        concurrency: 1,
+        name: ((document.getElementById("expName") || {}).value || "").trim() || undefined,
+      };
+    }
+    async function expEstimate() {
+      const st = document.getElementById("expStatus");
+      try {
+        const body = _expBodyBase();
+        if (!body.rule_ids.length) {
+          if (st) st.textContent = "请先在左侧勾选至少一条可回测规则。";
+          return;
+        }
+        if (!body.gua_keys.length || !body.weekday_keys.length) {
+          if (st) st.textContent = "请至少选择一种卦象方案与一种星期模板。";
+          return;
+        }
+        const d = await api("/api/v1/experiments/estimate", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        if (st) {
+          st.textContent =
+            "预估组合数：" + d.estimated_variants +
+            "（上限 " + d.max_variants + "）" +
+            (d.warning ? " · " + d.warning : "");
+        }
+      } catch (e) {
+        if (st) st.textContent = "估算失败：" + (e.message || e);
+      }
+    }
+    async function expCreateAndStart() {
+      const st = document.getElementById("expStatus");
+      try {
+        const body = _expBodyBase();
+        if (!body.rule_ids.length) {
+          alert("请先在左侧勾选至少一条可回测规则（实验会用该规则做笛卡尔积）。");
+          return;
+        }
+        if (!body.gua_keys.length || !body.weekday_keys.length) {
+          alert("请至少选择一种卦象方案与一种星期模板。");
+          return;
+        }
+        if (st) st.textContent = "创建实验…";
+        const exp = await api("/api/v1/experiments", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        __activeExperimentId = exp.experiment_id;
+        if (st) st.textContent = "已创建 " + exp.experiment_id + "，启动中…";
+        await api("/api/v1/experiments/" + encodeURIComponent(exp.experiment_id) + "/start", {
+          method: "POST",
+          body: "{}",
+        });
+        expRenderList();
+        expPoll(exp.experiment_id);
+      } catch (e) {
+        if (st) st.textContent = "创建/启动失败：" + (e.message || e);
+        alert("实验失败：" + (e.message || e));
+      }
+    }
+    async function expRenderList() {
+      const box = document.getElementById("expList");
+      if (!box) return;
+      try {
+        const rows = await api("/api/v1/experiments?limit=20");
+        if (!rows || !rows.length) {
+          box.innerHTML = "<div class='sub'>暂无实验。创建后会显示在这里。</div>";
+          return;
+        }
+        let html = "<table class='exp-table'><thead><tr><th>名称</th><th>状态</th><th>进度</th><th>操作</th></tr></thead><tbody>";
+        rows.forEach((r) => {
+          const prog =
+            (r.completed_variants || 0) + "/" + (r.estimated_variants || 0) +
+            " 成 · 败" + (r.failed_variants || 0) + " · 跳过" + (r.skipped_variants || 0);
+          html +=
+            "<tr><td>" + escAttr(r.name || r.experiment_id) +
+            "<div class='sub'>" + escAttr(r.experiment_id) + "</div></td>" +
+            "<td>" + escAttr(r.status) + "</td>" +
+            "<td>" + prog + "</td>" +
+            "<td><button type='button' class='btn-op' data-exp-view='" + escAttr(r.experiment_id) +
+            "'>结果</button> " +
+            "<a class='btn-op' href='/api/v1/experiments/" + encodeURIComponent(r.experiment_id) +
+            "/export.xlsx' target='_blank' rel='noopener'>Excel</a></td></tr>";
+        });
+        html += "</tbody></table>";
+        box.innerHTML = html;
+        box.querySelectorAll("[data-exp-view]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const id = btn.getAttribute("data-exp-view");
+            __activeExperimentId = id;
+            expShowResults(id);
+            expPoll(id);
+          });
+        });
+      } catch (e) {
+        box.innerHTML = "<div class='sub'>加载实验失败：" + escAttr(e.message || e) + "</div>";
+      }
+    }
+    async function expShowResults(experimentId) {
+      const box = document.getElementById("expResults");
+      const st = document.getElementById("expStatus");
+      if (!box) return;
+      try {
+        const d = await api("/api/v1/experiments/" + encodeURIComponent(experimentId) + "/results");
+        const exp = await api("/api/v1/experiments/" + encodeURIComponent(experimentId));
+        if (st) {
+          st.textContent =
+            (exp.name || experimentId) + " · " + exp.status +
+            " · 完成 " + (exp.completed_variants || 0) +
+            " / " + (exp.estimated_variants || 0);
+        }
+        let html = "<table class='exp-table'><thead><tr>" +
+          "<th>规则</th><th>卦象</th><th>星期</th><th>状态</th><th>总收益</th><th>回撤</th><th>胜率</th><th>回合</th><th>run</th>" +
+          "</tr></thead><tbody>";
+        (d.rows || []).forEach((row) => {
+          const p = row.params || {};
+          const meta = p._meta || {};
+          const m = row.metrics || {};
+          const ret = m.total_return != null ? formatPercent(m.total_return) : "—";
+          const mdd = m.max_drawdown != null ? formatPercent(Math.abs(m.max_drawdown)) : "—";
+          const wr = m.win_rate != null ? formatPercent(m.win_rate) : "—";
+          html +=
+            "<tr><td>" + escAttr(meta.rule_id || ((p.rule_ids || [])[0] || "—")) + "</td>" +
+            "<td>" + escAttr(meta.gua_label || meta.gua_key || "—") + "</td>" +
+            "<td>" + escAttr(meta.weekday_label || meta.weekday_key || "—") + "</td>" +
+            "<td>" + escAttr(row.status || "—") + "</td>" +
+            "<td class='num'>" + ret + "</td>" +
+            "<td class='num'>" + mdd + "</td>" +
+            "<td class='num'>" + wr + "</td>" +
+            "<td class='num'>" + (m.n_round_trips != null ? m.n_round_trips : "—") + "</td>" +
+            "<td class='sub'>" + escAttr(row.run_id || "—") + "</td></tr>";
+        });
+        html += "</tbody></table>";
+        box.innerHTML = html;
+      } catch (e) {
+        box.innerHTML = "<div class='sub'>加载结果失败：" + escAttr(e.message || e) + "</div>";
+      }
+    }
+    function expPoll(experimentId) {
+      if (__expPollTimer) clearInterval(__expPollTimer);
+      if (!experimentId) return;
+      __expPollTimer = setInterval(async () => {
+        try {
+          const exp = await api("/api/v1/experiments/" + encodeURIComponent(experimentId));
+          expRenderList();
+          if (exp.status === "completed" || exp.status === "cancelled" || exp.status === "failed") {
+            clearInterval(__expPollTimer);
+            __expPollTimer = null;
+            expShowResults(experimentId);
+          } else {
+            expShowResults(experimentId);
+          }
+        } catch (e) {}
+      }, 2500);
+    }
+    document.getElementById("btnExpEstimate")?.addEventListener("click", () => expEstimate());
+    document.getElementById("btnExpCreate")?.addEventListener("click", () => expCreateAndStart());
+    document.getElementById("btnExpRefresh")?.addEventListener("click", () => {
+      expRenderList();
+      if (__activeExperimentId) expShowResults(__activeExperimentId);
+    });
+
+
     bindBacktestNav();
 
     document.getElementById("btnCompareSelected")?.addEventListener("click", () => {

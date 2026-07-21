@@ -385,7 +385,158 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             raise HTTPException(500, str(e)) from e
 
 
+
+    # ----- Stage D: SQLite registry -----
+    @app.post("/api/v1/db/migrate")
+    def api_db_migrate() -> dict:
+        from .service.db import migrate_runs_index_to_sqlite, db_path, init_db
+
+        init_db(cfg)
+        report = migrate_runs_index_to_sqlite(cfg)
+        report["db_path"] = str(db_path(cfg))
+        return report
+
+    @app.get("/api/v1/db/stats")
+    def api_db_stats() -> dict:
+        from .service.db import count_runs_db, db_path, init_db, list_experiments
+
+        init_db(cfg)
+        return {
+            "db_path": str(db_path(cfg)),
+            "n_runs": count_runs_db(cfg),
+            "n_experiments": len(list_experiments(cfg, limit=200)),
+        }
+
+    # ----- Stage E: experiment center -----
+    @app.get("/api/v1/experiments/presets")
+    def api_experiment_presets() -> dict:
+        from .service.experiments import GUA_PRESETS, WEEKDAY_TEMPLATES
+
+        return {
+            "gua_presets": [
+                {"key": k, "label": v.get("label")} for k, v in GUA_PRESETS.items()
+            ],
+            "weekday_templates": [
+                {"key": k, "label": v.get("label")} for k, v in WEEKDAY_TEMPLATES.items()
+            ],
+            "default_max_variants": 50,
+            "hard_max_variants": 200,
+        }
+
+    @app.post("/api/v1/experiments/estimate")
+    def api_experiment_estimate(payload: dict = Body(...)) -> dict:
+        from .service.experiments import estimate_grid_size, DEFAULT_MAX_VARIANTS
+
+        rule_ids = payload.get("rule_ids") or []
+        gua_keys = payload.get("gua_keys") or ["none"]
+        weekday_keys = payload.get("weekday_keys") or ["all_signal_tn12"]
+        stop_loss_list = payload.get("stop_loss_list")
+        n = estimate_grid_size(rule_ids, gua_keys, weekday_keys, stop_loss_list)
+        max_v = int(payload.get("max_variants") or DEFAULT_MAX_VARIANTS)
+        return {
+            "estimated_variants": n,
+            "max_variants": max_v,
+            "exceeds_soft_cap": n > max_v,
+            "warning": (
+                f"组合数 {n} 超过上限 {max_v}，请缩小参数空间或提高上限"
+                if n > max_v
+                else (f"组合数 {n} 较大，建议先演示池试跑" if n > 20 else None)
+            ),
+        }
+
+    @app.post("/api/v1/experiments")
+    def api_create_experiment(payload: dict = Body(...)) -> dict:
+        from .service.experiments import create_experiment_from_grid
+
+        try:
+            return create_experiment_from_grid(
+                cfg,
+                name=str(payload.get("name") or "实验"),
+                rule_ids=payload.get("rule_ids") or [],
+                gua_keys=payload.get("gua_keys") or ["none"],
+                weekday_keys=payload.get("weekday_keys") or ["all_signal_tn12"],
+                stop_loss_list=payload.get("stop_loss_list"),
+                period=payload.get("period") or "DAY",
+                codes=payload.get("codes"),
+                start=payload.get("start"),
+                end=payload.get("end"),
+                account_mode=payload.get("account_mode") or "portfolio",
+                research_unadjusted=bool(payload.get("research_unadjusted")),
+                max_variants=int(payload.get("max_variants") or 50),
+                concurrency=int(payload.get("concurrency") or 1),
+                force=bool(payload.get("force")),
+                note=str(payload.get("note") or ""),
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except Exception as e:
+            raise HTTPException(500, str(e)) from e
+
+    @app.get("/api/v1/experiments")
+    def api_list_experiments(limit: int = Query(50, ge=1, le=200)) -> List[dict]:
+        from .service.db import list_experiments
+
+        return list_experiments(cfg, limit=limit)
+
+    @app.get("/api/v1/experiments/{experiment_id}")
+    def api_get_experiment(experiment_id: str) -> dict:
+        from .service.db import get_experiment
+
+        try:
+            return get_experiment(cfg, experiment_id)
+        except FileNotFoundError:
+            raise HTTPException(404, "experiment not found") from None
+
+    @app.post("/api/v1/experiments/{experiment_id}/start")
+    def api_start_experiment(experiment_id: str) -> dict:
+        from .service.experiments import get_runner
+
+        try:
+            return get_runner(cfg).start(experiment_id)
+        except FileNotFoundError:
+            raise HTTPException(404, "experiment not found") from None
+        except Exception as e:
+            raise HTTPException(500, str(e)) from e
+
+    @app.post("/api/v1/experiments/{experiment_id}/cancel")
+    def api_cancel_experiment(experiment_id: str) -> dict:
+        from .service.experiments import get_runner
+        from .service.db import get_experiment, update_experiment_status
+
+        get_runner(cfg).cancel(experiment_id)
+        try:
+            update_experiment_status(cfg, experiment_id, "cancelled")
+            return get_experiment(cfg, experiment_id)
+        except FileNotFoundError:
+            raise HTTPException(404, "experiment not found") from None
+
+    @app.get("/api/v1/experiments/{experiment_id}/results")
+    def api_experiment_results(experiment_id: str) -> dict:
+        from .service.db import experiment_results_table
+
+        try:
+            return experiment_results_table(cfg, experiment_id)
+        except FileNotFoundError:
+            raise HTTPException(404, "experiment not found") from None
+
+    @app.get("/api/v1/experiments/{experiment_id}/export.xlsx")
+    def api_experiment_export(experiment_id: str):
+        from .service.experiments import write_experiment_excel
+
+        try:
+            path = write_experiment_excel(cfg, experiment_id)
+        except FileNotFoundError:
+            raise HTTPException(404, "experiment not found") from None
+        except Exception as e:
+            raise HTTPException(500, str(e)) from e
+        return FileResponse(
+            path,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=path.name,
+        )
+
     # ----- Forecast module (isolated) -----
+
 
     # ---- Gua (hexagram) catalogue & filter preview ----
     @app.get("/api/v1/gua/states")

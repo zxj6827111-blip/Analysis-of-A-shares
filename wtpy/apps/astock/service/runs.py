@@ -33,6 +33,15 @@ def append_run_index(cfg: AStockConfig, row: Dict[str, Any]) -> None:
     rows.insert(0, row)
     rows = rows[:200]
     path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Stage D: dual-write SQLite (best-effort; never break JSON index path)
+    try:
+        from .db import upsert_run_from_index_row
+
+        rid = row.get("run_id")
+        out_dir = Path(cfg.output_root) / rid if rid else None
+        upsert_run_from_index_row(cfg, row, out_dir=out_dir)
+    except Exception:
+        pass
 
 
 def _metrics_brief(metrics: Optional[dict]) -> Optional[dict]:
@@ -208,6 +217,30 @@ def _enrich_row(row: dict, out_dir: Optional[Path] = None) -> dict:
 
 def list_runs(cfg: Optional[AStockConfig] = None, *, limit: int = 50) -> List[Dict[str, Any]]:
     cfg = cfg or get_default_config()
+    # Stage D: prefer SQLite when populated (after dual-write / migrate)
+    try:
+        from .db import count_runs_db, list_runs_db, migrate_runs_index_to_sqlite
+
+        n_db = count_runs_db(cfg)
+        if n_db == 0:
+            # lazy one-shot migration from legacy JSON index
+            migrate_runs_index_to_sqlite(cfg)
+            n_db = count_runs_db(cfg)
+        if n_db > 0:
+            db_rows = list_runs_db(cfg, limit=limit)
+            # still enrich from filesystem for status_label etc.
+            out_root = Path(cfg.output_root)
+            enriched_db: List[dict] = []
+            for row in db_rows:
+                rid = row.get("run_id")
+                out_dir = (out_root / rid) if rid and out_root.exists() else None
+                if out_dir is not None and not out_dir.is_dir():
+                    out_dir = None
+                enriched_db.append(_enrich_row(row, out_dir))
+            return enriched_db[:limit]
+    except Exception:
+        pass
+
     path = _index_path(cfg)
     rows: List[dict] = []
     if path.exists():
@@ -649,6 +682,13 @@ def delete_run(
         path.write_text(
             json.dumps(new_rows, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+
+    try:
+        from .db import delete_run_db
+
+        delete_run_db(cfg, run_id)
+    except Exception:
+        pass
 
     return {
         "run_id": run_id,
