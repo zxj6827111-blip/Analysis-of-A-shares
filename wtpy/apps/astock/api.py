@@ -429,29 +429,22 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
                 {"key": k, "label": v.get("label")} for k, v in WEEKDAY_TEMPLATES.items()
             ],
             "default_max_variants": 50,
-            "hard_max_variants": 200,
+            "hard_max_variants": 500,
         }
 
     @app.post("/api/v1/experiments/estimate")
     def api_experiment_estimate(payload: dict = Body(...)) -> dict:
-        from .service.experiments import estimate_grid_size, DEFAULT_MAX_VARIANTS
+        """Preview grid size for legacy weekday_keys OR free axes.
 
-        rule_ids = payload.get("rule_ids") or []
-        gua_keys = payload.get("gua_keys") or ["none"]
-        weekday_keys = payload.get("weekday_keys") or ["all_signal_tn12"]
-        stop_loss_list = payload.get("stop_loss_list")
-        n = estimate_grid_size(rule_ids, gua_keys, weekday_keys, stop_loss_list)
-        max_v = int(payload.get("max_variants") or DEFAULT_MAX_VARIANTS)
-        return {
-            "estimated_variants": n,
-            "max_variants": max_v,
-            "exceeds_soft_cap": n > max_v,
-            "warning": (
-                f"组合数 {n} 超过上限 {max_v}，请缩小参数空间或提高上限"
-                if n > max_v
-                else (f"组合数 {n} 较大，建议先演示池试跑" if n > 20 else None)
-            ),
-        }
+        Response includes theoretical/rejected/actual/preview plus
+        estimated_variants (alias of actual) for existing UI.
+        """
+        from .service.experiments import estimate_grid_from_payload
+
+        try:
+            return estimate_grid_from_payload(payload or {})
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
 
     @app.post("/api/v1/experiments")
     def api_create_experiment(payload: dict = Body(...)) -> dict:
@@ -463,7 +456,7 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
                 name=str(payload.get("name") or "实验"),
                 rule_ids=payload.get("rule_ids") or [],
                 gua_keys=payload.get("gua_keys") or ["none"],
-                weekday_keys=payload.get("weekday_keys") or ["all_signal_tn12"],
+                weekday_keys=payload.get("weekday_keys"),
                 stop_loss_list=payload.get("stop_loss_list"),
                 period=payload.get("period") or "DAY",
                 codes=payload.get("codes"),
@@ -475,6 +468,11 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
                 concurrency=int(payload.get("concurrency") or 1),
                 force=bool(payload.get("force")),
                 note=str(payload.get("note") or ""),
+                signal_weekdays_options=payload.get("signal_weekdays_options"),
+                buy_options=payload.get("buy_options"),
+                sell_options=payload.get("sell_options"),
+                take_profit_list=payload.get("take_profit_list"),
+                holiday_policy=str(payload.get("holiday_policy") or "next_trading_day"),
             )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
