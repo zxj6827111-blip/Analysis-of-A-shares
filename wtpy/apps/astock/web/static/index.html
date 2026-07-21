@@ -278,7 +278,7 @@
     }
     .history-table {
       width: 100%;
-      min-width: 1100px;
+      min-width: 1240px;
       border-collapse: separate;
       border-spacing: 0;
       font-size: 0.84rem;
@@ -326,15 +326,21 @@
     }
     .history-table th.col-strategy,
     .history-table td.col-strategy {
-      width: 28%;
-      min-width: 16rem;
+      width: 30%;
+      min-width: 18rem;
+      overflow: visible;
     }
     .history-table th.col-time,
     .history-table td.col-time {
-      width: 8.2rem;
+      width: 9.6rem;
+      min-width: 9.6rem;
+      max-width: 10.2rem;
       white-space: nowrap;
+      overflow: visible;
       color: var(--muted);
       font-size: 0.8rem;
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum";
     }
     .history-table th.col-status,
     .history-table td.col-status {
@@ -779,15 +785,15 @@
     }
     .history-table {
       width: 100%;
-      min-width: 1180px;
+      min-width: 1240px;
       border-collapse: separate;
       border-spacing: 0;
       font-size: 0.82rem;
       table-layout: fixed;
     }
     .history-table col.col-check { width: 2.2rem; }
-    .history-table col.col-strategy { width: 26%; }
-    .history-table col.col-time { width: 8.4rem; }
+    .history-table col.col-strategy { width: 30%; min-width: 18rem; }
+    .history-table col.col-time { width: 9.6rem; }
     .history-table col.col-status { width: 4.4rem; }
     .history-table col.col-period { width: 3.8rem; }
     .history-table col.col-mode { width: 5.6rem; }
@@ -818,8 +824,9 @@
       padding: 0.42rem 0.45rem;
       text-align: left;
       vertical-align: middle;
-      height: 72px;
-      max-height: 80px;
+      height: auto;
+      min-height: 72px;
+      max-height: none;
       box-sizing: border-box;
     }
     .history-table tbody tr.hist-row { cursor: pointer; }
@@ -850,8 +857,11 @@
     .history-table th.col-time,
     .history-table td.col-time {
       white-space: nowrap;
+      overflow: visible;
       color: var(--muted);
       font-size: 0.78rem;
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum";
     }
 
     .hist-title {
@@ -868,11 +878,21 @@
     .hist-tags {
       margin-top: 0.18rem;
       display: flex;
-      flex-wrap: nowrap;
+      flex-wrap: wrap;
       gap: 0.22rem;
       align-items: center;
-      overflow: hidden;
+      overflow: visible;
       max-width: 100%;
+    }
+    .hist-range {
+      margin-top: 0.16rem;
+      color: #9eb0c9;
+      font-size: 0.74rem;
+      line-height: 1.3;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum";
+      letter-spacing: 0.01em;
     }
     .hist-tag {
       display: inline-block;
@@ -3427,7 +3447,19 @@ XG:CROSS(MA5,MA10);</textarea>
       try {
         const d = new Date((Number(ts) < 1e12 ? Number(ts) * 1000 : Number(ts)));
         if (Number.isNaN(d.getTime())) return String(ts);
-        return d.toLocaleString();
+        const pad = (n) => String(n).padStart(2, "0");
+        // fixed width; avoid long toLocaleString clipping
+        return (
+          d.getFullYear() +
+          "-" +
+          pad(d.getMonth() + 1) +
+          "-" +
+          pad(d.getDate()) +
+          " " +
+          pad(d.getHours()) +
+          ":" +
+          pad(d.getMinutes())
+        );
       } catch (_) {
         return String(ts);
       }
@@ -3787,8 +3819,20 @@ XG:CROSS(MA5,MA10);</textarea>
             primary +
             "</div>" +
             (tagHtml ? "<div class='hist-tags'>" + tagHtml + "</div>" : "") +
+            (function () {
+              const rangeText = strategyDateRangeText(r);
+              return rangeText
+                ? "<div class='hist-range' title='" +
+                  escAttr("回测区间 " + rangeText) +
+                  "'>" +
+                  rangeText +
+                  "</div>"
+                : "";
+            })() +
             "</td>" +
-            "<td class='col-time'>" +
+            "<td class='col-time' title='" +
+            escAttr(fmtTime(r.created_at)) +
+            "'>" +
             fmtTime(r.created_at) +
             "</td>" +
             "<td class='col-status'><span class='badge-status " +
@@ -3947,21 +3991,19 @@ XG:CROSS(MA5,MA10);</textarea>
         seen.add(tg);
         out.push(tg);
       });
-      // 卦象：历史行必须显示「规则 + 卦象」
-      try {
-        const gBit = guaTitleFragment(r);
-        if (gBit && !seen.has(gBit)) {
-          seen.add(gBit);
-          out.unshift(gBit);
-        }
-      } catch (e) {}
+      // 卦象摘要已并入标题（strategyPrimaryName），标签栏不再重复，避免挤掉日期区间
       // signal weekday filter tags
       const swd = r.signal_weekdays || (r.repro && r.repro.signal_weekdays) || (m && m.signal_weekdays);
       if (Array.isArray(swd) && swd.length) {
         out.push("信号" + swd.map((d) => wdName(Number(d))).join(""));
       }
-      if (r.start || r.end) out.push(fmtYmd(r.start) + "~" + fmtYmd(r.end));
+      // date range shown via hist-range row
       return out;
+    }
+
+    function strategyDateRangeText(r) {
+      if (!(r && (r.start || r.end))) return "";
+      return fmtYmd(r.start) + " ~ " + fmtYmd(r.end);
     }
 
     function filterSortHistory(rows) {
