@@ -425,10 +425,49 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
     def api_gua_preview(payload: dict = Body(...)) -> dict:
         from .service.gua import preview_filter
 
-        gf = payload.get("gua_filter") if isinstance(payload, dict) else None
-        if gf is None and isinstance(payload, dict):
+        if not isinstance(payload, dict):
+            payload = {}
+        gf = payload.get("gua_filter")
+        if gf is None:
             gf = payload
-        return preview_filter(gf or {}, cfg=cfg)
+        signal_preview = bool(
+            payload.get("signal_preview")
+            or payload.get("include_signal_preview")
+            or payload.get("real_signals")
+        )
+        rule_ids = payload.get("rule_ids")
+        codes = payload.get("codes")
+        period = payload.get("period") or "DAY"
+        start = payload.get("start")
+        end = payload.get("end")
+        max_codes = int(payload.get("max_codes") or 20)
+        min_sample = int(payload.get("min_sample") or 30)
+        try:
+            return preview_filter(
+                gf or {},
+                cfg=cfg,
+                signal_preview=signal_preview,
+                rule_ids=rule_ids,
+                codes=codes,
+                period=period,
+                start=start,
+                end=end,
+                max_codes=max_codes,
+                min_sample=min_sample,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.get("/api/v1/backtests/{run_id}/bagua-metrics")
+    def api_run_bagua_metrics(run_id: str) -> dict:
+        from .service.gua import run_bagua_metrics_for_run
+
+        try:
+            return run_bagua_metrics_for_run(cfg, run_id)
+        except FileNotFoundError:
+            raise HTTPException(404, "run not found") from None
+        except Exception as e:
+            raise HTTPException(500, str(e)) from e
 
     @app.post("/api/v1/gua/import")
     async def api_gua_import(file: UploadFile = File(...)) -> dict:
@@ -441,7 +480,7 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             shutil.copyfileobj(file.file, tmp)
             tmp_path = Path(tmp.name)
         try:
-            report = reimport_excel(tmp_path, cfg=cfg)
+            report = reimport_excel(tmp_path, cfg=cfg, archive_previous=True)
         finally:
             try:
                 tmp_path.unlink(missing_ok=True)

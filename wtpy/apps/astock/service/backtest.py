@@ -561,6 +561,11 @@ def run_backtest(
         attach_bagua(events, period_raw_map, calc)
         bagua_n_before = len(events)
         if gf.is_active():
+            try:
+                from ..bagua.filter_rules import compute_bagua_metrics
+                bagua_metrics_pre = compute_bagua_metrics(events, gf)
+            except Exception:
+                bagua_metrics_pre = None
             events = filter_events_by_gua_filter(events, gf)
             bagua_n_after = len(events)
             bagua_filter_mode = f"gua_filter:{gf.selection_mode}"
@@ -581,6 +586,8 @@ def run_backtest(
                     (bagua_n_after / bagua_n_before) if bagua_n_before else 0.0
                 ),
             }
+            if bagua_metrics_pre is not None:
+                gua_filter_meta["bagua_metrics"] = bagua_metrics_pre
             msg = (
                 f"卦象过滤·{gf.selection_mode}："
                 f"{bagua_n_before} → {bagua_n_after} 条信号"

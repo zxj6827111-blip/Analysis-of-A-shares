@@ -4417,14 +4417,14 @@ XG:CROSS(MA5,MA10);</textarea>
       const box = document.getElementById("guaDetailBlock");
       if (!box) return;
       if (!gf || !gf.enabled) {
-        box.innerHTML = "<div class='sub'>卦象过滤：未启用</div>";
+        box.innerHTML = "<div class='sub'>卦象过滤：未启用。技术信号未按卦象筛选。</div>";
         return;
       }
       const before = summary.n_signals_before_bagua != null ? summary.n_signals_before_bagua : (gf.n_signals_before != null ? gf.n_signals_before : "—");
       const after = summary.n_signals_after_bagua != null ? summary.n_signals_after_bagua : (gf.n_signals_after != null ? gf.n_signals_after : "—");
       let rate = "—";
       if (typeof before === "number" && before > 0 && typeof after === "number") rate = ((after/before)*100).toFixed(2) + "%";
-      else if (gf.retention_rate != null) rate = (gf.retention_rate*100).toFixed(2) + "%";
+      else if (gf.retention_rate != null) rate = (Number(gf.retention_rate)*100).toFixed(2) + "%";
       const nl = gf.natural_language || (summary.bagua_filter_label) || "—";
       let tags = "";
       const sids = gf.selected_state_ids || [];
@@ -4437,12 +4437,57 @@ XG:CROSS(MA5,MA10);</textarea>
       const max = 8;
       tags = items.slice(0,max).map(t => "<span class='gua-tag'>"+t+"</span>").join(" ");
       if (items.length > max) tags += " <span class='gua-tag'>+另外"+(items.length-max)+"项</span>";
+      let metricsHtml = "<div class='sub' id='guaMetricsStatus'>正在加载卦象分析…</div>";
       box.innerHTML = "<div style='display:grid;grid-template-columns:1fr 1fr;gap:0.35rem 1rem;font-size:0.85rem'>"
         + "<div>启用：<b>是</b></div><div>模式：<b>"+(gf.selection_mode||"—")+"</b></div>"
         + "<div>规则版本：<b>"+(gf.rule_version||"—")+"</b></div><div>保留率：<b>"+rate+"</b></div>"
         + "<div>原始信号：<b>"+before+"</b></div><div>过滤后：<b>"+after+"</b></div>"
         + "</div><div class='gua-rule' style='margin-top:0.45rem'>"+nl+"</div>"
-        + "<div class='gua-tags' style='margin-top:0.45rem'>"+tags+"</div>";
+        + "<div class='gua-tags' style='margin-top:0.45rem'>"+tags+"</div>"
+        + "<div style='margin-top:0.75rem' id='guaAnalysisBlock'>"+metricsHtml+"</div>";
+
+      // Async load bagua metrics for this run
+      const rid = (summary && summary.run_id) || (document.getElementById("resultRunId")||{}).textContent || "";
+      const bm = (gf.bagua_metrics) || (summary.bagua_metrics) || null;
+      const fillMetrics = (m) => {
+        const host = document.getElementById("guaAnalysisBlock");
+        if (!host) return;
+        if (!m) {
+          host.innerHTML = "<div class='sub'>暂无卦象分布明细（可查看 signals.csv）。</div>";
+          return;
+        }
+        const warn = (m.warnings || []).map((w) => "<div class='sub' style='color:var(--warn)'>"+w+"</div>").join("");
+        const fmtList = (arr, title) => {
+          if (!arr || !arr.length) return "";
+          return "<div style='margin-top:0.45rem'><div class='sub' style='margin-bottom:0.2rem'>"+title+"</div>"
+            + arr.slice(0,12).map((x) => "<span class='gua-tag'>"+x.key+" ×"+x.count+"</span> ").join("")
+            + "</div>";
+        };
+        const after = m.after || {};
+        const beforeM = m.before || {};
+        host.innerHTML =
+          "<div style='font-size:0.85rem;margin-top:0.25rem'>"
+          + "<b>卦象分析</b>"
+          + (m.source ? " <span class='sub'>来源："+m.source+"</span>" : "")
+          + (m.sample_sufficient === false ? " <span class='sub' style='color:var(--warn)'>· 样本不足</span>" : "")
+          + "</div>"
+          + warn
+          + fmtList(after.by_action_signal || beforeM.by_action_signal, "操作信号分布（过滤后优先）")
+          + fmtList(after.by_main_hexagram || beforeM.by_main_hexagram, "主卦分布 Top")
+          + fmtList(after.by_state_id || beforeM.by_state_id, "精确爻 state_id Top");
+      };
+      if (bm) {
+        fillMetrics(bm);
+      } else if (rid) {
+        api("/api/v1/backtests/" + encodeURIComponent(rid.trim()) + "/bagua-metrics")
+          .then((m) => fillMetrics(m))
+          .catch(() => {
+            const host = document.getElementById("guaAnalysisBlock");
+            if (host) host.innerHTML = "<div class='sub'>卦象分析加载失败；过滤前后数量见上方。</div>";
+          });
+      } else {
+        fillMetrics(null);
+      }
     }
 
     const GuaUI = (function(){
@@ -5272,22 +5317,60 @@ XG:CROSS(MA5,MA10);</textarea>
         }
         const cfg = getPayload();
         try {
+          const ruleIds = (typeof selected !== "undefined" && selected && selected.size)
+            ? Array.from(selected).filter((id) => id && id !== "bagua_ohlc")
+            : [];
+          const periodEl = document.getElementById("period");
+          const startEl = document.getElementById("start");
+          const endEl = document.getElementById("end");
+          const body = {
+            gua_filter: cfg,
+            signal_preview: ruleIds.length > 0,
+            rule_ids: ruleIds.length ? ruleIds : null,
+            codes: ["SSE.STK.600000", "SZSE.STK.000001"],
+            period: (periodEl && periodEl.value) || "DAY",
+            start: startEl && startEl.value ? parseInt(startEl.value, 10) : null,
+            end: endEl && endEl.value ? parseInt(endEl.value, 10) : null,
+            max_codes: 8,
+            min_sample: 30,
+          };
           const r = await fetch("/api/v1/gua/preview", {
             method: "POST",
             headers: {"Content-Type":"application/json"},
-            body: JSON.stringify({ gua_filter: cfg }),
+            body: JSON.stringify(body),
           });
           const d = await r.json();
           const lines = [];
           lines.push("选中主卦：" + (d.selected_main_hexagram_count||0) + " · 精确爻象：" + (d.selected_exact_line_count||0) + " · 操作信号：" + (d.selected_action_signal_count||0));
-          lines.push("匹配爻象状态：" + (d.matched_state_count||0) + " / " + (d.total_state_count||384) + "（覆盖 " + ((d.state_coverage_ratio||0)*100).toFixed(2) + "%）");
+          lines.push("规则表匹配爻象：" + (d.matched_state_count||0) + " / " + (d.total_state_count||384) + "（覆盖 " + ((d.state_coverage_ratio||0)*100).toFixed(2) + "%）");
           if (d.natural_language) lines.push(d.natural_language);
+          const sp = d.signal_preview;
+          if (sp && sp.ok) {
+            const m = sp.metrics || {};
+            lines.push(
+              "真实信号抽样（" + (sp.n_codes||0) + "只 · " + (sp.period||"DAY") + "）：" +
+              (m.n_signals_before != null ? m.n_signals_before : sp.n_signals) +
+              " → 过滤后 " + (m.n_signals_after != null ? m.n_signals_after : "—") +
+              (m.retention_rate != null ? "（保留 " + (m.retention_rate*100).toFixed(1) + "%）" : "")
+            );
+            if (m.sample_sufficient === false) {
+              lines.push("样本提示：过滤后信号偏少，统计可能不稳健。");
+            }
+            const acts = (m.after && m.after.by_action_signal) || [];
+            if (acts.length) {
+              lines.push("过滤后操作信号分布：" + acts.slice(0,5).map((x) => x.key + "×" + x.count).join("、"));
+            }
+          } else if (sp && sp.error) {
+            lines.push("真实信号预览未完成：" + sp.error);
+          } else if (!ruleIds.length) {
+            lines.push("提示：勾选可回测指标后，预览将附带演示池真实信号计数。");
+          }
           if (d.warnings && d.warnings.length) lines.push(d.warnings.join(" "));
           if (d.note) lines.push(d.note);
           box.textContent = lines.join("\n");
           box.className = "gua-preview";
           if (d.matched_state_count === 0) box.classList.add("bad");
-          else if (d.matched_state_count < 12) box.classList.add("warn");
+          else if (d.matched_state_count < 12 || (sp && sp.ok && sp.metrics && sp.metrics.sample_sufficient === false)) box.classList.add("warn");
         } catch (e){
           box.className = "gua-preview warn";
           box.textContent = "预览失败，可稍后重试。";

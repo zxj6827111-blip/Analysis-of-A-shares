@@ -285,6 +285,100 @@ def filter_events_by_gua_filter(events: Iterable, gf: GuaFilter) -> List:
     return [ev for ev in events if event_matches_gua_filter(ev, gf)]
 
 
+def compute_bagua_metrics(
+    events: Iterable,
+    gf: Optional[GuaFilter] = None,
+    *,
+    min_sample: int = 30,
+) -> Dict[str, Any]:
+    """Aggregate bagua distribution on signal events (before/after filter).
+
+    Returns counts by main hexagram, action_signal, state_id, plus sample-size flags.
+    Designed for run detail + research preview; does not re-run the trading engine.
+    """
+    all_events = list(events or [])
+    n_total = len(all_events)
+    gf_active = bool(gf and gf.is_active())
+    kept = (
+        [ev for ev in all_events if event_matches_gua_filter(ev, gf)]  # type: ignore[arg-type]
+        if gf_active
+        else list(all_events)
+    )
+    n_kept = len(kept)
+
+    def _agg(evs: List) -> Dict[str, Any]:
+        by_main: Dict[str, int] = {}
+        by_action: Dict[str, int] = {}
+        by_state: Dict[str, int] = {}
+        missing_bagua = 0
+        for ev in evs:
+            bg = getattr(ev, "bagua", None) or {}
+            if not isinstance(bg, dict) or not bg:
+                missing_bagua += 1
+                continue
+            go = bg.get("gua_order") or bg.get("main_hexagram_id")
+            name = (
+                bg.get("main_hexagram_name")
+                or bg.get("gua_name")
+                or bg.get("full_name")
+                or ""
+            )
+            if go is not None:
+                try:
+                    key = f"{int(go):02d}"
+                except (TypeError, ValueError):
+                    key = str(go)
+                label = f"{key}:{name}" if name else key
+                by_main[label] = by_main.get(label, 0) + 1
+            act = str(bg.get("action_signal") or "").strip() or "(空)"
+            by_action[act] = by_action.get(act, 0) + 1
+            sid = normalize_state_id(bg) or str(bg.get("state_id") or "")
+            if sid:
+                by_state[sid] = by_state.get(sid, 0) + 1
+        # top lists
+        def top(d: Dict[str, int], n: int = 15) -> List[Dict[str, Any]]:
+            items = sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))[:n]
+            return [{"key": k, "count": c} for k, c in items]
+
+        return {
+            "n": len(evs),
+            "missing_bagua": missing_bagua,
+            "by_main_hexagram": top(by_main),
+            "by_action_signal": top(by_action, 10),
+            "by_state_id": top(by_state, 20),
+            "n_unique_main": len(by_main),
+            "n_unique_state": len(by_state),
+        }
+
+    before = _agg(all_events)
+    after = _agg(kept)
+    sample_ok = n_kept >= int(min_sample)
+    retention = (n_kept / n_total) if n_total else 0.0
+    warnings: List[str] = []
+    if n_total == 0:
+        warnings.append("无技术信号样本，无法评估卦象过滤效果。")
+    elif not sample_ok:
+        warnings.append(
+            f"过滤后仅 {n_kept} 条信号（建议 ≥{min_sample}），统计可能不稳健。"
+        )
+    if after.get("missing_bagua"):
+        warnings.append(
+            f"过滤后仍有 {after['missing_bagua']} 条信号缺少卦象标注。"
+        )
+    return {
+        "n_signals_before": n_total,
+        "n_signals_after": n_kept,
+        "retention_rate": retention,
+        "filter_active": gf_active,
+        "selection_mode": (gf.selection_mode if gf else MODE_NONE),
+        "min_sample": int(min_sample),
+        "sample_sufficient": sample_ok,
+        "before": before,
+        "after": after,
+        "warnings": warnings,
+    }
+
+
 def gua_filter_natural_language(
     gf: GuaFilter,
     *,
