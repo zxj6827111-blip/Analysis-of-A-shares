@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""FIFO task queue: multiple submits wait until previous finishes."""
+"""FIFO task queue: second submit waits until first finishes."""
 from __future__ import annotations
 
 import time
@@ -25,30 +25,32 @@ def cfg(tmp_path: Path) -> AStockConfig:
     return c
 
 
-def _wait_status(store: JobStore, job_id: str, want, timeout: float = 3.0) -> str:
+def _wait(store: JobStore, job_id: str, statuses, timeout: float = 3.0) -> str:
+    if isinstance(statuses, str):
+        statuses = {statuses}
+    else:
+        statuses = set(statuses)
     deadline = time.time() + timeout
     last = ""
     while time.time() < deadline:
         last = store.get(job_id).status
-        if last in want if isinstance(want, (set, tuple, list)) else last == want:
+        if last in statuses:
             return last
         time.sleep(0.02)
     return last
 
 
 def test_jobs_fifo_second_waits_for_first(cfg: AStockConfig):
-    """Submit A then B with max_workers=1: B stays queued until A finishes."""
     store = JobStore(cfg, max_workers=1)
     order: list[str] = []
     hold = {"A": True}
 
     def fake_run(self, req, progress_cb=None):
-        rid = req.rule_ids[0] if req.rule_ids else "?"
+        rid = req.rule_ids[0]
         order.append("start:" + rid)
-        # busy-wait so we can observe B queued (avoid Event edge cases under pytest)
         if rid == "rule_A":
             t0 = time.time()
-            while hold["A"] and time.time() - t0 < 2.0:
+            while hold["A"] and time.time() - t0 < 2.5:
                 time.sleep(0.02)
         order.append("end:" + rid)
         return {"run_id": "bt_" + rid, "status": "ok", "title": rid, "metrics": {}}
@@ -57,22 +59,21 @@ def test_jobs_fifo_second_waits_for_first(cfg: AStockConfig):
         with patch("wtpy.apps.astock.service.jobs.BacktestService.run", fake_run):
             ja = store.submit(BacktestRequest(rule_ids=["rule_A"], period="DAY"))
             jb = store.submit(BacktestRequest(rule_ids=["rule_B"], period="DAY"))
-            assert _wait_status(store, ja.job_id, "running") == "running"
-            # give pool a tick; B must still be queued
+            assert _wait(store, ja.job_id, "running") == "running"
             time.sleep(0.05)
             assert store.get(jb.job_id).status == "queued"
             snap = store.queue_snapshot()
             assert snap["n_running"] == 1
             assert snap["n_queued"] >= 1
-            assert any(q["job_id"] == jb.job_id for q in snap["queued"])
+            assert snap["queued"][0]["job_id"] == jb.job_id
             hold["A"] = False
-            assert _wait_status(store, ja.job_id, "succeeded") == "succeeded"
-            assert _wait_status(store, jb.job_id, "succeeded") == "succeeded"
+            assert _wait(store, ja.job_id, "succeeded") == "succeeded"
+            assert _wait(store, jb.job_id, "succeeded") == "succeeded"
             assert order[0] == "start:rule_A"
             assert order.index("end:rule_A") < order.index("start:rule_B")
     finally:
         hold["A"] = False
-        store._pool.shutdown(wait=False)
+        store.shutdown(wait=False)
 
 
 def test_queue_snapshot_public_fields(cfg: AStockConfig):
@@ -87,12 +88,12 @@ def test_queue_snapshot_public_fields(cfg: AStockConfig):
             assert pub["job_id"]
             assert "title_hint" in pub
             assert "queue_seq" in pub
-            assert _wait_status(store, rec.job_id, "succeeded") == "succeeded"
+            assert _wait(store, rec.job_id, "succeeded") == "succeeded"
             snap = store.queue_snapshot()
             assert snap["max_workers"] == 1
             assert "recent" in snap
     finally:
-        store._pool.shutdown(wait=False)
+        store.shutdown(wait=False)
 
 
 def test_ui_always_async_and_queue_bar():
