@@ -1773,16 +1773,22 @@ XG:CROSS(MA5,MA10);</textarea>
         <div class="exp-hero">
           <h2>实验中心</h2>
           <p>
-            用<strong>同一条选股规则</strong>，自动跑多组「卦象 × 买卖日程」组合，再并排看谁更好。
-            适合回答：<em>「加最佳3爻有没有用？换一种星期买卖差多少？」</em>
+            用<strong>同一条选股规则</strong>，按「卦象 × 买卖参数」批量回测并对比。
+            支持<strong>日程模板</strong>（快捷）或<strong>独立参数轴</strong>（信号星期 / 买入 / 卖出）。
+            一键可跑 <em>735 标准 16 组</em>（周五信号→周一开买→周二～五开/收平 × 无卦/最佳三爻）。
           </p>
           <ol class="exp-steps">
             <li><b>1</b> 选规则</li>
-            <li><b>2</b> 勾要对比的条件</li>
-            <li><b>3</b> 确认会跑几组</li>
+            <li><b>2</b> 卦象与日程模式</li>
+            <li><b>3</b> 预览组数与参数</li>
             <li><b>4</b> 开始实验</li>
             <li><b>5</b> 看结果表</li>
           </ol>
+          <div class="exp-actions" style="margin-top:0.55rem;flex-wrap:wrap">
+            <button type="button" class="primary-xl" id="btnExp735" title="周五信号·周一开买·周二至五开/收平·无卦与最佳3爻 = 16 组">735 一键 16 组</button>
+            <button type="button" class="secondary" id="btnExpModeTemplate">日程模板模式</button>
+            <button type="button" class="secondary" id="btnExpModeAxes">独立参数轴模式</button>
+          </div>
         </div>
 
         <div class="exp-split">
@@ -1810,9 +1816,9 @@ XG:CROSS(MA5,MA10);</textarea>
               </div>
             </div>
 
-            <div class="exp-card">
-              <h3><span class="n">3</span> 要比哪几种买卖日程？</h3>
-              <p class="hint">可多选。每一种 = 信号在哪天有效 + 哪天买/平 + 开盘还是收盘。</p>
+            <div class="exp-card" id="expCardTemplateMode">
+              <h3><span class="n">3a</span> 买卖日程模板 <span class="sub" id="expModeTag">（当前：模板模式）</span></h3>
+              <p class="hint">可多选快捷模板。若切换到<strong>独立参数轴</strong>，将忽略此处勾选，改用下方轴配置。</p>
               <div class="exp-chips" id="expWdChips">
                 <label class="exp-chip on"><input type="checkbox" class="exp-wd" value="fri_signal_mon_buy_thu_exit" checked />
                   <span><div class="t">研究常用日程</div><div class="d">仅周五信号 → 周一开盘买 → 周四开盘平</div></span></label>
@@ -1823,25 +1829,82 @@ XG:CROSS(MA5,MA10);</textarea>
               </div>
             </div>
 
+            <div class="exp-card" id="expCardAxesMode" style="display:none">
+              <h3><span class="n">3b</span> 独立参数轴</h3>
+              <p class="hint">分别勾选信号星期、买入方式、卖出方式；系统做笛卡尔积并过滤非法组合。服务端会返回预览表。</p>
+              <div style="margin-bottom:0.55rem">
+                <div class="sub" style="margin-bottom:0.25rem">信号星期（可多选；勾「不限」则忽略具体星期）</div>
+                <div class="exp-chips" id="expSigWdChips">
+                  <label class="exp-chip"><input type="checkbox" class="exp-sig-wd" value="all" /> <span><div class="t">不限</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sig-wd" value="1" /> <span><div class="t">周一</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sig-wd" value="2" /> <span><div class="t">周二</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sig-wd" value="3" /> <span><div class="t">周三</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sig-wd" value="4" /> <span><div class="t">周四</div></span></label>
+                  <label class="exp-chip on"><input type="checkbox" class="exp-sig-wd" value="5" checked /> <span><div class="t">周五</div></span></label>
+                </div>
+              </div>
+              <div style="margin-bottom:0.55rem">
+                <div class="sub" style="margin-bottom:0.25rem">买入方式（可多选）</div>
+                <div class="exp-chips" id="expBuyChips">
+                  <label class="exp-chip on"><input type="checkbox" class="exp-buy" value="wd:1:open" checked />
+                    <span><div class="t">周一开盘</div><div class="d">buy_weekday=1 · open</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-buy" value="wd:1:close" />
+                    <span><div class="t">周一收盘</div><div class="d">buy_weekday=1 · close</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-buy" value="lag:1:open" />
+                    <span><div class="t">T+1 开盘</div><div class="d">entry_lag=1 · open</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-buy" value="lag:1:close" />
+                    <span><div class="t">T+1 收盘</div><div class="d">entry_lag=1 · close</div></span></label>
+                </div>
+              </div>
+              <div>
+                <div class="sub" style="margin-bottom:0.25rem">卖出方式（可多选）</div>
+                <div class="exp-chips" id="expSellChips">
+                  <label class="exp-chip on"><input type="checkbox" class="exp-sell" value="wd:2:open" checked />
+                    <span><div class="t">周二开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="wd:2:close" />
+                    <span><div class="t">周二收盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="wd:3:open" />
+                    <span><div class="t">周三开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="wd:3:close" />
+                    <span><div class="t">周三收盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="wd:4:open" />
+                    <span><div class="t">周四开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="wd:4:close" />
+                    <span><div class="t">周四收盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="wd:5:open" />
+                    <span><div class="t">周五开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="wd:5:close" />
+                    <span><div class="t">周五收盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:1:open" />
+                    <span><div class="t">持有 1 日开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:1:close" />
+                    <span><div class="t">持有 1 日收盘</div></span></label>
+                </div>
+              </div>
+            </div>
+
             <div class="exp-card">
-              <h3><span class="n">4</span> 确认并开始</h3>
-              <p class="hint">默认用<strong>演示池 2 只股票</strong>试跑，速度快。日期跟「新建回测」里选的区间一致。</p>
+              <h3><span class="n">4</span> 预览并开始</h3>
+              <p class="hint">默认用<strong>演示池 2 只股票</strong>试跑。点「重新计算 / 预览」会请求服务端 estimate（含过滤后组数与前若干组参数）。</p>
               <div class="exp-summary" id="expSummary">
                 <div><div class="sub">将运行</div><div class="big" id="expComboCount">—</div><div class="sub">组回测</div></div>
                 <div class="formula" id="expFormula">请先完成第 1～3 步</div>
               </div>
+              <div id="expPreviewStats" class="sub" style="margin:0.35rem 0 0.25rem"></div>
+              <div id="expPreviewBox" style="overflow:auto;max-height:14rem;margin-bottom:0.45rem"></div>
               <div class="exp-actions">
                 <button type="button" class="primary-xl" id="btnExpCreate">开始实验</button>
-                <button type="button" class="secondary" id="btnExpEstimate">重新计算组数</button>
+                <button type="button" class="secondary" id="btnExpEstimate">重新计算 / 预览</button>
                 <input id="expName" placeholder="给实验起个名（可选）" style="min-width:11rem;flex:1" />
               </div>
               <details class="exp-advanced">
-                <summary>高级：组合上限（默认 50，防止一次跑太多）</summary>
-                <div class="row" style="margin-top:0.4rem">
-                  <label style="font-weight:400">最多允许 <input id="expMax" type="number" min="1" max="200" value="50" style="width:4.5rem;display:inline-block" /> 组</label>
+                <summary>高级：组合上限与强制（默认 50；硬顶 500）</summary>
+                <div class="row" style="margin-top:0.4rem;flex-wrap:wrap;gap:0.6rem">
+                  <label style="font-weight:400">最多允许 <input id="expMax" type="number" min="1" max="500" value="50" style="width:4.5rem;display:inline-block" /> 组</label>
+                  <label style="font-weight:400"><input id="expForce" type="checkbox" /> force（超过 soft 上限仍创建，不得超过硬顶）</label>
                 </div>
               </details>
-              <div class="exp-status" id="expStatus">准备就绪后点「开始实验」。</div>
+              <div class="exp-status" id="expStatus">准备就绪后点「开始实验」。可用「735 一键 16 组」快速填充。</div>
             </div>
           </div>
 
@@ -4920,6 +4983,90 @@ XG:CROSS(MA5,MA10);</textarea>
       }).join("、") + "</strong>" +
         "<div class='sub' style='margin-top:0.25rem'>实验会对以上规则分别做「卦象 × 日程」组合。</div>";
     }
+    let __expMode = "template"; // template | free_axes
+
+    function _expWdLabel(n) {
+      const m = { 1: "周一", 2: "周二", 3: "周三", 4: "周四", 5: "周五" };
+      return m[n] || String(n);
+    }
+    function _expSetMode(mode) {
+      __expMode = mode === "free_axes" ? "free_axes" : "template";
+      const cardT = document.getElementById("expCardTemplateMode");
+      const cardA = document.getElementById("expCardAxesMode");
+      const tag = document.getElementById("expModeTag");
+      if (cardT) cardT.style.opacity = __expMode === "template" ? "1" : "0.55";
+      if (cardA) cardA.style.display = __expMode === "free_axes" ? "" : "none";
+      if (tag) {
+        tag.textContent = __expMode === "free_axes"
+          ? "（当前：独立参数轴 — 模板勾选将被忽略）"
+          : "（当前：模板模式）";
+      }
+      _expChipSync();
+    }
+    function _expParseBuyToken(tok) {
+      const p = String(tok || "").split(":");
+      if (p[0] === "wd" && p.length >= 3) {
+        return { buy_weekday: parseInt(p[1], 10), buy_on: p[2], entry_lag: 1 };
+      }
+      if (p[0] === "lag" && p.length >= 3) {
+        return { entry_lag: parseInt(p[1], 10) || 1, buy_on: p[2], buy_weekday: null };
+      }
+      return null;
+    }
+    function _expParseSellToken(tok) {
+      const p = String(tok || "").split(":");
+      if (p[0] === "wd" && p.length >= 3) {
+        return { exit_weekday: parseInt(p[1], 10), sell_on: p[2], hold: 1 };
+      }
+      if (p[0] === "hold" && p.length >= 3) {
+        return { hold: parseInt(p[1], 10) || 1, sell_on: p[2], exit_weekday: null };
+      }
+      return null;
+    }
+    function _expCollectFreeAxes() {
+      const sigRaw = _expChecked("#expSigWdChips .exp-sig-wd");
+      let signal_weekdays_options;
+      if (sigRaw.indexOf("all") >= 0 || !sigRaw.length) {
+        signal_weekdays_options = [null];
+      } else {
+        const days = sigRaw.map((x) => parseInt(x, 10)).filter((n) => n >= 1 && n <= 7);
+        signal_weekdays_options = days.length ? [days] : [null];
+      }
+      const buy_options = _expChecked("#expBuyChips .exp-buy")
+        .map(_expParseBuyToken)
+        .filter(Boolean);
+      const sell_options = _expChecked("#expSellChips .exp-sell")
+        .map(_expParseSellToken)
+        .filter(Boolean);
+      return { signal_weekdays_options, buy_options, sell_options };
+    }
+    function _expApply735Matrix() {
+      // Fri signal, Mon open buy, exit Tue–Fri × open/close, gua none+best3
+      _expSetMode("free_axes");
+      document.querySelectorAll(".exp-gua").forEach((el) => {
+        el.checked = el.value === "none" || el.value === "best3";
+      });
+      document.querySelectorAll(".exp-sig-wd").forEach((el) => {
+        el.checked = el.value === "5";
+      });
+      document.querySelectorAll(".exp-buy").forEach((el) => {
+        el.checked = el.value === "wd:1:open";
+      });
+      const sellNeed = new Set(
+        [2, 3, 4, 5].flatMap((d) => ["wd:" + d + ":open", "wd:" + d + ":close"])
+      );
+      document.querySelectorAll(".exp-sell").forEach((el) => {
+        el.checked = sellNeed.has(el.value);
+      });
+      const nameEl = document.getElementById("expName");
+      if (nameEl && !String(nameEl.value || "").trim()) {
+        nameEl.value = "735标准16组";
+      }
+      const maxEl = document.getElementById("expMax");
+      if (maxEl && parseInt(maxEl.value, 10) < 16) maxEl.value = "50";
+      _expChipSync();
+      expEstimate();
+    }
     function _expBodyBase() {
       const start = (typeof ymdFromParts === "function")
         ? ymdFromParts(document.getElementById("startYear"), document.getElementById("startMonth"), document.getElementById("startDay"))
@@ -4927,10 +5074,9 @@ XG:CROSS(MA5,MA10);</textarea>
       const end = (typeof ymdFromParts === "function")
         ? ymdFromParts(document.getElementById("endYear"), document.getElementById("endMonth"), document.getElementById("endDay"))
         : null;
-      return {
+      const body = {
         rule_ids: _expSelectedRules(),
         gua_keys: _expChecked("#expGuaChips .exp-gua, .exp-gua"),
-        weekday_keys: _expChecked("#expWdChips .exp-wd, .exp-wd"),
         period: (document.getElementById("period") || {}).value || "DAY",
         codes: ["sh600000", "sz000001"],
         start: start || 20240101,
@@ -4938,31 +5084,110 @@ XG:CROSS(MA5,MA10);</textarea>
         account_mode: (document.querySelector('input[name="accountMode"]:checked') || {}).value || "portfolio",
         research_unadjusted: !!(document.getElementById("researchUnadj") || {}).checked,
         max_variants: parseInt((document.getElementById("expMax") || {}).value, 10) || 50,
+        force: !!(document.getElementById("expForce") || {}).checked,
         concurrency: 1,
+        holiday_policy: "next_trading_day",
         name: ((document.getElementById("expName") || {}).value || "").trim() || undefined,
+        preview_only: true,
       };
+      if (__expMode === "free_axes") {
+        const axes = _expCollectFreeAxes();
+        body.signal_weekdays_options = axes.signal_weekdays_options;
+        body.buy_options = axes.buy_options;
+        body.sell_options = axes.sell_options;
+        // free axes: omit weekday_keys so server ignores templates
+      } else {
+        body.weekday_keys = _expChecked("#expWdChips .exp-wd, .exp-wd");
+      }
+      return body;
     }
     function _expLocalFormula(body) {
       const nR = (body.rule_ids || []).length;
       const nG = (body.gua_keys || []).length;
+      const guaNames = { none: "不加卦象", best3: "最佳3爻", bull: "偏多信号" };
+      const gLab = (body.gua_keys || []).map((k) => guaNames[k] || k).join("、") || "—";
+      const rLab = _expRuleLabels().join("、") || "（未选规则）";
+      if (body.buy_options || body.sell_options || body.signal_weekdays_options) {
+        const nSig = (body.signal_weekdays_options || []).length || 1;
+        const nBuy = (body.buy_options || []).length || 0;
+        const nSell = (body.sell_options || []).length || 0;
+        const total = nR * nG * nSig * nBuy * nSell;
+        return {
+          total,
+          text:
+            "【独立参数轴】规则 " + nR + "（" + rLab + "）× 卦象 " + nG + "（" + gLab + "）× 信号轴 " + nSig +
+            " × 买入 " + nBuy + " × 卖出 " + nSell + " ≈ <b>" + total + "</b> 组（服务端过滤后为准）" +
+            "<div class='sub' style='margin-top:0.25rem'>演示池 2 只 · 日期用新建回测区间 · holiday_policy=next_trading_day</div>",
+        };
+      }
       const nW = (body.weekday_keys || []).length;
       const total = nR * nG * nW;
-      const guaNames = { none: "不加卦象", best3: "最佳3爻", bull: "偏多信号" };
       const wdNames = {
         fri_signal_mon_buy_thu_exit: "研究常用日程",
         all_signal_tn12: "经典T+1/T+2",
         fri_signal_fri_buy_mon_exit: "周五买下周一平",
       };
-      const gLab = (body.gua_keys || []).map((k) => guaNames[k] || k).join("、") || "—";
       const wLab = (body.weekday_keys || []).map((k) => wdNames[k] || k).join("、") || "—";
-      const rLab = _expRuleLabels().join("、") || "（未选规则）";
       return {
         total,
-        nR, nG, nW,
         text:
-          "规则 " + nR + " 条（" + rLab + "） × 卦象 " + nG + " 种（" + gLab + "） × 日程 " + nW + " 种（" + wLab + "） = <b>" + total + "</b> 组" +
-          "<div class='sub' style='margin-top:0.25rem'>默认演示池 2 只股票 · 日期用新建回测里的区间</div>",
+          "【模板】规则 " + nR + "（" + rLab + "）× 卦象 " + nG + "（" + gLab + "）× 日程 " + nW + "（" + wLab + "）= <b>" + total + "</b> 组" +
+          "<div class='sub' style='margin-top:0.25rem'>演示池 2 只 · 日期用新建回测区间</div>",
       };
+    }
+    function _expRenderPreview(d) {
+      const stats = document.getElementById("expPreviewStats");
+      const box = document.getElementById("expPreviewBox");
+      if (!stats && !box) return;
+      const th = d.theoretical != null ? d.theoretical : d.theoretical_count;
+      const rj = d.rejected != null ? d.rejected : d.rejected_count;
+      const ac = d.actual != null ? d.actual : (d.estimated_variants != null ? d.estimated_variants : d.n);
+      const reasons = d.rejection_reasons || {};
+      let rtxt = Object.keys(reasons).map((k) => k + ":" + reasons[k]).join(" · ");
+      if (stats) {
+        stats.innerHTML =
+          "服务端：理论 <b>" + (th != null ? th : "—") +
+          "</b> · 过滤 <b>" + (rj != null ? rj : "—") +
+          "</b> · 实际 <b>" + (ac != null ? ac : "—") +
+          "</b>" + (rtxt ? " <span class='warn'>(" + escAttr(rtxt) + ")</span>" : "") +
+          (d.mode ? " · mode=" + escAttr(d.mode) : "");
+      }
+      const prev = d.preview || [];
+      if (!box) return;
+      if (!prev.length) {
+        box.innerHTML = "<div class='exp-empty sub'>无预览行（可能被过滤或尚未 estimate）。</div>";
+        return;
+      }
+      let html = "<table class='exp-table'><thead><tr>" +
+        "<th>#</th><th>规则</th><th>信号</th><th>买入</th><th>卖出</th><th>卦象</th>" +
+        "</tr></thead><tbody>";
+      prev.slice(0, 50).forEach((row, i) => {
+        const p = row.params || row;
+        const meta = p._meta || row._meta || {};
+        const sig = p.signal_weekdays == null ? "不限" : (
+          Array.isArray(p.signal_weekdays)
+            ? p.signal_weekdays.map(_expWdLabel).join("/")
+            : String(p.signal_weekdays)
+        );
+        let buy = "—";
+        if (p.buy_weekday != null) buy = _expWdLabel(p.buy_weekday) + (p.buy_on === "close" ? "收" : "开");
+        else if (p.entry_lag != null) buy = "T+" + p.entry_lag + (p.buy_on === "close" ? "收" : "开");
+        let sell = "—";
+        if (p.exit_weekday != null) sell = _expWdLabel(p.exit_weekday) + (p.sell_on === "close" ? "收" : "开");
+        else if (p.hold != null) sell = "持有" + p.hold + "日" + (p.sell_on === "close" ? "收" : "开");
+        html +=
+          "<tr><td class='num'>" + (i + 1) + "</td>" +
+          "<td>" + escAttr(meta.rule_id || ((p.rule_ids || [])[0] || "—")) + "</td>" +
+          "<td>" + escAttr(sig) + "</td>" +
+          "<td>" + escAttr(buy) + "</td>" +
+          "<td>" + escAttr(sell) + "</td>" +
+          "<td>" + escAttr(meta.gua_label || meta.gua_key || "—") + "</td></tr>";
+      });
+      html += "</tbody></table>";
+      if (prev.length > 50) {
+        html += "<div class='sub'>仅显示前 50 组预览…</div>";
+      }
+      box.innerHTML = html;
     }
     async function expEstimate() {
       const st = document.getElementById("expStatus");
@@ -4979,28 +5204,45 @@ XG:CROSS(MA5,MA10);</textarea>
           if (st) st.textContent = "还差第 1 步：去左侧选一条规则。";
           return;
         }
-        if (!body.gua_keys.length || !body.weekday_keys.length) {
-          if (st) st.textContent = "请至少勾选 1 种卦象方案和 1 种买卖日程。";
+        if (!(body.gua_keys || []).length) {
+          if (st) st.textContent = "请至少勾选 1 种卦象方案。";
           return;
         }
-        // server estimate for soft-cap warning
+        if (__expMode === "template" && !(body.weekday_keys || []).length) {
+          if (st) st.textContent = "模板模式：请至少勾选 1 种买卖日程。";
+          return;
+        }
+        if (__expMode === "free_axes") {
+          if (!(body.buy_options || []).length || !(body.sell_options || []).length) {
+            if (st) st.textContent = "独立参数轴：请至少勾选 1 种买入和 1 种卖出。";
+            return;
+          }
+        }
         const d = await api("/api/v1/experiments/estimate", {
           method: "POST",
           body: JSON.stringify(body),
         });
-        if (countEl) countEl.textContent = String(d.estimated_variants);
+        const n = d.estimated_variants != null ? d.estimated_variants : (d.actual != null ? d.actual : d.n);
+        if (countEl) countEl.textContent = String(n);
+        _expRenderPreview(d);
         let extra = "";
-        if (d.exceeds_soft_cap) {
-          extra = "<div class='warn'>超过上限 " + d.max_variants + " 组，请少勾几种条件，或到高级里调高上限。</div>";
+        if (d.exceeds_soft_cap && !body.force) {
+          extra = "<div class='warn'>超过 soft 上限 " + (d.max_variants || body.max_variants) +
+            " 组。可少勾条件、调高上限，或勾选 force（仍受硬顶 " + (d.hard_max || 500) + " 限制）。</div>";
+        } else if (d.ok === false && d.message) {
+          extra = "<div class='warn'>" + escAttr(d.message) + "</div>";
         } else if (d.warning) {
-          extra = "<div class='warn'>" + d.warning + "</div>";
+          extra = "<div class='warn'>" + escAttr(d.warning) + "</div>";
         } else {
-          extra = "<div class='sub' style='margin-top:0.2rem;color:#8fd19e'>组数合适，可以开始。</div>";
+          extra = "<div class='sub' style='margin-top:0.2rem;color:#8fd19e'>组数合适，可以开始。下方为服务端预览。</div>";
         }
         if (formulaEl) formulaEl.innerHTML = local.text + extra;
-        if (st) st.textContent = d.exceeds_soft_cap
-          ? "请先缩小组合数，再点开始。"
-          : "准备就绪：将排队运行 " + d.estimated_variants + " 组回测（可随时在结果区查看进度）。";
+        if (st) {
+          st.textContent = (d.exceeds_soft_cap && !body.force)
+            ? "请先缩小组合数或勾选 force，再点开始。"
+            : "准备就绪：实际 " + n + " 组（理论 " + (d.theoretical != null ? d.theoretical : "—") +
+              "，过滤 " + (d.rejected != null ? d.rejected : 0) + "）。";
+        }
       } catch (e) {
         if (st) st.textContent = "计算组数失败：" + (e.message || e);
       }
@@ -5009,27 +5251,46 @@ XG:CROSS(MA5,MA10);</textarea>
       const st = document.getElementById("expStatus");
       try {
         const body = _expBodyBase();
+        delete body.preview_only;
         if (!body.rule_ids.length) {
           alert("请先选择规则：点「去选规则」，在左侧勾选一条可回测指标。");
           switchBtPage("new");
           return;
         }
-        if (!body.gua_keys.length || !body.weekday_keys.length) {
-          alert("请至少勾选 1 种卦象和 1 种买卖日程。");
+        if (!(body.gua_keys || []).length) {
+          alert("请至少勾选 1 种卦象。");
           return;
         }
-        // preflight estimate
+        if (__expMode === "template" && !(body.weekday_keys || []).length) {
+          alert("请至少勾选 1 种买卖日程。");
+          return;
+        }
+        if (__expMode === "free_axes") {
+          if (!(body.buy_options || []).length || !(body.sell_options || []).length) {
+            alert("独立参数轴：请至少勾选 1 种买入和 1 种卖出。");
+            return;
+          }
+        }
         const est = await api("/api/v1/experiments/estimate", {
           method: "POST",
-          body: JSON.stringify(body),
+          body: JSON.stringify(Object.assign({}, body, { preview_only: true })),
         });
-        if (est.exceeds_soft_cap) {
-          alert("组合数 " + est.estimated_variants + " 超过上限 " + est.max_variants + "。\\n请少勾几种条件，或在「高级」里提高上限。");
+        const n = est.estimated_variants != null ? est.estimated_variants : est.actual;
+        if (est.exceeds_soft_cap && !body.force) {
+          alert(
+            "组合数 " + n + " 超过上限 " + est.max_variants + "。\n" +
+            "请少勾条件、提高上限，或在高级里勾选 force。"
+          );
+          return;
+        }
+        if (est.ok === false && !body.force) {
+          alert(est.message || ("无法创建：实际 " + n + " 组"));
           return;
         }
         const ok = confirm(
-          "即将开始实验：共 " + est.estimated_variants + " 组回测。\\n" +
-          "使用演示池试跑，可能需要几分钟。\\n\\n确定开始？"
+          "即将开始实验：实际 " + n + " 组回测" +
+          (est.rejected ? "（已过滤 " + est.rejected + "）" : "") + "。\n" +
+          "使用演示池试跑，可能需要几分钟。\n\n确定开始？"
         );
         if (!ok) return;
         if (st) st.textContent = "正在创建实验…";
@@ -5127,10 +5388,19 @@ XG:CROSS(MA5,MA10);</textarea>
           const mdd = m.max_drawdown != null ? formatPercent(Math.abs(Number(m.max_drawdown))) : "—";
           const wr = m.win_rate != null ? formatPercent(m.win_rate) : "—";
           const stLab = { succeeded: "完成", failed: "失败", skipped: "跳过(重复)", pending: "等待", running: "运行中", cancelled: "取消" };
+          let sched = meta.weekday_label || meta.weekday_key || "";
+          if (!sched) {
+            const parts = [];
+            if (p.buy_weekday != null) parts.push("买" + _expWdLabel(p.buy_weekday) + (p.buy_on === "close" ? "收" : "开"));
+            else if (p.entry_lag != null) parts.push("买T+" + p.entry_lag + (p.buy_on === "close" ? "收" : "开"));
+            if (p.exit_weekday != null) parts.push("卖" + _expWdLabel(p.exit_weekday) + (p.sell_on === "close" ? "收" : "开"));
+            else if (p.hold != null) parts.push("持有" + p.hold + (p.sell_on === "close" ? "收" : "开"));
+            sched = parts.join(" · ") || "—";
+          }
           html +=
             "<tr><td>" + escAttr(meta.rule_id || ((p.rule_ids || [])[0] || "—")) + "</td>" +
             "<td>" + escAttr(meta.gua_label || meta.gua_key || "—") + "</td>" +
-            "<td>" + escAttr(meta.weekday_label || meta.weekday_key || "—") + "</td>" +
+            "<td>" + escAttr(sched) + "</td>" +
             "<td>" + escAttr(stLab[row.status] || row.status || "—") + "</td>" +
             "<td class='num'>" + ret + "</td>" +
             "<td class='num'>" + mdd + "</td>" +
@@ -5141,6 +5411,44 @@ XG:CROSS(MA5,MA10);</textarea>
               : "—") + "</td></tr>";
         });
         html += "</tbody></table>";
+        // 735-style matrix if rows look like exit_weekday × sell_on × gua
+        try {
+          const matrixRows = [];
+          (d.rows || []).forEach((row) => {
+            const p = row.params || {};
+            const meta = p._meta || {};
+            const m = row.metrics || {};
+            if (p.exit_weekday == null || !p.sell_on) return;
+            matrixRows.push({
+              exit_weekday: p.exit_weekday,
+              sell_on: p.sell_on,
+              gua_key: meta.gua_key || (p.with_bagua ? "best3" : "none"),
+              total_return: m.total_return,
+            });
+          });
+          if (matrixRows.length >= 4) {
+            const by = {};
+            matrixRows.forEach((r) => {
+              const k = r.exit_weekday + "|" + r.sell_on;
+              if (!by[k]) by[k] = { exit_weekday: r.exit_weekday, sell_on: r.sell_on, none: null, best3: null };
+              if (r.gua_key === "best3") by[k].best3 = r.total_return;
+              else by[k].none = r.total_return;
+            });
+            const keys = Object.keys(by).sort();
+            let mh = "<div class='sub' style='margin:0.55rem 0 0.25rem'>结果矩阵（exit × session × 卦象 · 总收益）</div>";
+            mh += "<table class='exp-table'><thead><tr><th>卖出星期</th><th>时点</th><th>无卦象</th><th>最佳3爻</th></tr></thead><tbody>";
+            keys.forEach((k) => {
+              const c = by[k];
+              mh +=
+                "<tr><td>" + escAttr(_expWdLabel(c.exit_weekday)) + "</td>" +
+                "<td>" + escAttr(c.sell_on) + "</td>" +
+                "<td class='num'>" + (c.none != null ? formatPercent(c.none) : "—") + "</td>" +
+                "<td class='num'>" + (c.best3 != null ? formatPercent(c.best3) : "—") + "</td></tr>";
+            });
+            mh += "</tbody></table>";
+            html += mh;
+          }
+        } catch (eMat) {}
         box.innerHTML = html;
         box.querySelectorAll("[data-exp-open-run]").forEach((btn) => {
           btn.addEventListener("click", () => {
@@ -5174,6 +5482,15 @@ XG:CROSS(MA5,MA10);</textarea>
     function _bindExpUi() {
       document.getElementById("btnExpEstimate")?.addEventListener("click", () => expEstimate());
       document.getElementById("btnExpCreate")?.addEventListener("click", () => expCreateAndStart());
+      document.getElementById("btnExp735")?.addEventListener("click", () => _expApply735Matrix());
+      document.getElementById("btnExpModeTemplate")?.addEventListener("click", () => {
+        _expSetMode("template");
+        expEstimate();
+      });
+      document.getElementById("btnExpModeAxes")?.addEventListener("click", () => {
+        _expSetMode("free_axes");
+        expEstimate();
+      });
       document.getElementById("btnExpRefresh")?.addEventListener("click", () => {
         expRenderList();
         if (__activeExperimentId) expShowResults(__activeExperimentId);
@@ -5183,17 +5500,20 @@ XG:CROSS(MA5,MA10);</textarea>
         expSyncRuleBox();
         expEstimate();
       });
-      document.querySelectorAll(".exp-gua, .exp-wd").forEach((el) => {
+      document.querySelectorAll(".exp-gua, .exp-wd, .exp-sig-wd, .exp-buy, .exp-sell").forEach((el) => {
         el.addEventListener("change", () => {
           _expChipSync();
           expEstimate();
         });
       });
       document.getElementById("expMax")?.addEventListener("change", () => expEstimate());
+      document.getElementById("expForce")?.addEventListener("change", () => expEstimate());
+      _expSetMode("template");
       _expChipSync();
       expSyncRuleBox();
     }
     _bindExpUi();
+
 
 
     bindBacktestNav();

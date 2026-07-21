@@ -16,7 +16,7 @@
 | P2.3 | 笛卡尔展开 + 合法性过滤 | `[x]` expand_axes + constraints |
 | P2.4 | 组合预览 API | `[x]` POST `/api/v1/experiments/estimate` |
 | P2.5 | 上限与预算绑定 | `[x]` soft 50 / hard 500 (API)；planner hard 2000 |
-| P2.6 | 前端模块化实验配置 | `[ ]` **下一批** |
+| P2.6 | 前端模块化实验配置 | `[x]` 模板/自由轴切换 + estimate 预览 + 735 一键 |
 | P2.7 | 735×16 + 结果矩阵 | `[x]` preset + `matrix.build_result_matrix`；Excel 表可选未做 |
 | P2.8 | 卦象多选轴 | `[x]` gua_keys 轴 |
 | P2.T | 单测 + 全量回归 | `[x]` 聚焦 36 + **全量 225 passed** |
