@@ -270,7 +270,7 @@ def collect_indicator_signals_with_bagua(
     """Generate technical signals on a limited pool and attach bagua labels."""
     from ..bagua.calculator import BaguaCalculator
     from ..data.adjustments import build_factor_series
-    from ..data.store import DataStore
+    from ..data.data_store import DataStore
     from ..data.tdx_reader import TdxDayReader
     from ..indicators.engine import compute_indicator_signal
     from ..study import (
