@@ -1,7 +1,7 @@
 # Phase 4 实施工单板 — 任务/试验平台（Queue + TrialStore）
 
 **分支：** `feature/astock-research-phase1`  
-**状态：** **in_progress**（2026-07-21）  
+**状态：** **accepted**（2026-07-21；gate 9 passed + API）  
 **范围：** Phase 4 only — 不实现 Phase 5/6 评分 / Optuna。
 
 ---
@@ -75,3 +75,8 @@ python -m pytest tests/apps/astock/test_phase4_gate.py -q --tb=short
 
 - Claim：`UPDATE ... WHERE status='queued'`，单进程测试足够原子  
 - Postgres：`PostgresDatabaseBackend.connect` 在无 `psycopg2` 时抛清晰 `ImportError`  
+
+
+## Live stack note
+
+Environment lacked Redis/Celery/Postgres; gate uses SQLite durable queue + TestClient fakes. Core claim/idempotency/reclaim proven in unit tests.
