@@ -272,13 +272,13 @@ def collect_indicator_signals_with_bagua(
     from ..data.adjustments import build_factor_series
     from ..data.data_store import DataStore
     from ..data.tdx_reader import TdxDayReader
-    from ..indicators.engine import compute_indicator_signal
     from ..study import (
         SignalEvent,
         attach_bagua,
         bars_dict_from_day,
         bars_dict_from_period,
         build_period_bars,
+        compute_indicator_signal,
         day_bars_to_adj,
     )
     from .backtest import DEMO_CODES, select_universe
