@@ -478,6 +478,8 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
                 use_signal_cache=bool(
                     True if payload.get("use_signal_cache") is None else payload.get("use_signal_cache")
                 ),
+                promote_top_n=int(payload.get("promote_top_n") if payload.get("promote_top_n") is not None else 3),
+                promote_metric=str(payload.get("promote_metric") or "total_return"),
             )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e

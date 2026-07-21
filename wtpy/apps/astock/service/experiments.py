@@ -693,6 +693,8 @@ def create_experiment_from_grid(
     engine: str = "fast",
     artifact_level: str = "summary",
     use_signal_cache: bool = True,
+    promote_top_n: int = 3,
+    promote_metric: str = "total_return",
 ) -> Dict[str, Any]:
     """Create experiment from legacy weekday_keys templates OR free axes.
 
@@ -819,6 +821,8 @@ def create_experiment_from_grid(
         "engine": (engine or "fast").strip().lower(),
         "artifact_level": (artifact_level or "summary").strip().lower(),
         "use_signal_cache": bool(use_signal_cache),
+        "promote_top_n": int(promote_top_n or 0),
+        "promote_metric": str(promote_metric or "total_return"),
         "mode": "free_axes" if use_free else "legacy_templates",
         "period": period,
         "codes": list(codes) if codes else ["sh600000", "sz000001"],
@@ -1059,12 +1063,72 @@ class ExperimentRunner:
                 failed_variants=failed,
                 skipped_variants=skipped,
             )
+            if final == "completed" and not self.is_cancelled(experiment_id):
+                try:
+                    self._promote_top_n_full(experiment_id)
+                except Exception:
+                    pass
         except Exception as e:
             exp_db.update_experiment_status(
                 self.cfg, experiment_id, "failed"
             )
             # best-effort
             _ = e
+
+    def _promote_top_n_full(self, experiment_id: str) -> None:
+        """Re-run top-N variants with engine=full + artifact_level=full (Phase-3)."""
+        exp = exp_db.get_experiment(self.cfg, experiment_id)
+        conf = dict(exp.get("config") or {})
+        top_n = int(conf.get("promote_top_n") or 0)
+        if top_n <= 0:
+            return
+        metric = str(conf.get("promote_metric") or "total_return")
+        table = exp_db.experiment_results_table(self.cfg, experiment_id)
+        rows = list(table.get("rows") or [])
+        scored = []
+        for row in rows:
+            if row.get("status") != "succeeded":
+                continue
+            m = row.get("metrics") or {}
+            val = m.get(metric)
+            if val is None:
+                continue
+            try:
+                scored.append((float(val), row))
+            except (TypeError, ValueError):
+                continue
+        if not scored:
+            return
+        scored.sort(key=lambda x: x[0], reverse=True)
+        winners = scored[:top_n]
+        for rank, (_score, row) in enumerate(winners, 1):
+            if self.is_cancelled(experiment_id):
+                break
+            params = dict(row.get("params") or {})
+            params.pop("_meta", None)
+            params["engine"] = "full"
+            params["artifact_level"] = "full"
+            params["use_signal_cache"] = conf.get("use_signal_cache", True)
+            vid = str(row.get("variant_id") or ("promote_%s" % rank))
+            variant = {
+                "variant_id": "%s__full" % vid,
+                "params": params,
+                "param_hash": None,
+                "status": "pending",
+            }
+            try:
+                _vid, st, rid, err = self._run_one(experiment_id, variant)
+                exp_db.update_variant(
+                    self.cfg,
+                    _vid,
+                    status=st,
+                    run_id=rid,
+                    error=(err[:500] if err else None),
+                )
+            except Exception:
+                continue
+
+
 
 
 _RUNNER: Optional[ExperimentRunner] = None

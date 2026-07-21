@@ -324,6 +324,8 @@ def run_backtest(
     errors: List[dict] = []
     combine = req.combine
     signal_cache_hit = False
+    filter_cache_hit = False
+    execution_cache_hit = False
     use_signal_cache = bool(getattr(req, "use_signal_cache", False))
 
     def _load_maps_and_maybe_signals(*, compute_signals: bool) -> List[SignalEvent]:
@@ -679,49 +681,135 @@ def run_backtest(
     bagua_n_before = len(events)
     bagua_n_after = len(events)
     gua_filter_meta = None
+    filter_cache_hit = False
+    _filter_key = None
+    # Phase-3: filter-layer cache (gua / bagua mode). Signal weekdays still applied in engine.
     if bagua_enabled:
-        calc = BaguaCalculator.from_json(cfg.bagua_json)
-        attach_bagua(events, period_raw_map, calc)
-        bagua_n_before = len(events)
-        if gf.is_active():
+        def _apply_bagua_filters(src_events):
+            nonlocal bagua_filter_mode, gua_filter_meta, bagua_n_before, bagua_n_after
+            evs = list(src_events)
+            calc = BaguaCalculator.from_json(cfg.bagua_json)
+            attach_bagua(evs, period_raw_map, calc)
+            bagua_n_before = len(evs)
+            if gf.is_active():
+                try:
+                    from ..bagua.filter_rules import compute_bagua_metrics
+                    bagua_metrics_pre = compute_bagua_metrics(evs, gf)
+                except Exception:
+                    bagua_metrics_pre = None
+                evs = filter_events_by_gua_filter(evs, gf)
+                bagua_n_after = len(evs)
+                bagua_filter_mode = f"gua_filter:{gf.selection_mode}"
+                try:
+                    names = hexagram_name_map(cfg)
+                    labels = state_label_map(cfg)
+                except Exception:
+                    names, labels = {}, {}
+                gua_filter_meta = {
+                    **gf.to_dict(),
+                    "natural_language": gua_filter_natural_language(gf, hexagram_names=names),
+                    "history_summary": gua_filter_history_summary(
+                        gf, hexagram_names=names, state_labels=labels
+                    ),
+                    "n_signals_before": bagua_n_before,
+                    "n_signals_after": bagua_n_after,
+                    "retention_rate": (
+                        (bagua_n_after / bagua_n_before) if bagua_n_before else 0.0
+                    ),
+                }
+                if bagua_metrics_pre is not None:
+                    gua_filter_meta["bagua_metrics"] = bagua_metrics_pre
+            else:
+                bagua_filter_mode = (req.bagua_filter_mode or DEFAULT_BAGUA_FILTER_MODE).strip()
+                evs = filter_events_by_bagua_mode(evs, bagua_filter_mode)
+                bagua_n_after = len(evs)
+            return evs
+
+        if use_signal_cache:
             try:
-                from ..bagua.filter_rules import compute_bagua_metrics
-                bagua_metrics_pre = compute_bagua_metrics(events, gf)
-            except Exception:
-                bagua_metrics_pre = None
-            events = filter_events_by_gua_filter(events, gf)
-            bagua_n_after = len(events)
-            bagua_filter_mode = f"gua_filter:{gf.selection_mode}"
-            try:
-                names = hexagram_name_map(cfg)
-                labels = state_label_map(cfg)
-            except Exception:
-                names, labels = {}, {}
-            gua_filter_meta = {
-                **gf.to_dict(),
-                "natural_language": gua_filter_natural_language(gf, hexagram_names=names),
-                "history_summary": gua_filter_history_summary(
-                    gf, hexagram_names=names, state_labels=labels
-                ),
-                "n_signals_before": bagua_n_before,
-                "n_signals_after": bagua_n_after,
-                "retention_rate": (
-                    (bagua_n_after / bagua_n_before) if bagua_n_before else 0.0
-                ),
-            }
-            if bagua_metrics_pre is not None:
-                gua_filter_meta["bagua_metrics"] = bagua_metrics_pre
-            msg = (
-                f"卦象过滤·{gf.selection_mode}："
-                f"{bagua_n_before} → {bagua_n_after} 条信号"
-            )
+                from ..research.filter_cache import filter_cache_key, get_or_compute_filtered
+
+                # Prefer raw signal cache key if available
+                _sk = locals().get("_sig_key")
+                if not _sk:
+                    from ..research.signal_cache import signal_cache_key as _sck
+                    _ind_src2 = "|".join(
+                        sorted(
+                            "%s:%s" % (s.id, getattr(s, "source_sha256", None) or "")
+                            for s in trade_specs
+                        )
+                    )
+                    _sk = _sck(
+                        indicator_ids=[s.id for s in trade_specs],
+                        indicator_source_hash=_ind_src2,
+                        period=period,
+                        start=start,
+                        end=end,
+                        universe_hash=selected_universe_sha(codes),
+                        adjust_mode=("research_unadjusted" if research_unadj else "adjusted"),
+                        combine=combine,
+                    )
+                _filter_key = filter_cache_key(
+                    signal_cache_key=str(_sk),
+                    signal_weekdays=signal_weekdays,
+                    gua_rule_version=getattr(gf, "rule_version", None),
+                    gua_filter=gf.to_dict() if gf else None,
+                    with_bagua=bool(req.with_bagua) or bagua_enabled,
+                    bagua_filter_mode=getattr(req, "bagua_filter_mode", None),
+                )
+                # Cache stores post-filter events; bagua attach needs period_raw_map on miss.
+                # On hit, bagua fields are already on events from prior save.
+                events, filter_cache_hit = get_or_compute_filtered(
+                    _filter_key,
+                    lambda: _apply_bagua_filters(events),
+                    cfg=cfg,
+                    use_cache=True,
+                    meta={"layer": "bagua_filter"},
+                )
+                bagua_n_after = len(events)
+                if filter_cache_hit:
+                    bagua_n_before = bagua_n_before or bagua_n_after
+                    if gf.is_active():
+                        bagua_filter_mode = bagua_filter_mode or f"gua_filter:{gf.selection_mode}"
+                        if gua_filter_meta is None:
+                            gua_filter_meta = {
+                                **gf.to_dict(),
+                                "n_signals_before": bagua_n_before,
+                                "n_signals_after": bagua_n_after,
+                                "retention_rate": (
+                                    (bagua_n_after / bagua_n_before) if bagua_n_before else 0.0
+                                ),
+                                "from_filter_cache": True,
+                            }
+                    else:
+                        bagua_filter_mode = (
+                            bagua_filter_mode
+                            or (req.bagua_filter_mode or DEFAULT_BAGUA_FILTER_MODE).strip()
+                        )
+                msg = (
+                    ("过滤缓存命中 · " if filter_cache_hit else "")
+                    + (
+                        f"卦象过滤：{bagua_n_before} → {bagua_n_after} 条信号"
+                        if gf.is_active()
+                        else f"八卦过滤：{bagua_n_before} → {bagua_n_after} 条信号"
+                    )
+                )
+            except Exception as _fc_err:
+                filter_cache_hit = False
+                events = _apply_bagua_filters(events)
+                errors.append(
+                    {"code": "*", "indicator": "filter_cache", "error": str(_fc_err)[:200]}
+                )
+                msg = f"卦象/八卦过滤：{bagua_n_before} → {bagua_n_after} 条信号"
         else:
-            bagua_filter_mode = (req.bagua_filter_mode or DEFAULT_BAGUA_FILTER_MODE).strip()
-            events = filter_events_by_bagua_mode(events, bagua_filter_mode)
-            bagua_n_after = len(events)
+            events = _apply_bagua_filters(events)
             msg = (
-                f"八卦过滤·{bagua_mode_label(bagua_filter_mode)}："
-                f"{bagua_n_before} → {bagua_n_after} 条信号"
+                f"卦象过滤·{gf.selection_mode}：{bagua_n_before} → {bagua_n_after} 条信号"
+                if gf.is_active()
+                else (
+                    f"八卦过滤·{bagua_mode_label(bagua_filter_mode)}："
+                    f"{bagua_n_before} → {bagua_n_after} 条信号"
+                )
             )
         _progress({
             "phase": "bagua_filter",
@@ -732,6 +820,7 @@ def run_backtest(
             "code": None,
             "n_signals": bagua_n_after,
             "n_signals_before_bagua": bagua_n_before,
+            "filter_cache_hit": filter_cache_hit,
         })
 
     try:
@@ -857,6 +946,67 @@ def run_backtest(
             "RESEARCH_UNCONFIRMED_FORMULA: paired source not user-confirmed; not formal.",
         ]
 
+    # Phase-3 execution cache: store metrics for identical screen runs (fast/summary)
+    try:
+        from ..research.execution_cache import (
+            execution_cache_key,
+            load_execution_cache,
+            save_execution_cache,
+        )
+        from dataclasses import asdict as _asdict_c
+
+        _ex_payload = {
+            "engine": "fast" if engine in ("fast", "quick", "research_fast") else "full",
+            "artifact_level": artifact_level,
+            "rule_ids": [s.id for s in trade_specs],
+            "period": period,
+            "hold": hold,
+            "entry_lag": entry_lag,
+            "buy_on": buy_on,
+            "sell_on": sell_on,
+            "buy_weekday": buy_weekday,
+            "exit_weekday": exit_weekday,
+            "signal_weekdays": signal_weekdays,
+            "holiday_policy": holiday_policy,
+            "stop_loss": req.stop_loss,
+            "take_profit": req.take_profit,
+            "account_mode": getattr(req, "account_mode", None) or "portfolio",
+            "start": start,
+            "end": end,
+            "universe": selected_universe_sha(codes),
+            "adjust": "research_unadjusted" if research_unadj else "adjusted",
+            "gua": (gf.to_dict() if gf else None),
+            "with_bagua": bagua_enabled,
+            "bagua_filter_mode": bagua_filter_mode,
+            "n_events": len(events),
+            "costs": _asdict_c(cfg.costs),
+        }
+        _ex_key = execution_cache_key(_ex_payload)
+        # Only auto-load for fast+summary screening to avoid stale formal full results
+        if (
+            use_signal_cache
+            and engine in ("fast", "quick", "research_fast")
+            and artifact_level == "summary"
+        ):
+            _ex_hit = load_execution_cache(_ex_key, cfg=cfg)
+            if _ex_hit and isinstance(_ex_hit.get("metrics"), dict):
+                execution_cache_hit = True
+                result.metrics = dict(_ex_hit["metrics"])
+                result.metrics["execution_cache_hit"] = True
+                result.notes = list(result.notes) + ["execution_cache_hit"]
+        if not execution_cache_hit and use_signal_cache:
+            try:
+                save_execution_cache(
+                    _ex_key,
+                    metrics=dict(result.metrics or {}),
+                    meta={"run_id": run_id, "engine": engine},
+                    cfg=cfg,
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     out_dir = cfg.output_root / run_id
     bagua_sha = ""
     try:
@@ -945,6 +1095,8 @@ def run_backtest(
         "astock_code_sha": _astock_code_sha(),
         "n_signals": len(events),
         "signal_cache_hit": signal_cache_hit,
+        "filter_cache_hit": filter_cache_hit,
+        "execution_cache_hit": execution_cache_hit,
         "use_signal_cache": use_signal_cache,
         "request": req.to_dict(),
     }
@@ -978,6 +1130,11 @@ def run_backtest(
 
     if art_flags.get("write_signals", True):
         write_signals_csv(out_dir / "signals.csv", events)
+        try:
+            from ..research.parquet_io import write_events_parquet
+            write_events_parquet(out_dir / "signals.parquet", events)
+        except Exception:
+            pass
     _progress({
         "phase": "writing_excel",
         "pct": 97.0,
@@ -1206,6 +1363,8 @@ def run_backtest(
         "artifact_level": artifact_level,
         "holiday_policy": holiday_policy,
         "signal_cache_hit": signal_cache_hit,
+        "filter_cache_hit": filter_cache_hit,
+        "execution_cache_hit": execution_cache_hit,
         "use_signal_cache": use_signal_cache,
         "repro": {
             "factor_manifest_sha": repro["factor_manifest_sha"],
