@@ -44,6 +44,20 @@ from .queue_backend import MemoryQueueBackend, QueueBackend, SqliteQueueBackend
 from .trial_store import TrialStore
 from .worker import ResearchWorker
 from .platform import ResearchPlatform, default_platform_db_path
+from .regimes import assign_regime, slice_metrics_by_regime
+from .validation import fixed_split, walk_forward_folds, score_in_out, DEFAULT_HARD_GATES
+from .scoring import (
+    composite_score,
+    hard_filter,
+    pareto_front,
+    rank_candidates,
+    neighborhood_stability,
+    spike_risk_flag,
+    DEFAULT_WEIGHTS,
+)
+from .gua_gain import pair_gua_gain
+from .heatmap import build_heatmap
+from .evaluation import evaluate_trials
 
 __all__ = [
     # fingerprint
@@ -98,4 +112,22 @@ __all__ = [
     "ResearchWorker",
     "ResearchPlatform",
     "default_platform_db_path",
+    # phase-5 evaluation center
+    "assign_regime",
+    "slice_metrics_by_regime",
+    "fixed_split",
+    "walk_forward_folds",
+    "score_in_out",
+    "DEFAULT_HARD_GATES",
+    "composite_score",
+    "hard_filter",
+    "pareto_front",
+    "rank_candidates",
+    "neighborhood_stability",
+    "spike_risk_flag",
+    "DEFAULT_WEIGHTS",
+    "pair_gua_gain",
+    "build_heatmap",
+    "evaluate_trials",
 ]
+

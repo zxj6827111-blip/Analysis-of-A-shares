@@ -1,4 +1,4 @@
-"""FastAPI server for A-stock frontend: rules + backtests."""
+﻿"""FastAPI server for A-stock frontend: rules + backtests."""
 
 from __future__ import annotations
 
@@ -222,7 +222,7 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             "data_min_date": data_min,
             "data_max_date": data_max,
             "data_range_label": (
-                f"{data_min} ~ {data_max}" if data_min and data_max else "未知"
+                f"{data_min} ~ {data_max}" if data_min and data_max else "鏈煡"
             ),
             "min60": min60,
         }
@@ -453,7 +453,7 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         try:
             return create_experiment_from_grid(
                 cfg,
-                name=str(payload.get("name") or "实验"),
+                name=str(payload.get("name") or "瀹為獙"),
                 rule_ids=payload.get("rule_ids") or [],
                 gua_keys=payload.get("gua_keys") or ["none"],
                 weekday_keys=payload.get("weekday_keys"),
@@ -665,6 +665,30 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         finally:
             plat.close()
 
+
+    @app.post("/api/v1/research/evaluate")
+    def api_research_evaluate(payload: dict = Body(...)) -> dict:
+        """Phase 5: evaluation center — rank / pareto / gua gains / heatmaps."""
+        from .research.evaluation import evaluate_trials
+
+        if not isinstance(payload, dict):
+            payload = {}
+        trials = payload.get("trials")
+        if not isinstance(trials, list):
+            raise HTTPException(400, "body.trials must be a list")
+        rank_mode = str(payload.get("rank_mode") or "composite")
+        hard_rules = payload.get("hard_rules")
+        if hard_rules is not None and not isinstance(hard_rules, dict):
+            hard_rules = None
+        result = evaluate_trials(
+            trials,
+            rank_mode=rank_mode,
+            hard_rules=hard_rules,
+            heatmap_x=str(payload.get("heatmap_x") or "exit_weekday"),
+            heatmap_y=str(payload.get("heatmap_y") or "sell_on"),
+            heatmap_metric=str(payload.get("heatmap_metric") or "total_return"),
+        )
+        return {"ok": True, **result}
 
     # ----- Forecast module (isolated) -----
 
@@ -939,3 +963,4 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
