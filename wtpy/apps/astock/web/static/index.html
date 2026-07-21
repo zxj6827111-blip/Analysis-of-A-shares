@@ -537,6 +537,24 @@
     #btnCompareSelected:disabled { opacity: 0.45; cursor: not-allowed; }
     /* Experiment center (UX rewrite) */
     #pageExperiment { max-width: 1100px; }
+    button.exp-mode-btn.active {
+      outline: 2px solid rgba(61,139,253,0.9);
+      background: rgba(61,139,253,0.28) !important;
+      box-shadow: 0 0 0 1px rgba(61,139,253,0.45);
+    }
+    .exp-card.exp-mode-on {
+      border-color: rgba(61,139,253,0.55);
+      box-shadow: inset 0 0 0 1px rgba(61,139,253,0.18);
+    }
+    .exp-card.exp-mode-off { opacity: 0.78; }
+    #expEvalPanel {
+      margin-top: 0.75rem;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(18,24,32,0.9);
+    }
+
     .exp-hero {
       padding: 1rem 1.15rem; border-radius: 12px;
       background: linear-gradient(135deg, rgba(61,139,253,0.16), rgba(20,28,40,0.6));
@@ -1786,8 +1804,8 @@ XG:CROSS(MA5,MA10);</textarea>
           </ol>
           <div class="exp-actions" style="margin-top:0.55rem;flex-wrap:wrap">
             <button type="button" class="primary-xl" id="btnExp735" title="周五信号·周一开买·周二至五开/收平·无卦与最佳3爻 = 16 组">735 一键 16 组</button>
-            <button type="button" class="secondary" id="btnExpModeTemplate">日程模板模式</button>
-            <button type="button" class="secondary" id="btnExpModeAxes">独立参数轴模式</button>
+            <button type="button" class="secondary exp-mode-btn active" id="btnExpModeTemplate">日程模板模式</button>
+            <button type="button" class="secondary exp-mode-btn" id="btnExpModeAxes">独立参数轴模式</button>
           </div>
         </div>
 
@@ -1927,7 +1945,7 @@ XG:CROSS(MA5,MA10);</textarea>
 
             <div class="exp-card">
               <h3><span class="n">4</span> 预览并开始</h3>
-              <p class="hint">默认用<strong>演示池 2 只股票</strong>试跑。点「重新计算 / 预览」会请求服务端 estimate（含过滤后组数与前若干组参数）。</p>
+              <p class="hint">默认用<strong>演示池 2 只股票</strong>试跑。若结果成交为 0 或收益为 —，请检查区间是否有信号，或在「新建回测」拉长日期后再开实验。评价六视图在结果区下方，点「评价分析」或实验完成后自动打开。点「重新计算 / 预览」会请求服务端 estimate（含过滤后组数与前若干组参数）。</p>
               <div class="exp-summary" id="expSummary">
                 <div><div class="sub">将运行</div><div class="big" id="expComboCount">—</div><div class="sub">组回测</div></div>
                 <div class="formula" id="expFormula">请先完成第 1～3 步</div>
@@ -5066,12 +5084,36 @@ XG:CROSS(MA5,MA10);</textarea>
       const cardT = document.getElementById("expCardTemplateMode");
       const cardA = document.getElementById("expCardAxesMode");
       const tag = document.getElementById("expModeTag");
-      if (cardT) cardT.style.opacity = __expMode === "template" ? "1" : "0.55";
-      if (cardA) cardA.style.display = __expMode === "free_axes" ? "" : "none";
+      const btnT = document.getElementById("btnExpModeTemplate");
+      const btnA = document.getElementById("btnExpModeAxes");
+      if (cardT) {
+        cardT.style.opacity = "1";
+        cardT.classList.toggle("exp-mode-on", __expMode === "template");
+        cardT.classList.toggle("exp-mode-off", __expMode !== "template");
+      }
+      if (cardA) {
+        cardA.style.display = __expMode === "free_axes" ? "" : "none";
+        cardA.classList.toggle("exp-mode-on", __expMode === "free_axes");
+        cardA.classList.toggle("exp-mode-off", __expMode !== "free_axes");
+      }
+      if (btnT) {
+        btnT.classList.add("exp-mode-btn");
+        btnT.classList.toggle("active", __expMode === "template");
+      }
+      if (btnA) {
+        btnA.classList.add("exp-mode-btn");
+        btnA.classList.toggle("active", __expMode === "free_axes");
+      }
       if (tag) {
         tag.textContent = __expMode === "free_axes"
           ? "（当前：独立参数轴 — 模板勾选将被忽略）"
           : "（当前：模板模式）";
+      }
+      const st = document.getElementById("expStatus");
+      if (st) {
+        st.textContent = __expMode === "free_axes"
+          ? "已切换：独立参数轴模式（下方会展开信号/买入/卖出轴，可点「重新计算 / 预览」）"
+          : "已切换：日程模板模式（请勾选模板后点「重新计算 / 预览」）";
       }
       _expChipSync();
     }
@@ -5151,7 +5193,7 @@ XG:CROSS(MA5,MA10);</textarea>
         gua_keys: _expChecked("#expGuaChips .exp-gua, .exp-gua"),
         period: (document.getElementById("period") || {}).value || "DAY",
         codes: ["sh600000", "sz000001"],
-        start: start || 20240101,
+        start: start || 20200101,
         end: end || 20241231,
         account_mode: (document.querySelector('input[name="accountMode"]:checked') || {}).value || "portfolio",
         research_unadjusted: !!(document.getElementById("researchUnadj") || {}).checked,
@@ -5437,6 +5479,50 @@ XG:CROSS(MA5,MA10);</textarea>
         box.innerHTML = "<div class='exp-empty'>加载失败：" + escAttr(e.message || e) + "</div>";
       }
     }
+    
+    function _expMetricRet(m) {
+      if (!m) return null;
+      if (m.total_return != null && m.total_return !== "") return m.total_return;
+      if (m.mean_return != null && m.mean_return !== "") return m.mean_return;
+      return null;
+    }
+    function _expMetricTrades(m) {
+      if (!m) return null;
+      if (m.n_round_trips != null) return m.n_round_trips;
+      if (m.n_trades != null) return m.n_trades;
+      if (m.n_buys != null) return m.n_buys;
+      return null;
+    }
+    function _expGuaLabel(meta, p) {
+      meta = meta || {};
+      p = p || {};
+      if (meta.gua_label) return meta.gua_label;
+      if (meta.gua_key === "none") return "不加卦象";
+      if (meta.gua_key === "best3") return "最佳3爻";
+      if (meta.gua_key === "bull") return "偏多信号";
+      if (meta.gua_key) return meta.gua_key;
+      if (p.with_bagua) return "最佳3爻";
+      const gf = p.gua_filter || {};
+      if (gf && gf.enabled) {
+        if (gf.selection_mode === "action_signal") return "偏多信号";
+        if (gf.selection_mode === "exact_line") return "最佳3爻";
+        return "卦象过滤";
+      }
+      return "不加卦象";
+    }
+    function _expStatusHint(row) {
+      const m = row.metrics || {};
+      const tr = _expMetricTrades(m);
+      const nSig = m.n_signals_fast != null ? m.n_signals_fast : m.n_events;
+      if (row.status === "succeeded" && (tr === 0 || tr === "0") && (nSig === 0 || nSig === "0")) {
+        return "（无信号/无成交）";
+      }
+      if (row.status === "succeeded" && (tr === 0 || tr === "0")) {
+        return "（有信号但无成交）";
+      }
+      return "";
+    }
+
     async function expShowResults(experimentId) {
       const box = document.getElementById("expResults");
       const st = document.getElementById("expStatus");
@@ -5461,7 +5547,9 @@ XG:CROSS(MA5,MA10);</textarea>
           const p = row.params || {};
           const meta = p._meta || {};
           const m = row.metrics || {};
-          const ret = m.total_return != null ? formatPercent(m.total_return) : "—";
+          const retN = _expMetricRet(m);
+          const trN = _expMetricTrades(m);
+          const ret = retN != null && retN !== "" ? formatPercent(retN) : "—";
           const mdd = m.max_drawdown != null ? formatPercent(Math.abs(Number(m.max_drawdown))) : "—";
           const wr = m.win_rate != null ? formatPercent(m.win_rate) : "—";
           const stLab = { succeeded: "完成", failed: "失败", skipped: "跳过(重复)", pending: "等待", running: "运行中", cancelled: "取消" };
@@ -5476,13 +5564,13 @@ XG:CROSS(MA5,MA10);</textarea>
           }
           html +=
             "<tr><td>" + escAttr(meta.rule_id || ((p.rule_ids || [])[0] || "—")) + "</td>" +
-            "<td>" + escAttr(meta.gua_label || meta.gua_key || "—") + "</td>" +
+            "<td>" + escAttr(_expGuaLabel(meta, p)) + "</td>" +
             "<td>" + escAttr(sched) + "</td>" +
-            "<td>" + escAttr(stLab[row.status] || row.status || "—") + "</td>" +
+            "<td>" + escAttr((stLab[row.status] || row.status || "—") + _expStatusHint(row)) + "</td>" +
             "<td class='num'>" + ret + "</td>" +
             "<td class='num'>" + mdd + "</td>" +
             "<td class='num'>" + wr + "</td>" +
-            "<td class='num'>" + (m.n_round_trips != null ? m.n_round_trips : "—") + "</td>" +
+            "<td class='num'>" + (trN != null ? trN : "—") + "</td>" +
             "<td class='sub'>" + (row.run_id
               ? ("<button type='button' class='btn-op' data-exp-open-run='" + escAttr(row.run_id) + "'>打开</button>")
               : "—") + "</td></tr>";
@@ -5500,7 +5588,7 @@ XG:CROSS(MA5,MA10);</textarea>
               exit_weekday: p.exit_weekday,
               sell_on: p.sell_on,
               gua_key: meta.gua_key || (p.with_bagua ? "best3" : "none"),
-              total_return: m.total_return,
+              total_return: _expMetricRet(m),
             });
           });
           if (matrixRows.length >= 4) {
@@ -5551,7 +5639,10 @@ XG:CROSS(MA5,MA10);</textarea>
             clearInterval(__expPollTimer);
             __expPollTimer = null;
             const st = document.getElementById("expStatus");
-            if (st && exp.status === "completed") st.textContent = "实验已完成，可下载 Excel 或打开单条任务详情。";
+            if (st && exp.status === "completed") {
+              st.textContent = "实验已完成。可点「评价分析」查看六视图，或下载 Excel。";
+              try { expRunEvaluate(experimentId); } catch (eEv) {}
+            }
           }
         } catch (e) {}
       }, 2500);
@@ -5617,15 +5708,27 @@ XG:CROSS(MA5,MA10);</textarea>
             sell_on: p.sell_on || meta.sell_on,
             hold: p.hold,
             gua_key: meta.gua_key || (p.with_bagua ? "best3" : "none"),
-            total_return: m.total_return,
+            total_return: (typeof _expMetricRet === "function" ? _expMetricRet(m) : m.total_return),
             max_drawdown: m.max_drawdown,
             win_rate: m.win_rate,
-            n_trades: m.n_round_trips != null ? m.n_round_trips : m.n_trades,
-            trade_count: m.n_round_trips != null ? m.n_round_trips : m.n_trades,
+            n_trades: (typeof _expMetricTrades === "function" ? _expMetricTrades(m) : (m.n_round_trips != null ? m.n_round_trips : m.n_trades)),
+            trade_count: (typeof _expMetricTrades === "function" ? _expMetricTrades(m) : (m.n_round_trips != null ? m.n_round_trips : m.n_trades)),
+            gua_label: (typeof _expGuaLabel === "function" ? _expGuaLabel(meta, p) : (meta.gua_label || meta.gua_key)),
           };
           if (m.yearly_metrics) trial.yearly_metrics = m.yearly_metrics;
           trials.push(trial);
         });
+        if (!trials.length) {
+          if (panel) {
+            panel.style.display = "";
+            const ov = document.getElementById("expEvalPane-overview");
+            if (ov) {
+              ov.innerHTML = "<div class='exp-empty'>没有成功的试验可评价。常见原因：区间内无信号/无成交（总收益与成交为 — 或 0）。可拉长日期区间，或用 full 引擎重跑。</div>";
+            }
+          }
+          if (st) st.textContent = "评价分析：无成功试验（请检查信号/成交是否为 0）。";
+          return;
+        }
         const ev = await api("/api/v1/research/evaluate", {
           method: "POST",
           body: JSON.stringify({ trials: trials, rank_mode: "composite" }),
