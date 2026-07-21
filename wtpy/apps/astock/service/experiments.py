@@ -690,8 +690,14 @@ def create_experiment_from_grid(
     sell_options: Optional[Sequence[dict]] = None,
     take_profit_list: Optional[Sequence[Optional[float]]] = None,
     holiday_policy: str = "next_trading_day",
+    engine: str = "fast",
+    artifact_level: str = "summary",
+    use_signal_cache: bool = True,
 ) -> Dict[str, Any]:
     """Create experiment from legacy weekday_keys templates OR free axes.
+
+    Phase-3 defaults: engine=fast, artifact_level=summary, use_signal_cache=True
+    so large grids screen quickly; promote winners with engine=full later.
 
     Templates are presets only: when any free axis is provided, weekday_keys
     are ignored. Caps: DEFAULT_MAX_VARIANTS=50 soft; HARD_MAX_VARIANTS=500.
@@ -810,6 +816,9 @@ def create_experiment_from_grid(
         "buy_options": list(buy_options) if buy_options is not None else None,
         "sell_options": list(sell_options) if sell_options is not None else None,
         "holiday_policy": holiday_policy,
+        "engine": (engine or "fast").strip().lower(),
+        "artifact_level": (artifact_level or "summary").strip().lower(),
+        "use_signal_cache": bool(use_signal_cache),
         "mode": "free_axes" if use_free else "legacy_templates",
         "period": period,
         "codes": list(codes) if codes else ["sh600000", "sz000001"],
@@ -904,6 +913,22 @@ class ExperimentRunner:
 
         exp_db.update_variant(self.cfg, vid, status="running")
         try:
+            # Experiment-level defaults (Phase-3): fast screen + summary artifacts + cache
+            exp_row = exp_db.get_experiment(self.cfg, experiment_id)
+            exp_cfg = dict(exp_row.get("config") or {})
+            eng = (
+                params.get("engine")
+                or exp_cfg.get("engine")
+                or "fast"
+            )
+            art = (
+                params.get("artifact_level")
+                or exp_cfg.get("artifact_level")
+                or "summary"
+            )
+            use_cache = params.get("use_signal_cache")
+            if use_cache is None:
+                use_cache = exp_cfg.get("use_signal_cache", True)
             req = BacktestRequest(
                 rule_ids=list(params.get("rule_ids") or []),
                 period=params.get("period") or "DAY",
@@ -923,6 +948,12 @@ class ExperimentRunner:
                 stop_loss=params.get("stop_loss"),
                 take_profit=params.get("take_profit"),
                 account_mode=params.get("account_mode") or "portfolio",
+                engine=str(eng or "fast"),
+                artifact_level=str(art or "summary"),
+                use_signal_cache=bool(use_cache),
+                holiday_policy=params.get("holiday_policy")
+                or exp_cfg.get("holiday_policy")
+                or "next_trading_day",
             )
             svc = BacktestService(self.cfg)
             summary = svc.run(req)

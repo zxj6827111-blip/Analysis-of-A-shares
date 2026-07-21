@@ -473,6 +473,11 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
                 sell_options=payload.get("sell_options"),
                 take_profit_list=payload.get("take_profit_list"),
                 holiday_policy=str(payload.get("holiday_policy") or "next_trading_day"),
+                engine=str(payload.get("engine") or "fast"),
+                artifact_level=str(payload.get("artifact_level") or "summary"),
+                use_signal_cache=bool(
+                    True if payload.get("use_signal_cache") is None else payload.get("use_signal_cache")
+                ),
             )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e

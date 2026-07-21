@@ -29,15 +29,15 @@ request
 | ID | 内容 | 状态 |
 |----|------|------|
 | P3.0 | 工单板 | `[x]` |
-| P3.1 | 拆分信号计算可调用 | `[~]` |
-| P3.2 | signal_cache | `[~]` |
-| P3.3 | filter_cache | `[~]` |
-| P3.4 | fast_engine | `[~]` |
-| P3.5 | 完整引擎保持默认 | `[ ]` |
-| P3.6 | artifact_level | `[ ]` |
-| P3.7 | Parquet 可选 | `[ ]` 本迭代可用 JSONL |
-| P3.8 | 基准/测试 | `[ ]` |
-| P3.E | commit push | `[ ]` |
+| P3.1 | 拆分信号计算可调用 | `[x]` `_load_maps_and_maybe_signals` |
+| P3.2 | signal_cache | `[x]` 磁盘 JSON + `use_signal_cache` 主路径 |
+| P3.3 | filter_cache | `[x]` API 就绪；卦象层仍按 run 过滤（cache 模块可用） |
+| P3.4 | fast_engine | `[x]` |
+| P3.5 | 完整引擎保持默认 | `[x]` 单次回测默认 full；实验默认 fast |
+| P3.6 | artifact_level | `[x]` 实验默认 summary |
+| P3.7 | Parquet 可选 | `[ ]` 仍用 JSON |
+| P3.8 | 基准/测试 | `[x]` phase3 单测 + 全量 238 |
+| P3.E | commit push | `[x]` |
 
 ---
 
