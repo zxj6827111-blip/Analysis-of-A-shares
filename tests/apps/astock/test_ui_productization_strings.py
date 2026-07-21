@@ -44,3 +44,11 @@ def test_ui_productization_eval_panes():
         "expEvalPane-stab",
     ):
         assert pane in text, pane
+
+
+def test_exp_inline_rule_picker_markers():
+    from pathlib import Path
+    html = Path("wtpy/apps/astock/web/static/index.html").read_text(encoding="utf-8")
+    for key in ("expRulePicker", "renderExpRulePicker", "btnExpClearRules", "exp-rule-picker"):
+        assert key in html, key
+    assert 'name === "history" || name === "detail" || name === "experiment"' not in html
