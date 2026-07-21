@@ -799,7 +799,18 @@ def run_backtest(
     title = "、".join(rule_names) if rule_names else "回测"
     if gua_filter_meta:
         hs = (gua_filter_meta.get("history_summary") or {}).get("short") or "卦象过滤"
-        # Prefer compact but explicit: 卦象3项 / 卦象信号：新开仓、加仓
+        # Fingerprint classic best-3 preset for human-readable history titles
+        try:
+            _sids = sorted(str(x) for x in (gua_filter_meta.get("selected_state_ids") or []))
+            if _sids == ["11-1", "24-1", "46-1"]:
+                hs = "卦象·最佳3爻"
+            elif gua_filter_meta.get("selection_mode") == "action_signal":
+                acts = list(gua_filter_meta.get("selected_action_signals") or [])
+                if set(acts) == {"新开仓", "加仓"} or set(acts) == {"加仓", "新开仓"}:
+                    hs = "卦象·偏多信号"
+        except Exception:
+            pass
+        # Prefer compact but explicit: 卦象·最佳3爻 / 卦象信号：…
         title = f"{title} + {hs}"
     elif bagua_enabled and bagua_filter_mode:
         title = f"{title} + {bagua_mode_label(bagua_filter_mode)}"

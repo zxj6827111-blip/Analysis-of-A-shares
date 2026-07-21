@@ -2914,16 +2914,24 @@ XG:CROSS(MA5,MA10);</textarea>
         const rp = repro || src.repro || (src.meta && src.meta.repro) || {};
         const gf = src.gua_filter || rp.gua_filter || (src.meta && src.meta.gua_filter) || null;
         if (!gf || !gf.enabled) {
-          // legacy bagua best3
+          // legacy bagua best3 path (with_bagua without structured gua_filter)
           if (src.with_bagua || rp.with_bagua || src.bagua_filter_label || rp.bagua_filter_label) {
             const lab = src.bagua_filter_label || rp.bagua_filter_label || "八卦";
             if (lab && lab !== "否") return String(lab);
           }
           return "";
         }
-        if (typeof GuaUI !== "undefined" && GuaUI.historyShort) {
+        // Prefer server-built history_summary (works even if GuaUI not ready)
+        if (gf.history_summary && gf.history_summary.short) {
+          const s0 = String(gf.history_summary.short);
+          if (s0 && s0.indexOf("未启用") < 0) return s0;
+        }
+        // best3 preset fingerprint (exact three classic lines)
+        const sids = (gf.selected_state_ids || []).map(String).slice().sort().join(",");
+        if (sids === "11-1,24-1,46-1" || sids === "24-1,46-1,11-1") return "卦象·最佳3爻";
+        if (typeof GuaUI !== "undefined" && GuaUI && GuaUI.historyShort) {
           const hs = GuaUI.historyShort(gf);
-          if (hs && hs.short && hs.short.indexOf("未启用") < 0) return hs.short;
+          if (hs && hs.short && String(hs.short).indexOf("未启用") < 0) return hs.short;
         }
         if (gf.selection_mode === "action_signal" && (gf.selected_action_signals || []).length) {
           return "卦象信号：" + (gf.selected_action_signals || []).slice(0, 3).join("、");
@@ -2974,12 +2982,11 @@ XG:CROSS(MA5,MA10);</textarea>
       if (r.entry_lag != null && r.entry_lag !== "") tags.push("延迟" + r.entry_lag);
       tags.push(accountModeShort(m, r));
       try {
-        const gf = r.gua_filter || (r.repro && r.repro.gua_filter) || null;
-        if (typeof GuaUI !== "undefined" && gf) {
-          const hs = GuaUI.historyShort(gf);
-          tags.push(hs.short);
-        } else if (gf && gf.enabled) {
-          tags.push("卦象过滤");
+        const gBit = guaTitleFragment(r);
+        if (gBit) tags.push(gBit);
+        else {
+          const gf = r.gua_filter || (r.repro && r.repro.gua_filter) || null;
+          if (gf && gf.enabled) tags.push("卦象过滤");
         }
       } catch (e) {}
 
@@ -3543,6 +3550,14 @@ XG:CROSS(MA5,MA10);</textarea>
         seen.add(tg);
         out.push(tg);
       });
+      // 卦象：历史行必须显示「规则 + 卦象」
+      try {
+        const gBit = guaTitleFragment(r);
+        if (gBit && !seen.has(gBit)) {
+          seen.add(gBit);
+          out.unshift(gBit);
+        }
+      } catch (e) {}
       // signal weekday filter tags
       const swd = r.signal_weekdays || (r.repro && r.repro.signal_weekdays) || (m && m.signal_weekdays);
       if (Array.isArray(swd) && swd.length) {
@@ -3949,6 +3964,19 @@ XG:CROSS(MA5,MA10);</textarea>
           return;
         }
 
+        // Surface obvious gua misconfig: switch on but no selection
+        try {
+          if (typeof GuaUI !== "undefined" && GuaUI && typeof GuaUI.getPayload === "function") {
+            const gchk = GuaUI.getPayload();
+            const sw = document.getElementById("guaEnabled");
+            if (sw && sw.checked && gchk && !gchk.enabled) {
+              if (!confirm("卦象开关已打开，但尚未选择有效过滤条件（方案/操作信号/爻象）。\n将按「不启用卦象过滤」提交。\n\n确定继续？")) {
+                return;
+              }
+            }
+          }
+        } catch (e) {}
+
         const body = {
           rule_ids: tradeIds,
           period: document.getElementById("period").value,
@@ -3965,7 +3993,25 @@ XG:CROSS(MA5,MA10);</textarea>
           use_full_market,
           start,
           end,
-          with_bagua: hasBagua,
+          // Gua filter from Step 6 (must be sent; with_bagua alone only tracks bagua_ohlc checkbox)
+          gua_filter: (function(){
+            try {
+              if (typeof GuaUI !== "undefined" && GuaUI && typeof GuaUI.getPayload === "function") {
+                return GuaUI.getPayload();
+              }
+            } catch (e) { console.warn("GuaUI.getPayload", e); }
+            return null;
+          })(),
+          with_bagua: (function(){
+            let gfOn = false;
+            try {
+              if (typeof GuaUI !== "undefined" && GuaUI && typeof GuaUI.getPayload === "function") {
+                const g = GuaUI.getPayload();
+                gfOn = !!(g && g.enabled);
+              }
+            } catch (e) {}
+            return !!(hasBagua || gfOn);
+          })(),
           bagua_filter_mode: hasBagua ? "best3" : null,
           research_unadjusted: document.getElementById("researchUnadj").checked,
           research_unconfirmed_formula: document.getElementById("researchUnconf").checked,

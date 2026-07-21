@@ -161,3 +161,13 @@ def test_copy_params_still_refreshes_summary(html: str):
     assert "updateTimeline" in html
     assert "updateBtSummary" in html
     assert "GuaUI.setFromConfig" in html
+
+
+def test_submit_body_includes_gua_filter(html: str):
+    """Regression: history titles need gua_filter on backtest POST body."""
+    assert "gua_filter:" in html
+    assert "GuaUI.getPayload" in html
+    # must not only rely on bagua_ohlc checkbox
+    assert "with_bagua:" in html
+    assert "guaTitleFragment" in html
+    assert "卦象·最佳3爻" in html or "history_summary" in html
