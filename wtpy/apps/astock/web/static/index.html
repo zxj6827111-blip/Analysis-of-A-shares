@@ -2423,11 +2423,15 @@ XG:CROSS(MA5,MA10);</textarea>
     }
 
     
-    function hideResultPanel() {
+    function hideResultPanel(force) {
+      // Background job progress must not clear a history detail the user is reading.
+      if (!force && window.__userBrowsingDetail) return;
       const card = document.getElementById("resultCard");
       if (card) card.classList.remove("visible");
       const chart = document.getElementById("equityChart");
       if (chart) chart.classList.remove("visible");
+      const dd = document.getElementById("ddChart");
+      if (dd) dd.classList.remove("visible");
       const jw = document.getElementById("resultJsonWrap");
       if (jw) jw.classList.remove("open");
     }
@@ -2471,6 +2475,10 @@ XG:CROSS(MA5,MA10);</textarea>
       const card = document.getElementById("resultCard");
       if (card) card.classList.add("visible");
       const runId = summary.run_id || (summary.meta && summary.meta.run_id) || null;
+      if (fromHistory && runId) {
+        window.__pinnedDetailRunId = runId;
+        window.__userBrowsingDetail = true;
+      }
       let detail = summary;
       let artifacts = summary.artifacts || [];
       let equity = (summary.meta && summary.meta.equity_curve) || summary.equity_curve || [];
@@ -2949,8 +2957,7 @@ XG:CROSS(MA5,MA10);</textarea>
       const detail = [phase, total ? (cur + "/" + total) : "", msg, code,
         "已运行 " + fmtElapsed(elapsed), job.job_id || ""].filter(Boolean).join(" · ");
       setProgressUI(pct, phase + (total ? (" " + cur + "/" + total) : ""), detail, { active: true });
-      // keep result panel hidden while running
-      hideResultPanel();
+      // Do NOT hideResultPanel here — user may be viewing history detail while a job runs.
       return "异步任务 " + job.status + " · " + Number(pct).toFixed(1) + "% · 已运行 " + fmtElapsed(elapsed);
     }
 
@@ -3872,6 +3879,10 @@ XG:CROSS(MA5,MA10);</textarea>
 
       const openRun = async (rid) => {
         if (!rid) return;
+        // Pin detail view so background job polls do not steal/clear the panel
+        window.__pinnedDetailRunId = rid;
+        window.__userBrowsingDetail = true;
+
         box.querySelectorAll("tr.hist-row").forEach((x) => x.classList.remove("active"));
         const tr = box.querySelector("tr.hist-row[data-run='" + rid + "']");
         if (tr) tr.classList.add("active");
@@ -4032,6 +4043,8 @@ XG:CROSS(MA5,MA10);</textarea>
         else tabDetail.removeAttribute("disabled");
       }
       if (name === "detail" && tabDetail) {
+        window.__userBrowsingDetail = true;
+
         tabDetail.disabled = false;
         tabDetail.removeAttribute("disabled");
       }
@@ -4044,7 +4057,7 @@ XG:CROSS(MA5,MA10);</textarea>
           requestAnimationFrame(() => window.scrollTo(0, window.__historyScrollY || 0));
         }
       }
-      if (name === "new") { window.scrollTo(0, 0); try { refreshTaskQueueBar(); } catch (e) {} }
+      if (name === "new") { window.__userBrowsingDetail = false; window.scrollTo(0, 0); try { refreshTaskQueueBar(); } catch (e) {} }
     }
 
     async function copyRunParams(runId) {
@@ -4409,7 +4422,9 @@ XG:CROSS(MA5,MA10);</textarea>
           async_mode: true,  // always queue: next submit waits until previous finishes
         };
 
-        hideResultPanel();
+        window.__userBrowsingDetail = false;
+        window.__pinnedDetailRunId = "";
+        hideResultPanel(true);
         document.getElementById("metrics").innerHTML = "";
         msg.textContent = "正在提交回测任务…";
         setProgressUI(0, "提交中", "正在创建任务…", { active: true, indeterminate: true });
@@ -4455,10 +4470,26 @@ XG:CROSS(MA5,MA10);</textarea>
               }
               setProgressUI(100, "完成", "run_id=" + (result.run_id || job.run_id || ""), { active: true });
               hideProgressSoon();
-              await showRunResult(result, { fromHistory: false });
+              const finishedId = result.run_id || job.run_id || "";
+              const pinned = window.__pinnedDetailRunId || "";
+              const browsing = !!window.__userBrowsingDetail;
+              // If user is viewing another history run, do not yank them to the new result
+              if (!browsing || !pinned || pinned === finishedId) {
+                window.__pinnedDetailRunId = finishedId || pinned;
+                window.__userBrowsingDetail = false;
+                await showRunResult(result, { fromHistory: false });
+              } else {
+                const em2 = document.getElementById("runMsg");
+                if (em2) {
+                  em2.innerHTML =
+                    '<span class="okmsg">后台任务已完成：' +
+                    escAttr(result.title || finishedId) +
+                    "（你正在查看其他详情，未自动切换；可在历史中打开）</span>";
+                }
+              }
               try {
                 const rows = await api("/api/v1/runs?limit=200");
-                renderHistory(rows, result.run_id || job.run_id);
+                renderHistory(rows, browsing && pinned ? pinned : finishedId);
               } catch (_) {}
             } catch (e2) {
               console.warn(e2);
@@ -4496,7 +4527,7 @@ XG:CROSS(MA5,MA10);</textarea>
     loadHealth().catch(e => { const el=document.getElementById("health"); if(el) el.textContent="API 失败: "+e.message; });
     loadRules().catch(e => { document.getElementById("ruleList").textContent = e.message; });
     loadUniverseAndCalendar();
-    hideResultPanel();
+    hideResultPanel(true);
     // auto-load history so recent runs are visible
     api("/api/v1/runs?limit=200").then(renderHistory).catch(() => {});
 
