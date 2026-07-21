@@ -58,6 +58,12 @@ from .scoring import (
 from .gua_gain import pair_gua_gain
 from .heatmap import build_heatmap
 from .evaluation import evaluate_trials
+from .optimizer import grid_search, random_search, staged_search, optuna_search, expand_cartesian
+from .promote import select_for_full_retest
+from .schedules import list_schedules, get_schedule, next_fire_times, ScheduleRunner, SCHEDULES
+from .drift import detect_drift, DEFAULT_THRESHOLDS
+from .reports_auto import build_research_summary, mark_paper_candidates
+from .continuous import run_budgeted_search, run_scheduled_research
 
 __all__ = [
     # fingerprint
@@ -129,5 +135,23 @@ __all__ = [
     "pair_gua_gain",
     "build_heatmap",
     "evaluate_trials",
+    # phase-6 search / continuous research
+    "expand_cartesian",
+    "grid_search",
+    "random_search",
+    "staged_search",
+    "optuna_search",
+    "select_for_full_retest",
+    "list_schedules",
+    "get_schedule",
+    "next_fire_times",
+    "ScheduleRunner",
+    "SCHEDULES",
+    "detect_drift",
+    "DEFAULT_THRESHOLDS",
+    "build_research_summary",
+    "mark_paper_candidates",
+    "run_budgeted_search",
+    "run_scheduled_research",
 ]
 

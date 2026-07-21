@@ -690,6 +690,79 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         )
         return {"ok": True, **result}
 
+    # ----- Phase 6: search / schedules / drift / summary -----
+    @app.post("/api/v1/research/search")
+    def api_research_search(payload: dict = Body(...)) -> dict:
+        """Budgeted parameter search (grid / random / staged)."""
+        from .research.continuous import run_budgeted_search
+
+        if not isinstance(payload, dict):
+            payload = {}
+        space = payload.get("space") or payload.get("space_axes") or {}
+        if not isinstance(space, dict):
+            raise HTTPException(400, "body.space must be a dict of axes")
+        method = str(payload.get("method") or "random")
+        budget = int(payload.get("budget") or 20)
+        seed = int(payload.get("seed") or 0)
+        try:
+            trials = run_budgeted_search(space, method=method, budget=budget, seed=seed)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {
+            "ok": True,
+            "method": method,
+            "budget": budget,
+            "seed": seed,
+            "n": len(trials),
+            "trials": trials,
+        }
+
+    @app.get("/api/v1/research/schedules")
+    def api_research_schedules() -> dict:
+        from .research.schedules import list_schedules
+
+        items = list_schedules()
+        return {"ok": True, "schedules": items, "names": [s["name"] for s in items]}
+
+    @app.post("/api/v1/research/drift")
+    def api_research_drift(payload: dict = Body(...)) -> dict:
+        from .research.drift import detect_drift
+
+        if not isinstance(payload, dict):
+            payload = {}
+        recent = payload.get("recent") or payload.get("recent_metrics") or {}
+        baseline = payload.get("baseline") or payload.get("baseline_metrics") or {}
+        if not isinstance(recent, dict) or not isinstance(baseline, dict):
+            raise HTTPException(400, "recent and baseline must be metric dicts")
+        thresholds = payload.get("thresholds")
+        if thresholds is not None and not isinstance(thresholds, dict):
+            thresholds = None
+        result = detect_drift(recent, baseline, thresholds=thresholds)
+        return {"ok": True, **result}
+
+    @app.post("/api/v1/research/summary")
+    def api_research_summary(payload: dict = Body(...)) -> dict:
+        from .research.reports_auto import build_research_summary
+        from .research.evaluation import evaluate_trials
+
+        if not isinstance(payload, dict):
+            payload = {}
+        trials = payload.get("trials")
+        if not isinstance(trials, list):
+            raise HTTPException(400, "body.trials must be a list")
+        experiment_id = payload.get("experiment_id")
+        evaluate_result = payload.get("evaluate_result")
+        if evaluate_result is None and trials:
+            evaluate_result = evaluate_trials(trials)
+        drift_result = payload.get("drift_result") or payload.get("drift")
+        summary = build_research_summary(
+            experiment_id,
+            trials,
+            evaluate_result=evaluate_result,
+            drift_result=drift_result if isinstance(drift_result, dict) else None,
+        )
+        return {"ok": True, **summary}
+
     # ----- Forecast module (isolated) -----
 
 
