@@ -29,6 +29,11 @@ from .planner import (
     HARD_MAX_VARIANTS,
     plan_experiment,
 )
+from .signal_cache import get_or_compute_signals, signal_cache_key
+from .filter_cache import filter_cache_key, get_or_compute_filtered
+from .fast_engine import run_fast_backtest
+from .executor import cached_signal_pipeline, run_engine
+from .artifacts import apply_artifact_policy, normalize_artifact_level
 
 __all__ = [
     # fingerprint
@@ -61,4 +66,15 @@ __all__ = [
     "plan_experiment",
     "DEFAULT_MAX_VARIANTS",
     "HARD_MAX_VARIANTS",
+    # phase-3 cache / engines
+    "signal_cache_key",
+    "get_or_compute_signals",
+    "filter_cache_key",
+    "get_or_compute_filtered",
+    "run_fast_backtest",
+    "cached_signal_pipeline",
+    "run_engine",
+    "normalize_artifact_level",
+    "apply_artifact_policy",
 ]
+

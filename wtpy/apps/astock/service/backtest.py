@@ -168,9 +168,15 @@ class BacktestRequest:
     # portfolio = shared cash; per_symbol = TDX-style independent capital per stock
     account_mode: str = "portfolio"
     run_id: Optional[str] = None
+    # Phase-3 research options
+    engine: str = "full"  # full | fast
+    use_signal_cache: bool = False
+    artifact_level: str = "full"  # summary | candidate | full
+    holiday_policy: Optional[str] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
+
 
 
 
@@ -696,26 +702,82 @@ def run_backtest(
         "n_signals": len(events),
     })
 
-    bt = PortfolioBacktester(cfg, cal, raw_map, adj_bars_by_code=trade_map)
-    result = bt.run(
-        events,
-        hold=hold,
-        period=period,
-        run_id=run_id,
-        start=start,
-        end=end,
-        research_unadjusted=use_research,
-        formal_ok=use_formal_ok,
-        stop_loss_pct=req.stop_loss,
-        take_profit_pct=req.take_profit,
-        entry_lag=entry_lag,
-        account_mode=getattr(req, "account_mode", None) or "portfolio",
-        signal_weekdays=signal_weekdays,
-        buy_on=buy_on,
-        sell_on=sell_on,
-        buy_weekday=buy_weekday,
-        exit_weekday=exit_weekday,
-    )
+    engine = (getattr(req, "engine", None) or "full").strip().lower()
+    holiday_policy = getattr(req, "holiday_policy", None) or "next_trading_day"
+    artifact_level = getattr(req, "artifact_level", None) or "full"
+    try:
+        from ..research.artifacts import apply_artifact_policy, normalize_artifact_level
+
+        artifact_level = normalize_artifact_level(artifact_level, default="full")
+        art_flags = apply_artifact_policy(level=artifact_level)
+    except Exception:
+        art_flags = {
+            "write_signals": True,
+            "write_fills": True,
+            "write_excel": True,
+            "write_equity": True,
+            "write_meta": True,
+        }
+
+    if engine in ("fast", "quick", "research_fast"):
+        from ..research.fast_engine import run_fast_backtest
+
+        fast_res = run_fast_backtest(
+            events,
+            trade_map,
+            cal,
+            hold=hold,
+            entry_lag=entry_lag,
+            buy_on=buy_on,
+            sell_on=sell_on,
+            buy_weekday=buy_weekday,
+            exit_weekday=exit_weekday,
+            holiday_policy=holiday_policy,
+            signal_weekdays=signal_weekdays,
+            start=start,
+            end=end,
+        )
+        # Adapt to BacktestResult-like surface for writers / history
+        from ..strategy import BacktestResult as _BTR
+
+        result = _BTR(
+            run_id=run_id,
+            config=dict(fast_res.config),
+            fills=[],
+            equity_curve=[],
+            metrics=dict(fast_res.metrics),
+            notes=list(fast_res.notes),
+            status="ok" if not use_research else "research_unadjusted",
+        )
+        result.metrics["engine"] = "fast"
+        result.metrics["n_signals_fast"] = fast_res.n_signals
+        result.config["engine"] = "fast"
+        result.config["holiday_policy"] = holiday_policy
+        result.config["artifact_level"] = artifact_level
+    else:
+        bt = PortfolioBacktester(cfg, cal, raw_map, adj_bars_by_code=trade_map)
+        result = bt.run(
+            events,
+            hold=hold,
+            period=period,
+            run_id=run_id,
+            start=start,
+            end=end,
+            research_unadjusted=use_research,
+            formal_ok=use_formal_ok,
+            stop_loss_pct=req.stop_loss,
+            take_profit_pct=req.take_profit,
+            entry_lag=entry_lag,
+            account_mode=getattr(req, "account_mode", None) or "portfolio",
+            signal_weekdays=signal_weekdays,
+            buy_on=buy_on,
+            sell_on=sell_on,
+            buy_weekday=buy_weekday,
+            exit_weekday=exit_weekday,
+            holiday_policy=holiday_policy,
+        )
+        result.config["engine"] = "full"
+        result.config["artifact_level"] = artifact_level
     if unconfirmed_run:
         result.status = "research_unconfirmed_formula"
         result.notes = list(result.notes) + [
@@ -834,21 +896,26 @@ def run_backtest(
         "pct": 96.0,
         "current": n_codes,
         "total": n_codes,
-        "message": f"写入结果（信号 {len(events)} / 成交 {len(result.fills)}）…",
+        "message": f"写入结果（信号 {len(events)} / 成交 {len(getattr(result, 'fills', []) or [])}）…",
         "code": None,
         "run_id": run_id,
     })
 
-    write_signals_csv(out_dir / "signals.csv", events)
+    if art_flags.get("write_signals", True):
+        write_signals_csv(out_dir / "signals.csv", events)
     _progress({
         "phase": "writing_excel",
         "pct": 97.0,
         "current": n_codes,
         "total": n_codes,
-        "message": "写入 CSV / Excel 汇总（大明细可能仍需片刻）…",
+        "message": (
+            "写入摘要…"
+            if not art_flags.get("write_excel", True)
+            else "写入 CSV / Excel 汇总（大明细可能仍需片刻）…"
+        ),
         "code": None,
         "run_id": run_id,
-        "n_fills": len(result.fills),
+        "n_fills": len(getattr(result, "fills", []) or []),
     })
     rule_names = [s.name for s in trade_specs]
     period_label = {
@@ -917,7 +984,47 @@ def run_backtest(
     elif "gua_filter" not in repro:
         repro["gua_filter"] = gf.to_dict() if gf else None
 
-    paths = write_backtest_csv(out_dir, result, meta=repro, events=events)
+    repro["engine"] = engine if engine in ("fast", "quick", "research_fast") else "full"
+    if repro["engine"] != "full":
+        repro["engine"] = "fast"
+    repro["artifact_level"] = artifact_level
+    repro["holiday_policy"] = holiday_policy
+
+    # Always write compact meta/metrics; heavy CSV/Excel respect artifact_level
+    out_dir.mkdir(parents=True, exist_ok=True)
+    import json as _json
+
+    (out_dir / "run_meta.json").write_text(
+        _json.dumps(repro, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    (out_dir / "metrics.json").write_text(
+        _json.dumps(result.metrics or {}, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    paths: dict = {
+        "run_meta": out_dir / "run_meta.json",
+        "metrics": out_dir / "metrics.json",
+    }
+    if art_flags.get("write_fills", True) or art_flags.get("write_excel", True) or art_flags.get(
+        "write_equity", True
+    ):
+        # full/candidate writers
+        if artifact_level == "summary":
+            pass
+        else:
+            paths.update(
+                write_backtest_csv(
+                    out_dir,
+                    result,
+                    meta=repro,
+                    events=events if art_flags.get("write_signals") else None,
+                )
+            )
+    else:
+        # summary: skip heavy write_backtest_csv
+        pass
+
 
     # index for history UI
     try:
@@ -1003,7 +1110,7 @@ def run_backtest(
         "gua_filter": gua_filter_meta or (gf.to_dict() if gf else None),
         "n_signals_before_bagua": bagua_n_before if bagua_enabled else None,
         "n_signals_after_bagua": bagua_n_after if bagua_enabled else None,
-        "n_fills": len(result.fills),
+        "n_fills": len(getattr(result, "fills", None) or []),
         "n_buys": result.metrics.get("n_buys"),
         "n_sells": result.metrics.get("n_sells"),
         "n_round_trips": result.metrics.get("n_round_trips"),
@@ -1020,6 +1127,9 @@ def run_backtest(
         "hold": hold,
         "account_mode": (getattr(req, "account_mode", None) or "portfolio"),
         "period": period,
+        "engine": repro.get("engine") or "full",
+        "artifact_level": artifact_level,
+        "holiday_policy": holiday_policy,
         "repro": {
             "factor_manifest_sha": repro["factor_manifest_sha"],
             "entry_lag": entry_lag,
