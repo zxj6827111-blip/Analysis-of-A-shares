@@ -62,7 +62,8 @@ def test_e2e_small_pool(tmp_path):
     assert "total_return" in metrics
     assert meta.get("status") == "research_unadjusted"
     assert meta.get("repro", {}).get("price_mode") == "raw"
-    assert meta["config"]["hold"] == 1
+    # hold is top-level / repro (AppConfig snapshot in config has no strategy hold)
+    assert meta.get("hold") == 1 or meta.get("repro", {}).get("hold") == 1
     if (out / "signals.csv").exists():
         rows = (out / "signals.csv").read_text(encoding="utf-8-sig").strip().splitlines()[1:]
         for row in rows:

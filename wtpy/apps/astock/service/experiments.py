@@ -283,6 +283,13 @@ class ExperimentRunner:
         params = dict(variant.get("params") or {})
         meta = params.pop("_meta", None)
         ph = variant.get("param_hash") or exp_db.param_hash(params)
+        # research fingerprint is metadata only; param_hash dedup stays param-only
+        research_fp = None
+        try:
+            from ..research.fingerprint import research_fingerprint_from_params
+            research_fp = research_fingerprint_from_params(params).full_hex(16)
+        except Exception:
+            research_fp = None
         # de-dup
         existing = exp_db.find_run_id_by_param_hash(self.cfg, ph)
         if existing:
@@ -343,6 +350,8 @@ class ExperimentRunner:
                             "gua_filter": summary.get("gua_filter") or params.get("gua_filter"),
                             "metrics": summary.get("metrics"),
                             "param_hash": ph,
+                            "research_fingerprint": research_fp
+                            or (summary.get("research_fingerprint") if isinstance(summary, dict) else None),
                             "experiment_id": experiment_id,
                             "variant_id": vid,
                         },

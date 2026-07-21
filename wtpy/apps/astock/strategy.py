@@ -8,9 +8,10 @@ Business rules (locked):
 - Without exit_weekday: DAY hold=N holds N trading days (hold=1 exits next session; cannot sell entry day).
   WEEK/MONTH hold=N: after N completed periods, exit on next tradable day; DWM hold=N same as day holds.
 - With exit_weekday: exit on first trading day on/after that weekday after entry (overrides hold stepping).
-- Holidays: next_weekday / nth_trading_day_after always land on a tradable session.
+- Holidays: planned weekday is civil calendar; holiday_policy maps to actual session
+  (default next_trading_day). Legacy next_weekday_trading_day may skip to next week.
 - Optional signal_weekdays: only signals whose calendar weekday is in the allow-list (1=Mon … 7=Sun); empty = all.
-- Time-stop (hold expiry / weekday exit, no SL/TP): sell at that day's open|close *(1-slippage) per sell_on, reason hold_expired.
+- Time-stop (hold expiry): reason time_exit; weekday exit: weekday_exit (legacy alias hold_expired still mapped).
 - Risk exits (stop_loss / take_profit): trigger on high/low, execute next tradable day open *(1-slippage).
 - Repeat signals do not reset remaining hold.
 - Buy px = open|close *(1+slippage) per buy_on (default open).
@@ -18,6 +19,7 @@ Business rules (locked):
 - account_mode=per_symbol: each stock independent virtual capital (通达信对照).
 - Suspended days: mark with last valid close.
 - Limit-down untradeable sells are deferred.
+- Fills record planned/actual dates and holiday_policy when schedule shifts apply.
 """
 
 from __future__ import annotations
@@ -29,7 +31,11 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 import numpy as np
 
 from .config import AStockConfig, CostConfig
-from .data.calendar import TradeCalendar
+from .data.calendar import (
+    DEFAULT_HOLIDAY_POLICY,
+    TradeCalendar,
+    normalize_holiday_policy,
+)
 from .data.limit_rules import (
     DefaultAShareLimitRule,
     LimitContext,
@@ -39,6 +45,20 @@ from .data.limit_rules import (
 from .data.periods import PeriodBar, aggregate_month, aggregate_week
 from .data.tdx_reader import DayBar
 from .study import SignalEvent
+
+# Canonical exit / entry reason codes (phase-1 research center).
+EXIT_REASON_STOP_LOSS = "stop_loss"
+EXIT_REASON_TAKE_PROFIT = "take_profit"
+EXIT_REASON_TIME_EXIT = "time_exit"
+EXIT_REASON_WEEKDAY_EXIT = "weekday_exit"
+EXIT_REASON_REVERSE_SIGNAL = "reverse_signal"
+EXIT_REASON_GUA_WEAKENING = "gua_weakening"
+EXIT_REASON_FORCED_EXIT = "forced_exit"
+EXIT_REASON_DELISTING_EXIT = "delisting_exit"
+ENTRY_REASON_SIGNAL = "signal_entry"
+
+# Legacy reason still accepted in compose fallbacks.
+LEGACY_HOLD_EXPIRED = "hold_expired"
 
 
 @dataclass
@@ -62,6 +82,13 @@ class Position:
     defer_reason: Optional[str] = None  # suspended | limit_down | bad_price while waiting to sell
     # When set: force time-stop on this calendar trading day (weekday-based exit).
     exit_date: Optional[int] = None
+    # Schedule provenance (phase-1)
+    planned_entry_date: Optional[int] = None
+    entry_shift_days: int = 0
+    planned_exit_date: Optional[int] = None
+    exit_shift_days: int = 0
+    holiday_policy: Optional[str] = None
+    time_exit_kind: str = "time_exit"  # time_exit | weekday_exit
 
 
 @dataclass
@@ -75,6 +102,10 @@ class Fill:
     commission: float
     stamp_tax: float
     reason: str
+    planned_date: Optional[int] = None
+    actual_date: Optional[int] = None
+    shift_days: int = 0
+    holiday_policy: Optional[str] = None
 
 
 @dataclass
@@ -267,15 +298,34 @@ def filter_events_by_signal_weekdays(
     return kept
 
 
-def compose_sell_reason(trigger: Optional[str], defer: Optional[str], fallback: str = "hold_expired") -> str:
-    """Compose fill reason preserving original risk trigger across deferrals."""
+def normalize_exit_reason(reason: Optional[str]) -> str:
+    """Map legacy codes to phase-1 canonical exit reasons."""
+    if not reason:
+        return EXIT_REASON_TIME_EXIT
+    r = str(reason)
+    if r == LEGACY_HOLD_EXPIRED:
+        return EXIT_REASON_TIME_EXIT
+    return r
+
+
+def compose_sell_reason(
+    trigger: Optional[str],
+    defer: Optional[str],
+    fallback: str = EXIT_REASON_TIME_EXIT,
+) -> str:
+    """Compose fill reason preserving original risk trigger across deferrals.
+
+    Canonical fallbacks: time_exit (hold N), weekday_exit (weekday anchor).
+    Legacy hold_expired is normalized to time_exit.
+    """
+    fb = normalize_exit_reason(fallback)
     if trigger and defer:
         return f"{trigger}_deferred_{defer}"
     if trigger:
         return trigger
     if defer in ("suspended", "limit_down", "bad_price"):
-        return f"{fallback}_deferred_{defer}"
-    return fallback
+        return f"{fb}_deferred_{defer}"
+    return fb
 
 
 def _week_key(d: int) -> Tuple[int, int]:
@@ -355,6 +405,7 @@ class PortfolioBacktester:
         sell_on: str = "open",
         buy_weekday: Optional[Union[int, str]] = None,
         exit_weekday: Optional[Union[int, str]] = None,
+        holiday_policy: Optional[str] = None,
     ) -> BacktestResult:
         stop_loss_pct = validate_risk_pct("stop_loss_pct", stop_loss_pct)
         take_profit_pct = validate_risk_pct("take_profit_pct", take_profit_pct)
@@ -368,6 +419,9 @@ class PortfolioBacktester:
         sell_on = parse_price_session(sell_on, default="open")
         buy_weekday = parse_single_weekday(buy_weekday)
         exit_weekday = parse_single_weekday(exit_weekday)
+        holiday_policy = normalize_holiday_policy(
+            holiday_policy, default=DEFAULT_HOLIDAY_POLICY
+        )
         account_mode = (account_mode or "portfolio").strip().lower()
         if account_mode in ("tdx", "per_stock", "independent", "通达信", "单票"):
             account_mode = "per_symbol"
@@ -384,14 +438,16 @@ class PortfolioBacktester:
             "Survivor bias possible: local TDX may lack delisted stocks.",
             DefaultAShareLimitRule.BOUNDARY_NOTE,
             "Schedule engine: all entry/exit dates are solved on the A-share trading-day calendar "
-            "(T+N family); holidays roll forward to the next tradable session.",
+            "(T+N family); weekday anchors use planned civil date + holiday_policy=%s."
+            % holiday_policy,
             "Sell at %s on exit day for time-stop/deferred risk (sell_on=%s)." % (sell_on, sell_on),
         ]
         if buy_weekday is not None:
             notes.append(
-                "Buy schedule (weekday anchor): first trading day after signal on %s at %s "
-                "(overrides entry_lag stepping; entry_lag=%d kept for repro only)."
-                % (format_single_weekday(buy_weekday), buy_on, entry_lag)
+                "Buy schedule (weekday anchor): planned %s after signal at %s "
+                "(overrides entry_lag stepping; entry_lag=%d kept for repro only; "
+                "holiday_policy=%s)."
+                % (format_single_weekday(buy_weekday), buy_on, entry_lag, holiday_policy)
             )
         else:
             notes.append(
@@ -400,9 +456,10 @@ class PortfolioBacktester:
             )
         if exit_weekday is not None:
             notes.append(
-                "Exit schedule (weekday anchor): first trading day after entry on %s at %s "
-                "(overrides hold N stepping; hold=%d kept for repro only)."
-                % (format_single_weekday(exit_weekday), sell_on, hold)
+                "Exit schedule (weekday anchor): planned %s after entry at %s "
+                "(overrides hold N stepping; hold=%d kept for repro only; "
+                "holiday_policy=%s)."
+                % (format_single_weekday(exit_weekday), sell_on, hold, holiday_policy)
             )
         else:
             notes.append(
@@ -424,7 +481,7 @@ class PortfolioBacktester:
                     if account_mode == "per_symbol"
                     else "Account mode: portfolio — single shared cash account with max_weight cap."
                 ),
-                "Time-stop / weekday exit: force flat at configured session (hold_expired), regardless of P&L.",
+                "Time-stop: reason time_exit; weekday anchor exit: weekday_exit (legacy hold_expired normalized).",
                 "Risk: trigger_on_daily_high_low (incl. entry day); execute_next_trading_day_open (T+1).",
                 "Risk conflict policy: stop_first when same bar hits both SL and TP.",
                 "schedule_mode=%s (weekday | tn)." % schedule_mode,
@@ -458,12 +515,24 @@ class PortfolioBacktester:
             # include from day before start for context? keep full for holds, filter equity later
             pass
         # trading dates window: from min signal next day to end
-        pending_buys: Dict[int, List[str]] = {}
+        # pending_buys[actual_entry] -> list of dicts with code + schedule meta
+        pending_buys: Dict[int, List[dict]] = {}
         for sig_date, codes in sig_map.items():
+            planned_entry: Optional[int] = None
+            entry_shift = 0
             if buy_weekday is not None:
-                entry = self.calendar.next_weekday_trading_day(sig_date, buy_weekday, strict=True)
+                resolved = self.calendar.resolve_weekday_session(
+                    sig_date,
+                    buy_weekday,
+                    strict=True,
+                    holiday_policy=holiday_policy,
+                )
+                if resolved is None:
+                    continue
+                planned_entry, entry, entry_shift = resolved
             else:
                 entry = self.calendar.nth_trading_day_after(sig_date, entry_lag)
+                planned_entry = entry
             if entry is None:
                 continue
             if start and entry < start:
@@ -472,9 +541,20 @@ class PortfolioBacktester:
             if end and entry > end:
                 continue
             pending_buys.setdefault(entry, [])
+            have = {x["code"] for x in pending_buys[entry]}
             for c in codes:
-                if c not in pending_buys[entry]:
-                    pending_buys[entry].append(c)
+                if c in have:
+                    continue
+                pending_buys[entry].append(
+                    {
+                        "code": c,
+                        "signal_date": sig_date,
+                        "planned_entry_date": planned_entry,
+                        "entry_shift_days": int(entry_shift or 0),
+                        "holiday_policy": holiday_policy,
+                    }
+                )
+                have.add(c)
 
         # determine simulation date range
         sim_dates = dates
@@ -562,10 +642,19 @@ class PortfolioBacktester:
                 else:
                     cash += amount - comm - tax
                 info = deferred_sells.pop(code, {}) or {}
+                # Prefer risk trigger; else weekday vs hold time-exit.
+                if info.get("trigger") or pos.trigger_reason:
+                    fallback = EXIT_REASON_TIME_EXIT
+                elif pos.time_exit_kind == EXIT_REASON_WEEKDAY_EXIT or (
+                    pos.exit_date is not None
+                ):
+                    fallback = EXIT_REASON_WEEKDAY_EXIT
+                else:
+                    fallback = EXIT_REASON_TIME_EXIT
                 reason = compose_sell_reason(
                     info.get("trigger") or pos.trigger_reason,
                     info.get("defer") or pos.defer_reason,
-                    fallback="hold_expired",
+                    fallback=fallback,
                 )
                 fills.append(
                     Fill(
@@ -578,11 +667,16 @@ class PortfolioBacktester:
                         commission=comm,
                         stamp_tax=tax,
                         reason=reason,
+                        planned_date=pos.planned_exit_date or pos.exit_date,
+                        actual_date=d,
+                        shift_days=int(pos.exit_shift_days or 0),
+                        holiday_policy=pos.holiday_policy,
                     )
                 )
 
             # 2) entries at open/close (buy_on)
-            for code in pending_buys.get(d, []):
+            for order in pending_buys.get(d, []):
+                code = order["code"] if isinstance(order, dict) else order
                 if code in positions:
                     # do not reset hold
                     continue
@@ -662,13 +756,57 @@ class PortfolioBacktester:
                     h_sess = int(hold)
                     h_per = 0
                     pkey = None
+                planned_entry = (
+                    order.get("planned_entry_date") if isinstance(order, dict) else d
+                ) or d
+                entry_shift = (
+                    int(order.get("entry_shift_days") or 0)
+                    if isinstance(order, dict)
+                    else 0
+                )
+                order_hp = (
+                    (order.get("holiday_policy") if isinstance(order, dict) else None)
+                    or holiday_policy
+                )
                 exit_date = None
+                planned_exit = None
+                exit_shift = 0
+                time_exit_kind = EXIT_REASON_TIME_EXIT
                 if exit_weekday is not None:
-                    exit_date = self.calendar.next_weekday_trading_day(d, exit_weekday, strict=True)
-                    # A-share T+1: never exit same day as entry; next_weekday already strict after d.
+                    resolved_x = self.calendar.resolve_weekday_session(
+                        d,
+                        exit_weekday,
+                        strict=True,
+                        holiday_policy=order_hp,
+                    )
+                    if resolved_x is None:
+                        # cannot schedule weekday exit — skip this entry
+                        if account_mode == "per_symbol":
+                            cash_by_code[code] = float(cash_by_code.get(code, 0.0)) + amount + comm
+                        else:
+                            cash += amount + comm
+                        continue
+                    planned_exit, exit_date, exit_shift = resolved_x
+                    # A-share T+1: never exit same day as entry
+                    if exit_date is not None and exit_date <= d:
+                        nxt = self.calendar.next_trading_day(d)
+                        if nxt is None:
+                            if account_mode == "per_symbol":
+                                cash_by_code[code] = float(cash_by_code.get(code, 0.0)) + amount + comm
+                            else:
+                                cash += amount + comm
+                            continue
+                        exit_date = nxt
+                        exit_shift = (
+                            (_date(exit_date // 10000, (exit_date // 100) % 100, exit_date % 100)
+                             - _date(planned_exit // 10000, (planned_exit // 100) % 100, planned_exit % 100)).days
+                            if planned_exit
+                            else 0
+                        )
                     # Disable session/period countdown; exit_date drives time-stop.
                     h_sess = 10**9
                     h_per = 10**9
+                    time_exit_kind = EXIT_REASON_WEEKDAY_EXIT
                 positions[code] = Position(
                     std_code=code,
                     shares=shares,
@@ -684,6 +822,12 @@ class PortfolioBacktester:
                     trigger_reason=None,
                     exit_date=exit_date,
                     defer_reason=None,
+                    planned_entry_date=int(planned_entry) if planned_entry else d,
+                    entry_shift_days=entry_shift,
+                    planned_exit_date=int(planned_exit) if planned_exit else None,
+                    exit_shift_days=int(exit_shift or 0),
+                    holiday_policy=order_hp,
+                    time_exit_kind=time_exit_kind,
                 )
                 fills.append(
                     Fill(
@@ -695,7 +839,11 @@ class PortfolioBacktester:
                         amount=amount,
                         commission=comm,
                         stamp_tax=0.0,
-                        reason="signal_entry",
+                        reason=ENTRY_REASON_SIGNAL,
+                        planned_date=int(planned_entry) if planned_entry else d,
+                        actual_date=d,
+                        shift_days=entry_shift,
+                        holiday_policy=order_hp,
                     )
                 )
 
@@ -835,6 +983,7 @@ class PortfolioBacktester:
                     buy_weekday=buy_weekday,
                     exit_weekday=exit_weekday,
                     account_mode=account_mode,
+                    holiday_policy=holiday_policy,
                 )
                 z_ret = z_res.metrics.get("total_return")
                 metrics["zero_cost_return"] = z_ret
@@ -864,6 +1013,7 @@ class PortfolioBacktester:
                 "buy_weekday": buy_weekday,
                 "exit_weekday": exit_weekday,
                 "schedule_mode": schedule_mode,
+                "holiday_policy": holiday_policy,
                 "account_mode": account_mode,
                 "costs": asdict(self.cfg.costs),
                 "start": start,

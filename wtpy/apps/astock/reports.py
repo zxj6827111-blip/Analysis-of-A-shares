@@ -495,9 +495,32 @@ def write_backtest_csv(
             "bagua_filter_label",
             "start",
             "end",
+            "costs",
         ):
             if k in meta and k not in full_meta:
                 full_meta[k] = meta[k]
+    # Cost traceability (P1.7): always surface CostConfig fields on run_meta
+    costs_src = None
+    if isinstance(full_meta.get("costs"), dict):
+        costs_src = full_meta["costs"]
+    elif isinstance(full_meta.get("config"), dict) and isinstance(full_meta["config"].get("costs"), dict):
+        costs_src = full_meta["config"]["costs"]
+    elif isinstance(getattr(result, "config", None), dict) and isinstance(result.config.get("costs"), dict):
+        costs_src = result.config["costs"]
+        full_meta.setdefault("config", dict(result.config))
+    if costs_src is not None:
+        full_meta["costs"] = {
+            "commission_rate": costs_src.get("commission_rate"),
+            "min_commission": costs_src.get("min_commission"),
+            "stamp_tax_rate": costs_src.get("stamp_tax_rate"),
+            "slippage": costs_src.get("slippage"),
+            "note": costs_src.get("note", ""),
+        }
+        cfg = full_meta.get("config")
+        if isinstance(cfg, dict) and "costs" not in cfg:
+            cfg = dict(cfg)
+            cfg["costs"] = dict(full_meta["costs"])
+            full_meta["config"] = cfg
     # keep a tiny sample for debugging only
     full_meta["fills_sample"] = [
         asdict(f) if is_dataclass(f) else str(f) for f in result.fills[:20]
@@ -558,6 +581,14 @@ def write_excel_summary(
 
     repro = meta or {}
     m = result.metrics or {}
+    _costs_cfg = None
+    if isinstance(repro.get("costs"), dict):
+        _costs_cfg = repro["costs"]
+    elif isinstance(repro.get("config"), dict) and isinstance(repro["config"].get("costs"), dict):
+        _costs_cfg = repro["config"]["costs"]
+    elif isinstance(getattr(result, "config", None), dict) and isinstance(result.config.get("costs"), dict):
+        _costs_cfg = result.config["costs"]
+    _costs_cfg = _costs_cfg or {}
 
     closed = [t for t in trips if t.get("状态") == "已平仓"]
     open_n = sum(1 for t in trips if t.get("状态") == "未平仓")
@@ -646,6 +677,13 @@ def write_excel_summary(
         ("组合胜率%", _fmt_pct(m.get("win_rate"))),
         ("换手", _fmt_num(m.get("turnover"), 4)),
         ("总成本", _fmt_num(m.get("cost_total"), 2)),
+        ("", ""),
+        ("【成本口径 CostConfig】", ""),
+        ("手续费率 commission_rate", _costs_cfg.get("commission_rate", "")),
+        ("最低佣金 min_commission", _costs_cfg.get("min_commission", "")),
+        ("印花税率 stamp_tax_rate", _costs_cfg.get("stamp_tax_rate", "")),
+        ("滑点 slippage", _costs_cfg.get("slippage", "")),
+        ("成本说明 note", _costs_cfg.get("note", "")),
         ("未平仓数量", m.get("n_open_positions")),
         ("未平仓市值", _fmt_num(m.get("open_market_value"), 2)),
         ("不计成本收益%", _fmt_pct(m.get("zero_cost_return"))),

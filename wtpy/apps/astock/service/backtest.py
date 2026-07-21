@@ -173,6 +173,49 @@ class BacktestRequest:
         return asdict(self)
 
 
+
+
+def research_fingerprint_fields_from_request(
+    req: "BacktestRequest",
+    *,
+    costs: Optional[Dict[str, Any]] = None,
+    universe_hash: Optional[str] = None,
+    indicator_source_hash: Optional[str] = None,
+    engine_code_hash: Optional[str] = None,
+    market_data_version: Optional[str] = None,
+    calendar_version: Optional[str] = None,
+    bagua_json_hash: Optional[str] = None,
+) -> Dict[str, str]:
+    """Compute research fingerprint metadata for run summary / repro / index.
+
+    Does not replace experiment ``param_hash`` (request-params only). Returns
+    16-char ``research_fingerprint`` plus cheap component hashes.
+    """
+    from ..research.fingerprint import research_fingerprint_from_params
+
+    params = req.to_dict() if hasattr(req, "to_dict") else dict(req or {})
+    # Align with fingerprint param keys (indicator_ids preferred over rule_ids)
+    if params.get("rule_ids") and not params.get("indicator_ids"):
+        params = dict(params)
+        params["indicator_ids"] = params.get("rule_ids")
+    fp = research_fingerprint_from_params(
+        params,
+        costs=costs,
+        engine_code_hash=engine_code_hash,
+        universe_hash=universe_hash,
+        indicator_source_hash=indicator_source_hash,
+        market_data_version=market_data_version,
+        calendar_version=calendar_version,
+        bagua_json_hash=bagua_json_hash,
+    )
+    return {
+        "research_fingerprint": fp.full_hex(16),
+        "signal_fp": fp.signal_hex(16),
+        "filter_fp": fp.filter_hex(16),
+        "execution_fp": fp.execution_hex(16),
+    }
+
+
 class BacktestService:
     def __init__(self, cfg: Optional[AStockConfig] = None):
         self.cfg = cfg or get_default_config()
@@ -439,6 +482,7 @@ def run_backtest(
             "selected_codes_count": len(codes),
             "request": req.to_dict(),
             "n_signals": len(events),
+            **(research_fingerprint_fields_from_request(req) or {}),
             "hint": (
                 "复权因子不完整，正式回测已拒绝。"
                 "可勾选「研究未复权」重跑，或先修复 adjustments 缓存后重试正式模式。"
@@ -767,6 +811,24 @@ def run_backtest(
         "n_signals": len(events),
         "request": req.to_dict(),
     }
+    try:
+        _ind_src = None
+        if trade_specs:
+            _ind_src = "|".join(
+                sorted(
+                    "%s:%s" % (s.id, getattr(s, "source_sha256", None) or "")
+                    for s in trade_specs
+                )
+            )
+        _fp_fields = research_fingerprint_fields_from_request(
+            req,
+            universe_hash=sel_sha,
+            indicator_source_hash=_ind_src,
+            bagua_json_hash=bagua_sha if bagua_enabled else None,
+        )
+        repro.update(_fp_fields)
+    except Exception:
+        _fp_fields = {}
     _progress({
         "phase": "writing",
         "pct": 96.0,
@@ -842,6 +904,14 @@ def run_backtest(
     repro["title"] = title
     repro["schedule_mode"] = schedule_mode
     repro["indicator_names"] = rule_names
+    # CostConfig snapshot for run_meta / Excel (P1.7)
+    try:
+        from dataclasses import asdict as _asdict_costs
+        repro["costs"] = _asdict_costs(cfg.costs)
+        if isinstance(repro.get("config"), dict):
+            repro["config"].setdefault("costs", repro["costs"])
+    except Exception:
+        pass
     if gua_filter_meta is not None:
         repro["gua_filter"] = gua_filter_meta
     elif "gua_filter" not in repro:
@@ -882,6 +952,7 @@ def run_backtest(
                 "end": end,
                 "selected_codes_count": len(codes),
                 "metrics": result.metrics,
+                **(_fp_fields if isinstance(_fp_fields, dict) else {}),
             },
         )
     except Exception:
@@ -897,11 +968,30 @@ def run_backtest(
         "run_id": run_id,
     })
 
+    # P1.7: expose CostConfig on service summary for API/CLI traceability
+    _costs = None
+    if isinstance(getattr(result, "config", None), dict):
+        _costs = result.config.get("costs")
+    if _costs is None:
+        try:
+            from dataclasses import asdict as _asdict
+            _costs = _asdict(cfg.costs)
+        except Exception:
+            _costs = None
+    if isinstance(repro.get("config"), dict) and isinstance(repro["config"].get("costs"), dict):
+        # prefer cfg snapshot already in repro
+        _costs = repro["config"]["costs"]
+    elif _costs is not None:
+        repro.setdefault("costs", _costs)
+        if isinstance(repro.get("config"), dict):
+            repro["config"].setdefault("costs", _costs)
+
     summary = {
         "run_id": run_id,
         "title": title,
         "status": result.status,
         "metrics": result.metrics,
+        "costs": _costs,
         "n_events": len(events),
         "with_bagua": bagua_enabled,
         "bagua_filter_mode": bagua_filter_mode,
@@ -943,6 +1033,14 @@ def run_backtest(
             "schedule_mode": schedule_mode,
             "indicator_ids": repro["indicator_ids"],
             "astock_code_sha": repro.get("astock_code_sha"),
+            "research_fingerprint": repro.get("research_fingerprint"),
+            "signal_fp": repro.get("signal_fp"),
+            "filter_fp": repro.get("filter_fp"),
+            "execution_fp": repro.get("execution_fp"),
         },
+        "research_fingerprint": repro.get("research_fingerprint"),
+        "signal_fp": repro.get("signal_fp"),
+        "filter_fp": repro.get("filter_fp"),
+        "execution_fp": repro.get("execution_fp"),
     }
     return summary

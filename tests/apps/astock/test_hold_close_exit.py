@@ -42,7 +42,8 @@ def test_hold1_sells_at_open_t1_buy_t2_sell():
     assert len(sells) == 1
     assert sells[0].date == 20240105
     assert abs(sells[0].price - 10.8) < 1e-9
-    assert sells[0].reason == "hold_expired"
+    # Phase-1 canonical code; legacy hold_expired normalized to time_exit
+    assert sells[0].reason == "time_exit"
 
 
 def test_stop_loss_still_sells_at_open():
