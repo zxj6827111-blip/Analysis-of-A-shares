@@ -19,7 +19,7 @@
 | P3.8 | 基准与测试 | `[x]` `scripts/bench_phase3_cache_fast.py` + 单测 |
 | P3.9 | 执行层缓存 | `[x]` fast+summary 可命中 metrics |
 | P3.10 | Top-N 精复测 | `[x]` `promote_top_n`（默认 3）实验完成后 full 复跑 |
-| P3.E | commit/push | `[ ]` 本轮收尾后推送 |
+| P3.E | commit/push | `[x]` `d3a15b8` |
 
 ## 默认行为
 
