@@ -357,8 +357,13 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         return list_runs(cfg, limit=limit)
 
     @app.get("/api/v1/backtests/jobs")
-    def api_jobs(limit: int = Query(30, ge=1, le=100)) -> List[dict]:
+    def api_jobs(limit: int = Query(50, ge=1, le=200)) -> List[dict]:
         return jobs.list_public(limit=limit)
+
+    @app.get("/api/v1/backtests/jobs/queue")
+    def api_jobs_queue() -> dict:
+        """FIFO task-center snapshot: running + queued + recent."""
+        return jobs.queue_snapshot()
 
     @app.delete("/api/v1/runs/{run_id}")
     def api_delete_run(

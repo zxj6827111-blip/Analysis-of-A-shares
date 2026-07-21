@@ -609,6 +609,28 @@
     .exp-table th { background: rgba(61,139,253,0.12); position: sticky; top: 0; }
     .exp-table .num { text-align: right; font-variant-numeric: tabular-nums; }
     .exp-status { font-size: 0.82rem; color: var(--muted); margin-top: 0.4rem; min-height: 1.2em; }
+
+    .task-queue-bar {
+      margin: 0.55rem 0 0.75rem; padding: 0.55rem 0.75rem;
+      border: 1px solid var(--border); border-radius: 10px;
+      background: rgba(61,139,253,0.08);
+      font-size: 0.82rem;
+    }
+    .task-queue-bar h4 { margin: 0 0 0.35rem; font-size: 0.88rem; }
+    .task-queue-bar .tq-row {
+      display: flex; flex-wrap: wrap; gap: 0.35rem 0.75rem; align-items: center;
+      padding: 0.28rem 0; border-top: 1px solid rgba(255,255,255,0.06);
+    }
+    .task-queue-bar .tq-row:first-of-type { border-top: none; }
+    .task-queue-bar .pill {
+      display: inline-block; padding: 0.05rem 0.4rem; border-radius: 999px;
+      font-size: 0.72rem; border: 1px solid var(--border);
+    }
+    .task-queue-bar .pill.run { background: rgba(61,139,253,0.25); color: #9ec5ff; }
+    .task-queue-bar .pill.wait { background: rgba(255,193,7,0.15); color: #f0d9a0; }
+    .task-queue-bar .pill.ok { background: rgba(40,167,69,0.2); color: #8fd19e; }
+    .task-queue-bar .pill.bad { background: rgba(243,18,96,0.15); color: #f5a0b8; }
+    .task-queue-bar .sub { color: var(--muted); }
     .exp-empty { color: var(--muted); font-size: 0.85rem; padding: 0.75rem 0.25rem; text-align: center; }
     .exp-split {
       display: grid; grid-template-columns: 1fr; gap: 0.75rem;
@@ -1659,6 +1681,10 @@ XG:CROSS(MA5,MA10);</textarea>
             </div>
             <div class="progress-bar" id="progressBar"><i id="progressFill"></i></div>
             <div class="progress-detail" id="progressDetail">—</div>
+          </div>
+          <div class="task-queue-bar" id="taskQueueBar" style="display:none">
+            <h4>任务队列 <span class="sub" id="taskQueueMeta">（同一时间只跑 1 个，其余自动排队）</span></h4>
+            <div id="taskQueueBody"></div>
           </div>
         </div>
       </div>
@@ -2897,6 +2923,16 @@ XG:CROSS(MA5,MA10);</textarea>
         else if (job.status === "queued") pct = 0;
         else pct = Math.min(95, 5 + elapsed * 0.15);
       }
+      if (job.status === "queued") {
+        const pos = job.queue_position || prog.queue_position;
+        const nq = prog.n_queued;
+        return (
+          "排队中" + (pos ? ("第 " + pos + " 位") : "") +
+          (nq != null ? (" / 共" + nq + "个等待") : "") +
+          " · 已等待 " + fmtElapsed(elapsed) +
+          " · " + (job.job_id || "")
+        );
+      }
       const phaseMap = {
         queued: "排队中", starting: "启动中", prepare: "准备",
         signals: "计算信号", factors: "校验复权", portfolio: "组合回测",
@@ -2915,7 +2951,154 @@ XG:CROSS(MA5,MA10);</textarea>
       return "异步任务 " + job.status + " · " + Number(pct).toFixed(1) + "% · 已运行 " + fmtElapsed(elapsed);
     }
 
+
+    // ---- Task queue (FIFO, multi-submit) ----
+    const __activeJobPolls = new Map(); // jobId -> { timer, msg }
+    let __queueRefreshTimer = null;
+
+    function jobStatusPill(st) {
+      const map = {
+        queued: ["wait", "排队中"],
+        running: ["run", "运行中"],
+        succeeded: ["ok", "已完成"],
+        failed: ["bad", "失败"],
+        cancelled: ["bad", "已取消"],
+      };
+      const m = map[st] || ["wait", st || "—"];
+      return '<span class="pill ' + m[0] + '">' + m[1] + "</span>";
+    }
+
+    async function refreshTaskQueueBar() {
+      const bar = document.getElementById("taskQueueBar");
+      const body = document.getElementById("taskQueueBody");
+      const meta = document.getElementById("taskQueueMeta");
+      if (!bar || !body) return;
+      try {
+        const snap = await api("/api/v1/backtests/jobs/queue");
+        const nq = snap.n_queued || 0;
+        const nr = snap.n_running || 0;
+        if (!nq && !nr && !(snap.recent || []).some((j) => j.status === "queued" || j.status === "running")) {
+          // keep bar visible if we still have local polls
+          if (__activeJobPolls.size === 0) {
+            bar.style.display = "none";
+            return;
+          }
+        }
+        bar.style.display = "block";
+        if (meta) {
+          meta.textContent =
+            "（并发 " + (snap.max_workers || 1) +
+            " · 运行中 " + nr +
+            " · 排队 " + nq +
+            " · 可继续点「开始回测」追加任务）";
+        }
+        const rows = [];
+        (snap.running || []).forEach((j) => {
+          const pct = (j.progress && j.progress.pct != null) ? Number(j.progress.pct).toFixed(0) + "%" : "…";
+          const msg = (j.progress && j.progress.message) || "";
+          rows.push(
+            '<div class="tq-row">' + jobStatusPill("running") +
+            " <strong>" + escAttr(j.title_hint || j.job_id) + "</strong>" +
+            " <span class='sub'>" + pct + " · " + escAttr(msg) + "</span>" +
+            " <span class='sub'>" + escAttr(j.job_id) + "</span></div>"
+          );
+        });
+        (snap.queued || []).forEach((j) => {
+          const pos = j.queue_position || (j.progress && j.progress.queue_position) || "?";
+          rows.push(
+            '<div class="tq-row">' + jobStatusPill("queued") +
+            " <strong>第 " + pos + " 位</strong> · " +
+            escAttr(j.title_hint || j.job_id) +
+            " <span class='sub'>等待前序任务结束自动开始</span></div>"
+          );
+        });
+        // recent finished (max 3)
+        const done = (snap.recent || []).filter((j) => j.status === "succeeded" || j.status === "failed").slice(0, 3);
+        done.forEach((j) => {
+          rows.push(
+            '<div class="tq-row">' + jobStatusPill(j.status) +
+            " " + escAttr(j.title_hint || j.run_id || j.job_id) +
+            (j.run_id ? " <span class='sub'>" + escAttr(j.run_id) + "</span>" : "") +
+            (j.error ? " <span class='sub'>" + escAttr(String(j.error).slice(0, 80)) + "</span>" : "") +
+            "</div>"
+          );
+        });
+        body.innerHTML = rows.length ? rows.join("") : "<div class='sub'>队列空闲</div>";
+      } catch (e) {
+        /* ignore */
+      }
+    }
+
+    function ensureQueueRefresh() {
+      if (__queueRefreshTimer) return;
+      __queueRefreshTimer = setInterval(() => {
+        refreshTaskQueueBar();
+        if (__activeJobPolls.size === 0) {
+          // one last refresh then stop when idle for a bit
+        }
+      }, 1500);
+      refreshTaskQueueBar();
+    }
+
+    function trackJobInBackground(jobId, onDone) {
+      if (__activeJobPolls.has(jobId)) return;
+      ensureQueueRefresh();
+      const startedAt = Date.now() / 1000;
+      let netFail = 0;
+      const tick = async () => {
+        try {
+          const j = await api("/api/v1/backtests/jobs/" + encodeURIComponent(jobId));
+          netFail = 0;
+          refreshTaskQueueBar();
+          // update main progress if this is the running one
+          if (j.status === "running" || (j.status === "queued" && __activeJobPolls.size === 1)) {
+            const prog = j.progress || {};
+            const pct = prog.pct != null ? prog.pct : (j.status === "queued" ? 0 : 5);
+            const label = j.status === "queued"
+              ? ("排队中第 " + (j.queue_position || prog.queue_position || "?") + " 位")
+              : (prog.message || "运行中");
+            setProgressUI(pct, label, showJobProgress(j, j.created_at || startedAt), { active: true });
+            const msg = document.getElementById("runMsg");
+            if (msg) msg.textContent = showJobProgress(j, j.created_at || startedAt);
+          }
+          if (j.status === "succeeded") {
+            __activeJobPolls.delete(jobId);
+            refreshTaskQueueBar();
+            if (typeof onDone === "function") onDone(null, j);
+            if (__activeJobPolls.size === 0) {
+              setProgressUI(100, "完成", "run_id=" + (j.run_id || ""), { active: true });
+              hideProgressSoon();
+            }
+            return;
+          }
+          if (j.status === "failed" || j.status === "cancelled") {
+            __activeJobPolls.delete(jobId);
+            refreshTaskQueueBar();
+            if (typeof onDone === "function") onDone(new Error(j.error || "job failed"), j);
+            return;
+          }
+          // still queued/running
+          const handle = setTimeout(tick, 1000);
+          __activeJobPolls.set(jobId, handle);
+        } catch (e) {
+          const em = String(e.message || e);
+          const isNet = em.indexOf("网络") >= 0 || em.indexOf("fetch") >= 0 || em.indexOf("Network") >= 0;
+          if (isNet && netFail < 20) {
+            netFail += 1;
+            const handle = setTimeout(tick, 1500);
+            __activeJobPolls.set(jobId, handle);
+            return;
+          }
+          __activeJobPolls.delete(jobId);
+          if (typeof onDone === "function") onDone(e, null);
+        }
+      };
+      __activeJobPolls.set(jobId, true);
+      tick();
+    }
+
     async function pollJob(jobId, msg) {
+
       const startedAt = Date.now() / 1000;
       setProgressUI(0, "排队/启动", "job " + jobId, { active: true });
       try {
@@ -4206,7 +4389,7 @@ XG:CROSS(MA5,MA10);</textarea>
           research_unconfirmed_formula: document.getElementById("researchUnconf").checked,
           stop_loss: document.getElementById("sl").value ? parseFloat(document.getElementById("sl").value) : null,
           take_profit: document.getElementById("tp").value ? parseFloat(document.getElementById("tp").value) : null,
-          async_mode: use_full_market,
+          async_mode: true,  // always queue: next submit waits until previous finishes
         };
 
         hideResultPanel();
@@ -4214,16 +4397,61 @@ XG:CROSS(MA5,MA10);</textarea>
         msg.textContent = "正在提交回测任务…";
         setProgressUI(0, "提交中", "正在创建任务…", { active: true, indeterminate: true });
 
+        // Always enqueue: returns immediately; jobs run FIFO (1 at a time).
         let r = await api("/api/v1/backtests", { method: "POST", body: JSON.stringify(body) });
         if (r.mode === "async" && r.job_id) {
-          msg.textContent = "任务已提交 " + r.job_id + "，开始轮询进度…";
-          r = await pollJob(r.job_id, msg);
-          r = { mode: "async", ...r };
-        } else {
-          msg.textContent = "同步回测计算中…";
+          const jobId = r.job_id;
+          const qpos = (r.progress && r.progress.queue_position) || r.queue_position;
+          const nq = (r.progress && r.progress.n_queued) || "";
+          msg.innerHTML =
+            '<span class="okmsg">任务已加入队列：' + jobId +
+            (qpos ? (" · 排队第 " + qpos + " 位") : "") +
+            "。可继续改参数再点「开始回测」追加任务；前一个跑完会自动开始下一个。</span>";
+          setProgressUI(
+            0,
+            qpos && qpos > 1 ? ("排队第 " + qpos + " 位") : "已入队",
+            "job " + jobId + " · 可继续提交",
+            { active: true }
+          );
+          ensureQueueRefresh();
+          refreshTaskQueueBar();
+          trackJobInBackground(jobId, async (err, job) => {
+            try {
+              refreshTaskQueueBar();
+              if (err) {
+                const em = document.getElementById("runMsg");
+                if (em) {
+                  em.innerHTML =
+                    '<span class="err">任务失败 ' + jobId + "：" +
+                    escAttr(err.message || String(err)).slice(0, 200) + "</span>";
+                }
+                return;
+              }
+              const result = (job && (job.result || job)) || {};
+              const em = document.getElementById("runMsg");
+              if (em) {
+                em.innerHTML =
+                  '<span class="okmsg">回测完成：' +
+                  escAttr(result.title || result.run_id || jobId) +
+                  " · " + statusLabel(result.status || job.status) +
+                  "</span>";
+              }
+              setProgressUI(100, "完成", "run_id=" + (result.run_id || job.run_id || ""), { active: true });
+              hideProgressSoon();
+              await showRunResult(result, { fromHistory: false });
+              try {
+                const rows = await api("/api/v1/runs?limit=200");
+                renderHistory(rows, result.run_id || job.run_id);
+              } catch (_) {}
+            } catch (e2) {
+              console.warn(e2);
+            }
+          });
+          return; // free the UI — do not await the whole backtest
         }
 
-        // failed async may throw; success:
+        // Fallback sync path (should be rare)
+        msg.textContent = "同步回测计算中…";
         msg.innerHTML = '<span class="okmsg">回测完成：' + (r.title || r.run_id || "") + " · " + statusLabel(r.status) + "</span>";
         setProgressUI(100, "完成", "run_id=" + (r.run_id || ""), { active: true });
         hideProgressSoon();
