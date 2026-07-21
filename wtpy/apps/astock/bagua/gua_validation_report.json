@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "issues": [],
+  "count_entries": 384,
+  "count_gua": 64,
+  "unique_state_ids": 384,
+  "action_signal_counts": {
+    "持有": 140,
+    "新开仓": 77,
+    "加仓": 14,
+    "清仓": 88,
+    "减仓": 65
+  },
+  "empty_biangua": 210,
+  "missing_action_signal": 0,
+  "rule_version": "gua_rules_v20260721",
+  "source_file": "64卦384爻行情简判完整版-已添加操作信号.xlsx",
+  "source_sha256": "08703fc6f49c24a90f6e74a79b1e0f3a090ca9169d7abd5f06f064d1139b172c",
+  "out_json": "E:\\Software Development\\wtpy-master\\wtpy\\apps\\astock\\bagua\\bagua_384.json"
+}

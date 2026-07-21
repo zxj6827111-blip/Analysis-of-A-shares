@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import date as _date
 from pathlib import Path
 from typing import List, Optional, Sequence
 
@@ -46,6 +47,31 @@ class TradeCalendar:
                 return None
             d = out
         return out
+
+
+    def next_weekday_trading_day(
+        self, after_date: int, weekday: int, *, strict: bool = True
+    ) -> Optional[int]:
+        """First trading day on ISO weekday (1=Mon..7=Sun).
+
+        strict=True: strictly after after_date (default for buy/exit after signal/entry).
+        strict=False: on or after after_date.
+        """
+        after_date = int(after_date)
+        weekday = int(weekday)
+        if weekday < 1 or weekday > 7:
+            raise ValueError("weekday must be 1..7, got %s" % weekday)
+        for d in self.dates:
+            if strict:
+                if d <= after_date:
+                    continue
+            else:
+                if d < after_date:
+                    continue
+            y, m, day = d // 10000, (d // 100) % 100, d % 100
+            if _date(y, m, day).isoweekday() == weekday:
+                return d
+        return None
 
     def prev_trading_day(self, date: int) -> Optional[int]:
         date = int(date)

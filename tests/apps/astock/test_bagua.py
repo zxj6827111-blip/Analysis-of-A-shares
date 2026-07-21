@@ -72,7 +72,8 @@ def test_fixed_sample_shanshuimeng(calc):
 def test_excel_row_consistency(calc):
     from pathlib import Path
     ind_dir = Path(__file__).resolve().parents[3] / '指标'
-    xlsxs = list(ind_dir.glob('*.xlsx'))
+    preferred = list(ind_dir.glob('*操作信号*.xlsx'))
+    xlsxs = preferred or list(ind_dir.glob('*.xlsx'))
     if not xlsxs:
         import pytest
         pytest.skip('excel missing')

@@ -43,6 +43,11 @@ class BacktestBody(BaseModel):
     period: str = "DAY"
     hold: int = 1
     entry_lag: int = 1
+    signal_weekdays: Optional[List] = None  # 1=Mon..7=Sun; empty=all
+    buy_on: str = "open"  # open | close
+    sell_on: str = "open"  # open | close
+    buy_weekday: Optional[int] = None  # 1=Mon..7=Sun; overrides entry_lag
+    exit_weekday: Optional[int] = None  # 1=Mon..7=Sun; overrides hold
     combine: Optional[str] = None
     codes: Optional[List[str]] = None
     use_full_market: bool = False
@@ -51,6 +56,7 @@ class BacktestBody(BaseModel):
     dwm: bool = False
     with_bagua: bool = False
     bagua_filter_mode: Optional[str] = None  # default best3 when with_bagua
+    gua_filter: Optional[dict] = None  # flexible hexagram filter
     research_unadjusted: bool = False
     research_unconfirmed_formula: bool = False
     stop_loss: Optional[float] = None
@@ -255,6 +261,11 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             period=payload.period,
             hold=payload.hold,
             entry_lag=payload.entry_lag,
+            signal_weekdays=payload.signal_weekdays,
+            buy_on=payload.buy_on,
+            sell_on=payload.sell_on,
+            buy_weekday=payload.buy_weekday,
+            exit_weekday=payload.exit_weekday,
             combine=payload.combine,
             codes=codes,
             start=payload.start,
@@ -262,6 +273,7 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             dwm=payload.dwm,
             with_bagua=payload.with_bagua,
             bagua_filter_mode=payload.bagua_filter_mode,
+            gua_filter=payload.gua_filter,
             research_unadjusted=payload.research_unadjusted,
             research_unconfirmed_formula=payload.research_unconfirmed_formula,
             stop_loss=payload.stop_loss,
@@ -345,6 +357,69 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
 
 
     # ----- Forecast module (isolated) -----
+
+    # ---- Gua (hexagram) catalogue & filter preview ----
+    @app.get("/api/v1/gua/states")
+    def api_gua_states(
+        search: Optional[str] = None,
+        main_hexagram_id: Optional[int] = None,
+        action_signal: Optional[str] = None,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(50, ge=1, le=384),
+    ) -> dict:
+        from .service.gua import list_states
+
+        return list_states(
+            cfg,
+            search=search,
+            main_hexagram_id=main_hexagram_id,
+            action_signal=action_signal,
+            page=page,
+            page_size=page_size,
+        )
+
+    @app.get("/api/v1/gua/hexagrams")
+    def api_gua_hexagrams() -> dict:
+        from .service.gua import list_hexagrams, rule_version, load_kb
+
+        kb = load_kb(cfg)
+        return {
+            "items": list_hexagrams(cfg),
+            "rule_version": rule_version(cfg),
+            "count_gua": kb.get("count_gua"),
+            "count_yao": kb.get("count_yao"),
+            "action_signal_counts": kb.get("action_signal_counts") or {},
+            "empty_biangua_count": kb.get("empty_biangua_count"),
+        }
+
+    @app.post("/api/v1/gua/preview")
+    def api_gua_preview(payload: dict = Body(...)) -> dict:
+        from .service.gua import preview_filter
+
+        gf = payload.get("gua_filter") if isinstance(payload, dict) else None
+        if gf is None and isinstance(payload, dict):
+            gf = payload
+        return preview_filter(gf or {}, cfg=cfg)
+
+    @app.post("/api/v1/gua/import")
+    async def api_gua_import(file: UploadFile = File(...)) -> dict:
+        from .service.gua import reimport_excel
+        import tempfile
+        import shutil
+
+        suffix = Path(file.filename or "gua.xlsx").suffix or ".xlsx"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = Path(tmp.name)
+        try:
+            report = reimport_excel(tmp_path, cfg=cfg)
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        return report
+
     @app.get("/api/v1/forecast/health")
     def forecast_health() -> dict:
         return forecast.health()

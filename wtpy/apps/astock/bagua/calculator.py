@@ -68,9 +68,39 @@ class BaguaResult:
     market_judgement: str
     biangua: str
     note: str
+    state_id: str = ""
+    action_signal: str = ""
+    main_hexagram_id: Optional[int] = None
+    main_hexagram_name: str = ""
+    changed_hexagram_name: str = ""
+    changed_hexagram_id: Optional[int] = None
+    market_summary: str = ""
+    line_index: Optional[int] = None
+    line_name: str = ""
+    line_text: str = ""
+    hexagram_symbol: str = ""
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if not d.get("state_id") and d.get("gua_order") is not None and d.get("yao_order") is not None:
+            d["state_id"] = f"{int(d['gua_order']):02d}-{int(d['yao_order'])}"
+        if not d.get("market_summary"):
+            d["market_summary"] = d.get("market_judgement") or ""
+        if not d.get("changed_hexagram_name"):
+            d["changed_hexagram_name"] = d.get("biangua") or ""
+        if not d.get("main_hexagram_name"):
+            d["main_hexagram_name"] = d.get("gua_name") or ""
+        if d.get("main_hexagram_id") is None and d.get("gua_order") is not None:
+            d["main_hexagram_id"] = d.get("gua_order")
+        if not d.get("line_name"):
+            d["line_name"] = d.get("yao_name") or ""
+        if d.get("line_index") is None:
+            d["line_index"] = d.get("yao_order")
+        if not d.get("line_text"):
+            d["line_text"] = d.get("yao_ci") or ""
+        if not d.get("hexagram_symbol"):
+            d["hexagram_symbol"] = d.get("gua_symbol") or ""
+        return d
 
 
 def format_price_2(price) -> str:
@@ -248,6 +278,17 @@ class BaguaCalculator:
         entry = None
         if self.knowledge:
             entry = self.knowledge.lookup(upper_id, lower_id, yao_order)
+        state_id = ""
+        action_signal = ""
+        main_hexagram_id = None
+        main_hexagram_name = ""
+        changed_hexagram_name = ""
+        changed_hexagram_id = None
+        market_summary = ""
+        line_index = None
+        line_name = ""
+        line_text = ""
+        hexagram_symbol = ""
         if entry:
             gua_order = entry.get("gua_order")
             gua_symbol = entry.get("gua_symbol") or ""
@@ -256,10 +297,23 @@ class BaguaCalculator:
             gua_ci = entry.get("gua_ci") or ""
             core_gang = entry.get("core_gang") or ""
             yao_ci = entry.get("yao_ci") or ""
-            market_judgement = entry.get("market_judgement") or ""
-            biangua = entry.get("biangua") or ""
+            market_judgement = entry.get("market_judgement") or entry.get("market_summary") or ""
+            biangua = entry.get("biangua") or entry.get("changed_hexagram_name") or ""
             note = entry.get("note") or ""
             yao_name = entry.get("yao_name") or ""
+            state_id = entry.get("state_id") or ""
+            if not state_id and gua_order is not None and yao_order:
+                state_id = f"{int(gua_order):02d}-{int(yao_order)}"
+            action_signal = entry.get("action_signal") or ""
+            main_hexagram_id = entry.get("main_hexagram_id") or gua_order
+            main_hexagram_name = entry.get("main_hexagram_name") or gua_name
+            changed_hexagram_name = entry.get("changed_hexagram_name") or biangua
+            changed_hexagram_id = entry.get("changed_hexagram_id")
+            market_summary = entry.get("market_summary") or market_judgement
+            line_index = entry.get("line_index") or entry.get("yao_order") or yao_order
+            line_name = entry.get("line_name") or yao_name
+            line_text = entry.get("line_text") or yao_ci
+            hexagram_symbol = entry.get("hexagram_symbol") or gua_symbol
         else:
             yao_name = {1: "初", 2: "二", 3: "三", 4: "四", 5: "五", 6: "上"}.get(
                 yao_order, str(yao_order)
@@ -295,111 +349,27 @@ class BaguaCalculator:
             market_judgement=market_judgement,
             biangua=biangua,
             note=note,
+            state_id=state_id
+            or (
+                f"{int(gua_order):02d}-{int(yao_order)}"
+                if gua_order is not None
+                else ""
+            ),
+            action_signal=action_signal,
+            main_hexagram_id=main_hexagram_id if main_hexagram_id is not None else gua_order,
+            main_hexagram_name=main_hexagram_name or gua_name,
+            changed_hexagram_name=changed_hexagram_name or biangua,
+            changed_hexagram_id=changed_hexagram_id,
+            market_summary=market_summary or market_judgement,
+            line_index=line_index if line_index is not None else yao_order,
+            line_name=line_name or yao_name,
+            line_text=line_text or yao_ci,
+            hexagram_symbol=hexagram_symbol or gua_symbol,
         )
 
 
-def rebuild_knowledge_from_excel(xlsx_path: Path, out_json: Path) -> dict:
-    """Rebuild bagua_384.json from Excel authority source."""
-    import openpyxl
+def rebuild_knowledge_from_excel(xlsx_path: Path, out_json: Path, **kwargs) -> dict:
+    """Rebuild bagua_384.json from Excel authority (optional action_signal column)."""
+    from .rebuild_from_excel import rebuild_knowledge_from_excel as _rebuild
 
-    xlsx_path = Path(xlsx_path)
-    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
-    ws = wb.active
-    sha = hashlib.sha256(xlsx_path.read_bytes()).hexdigest()
-    self_map = {
-        "乾为天": (1, 1),
-        "坤为地": (8, 8),
-        "震为雷": (4, 4),
-        "艮为山": (7, 7),
-        "坎为水": (6, 6),
-        "离为火": (3, 3),
-        "巽为风": (5, 5),
-        "兑为泽": (2, 2),
-    }
-    alias_to_id = {v["alias"]: k for k, v in TRIGRAMS.items()}
-
-    def parse_ul(name: str):
-        if name in self_map:
-            return self_map[name]
-        return alias_to_id[name[0]], alias_to_id[name[1]]
-
-    entries: List[dict] = []
-    current = None
-    gua_idx = 0
-    for r in range(2, 386):
-        vals = [ws.cell(r, c).value for c in range(1, 9)]
-        gname, gci, gang, yao_pos, biangua, yao_ci, pan, note = vals
-        if not gname:
-            raise ValueError(f"missing hexagram name at row {r}")
-        full = str(gname).strip()
-        if current is None or full != current["full_name"]:
-            gua_idx += 1
-            m = re.match(r"^(.)(.+)$", full)
-            symbol = m.group(1) if m else ""
-            rest = m.group(2) if m else full
-            current = {
-                "gua_order": gua_idx,
-                "full_name": full,
-                "gua_symbol": symbol,
-                "gua_name": rest,
-                "gua_ci": str(gci).strip() if gci else "",
-                "core_gang": str(gang).strip() if gang else "",
-            }
-        else:
-            if gci and str(gci).strip():
-                current["gua_ci"] = str(gci).strip()
-            if gang and str(gang).strip():
-                current["core_gang"] = str(gang).strip()
-
-        yao = str(yao_pos).strip() if yao_pos else ""
-        u, l = parse_ul(current["gua_name"])
-        entries.append(
-            {
-                "excel_row": r,
-                "gua_order": current["gua_order"],
-                "gua_symbol": current["gua_symbol"],
-                "gua_name": current["gua_name"],
-                "full_name": current["full_name"],
-                "gua_ci": current["gua_ci"],
-                "core_gang": current["core_gang"],
-                "yao_order": YAO_ORDER_MAP.get(yao),
-                "yao_name": yao,
-                "biangua": str(biangua).strip() if biangua else "",
-                "yao_ci": str(yao_ci).strip() if yao_ci else "",
-                "market_judgement": str(pan).strip() if pan else "",
-                "note": str(note).strip() if note else "",
-                "upper": u,
-                "lower": l,
-                "upper_name": TRIGRAMS[u]["name"],
-                "lower_name": TRIGRAMS[l]["name"],
-                "upper_alias": TRIGRAMS[u]["alias"],
-                "lower_alias": TRIGRAMS[l]["alias"],
-                "upper_symbol": TRIGRAMS[u]["symbol"],
-                "lower_symbol": TRIGRAMS[l]["symbol"],
-            }
-        )
-
-    # propagate group fields within each gua_order
-    by_go: Dict[int, List[dict]] = {}
-    for e in entries:
-        by_go.setdefault(e["gua_order"], []).append(e)
-    for go, rows in by_go.items():
-        gang = next((x["core_gang"] for x in rows if x["core_gang"]), "")
-        gci = next((x["gua_ci"] for x in rows if x["gua_ci"]), "")
-        for x in rows:
-            x["core_gang"] = gang
-            x["gua_ci"] = gci
-
-    kb = {
-        "source_file": xlsx_path.name,
-        "source_sha256": sha,
-        "source_path": str(xlsx_path.resolve()),
-        "trigrams": TRIGRAMS,
-        "entries": entries,
-        "count_gua": 64,
-        "count_yao": 384,
-    }
-    out_json = Path(out_json)
-    out_json.parent.mkdir(parents=True, exist_ok=True)
-    out_json.write_text(json.dumps(kb, ensure_ascii=False, indent=2), encoding="utf-8")
-    return kb
+    return _rebuild(xlsx_path, out_json, **kwargs)

@@ -162,6 +162,16 @@ class ForecastService:
     # ----- health -----
     def health(self) -> dict:
         kb = self._kb
+        stock_n = sum(1 for r in self._stock_rows if (r.get("kind") or "stock") != "etf")
+        etf_n = sum(1 for r in self._stock_rows if (r.get("kind") or "") == "etf")
+        meta = self._week_meta or {}
+        if etf_n == 0 and meta.get("etf_count"):
+            # older snapshots may lack kind; use meta when merge size matches
+            meta_etf = int(meta.get("etf_count") or 0)
+            meta_stk = int(meta.get("stock_count") or 0)
+            if meta_stk and stock_n >= meta_stk and len(self._stock_rows) >= meta_stk + meta_etf:
+                etf_n = meta_etf
+                stock_n = meta_stk
         return {
             "ok": True,
             "forecast_root": str(self.root),
@@ -171,7 +181,9 @@ class ForecastService:
             "kb_entry_count": (len(kb.entries) if kb else 0),
             "kb_source_file": (kb.source_file if kb else None),
             "active_week_key": self._active_week,
-            "stock_count": len(self._stock_rows),
+            "stock_count": stock_n,
+            "etf_count": etf_n,
+            "instrument_count": len(self._stock_rows),
             "week_meta": self._week_meta,
             "yao_index_base": self.yao_index_base,
         }
@@ -281,18 +293,31 @@ class ForecastService:
                 if meta_path and Path(meta_path).exists():
                     meta = json.loads(Path(meta_path).read_text(encoding="utf-8"))
                     if isinstance(meta, dict):
-                        for k in ("source_filename", "stock_count", "week_end", "imported_at"):
+                        for k in (
+                            "source_filename",
+                            "stock_count",
+                            "etf_count",
+                            "instrument_count",
+                            "week_end",
+                            "imported_at",
+                        ):
                             if item.get(k) in (None, "") and meta.get(k) is not None:
                                 item[k] = meta.get(k)
             except Exception:
                 pass
             fn = item.get("source_filename") or ""
             sc = item.get("stock_count")
+            ec = item.get("etf_count")
             label = wk or "unknown"
             if fn:
                 label += f" · {fn}"
+            bits = []
             if sc is not None:
-                label += f" · {sc}只"
+                bits.append(f"{sc}股")
+            if ec is not None:
+                bits.append(f"{ec}ETF")
+            if bits:
+                label += " · " + "+".join(bits)
             item["label"] = label
             enriched.append(item)
         return {
@@ -309,7 +334,13 @@ class ForecastService:
         index["active_week_key"] = week_key
         self._save_weekly_index(index)
         self._load_active_week()
-        return {"active_week_key": week_key, "stock_count": len(self._stock_rows)}
+        etf_n = sum(1 for r in self._stock_rows if (r.get("kind") or "") == "etf")
+        return {
+            "active_week_key": week_key,
+            "stock_count": len(self._stock_rows) - etf_n,
+            "etf_count": etf_n,
+            "instrument_count": len(self._stock_rows),
+        }
 
     # ----- query -----
     def search(self, q: str, limit: int = 20) -> List[dict]:
@@ -367,7 +398,7 @@ class ForecastService:
         if row is None:
             return {
                 "found": False,
-                "tips": ["未在本周周报中找到该股票"],
+                "tips": ["未在本周周报中找到该股票/ETF"],
                 "active_week_key": self._active_week,
                 "query": q,
             }
@@ -376,12 +407,17 @@ class ForecastService:
         tips: List[str] = []
         for side in ("week", "month"):
             tips.extend(matches[side].get("tips") or [])
+        kind = str(row.get("kind") or "stock").lower()
+        if kind not in ("stock", "etf"):
+            kind = "etf" if "etf" in str(row.get("name") or "").lower() else "stock"
 
         return {
             "found": True,
             "active_week_key": self._active_week,
             "code": row.get("code6") or normalize_stock_code(row.get("code")),
             "name": row.get("name"),
+            "kind": kind,
+            "industry": row.get("industry") or row.get("industy"),
             "week_key": row.get("week_key") or self._active_week,
             "week_end": row.get("week_end"),
             "quote": {
@@ -437,7 +473,7 @@ class ForecastService:
                         "found": False,
                         "code": r.get("code6"),
                         "name": "",
-                        "tips": ["未在本周周报中找到该股票"],
+                        "tips": ["未在本周周报中找到该股票/ETF"],
                     }
                 )
                 continue
@@ -447,6 +483,8 @@ class ForecastService:
                     "found": True,
                     "code": r.get("code6") or normalize_stock_code(r.get("code")),
                     "name": r.get("name"),
+                    "kind": r.get("kind") or "stock",
+                    "industry": r.get("industry") or r.get("industy"),
                     "week_key": r.get("week_key") or self._active_week,
                     "week_end": r.get("week_end"),
                     "ret_w_pct": r.get("ret_w(%)"),
@@ -482,6 +520,8 @@ class ForecastService:
         headers = [
             "code",
             "name",
+            "kind",
+            "industry",
             "week_key",
             "week_end",
             "ret_w(%)",
@@ -506,6 +546,8 @@ class ForecastService:
                 [
                     r.get("code6") or normalize_stock_code(r.get("code")),
                     r.get("name"),
+                    r.get("kind") or "stock",
+                    r.get("industry") or r.get("industy"),
                     r.get("week_key") or self._active_week,
                     r.get("week_end"),
                     r.get("ret_w(%)"),

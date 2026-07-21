@@ -134,12 +134,12 @@
     .fc-stock-card.not-found .fc-stock-name { color: var(--bad); }
 
     header .sub { color: var(--muted); font-size: 0.85rem; }
-    main { display: grid; grid-template-columns: 320px 1fr; gap: 0; min-height: calc(100vh - 64px); }
+    main { display: grid; grid-template-columns: 320px 1fr; gap: 0; min-height: calc(100vh - 72px); }
     aside {
       border-right: 1px solid var(--border); padding: 1rem;
-      overflow: auto; max-height: calc(100vh - 64px); background: #121a24;
+      overflow: visible; max-height: none; background: #121a24;
     }
-    section.workspace { padding: 1rem 1.25rem; overflow: auto; max-height: calc(100vh - 64px); }
+    section.workspace { padding: 1rem 1.25rem; overflow: visible; max-height: none; }
     h2 { font-size: 0.95rem; margin: 0 0 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
     .card {
       background: var(--panel); border: 1px solid var(--border);
@@ -554,6 +554,595 @@
       color: #ff6b8a !important;
     }
 
+  
+    /* ===== 页签导航 / 全宽历史与详情 ===== */
+    .bt-subtabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      align-items: center;
+      margin: 0 0 0.85rem;
+      padding-bottom: 0.55rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .bt-subtab {
+      font-size: 0.86rem;
+      padding: 0.4rem 0.95rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #152033;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .bt-subtab:hover { border-color: var(--accent); }
+    .bt-subtab.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+    main#viewBacktest {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 0;
+      min-height: calc(100vh - 72px);
+      max-height: none;
+      overflow: visible;
+    }
+    main#viewBacktest.fullwidth {
+      grid-template-columns: 1fr;
+    }
+    main#viewBacktest.fullwidth > aside {
+      display: none !important;
+    }
+    main#viewBacktest > aside {
+      border-right: 1px solid var(--border);
+      padding: 1rem;
+      background: #121a24;
+      overflow: visible;
+      max-height: none;
+    }
+    main#viewBacktest > section.workspace {
+      padding: 1rem 1.25rem 2.5rem;
+      overflow: visible;
+      max-height: none;
+      min-width: 0;
+    }
+    body { overflow-x: hidden; }
+    .bt-page { display: none; }
+    .bt-page.active { display: block; }
+
+    /* 紧凑历史表：统一列宽 + 行高 64–80px */
+    .history-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem 0.55rem;
+      align-items: center;
+      margin: 0 0 0.65rem;
+    }
+    .history-toolbar input[type="search"],
+    .history-toolbar select {
+      width: auto;
+      min-width: 7rem;
+      max-width: 14rem;
+      padding: 0.35rem 0.5rem;
+      font-size: 0.82rem;
+    }
+    .history-toolbar .sel-info,
+    .history-toolbar .hist-count {
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin-left: 0.1rem;
+    }
+    .history-wrap {
+      overflow-x: auto;
+      max-width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #121a28;
+    }
+    .history-table {
+      width: 100%;
+      min-width: 1180px;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 0.82rem;
+      table-layout: fixed;
+    }
+    .history-table col.col-check { width: 2.2rem; }
+    .history-table col.col-strategy { width: 26%; }
+    .history-table col.col-time { width: 8.4rem; }
+    .history-table col.col-status { width: 4.4rem; }
+    .history-table col.col-period { width: 3.8rem; }
+    .history-table col.col-mode { width: 5.6rem; }
+    .history-table col.col-ret { width: 6.2rem; }
+    .history-table col.col-ann { width: 5.8rem; }
+    .history-table col.col-mdd { width: 5.8rem; }
+    .history-table col.col-trades { width: 5.6rem; }
+    .history-table col.col-win { width: 5rem; }
+    .history-table col.col-pl { width: 5rem; }
+    .history-table col.col-ops { width: 11.5rem; }
+
+    .history-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #182233;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.76rem;
+      border-bottom: 1px solid var(--border);
+      padding: 0.48rem 0.45rem;
+      text-align: left;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .history-table tbody td {
+      border-bottom: 1px solid rgba(45, 58, 77, 0.85);
+      padding: 0.42rem 0.45rem;
+      text-align: left;
+      vertical-align: middle;
+      height: 72px;
+      max-height: 80px;
+      box-sizing: border-box;
+    }
+    .history-table tbody tr.hist-row { cursor: pointer; }
+    .history-table tbody tr.hist-row:hover td { background: rgba(61, 139, 253, 0.07); }
+    .history-table tbody tr.hist-row.active td { background: rgba(61, 139, 253, 0.12); }
+
+    .history-table th.col-check,
+    .history-table td.col-check { text-align: center; padding-left: 0.35rem; padding-right: 0.2rem; }
+    .history-table th.num,
+    .history-table td.num {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      padding-right: 0.55rem;
+    }
+    .history-table th.col-ops,
+    .history-table td.col-ops {
+      white-space: nowrap;
+      text-align: right;
+      padding-right: 0.55rem;
+    }
+    .history-table th.col-status,
+    .history-table td.col-status,
+    .history-table th.col-period,
+    .history-table td.col-period,
+    .history-table th.col-mode,
+    .history-table td.col-mode { text-align: center; white-space: nowrap; }
+    .history-table th.col-time,
+    .history-table td.col-time {
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .hist-title {
+      font-weight: 650;
+      color: var(--text);
+      line-height: 1.3;
+      white-space: nowrap !important;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      word-break: normal;
+      display: block;
+      max-width: 100%;
+    }
+    .hist-tags {
+      margin-top: 0.18rem;
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 0.22rem;
+      align-items: center;
+      overflow: hidden;
+      max-width: 100%;
+    }
+    .hist-tag {
+      display: inline-block;
+      padding: 0.04rem 0.32rem;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      line-height: 1.3;
+      color: #a8b7ce;
+      background: rgba(61, 139, 253, 0.08);
+      border: 1px solid rgba(61, 139, 253, 0.18);
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    .hist-tag.mode-per {
+      color: #f5c26b;
+      background: rgba(245, 165, 36, 0.1);
+      border-color: rgba(245, 165, 36, 0.28);
+    }
+    .hist-tag.mode-pool {
+      color: #7eb6ff;
+      background: rgba(61, 139, 253, 0.1);
+      border-color: rgba(61, 139, 253, 0.28);
+    }
+    .hist-id, .hist-extra { display: none !important; }
+
+    .ops-row {
+      display: inline-flex !important;
+      flex-direction: row !important;
+      flex-wrap: nowrap !important;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.28rem;
+      white-space: nowrap;
+    }
+    .btn-op {
+      display: inline-block;
+      padding: 0.22rem 0.48rem;
+      font-size: 0.75rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #1a2740;
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+      line-height: 1.2;
+    }
+    .btn-op:hover { border-color: var(--accent); color: #fff; }
+    .btn-op.btn-del {
+      color: #f87171;
+      border-color: rgba(248, 113, 113, 0.35);
+      background: rgba(248, 113, 113, 0.08);
+    }
+    .btn-op.btn-del:hover { background: rgba(248, 113, 113, 0.16); }
+
+    .pct-pos { color: #f31260 !important; }
+    .pct-neg { color: #3dd68c !important; }
+    .pct-zero { color: var(--muted); }
+    .pct-mdd { color: #f5a524 !important; font-weight: 600; }
+    .pct-note { display: none !important; }
+
+    .badge-status.ok { color: #3dd68c; background: rgba(61, 214, 140, 0.12); }
+    .badge-status.bad { color: #f87171; background: rgba(248, 113, 113, 0.12); }
+    .badge-status.warn { color: #f5a524; background: rgba(245, 165, 36, 0.12); }
+    .badge-status {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      white-space: nowrap;
+    }
+    .mode-pill {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      white-space: nowrap;
+      border: 1px solid var(--border);
+    }
+    .mode-pill.per { color: #f5c26b; border-color: rgba(245, 165, 36, 0.35); }
+    .mode-pill.pool { color: #8bb7ff; border-color: rgba(61, 139, 253, 0.35); }
+
+    /* 回测详情 */
+    .detail-hero {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem 1rem;
+      margin-bottom: 0.85rem;
+    }
+    .detail-hero h2 {
+      margin: 0 0 0.35rem;
+      font-size: 1.05rem;
+      color: var(--text);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .detail-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      align-items: center;
+    }
+    .detail-chip {
+      display: inline-block;
+      padding: 0.12rem 0.48rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      background: #152033;
+      white-space: nowrap;
+    }
+    .detail-chip.hi { color: #f5c26b; border-color: rgba(245, 165, 36, 0.35); }
+    .detail-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      align-items: center;
+    }
+    .detail-core-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.55rem;
+      margin: 0.5rem 0 0.9rem;
+    }
+    @media (max-width: 1100px) {
+      .detail-core-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .core-metric {
+      background: #152033;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.65rem 0.75rem;
+      min-height: 4.4rem;
+    }
+    .core-metric .k {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+    .core-metric .v {
+      font-size: 1.15rem;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+    }
+    .core-metric .subtip {
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-top: 0.15rem;
+    }
+    .detail-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      border-bottom: 1px solid var(--border);
+      margin: 0.4rem 0 0.75rem;
+      padding-bottom: 0.35rem;
+    }
+    .detail-tab {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      padding: 0.35rem 0.7rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.82rem;
+    }
+    .detail-tab.active {
+      background: rgba(61, 139, 253, 0.15);
+      color: var(--text);
+      font-weight: 600;
+    }
+    .detail-pane { display: none; }
+    .detail-pane.active { display: block; }
+    .export-menu-wrap { position: relative; display: inline-block; }
+    .export-menu {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      min-width: 11rem;
+      background: #152033;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.35rem;
+      z-index: 20;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }
+    .export-menu.open { display: block; }
+    .export-menu a {
+      display: block;
+      padding: 0.4rem 0.55rem;
+      color: var(--text);
+      text-decoration: none;
+      border-radius: 6px;
+      font-size: 0.82rem;
+    }
+    .export-menu a:hover { background: rgba(61, 139, 253, 0.12); }
+    .virtual-warn {
+      border: 1px solid rgba(245, 165, 36, 0.45);
+      background: rgba(245, 165, 36, 0.08);
+      color: #f5c26b;
+      border-radius: 8px;
+      padding: 0.55rem 0.75rem;
+      font-size: 0.82rem;
+      margin: 0.4rem 0 0.75rem;
+    }
+    .detail-kv {
+      display: grid;
+      grid-template-columns: 8.5rem 1fr;
+      gap: 0.35rem 0.75rem;
+      font-size: 0.85rem;
+    }
+    .detail-kv .k { color: var(--muted); }
+    .detail-kv .v { word-break: break-all; }
+    .secondary-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+      gap: 0.45rem;
+      margin-top: 0.5rem;
+    }
+    .secondary-metrics .metric {
+      background: #121a28;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.45rem 0.55rem;
+    }
+    .secondary-metrics .metric .k { font-size: 0.72rem; color: var(--muted); }
+    .secondary-metrics .metric .v { font-size: 0.95rem; font-weight: 600; }
+    #resultCard { display: none; }
+    #resultCard.visible { display: block; }
+    #resultJsonWrap { display: none; }
+    #resultJsonWrap.open { display: block; }
+    .path-hint { display: none; }
+    .history-empty {
+      color: var(--muted);
+      padding: 1.5rem;
+      text-align: center;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+    }
+
+  
+    .fc-kind-badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 0.08rem 0.4rem;
+      border-radius: 999px;
+      vertical-align: middle;
+      margin-left: 0.25rem;
+      letter-spacing: 0.04em;
+    }
+    .fc-kind-badge.etf {
+      color: #f5c26b;
+      background: rgba(245, 165, 36, 0.14);
+      border: 1px solid rgba(245, 165, 36, 0.35);
+    }
+    .fc-kind-badge.stock {
+      color: #8bb7ff;
+      background: rgba(61, 139, 253, 0.12);
+      border: 1px solid rgba(61, 139, 253, 0.28);
+    }
+
+  
+    /* ---- Gua filter (backtest) — signal colors NOT red/green stock P&L ---- */
+    .gua-card { margin-top: 0.85rem; border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem 0.9rem; background: #141c28; }
+    .gua-card-head { display:flex; align-items:center; justify-content:space-between; gap:0.75rem; margin-bottom:0.55rem; }
+    .gua-card-head h3 { margin:0; font-size:0.95rem; font-weight:600; }
+    .gua-switch { display:inline-flex; align-items:center; gap:0.4rem; font-size:0.82rem; color:var(--muted); }
+    .gua-modes { display:flex; flex-wrap:wrap; gap:0.45rem 0.85rem; margin:0.35rem 0 0.55rem; font-size:0.85rem; }
+    .gua-modes label { display:inline-flex; align-items:center; gap:0.25rem; margin:0; cursor:pointer; }
+    .gua-main-row { display:flex; gap:0.45rem; align-items:center; }
+    .gua-main-row input[type=text] { flex:1; min-width:0; }
+    .gua-tags { display:flex; flex-wrap:wrap; gap:0.35rem; margin-top:0.45rem; min-height:1.4rem; }
+    .gua-tag { display:inline-flex; align-items:center; gap:0.3rem; padding:0.12rem 0.45rem; border-radius:999px; background:#1e2a3c; border:1px solid var(--border); font-size:0.78rem; max-width:100%; }
+    .gua-tag button { border:0; background:transparent; color:var(--muted); cursor:pointer; padding:0 0.1rem; font-size:0.85rem; }
+    .gua-tag button:hover { color:var(--bad); }
+    .gua-rule { margin-top:0.4rem; font-size:0.8rem; color:var(--muted); line-height:1.4; }
+    .gua-preview { margin-top:0.45rem; font-size:0.8rem; color:#b8c4d6; background:#101820; border:1px solid var(--border); border-radius:8px; padding:0.45rem 0.6rem; }
+    .gua-preview.warn { border-color: var(--warn); color: #f0d9a0; }
+    .gua-preview.bad { border-color: var(--bad); color: #f5a0b8; }
+    .gua-act { display:inline-block; padding:0.08rem 0.4rem; border-radius:5px; font-size:0.75rem; font-weight:600; }
+    .gua-act-新开仓 { background:#152a44; color:#5b9dff; }
+    .gua-act-加仓 { background:#24183a; color:#c4a0ff; }
+    .gua-act-持有 { background:#1a2a30; color:#8aa4b0; }
+    .gua-act-减仓 { background:#3a2410; color:#f0a050; }
+    .gua-act-清仓 { background:#3a1528; color:#f06292; }
+
+    .gua-drawer-mask { position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9000; display:none; }
+    .gua-drawer-mask.open { display:block; }
+    .gua-drawer { position:fixed; top:0; right:0; height:100%; width:min(860px, 96vw); background:#121a24; border-left:1px solid var(--border); z-index:9001; display:flex; flex-direction:column; transform:translateX(100%); transition:transform .2s ease; box-shadow:-8px 0 28px rgba(0,0,0,.45); }
+    .gua-drawer.open { transform:translateX(0); }
+    .gua-drawer-hd { display:flex; flex-wrap:wrap; align-items:center; gap:0.45rem 0.65rem; padding:0.75rem 1rem; border-bottom:1px solid var(--border); background:#0f1620; }
+    .gua-drawer-hd h3 { margin:0; font-size:1rem; flex:1; min-width:8rem; }
+    .gua-drawer-bd { flex:1; display:flex; min-height:0; }
+    .gua-nav { width:260px; border-right:1px solid var(--border); overflow:auto; background:#0e141d; }
+    .gua-nav-item { display:flex; align-items:center; gap:0.35rem; padding:0.4rem 0.65rem; cursor:pointer; font-size:0.8rem; border-bottom:1px solid #1a2330; }
+    .gua-nav-item:hover { background:#182232; }
+    .gua-nav-item.active { background:#1c3355; color:#fff; }
+    .gua-nav-item .cnt { margin-left:auto; color:var(--muted); font-size:0.75rem; }
+    .gua-nav-item .cnt.has { color:var(--accent); font-weight:600; }
+    .gua-detail { flex:1; overflow:auto; padding:0.75rem 1rem; }
+    .gua-line { display:grid; grid-template-columns: auto 1fr; gap:0.35rem 0.65rem; padding:0.55rem 0.45rem; border-bottom:1px solid var(--border); align-items:start; }
+    .gua-line label.chk { display:flex; gap:0.4rem; align-items:flex-start; cursor:pointer; }
+    .gua-search-hits { max-height:220px; overflow:auto; border:1px solid var(--border); border-radius:8px; margin:0.45rem 1rem; display:none; }
+    .gua-search-hits.open { display:block; }
+    .gua-hit { display:flex; gap:0.5rem; align-items:flex-start; padding:0.4rem 0.55rem; border-bottom:1px solid #1a2330; cursor:pointer; font-size:0.8rem; }
+    .gua-hit:hover, .gua-hit.kb { background:#1c3355; }
+    .gua-drawer-ft { display:flex; gap:0.5rem; justify-content:flex-end; padding:0.65rem 1rem; border-top:1px solid var(--border); background:#0f1620; }
+    .gua-views { display:flex; gap:0.35rem; flex-wrap:wrap; }
+    .gua-views button { font-size:0.78rem; padding:0.2rem 0.5rem; }
+    .gua-views button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+  
+    /* ---- Stepped backtest config ---- */
+    .bt-steps-nav {
+      display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.55rem 0 0.85rem;
+    }
+    .bt-steps-nav a {
+      font-size: 0.75rem; color: var(--muted); text-decoration: none;
+      padding: 0.2rem 0.5rem; border: 1px solid var(--border); border-radius: 999px;
+      background: #121a24;
+    }
+    .bt-steps-nav a:hover { color: var(--text); border-color: var(--accent); }
+    .bt-step {
+      border: 1px solid var(--border); border-radius: 12px;
+      background: #141c28; margin: 0 0 0.75rem; overflow: hidden;
+    }
+    .bt-step-hd {
+      display: flex; align-items: flex-start; gap: 0.65rem;
+      padding: 0.7rem 0.9rem; background: #101820; border-bottom: 1px solid var(--border);
+    }
+    .bt-step-num {
+      flex-shrink: 0; width: 1.55rem; height: 1.55rem; border-radius: 50%;
+      background: var(--accent); color: #fff; font-size: 0.8rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .bt-step-hd h3 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+    .bt-step-hd .bt-step-desc { margin: 0.15rem 0 0; font-size: 0.78rem; color: var(--muted); line-height: 1.35; }
+    .bt-step-opt {
+      margin-left: 0.35rem; font-size: 0.72rem; font-weight: 600; color: var(--muted);
+      border: 1px solid var(--border); border-radius: 4px; padding: 0.05rem 0.35rem; vertical-align: middle;
+    }
+    .bt-step-bd { padding: 0.75rem 0.9rem 0.9rem; }
+    .bt-summary-bar {
+      position: sticky; bottom: 0; z-index: 20;
+      margin-top: 0.75rem; padding: 0.65rem 0.85rem;
+      background: #0e1620; border: 1px solid var(--border); border-radius: 10px;
+      box-shadow: 0 -4px 18px rgba(0,0,0,0.35);
+    }
+    .bt-summary-bar .sum-title { font-size: 0.78rem; color: var(--muted); margin: 0 0 0.25rem; }
+    .bt-summary-bar .sum-body { font-size: 0.86rem; line-height: 1.45; color: var(--text); }
+    .swd-status { font-size: 0.8rem; color: var(--accent); margin: 0.35rem 0 0; }
+    .gua-usage-grid {
+      display: grid; grid-template-columns: 1fr; gap: 0.5rem; margin: 0.45rem 0 0.65rem;
+    }
+    @media (min-width: 720px) {
+      .gua-usage-grid { grid-template-columns: 1fr 1fr 1fr; }
+    }
+    .gua-usage-card {
+      border: 1px solid var(--border); border-radius: 10px; padding: 0.55rem 0.65rem;
+      background: #101820; cursor: pointer; text-align: left; color: inherit;
+      font: inherit; width: 100%;
+    }
+    .gua-usage-card:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+    .gua-usage-card.active {
+      border-color: var(--accent); background: #152033;
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+    .gua-usage-card b { display: block; font-size: 0.88rem; margin-bottom: 0.2rem; }
+    .gua-usage-card span { font-size: 0.75rem; color: var(--muted); line-height: 1.35; display: block; }
+    .gua-preset-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.35rem 0 0.55rem; }
+    .gua-preset-row button { font-size: 0.78rem; padding: 0.25rem 0.55rem; }
+    .gua-disabled-hint {
+      font-size: 0.82rem; color: var(--muted); line-height: 1.45;
+      padding: 0.45rem 0.55rem; background: #101820; border-radius: 8px; border: 1px dashed var(--border);
+      margin-bottom: 0.55rem;
+    }
+    .gua-panel { margin-top: 0.35rem; display: none; }
+    .gua-panel.is-on { display: block; }
+    .gua-panel[hidden] { display: none !important; }
+    .gua-usage-card { position: relative; z-index: 1; pointer-events: auto; }
+
+    .gua-preset-row button.active-preset {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+    }
+    .gua-action-browse { padding: 0.5rem 0.75rem; overflow: auto; flex: 1; }
+    .gua-act-group { margin-bottom: 0.85rem; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .gua-act-group h4 {
+      margin: 0; padding: 0.4rem 0.65rem; font-size: 0.85rem;
+      background: #101820; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 0.45rem;
+    }
+    .gua-act-row {
+      display: flex; gap: 0.45rem; align-items: flex-start;
+      padding: 0.4rem 0.55rem; border-bottom: 1px solid #1a2330; font-size: 0.8rem;
+    }
+    .gua-act-row:last-child { border-bottom: 0; }
+    .gua-drawer-bd.view-action .gua-nav { display: none; }
+    .gua-drawer-bd.view-action .gua-detail { display: none; }
+    .gua-drawer-bd.view-name .gua-action-browse { display: none; }
+    .gua-drawer-bd { position: relative; }
+
+
   </style>
 </head>
 <body>
@@ -578,6 +1167,13 @@
       <div id="ruleList"></div>
     </aside>
     <section class="workspace">
+      <div class="bt-subtabs" id="btSubtabs">
+        <button type="button" class="bt-subtab active" data-bt-page="new">新建回测</button>
+        <button type="button" class="bt-subtab" data-bt-page="history">历史任务</button>
+        <button type="button" class="bt-subtab" data-bt-page="detail" id="tabDetail" disabled title="请先从历史任务打开详情">回测详情</button>
+      </div>
+      <div class="bt-page active" id="pageNew">
+
       <div class="data-banner" id="dataBanner">正在读取本地行情数据范围…</div>
 
       <div class="card" id="createPanel" style="display:none">
@@ -598,165 +1194,462 @@ XG:CROSS(MA5,MA10);</textarea>
         <div id="createMsg"></div>
       </div>
 
-      <div class="card">
+      <div class="card" id="btConfigCard">
         <h2>回测配置</h2>
-        <p class="sub" style="margin-top:0">已选规则：<span id="selectedLabel">无</span> <span class="sub" style="font-size:0.8rem">（八卦OHLC 为分类标注，需配合选股规则一起回测）</span></p>
-        <h2 style="margin-top:0.25rem">回测账户模式</h2>
-        <div class="acct-mode" id="accountModeBox">
-          <label>
-            <input type="radio" name="accountMode" value="portfolio" checked />
-            <span><b>组合账户</b>（默认）
-              <small>全市场共享约 100 万资金，单票约 10% 上限；接近真实可执行组合。</small>
-            </span>
-          </label>
-          <label>
-            <input type="radio" name="accountMode" value="per_symbol" />
-            <span><b>通达信对照 · 单票独立资金</b>
-              <small>每只股票各自独立本金、互不挤兑；汇总含等权平均单票收益，便于与通达信导出表对照。</small>
-            </span>
-          </label>
-        </div>
-        <div class="row">
-          <div>
-            <label>组合方式（多规则）</label>
-            <select id="combine">
-              <option value="">分别信号（不合并）</option>
-              <option value="all">全部满足 AND</option>
-              <option value="any">任一满足 OR</option>
-            </select>
+        <p class="sub" style="margin-top:0">已选策略：<span id="selectedLabel">无</span>
+          <span class="sub" style="font-size:0.8rem">（请先在左侧勾选选股规则；八卦OHLC 仅为标注，需配合选股规则）</span>
+        </p>
+
+        <nav class="bt-steps-nav" aria-label="配置步骤">
+          <a href="#step-account">1 账户</a>
+          <a href="#step-signal">2 信号</a>
+          <a href="#step-swd">3 信号星期</a>
+          <a href="#step-trade">4 交易日程</a>
+          <a href="#step-pool">5 股票与区间</a>
+          <a href="#step-gua">6 卦象</a>
+        </nav>
+
+        <!-- Step 1 -->
+        <section class="bt-step" id="step-account">
+          <div class="bt-step-hd">
+            <div class="bt-step-num">1</div>
+            <div>
+              <h3>选择账户模式</h3>
+              <p class="bt-step-desc">决定资金如何汇总，影响收益与回撤的解读方式。</p>
+            </div>
           </div>
-          <div>
-            <label>K线周期</label>
-            <select id="period">
+          <div class="bt-step-bd">
+            <div class="acct-mode" id="accountModeBox">
+              <label>
+                <input type="radio" name="accountMode" value="portfolio" checked />
+                <span><b>组合账户</b>（默认）
+                  <small>全市场共享约 100 万资金，单票约 10% 上限；接近真实可执行组合。</small>
+                </span>
+              </label>
+              <label>
+                <input type="radio" name="accountMode" value="per_symbol" />
+                <span><b>通达信对照 · 单票独立资金</b>
+                  <small>每只股票各自独立本金、互不挤兑；汇总含等权平均单票收益，便于与通达信导出表对照。</small>
+                </span>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- Step 2 -->
+        <section class="bt-step" id="step-signal">
+          <div class="bt-step-hd">
+            <div class="bt-step-num">2</div>
+            <div>
+              <h3>定义信号</h3>
+              <p class="bt-step-desc">多规则如何合并，以及在什么 K 线周期上产生信号。</p>
+            </div>
+          </div>
+          <div class="bt-step-bd">
+            <div class="row">
+              <div>
+                <label>组合方式（多规则）</label>
+                <select id="combine">
+                  <option value="">分别信号（不合并）</option>
+                  <option value="all">全部满足 AND</option>
+                  <option value="any">任一满足 OR</option>
+                </select>
+                <div class="hint">仅勾选一条规则时，可保持「分别信号」。</div>
+              </div>
+              <div>
+                <label>K线周期</label>
+                <select id="period">
+                  <option value="DAY">日线</option>
+                  <option value="WEEK">周线</option>
+                  <option value="MONTH">月线</option>
+                  <option value="DWM">日周月共振</option>
+                  <option value="MIN60">60分钟线</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Step 3 -->
+        <section class="bt-step" id="step-swd">
+          <div class="bt-step-hd">
+            <div class="bt-step-num">3</div>
+            <div>
+              <h3>信号星期过滤 <span class="bt-step-opt">可选</span></h3>
+              <p class="bt-step-desc">限制「哪几天允许出现指标信号」。与下方「买入/平仓星期」不同：这里管信号日，下面管成交日。</p>
+            </div>
+          </div>
+          <div class="bt-step-bd">
+            <div class="sub" style="margin:0 0 0.4rem;font-size:0.8rem">默认<strong>不限制</strong>（全部不勾选）。可多选周一～周五，支持同时勾选多天。</div>
+            <div class="swd-row" id="signalWeekdays" style="display:flex;flex-wrap:wrap;gap:0.55rem 0.85rem;align-items:center">
+              <label style="display:inline-flex;align-items:center;gap:0.25rem;margin:0;font-size:0.85rem;color:var(--text)"><input type="checkbox" class="swd" value="1" style="width:auto" /> 一</label>
+              <label style="display:inline-flex;align-items:center;gap:0.25rem;margin:0;font-size:0.85rem;color:var(--text)"><input type="checkbox" class="swd" value="2" style="width:auto" /> 二</label>
+              <label style="display:inline-flex;align-items:center;gap:0.25rem;margin:0;font-size:0.85rem;color:var(--text)"><input type="checkbox" class="swd" value="3" style="width:auto" /> 三</label>
+              <label style="display:inline-flex;align-items:center;gap:0.25rem;margin:0;font-size:0.85rem;color:var(--text)"><input type="checkbox" class="swd" value="4" style="width:auto" /> 四</label>
+              <label style="display:inline-flex;align-items:center;gap:0.25rem;margin:0;font-size:0.85rem;color:var(--text)"><input type="checkbox" class="swd" value="5" style="width:auto" /> 五</label>
+              <button type="button" class="secondary" id="btnSwdClear" style="padding:0.2rem 0.55rem;font-size:0.78rem">不限制</button>
+              <button type="button" class="secondary" id="btnSwdWeekdays" style="padding:0.2rem 0.55rem;font-size:0.78rem">工作日</button>
+              <button type="button" class="secondary" id="btnSwdFri" style="padding:0.2rem 0.55rem;font-size:0.78rem">仅周五</button>
+            </div>
+            <p class="swd-status" id="swdStatus">当前：不限制（任意交易日信号均有效）</p>
+          </div>
+        </section>
+
+        <!-- Step 4 -->
+        <section class="bt-step" id="step-trade">
+          <div class="bt-step-hd">
+            <div class="bt-step-num">4</div>
+            <div>
+              <h3>交易日程</h3>
+              <p class="bt-step-desc">信号之后何时买入、何时平仓，以及按开盘价还是收盘价成交。</p>
+            </div>
+          </div>
+          <div class="bt-step-bd">
+            <div class="param-pair">
+              <div class="field">
+                <label>买入日（星期几）<br/><span style="font-weight:400;opacity:.85">信号后第一个该星期的交易日买入</span></label>
+                <select id="buyWeekday">
+                  <option value="1">周一</option>
+                  <option value="2">周二</option>
+                  <option value="3">周三</option>
+                  <option value="4">周四</option>
+                  <option value="5" selected>周五</option>
+                </select>
+                <div class="hint">例：周五信号 → 选周一买 = 下周一。</div>
+                <input type="hidden" id="entryLag" value="1" />
+              </div>
+              <div class="field">
+                <label>强制平仓日（星期几）<br/><span style="font-weight:400;opacity:.85">买入后第一个该星期的交易日强平</span></label>
+                <select id="exitWeekday">
+                  <option value="1" selected>周一</option>
+                  <option value="2">周二</option>
+                  <option value="3">周三</option>
+                  <option value="4">周四</option>
+                  <option value="5">周五</option>
+                </select>
+                <div class="hint">例：周五买入 → 选周一平 = 下周一。</div>
+                <input type="hidden" id="hold" value="1" />
+              </div>
+            </div>
+            <div class="row" style="margin-top:0.55rem">
+              <div>
+                <label>买入成交价</label>
+                <div class="pool-mode" id="buyOnBox" style="margin-top:0.25rem">
+                  <label><input type="radio" name="buyOn" value="open" checked /> 开盘买</label>
+                  <label><input type="radio" name="buyOn" value="close" /> 收盘买</label>
+                </div>
+              </div>
+              <div>
+                <label>卖出成交价</label>
+                <div class="pool-mode" id="sellOnBox" style="margin-top:0.25rem">
+                  <label><input type="radio" name="sellOn" value="open" checked /> 开盘卖</label>
+                  <label><input type="radio" name="sellOn" value="close" /> 收盘卖</label>
+                </div>
+              </div>
+            </div>
+            <div class="timeline" id="timeline" style="margin-top:0.55rem"></div>
+            <details class="sub" style="margin-top:0.55rem">
+              <summary style="cursor:pointer;color:var(--muted);font-size:0.82rem">风险控制（可选）：止损 / 止盈</summary>
+              <div class="row" style="margin-top:0.45rem">
+                <div>
+                  <label>止损 / 止盈（比例，可空）</label>
+                  <div class="row">
+                    <input id="sl" placeholder="止损 0.03" />
+                    <input id="tp" placeholder="止盈 0.08" />
+                  </div>
+                </div>
+                <div></div>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <!-- Step 5 -->
+        <section class="bt-step" id="step-pool">
+          <div class="bt-step-hd">
+            <div class="bt-step-num">5</div>
+            <div>
+              <h3>股票池与回测区间</h3>
+              <p class="bt-step-desc">测哪些股票、哪段时间；全市场会更慢，建议先用小池验证。</p>
+            </div>
+          </div>
+          <div class="bt-step-bd">
+            <div class="pool-mode" id="poolMode">
+              <label><input type="radio" name="poolMode" value="demo" checked /> 演示小池</label>
+              <label><input type="radio" name="poolMode" value="custom" /> 自定义代码</label>
+              <label><input type="radio" name="poolMode" value="full" /> 全部 A 股 / 全市场</label>
+            </div>
+            <div class="warn-box" id="fullMarketWarn">
+              已选择<strong>全市场</strong>：将使用本地 universe 中的全部 A 股（约 <span id="univCount">?</span> 只）。
+              耗时与内存显著增加，建议先缩小日期区间；长任务将以异步方式提交。
+            </div>
+            <div id="codesWrap">
+              <label>股票代码（逗号分隔，如 sh600000,sz000001）</label>
+              <input id="codes" value="sh600000,sz000001" />
+              <div class="hint" id="poolHint">演示池默认两只股票，便于快速验证。</div>
+            </div>
+            <h3 style="margin:0.85rem 0 0.35rem;font-size:0.9rem">回测区间</h3>
+            <div class="row">
+              <div>
+                <label>开始日期</label>
+                <div class="date-grid">
+                  <select id="startYear"></select>
+                  <select id="startMonth"></select>
+                  <select id="startDay"></select>
+                </div>
+                <div class="hint">也可清空年=不限制起点</div>
+              </div>
+              <div>
+                <label>结束日期</label>
+                <div class="date-grid">
+                  <select id="endYear"></select>
+                  <select id="endMonth"></select>
+                  <select id="endDay"></select>
+                </div>
+                <div class="hint">年选「不限」表示不限制终点</div>
+              </div>
+            </div>
+            <div class="hint" id="calHint">交易日历加载中…</div>
+            <div class="actions" style="margin-top:0.55rem">
+              <label style="display:flex;align-items:center;gap:0.4rem;color:var(--muted);width:auto;margin:0">
+                <input type="checkbox" id="researchUnadj" style="width:auto;margin:0" /> 研究未复权
+              </label>
+              <label style="display:flex;align-items:center;gap:0.4rem;color:var(--muted);width:auto;margin:0">
+                <input type="checkbox" id="researchUnconf" style="width:auto;margin:0" /> 允许未确认公式（研究）
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <!-- Step 6 卦象 -->
+        <section class="bt-step" id="step-gua">
+          <div class="bt-step-hd">
+            <div class="bt-step-num">6</div>
+            <div style="flex:1;min-width:0">
+              <h3>卦象过滤 <span class="bt-step-opt">可选</span></h3>
+              <p class="bt-step-desc">在技术指标信号上再按「主卦+爻位 / 操作信号」过滤。默认关闭，不影响纯策略回测。</p>
+            </div>
+            <label class="gua-switch" style="margin-left:auto;flex-shrink:0"><input type="checkbox" id="guaEnabled" /> 启用</label>
+          </div>
+          <div class="bt-step-bd">
+            <div class="gua-disabled-hint" id="guaOffHint">
+              <b>当前未启用。</b>技术信号不会按卦象过滤。建议先跑一版纯策略，再打开启用做对比；历史标题会显示「策略 + 卦象…」。
+              下方可先浏览用法，只有打开「启用」后才会真正生效。
+            </div>
+
+            <div class="sub" style="font-size:0.8rem;margin:0 0 0.35rem">用法（三选一，小白建议从「操作信号」或「现成方案」开始）</div>
+            <div class="gua-usage-grid" id="guaUsageGrid">
+              <button type="button" class="gua-usage-card active" data-usage="action" id="guaUsageAction">
+                <b>① 按操作信号</b>
+                <span>勾选 新开仓 / 加仓 / 持有 等，无需记卦名。推荐入门。</span>
+              </button>
+              <button type="button" class="gua-usage-card" data-usage="preset" id="guaUsagePreset">
+                <b>② 用现成方案</b>
+                <span>一键采用「最佳 3 爻」或「偏多信号」等研究模板。</span>
+              </button>
+              <button type="button" class="gua-usage-card" data-usage="advanced" id="guaUsageAdvanced">
+                <b>③ 自己指定卦/爻</b>
+                <span>搜索或按 64 卦目录勾选具体爻象（进阶）。</span>
+              </button>
+            </div>
+
+            <div id="guaPanelAction" class="gua-panel is-on">
+              <div class="sub" style="font-size:0.78rem;margin-bottom:0.3rem">操作信号（可多选，同类为「或」）</div>
+              <div class="gua-preset-row">
+                <button type="button" class="secondary" id="btnGuaActBull">一键偏多（新开仓+加仓）</button>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:0.45rem 0.75rem;font-size:0.85rem" id="guaActionChecks">
+                <label><input type="checkbox" value="新开仓" /> <span class="gua-act gua-act-新开仓">新开仓</span></label>
+                <label><input type="checkbox" value="加仓" /> <span class="gua-act gua-act-加仓">加仓</span></label>
+                <label><input type="checkbox" value="持有" /> <span class="gua-act gua-act-持有">持有</span></label>
+                <label><input type="checkbox" value="减仓" /> <span class="gua-act gua-act-减仓">减仓</span></label>
+                <label><input type="checkbox" value="清仓" /> <span class="gua-act gua-act-清仓">清仓</span></label>
+              </div>
+            </div>
+
+            <div id="guaPanelPreset" class="gua-panel" hidden>
+              <div class="sub" style="font-size:0.78rem;margin-bottom:0.35rem">点击方案即写入选择；请同时打开右上角「启用」。</div>
+              <div class="gua-preset-row">
+                <button type="button" class="secondary" id="btnGuaPresetBest3" data-preset="best3" title="地雷复·初九、地风升·初六、地天泰·初九">① 最佳 3 爻</button>
+                <button type="button" class="secondary" id="btnGuaPresetBull" data-preset="bull" title="新开仓 + 加仓">② 偏多操作信号</button>
+                <button type="button" class="secondary" id="btnGuaPresetLast" data-preset="last">③ 恢复上次</button>
+              </div>
+              <div class="hint" id="guaPresetHint">请点选上方方案。当前：尚未采用方案。</div>
+            </div>
+
+            <div id="guaPanelAdvanced" class="gua-panel" hidden>
+              <div class="sub" style="font-size:0.78rem;margin-bottom:0.35rem">搜索爻辞/卦名，或打开完整目录浏览 64 卦 × 六爻。</div>
+              <div class="gua-main-row">
+                <input type="text" id="guaQuickSearch" placeholder="搜索：乾、九五、飞龙、新开仓…" autocomplete="off" />
+                <button type="button" class="secondary" id="btnGuaOpen">打开完整目录</button>
+              </div>
+              <div class="hint" style="margin-top:0.35rem">进阶：目录内可按主卦全选六爻，或只勾若干爻。</div>
+            </div>
+
+            <div class="gua-tags" id="guaSelectedTags" style="margin-top:0.55rem"></div>
+            <div class="gua-rule" id="guaRuleText">卦象过滤：未启用（开关关闭）</div>
+            <div class="gua-preview" id="guaPreviewBox">打开「启用」并选择条件后显示命中预览…</div>
+          </div>
+        </section>
+
+        <!-- drawer stays outside steps but inside card for z-index -->
+        <div class="gua-drawer-mask" id="guaDrawerMask"></div>
+        <div class="gua-drawer" id="guaDrawer" role="dialog" aria-modal="true" aria-label="选择卦象">
+          <div class="gua-drawer-hd">
+            <h3>选择卦象 <span class="sub" id="guaSelCount" style="font-weight:400">已选 0</span></h3>
+            <div class="gua-views" id="guaViews">
+              <button type="button" class="secondary active" data-view="by_name">按卦名</button>
+              <button type="button" class="secondary" data-view="by_action">按操作信号</button>
+            </div>
+            <button type="button" class="secondary" id="btnGuaClear">清空选择</button>
+            <button type="button" class="secondary" id="btnGuaCancel">取消</button>
+            <button type="button" id="btnGuaOk">确定</button>
+            <button type="button" class="secondary" id="btnGuaClose" title="关闭">✕</button>
+          </div>
+          <div style="padding:0.55rem 1rem 0">
+            <input type="text" id="guaDrawerSearch" placeholder="搜索：乾 / 01 / ䷀ / 九五 / 飞龙在天 / 大有 / 主升浪 / 新开仓" autocomplete="off" />
+          </div>
+          <div class="gua-search-hits" id="guaSearchHits"></div>
+          <div class="gua-drawer-bd view-name" id="guaDrawerBody">
+            <div class="gua-nav" id="guaNavList"><div class="sub" style="padding:0.75rem">加载中…</div></div>
+            <div class="gua-detail" id="guaDetailPane"><div class="sub">请选择左侧主卦</div></div>
+            <div class="gua-action-browse" id="guaActionBrowse" style="display:none"><div class="sub">按操作信号浏览…</div></div>
+          </div>
+          <div class="gua-drawer-ft">
+            <span class="sub" id="guaDrawerStatus" style="flex:1;text-align:left"></span>
+            <button type="button" class="secondary" id="btnGuaCancel2">取消</button>
+            <button type="button" id="btnGuaOk2">确定</button>
+          </div>
+        </div>
+
+        <div class="bt-summary-bar" id="btSummaryBar">
+          <div class="sum-title">本单摘要（提交前请确认）</div>
+          <div class="sum-body" id="btSummaryBody">—</div>
+          <div class="actions" style="margin-top:0.55rem">
+            <button type="button" id="btnRun">开始回测</button>
+            <button type="button" class="secondary" id="btnGoHistory">查看历史任务</button>
+          </div>
+          <div id="runMsg" style="margin-top:0.5rem"></div>
+          <div id="progressWrap" class="progress-wrap">
+            <div class="progress-meta">
+              <span id="progressLabel"><strong>进度</strong></span>
+              <span id="progressPct">0%</span>
+            </div>
+            <div class="progress-bar" id="progressBar"><i id="progressFill"></i></div>
+            <div class="progress-detail" id="progressDetail">—</div>
+          </div>
+        </div>
+      </div>
+
+
+      
+      </div><!-- /pageNew -->
+
+      <div class="bt-page" id="pageHistory">
+        <div class="card" style="margin-bottom:0">
+          <h2>历史任务</h2>
+          <div class="history-toolbar" id="historyToolbar">
+            <input type="search" id="histSearch" placeholder="搜索策略名称 / 任务编号" />
+            <select id="histFilterMode" title="资金模式">
+              <option value="">全部模式</option>
+              <option value="portfolio">共享资金池</option>
+              <option value="per_symbol">单票独立</option>
+            </select>
+            <select id="histFilterPeriod" title="周期">
+              <option value="">全部周期</option>
               <option value="DAY">日线</option>
               <option value="WEEK">周线</option>
               <option value="MONTH">月线</option>
-              <option value="DWM">日周月共振</option>
-              <option value="MIN60">60分钟线</option>
+              <option value="DWM">日周月</option>
+              <option value="MIN60">60分钟</option>
             </select>
+            <select id="histFilterStatus" title="状态">
+              <option value="">全部状态</option>
+              <option value="ok">完成</option>
+              <option value="failed">失败</option>
+              <option value="running">运行中</option>
+            </select>
+            <select id="histSort" title="排序">
+              <option value="time_desc">时间最新</option>
+              <option value="time_asc">时间最早</option>
+              <option value="ret_desc">主收益高→低</option>
+              <option value="ret_asc">主收益低→高</option>
+              <option value="mdd_asc">回撤小→大</option>
+            </select>
+            <button type="button" class="secondary" id="btnLoadRuns">刷新</button>
+            <button type="button" class="secondary" id="btnHistSelectAll">全选</button>
+            <button type="button" class="secondary" id="btnHistSelectNone">取消全选</button>
+            <button type="button" class="secondary btn-del-batch" id="btnDeleteSelected">删除所选</button>
+            <button type="button" class="secondary" id="btnClearHistory" title="删除当前列表全部记录及结果文件">全部删除</button>
+            <span class="sel-info" id="histSelInfo">已选 0 条</span>
+            <span class="hist-count" id="histCount">共 0 条</span>
           </div>
-        </div>
-        <div class="param-pair">
-          <div class="field">
-            <label>买入延迟 entry_lag<br/><span style="font-weight:400;opacity:.85">信号后第 N 个交易日 · 开盘买入</span></label>
-            <input type="number" id="entryLag" min="1" value="1" />
-            <div class="hint">例：N=1 → 信号次日开盘买（默认）。</div>
-          </div>
-          <div class="field">
-            <label>强制平仓 hold<br/><span style="font-weight:400;opacity:.85">开仓后 N 周期 · 无论涨跌 · 收盘价平仓</span></label>
-            <input type="number" id="hold" min="1" value="1" title="日线=N个交易日；周/月线=N个完整周期。A股T+1：不能开仓当日卖出。到期强制平仓用收盘价；止损/止盈仍为次日开盘。" />
-            <div class="hint">例：日线 hold=5 → 计满后可卖日按收盘价强平（未触发止损止盈时）。</div>
-          </div>
-        </div>
-        <div class="row" style="margin-top:0.65rem">
-          <div>
-            <label>止损 / 止盈（比例，可空）</label>
-            <div class="row">
-              <input id="sl" placeholder="止损 0.03" />
-              <input id="tp" placeholder="止盈 0.08" />
-            </div>
-          </div>
-          <div></div>
-        </div>
-        <div class="timeline" id="timeline"></div>
-
-        <h2 style="margin-top:1rem">股票池</h2>
-        <div class="pool-mode" id="poolMode">
-          <label><input type="radio" name="poolMode" value="demo" checked /> 演示小池</label>
-          <label><input type="radio" name="poolMode" value="custom" /> 自定义代码</label>
-          <label><input type="radio" name="poolMode" value="full" /> 全部 A 股 / 全市场</label>
-        </div>
-        <div class="warn-box" id="fullMarketWarn">
-          已选择<strong>全市场</strong>：将使用本地 universe 中的全部 A 股（约 <span id="univCount">?</span> 只）。
-          耗时与内存显著增加，建议先缩小日期区间；长任务将以异步方式提交。
-        </div>
-        <div id="codesWrap">
-          <label>股票代码（逗号分隔，如 sh600000,sz000001）</label>
-          <input id="codes" value="sh600000,sz000001" />
-          <div class="hint" id="poolHint">演示池默认两只股票，便于快速验证。</div>
-        </div>
-
-        <h2 style="margin-top:0.5rem">回测区间（下拉选择）</h2>
-        <div class="row">
-          <div>
-            <label>开始日期</label>
-            <div class="date-grid">
-              <select id="startYear"></select>
-              <select id="startMonth"></select>
-              <select id="startDay"></select>
-            </div>
-            <div class="hint">也可清空年=不限制起点</div>
-          </div>
-          <div>
-            <label>结束日期</label>
-            <div class="date-grid">
-              <select id="endYear"></select>
-              <select id="endMonth"></select>
-              <select id="endDay"></select>
-            </div>
-            <div class="hint">年选「不限」表示不限制终点</div>
-          </div>
-        </div>
-        <div class="hint" id="calHint">交易日历加载中…</div>
-
-        <div class="actions">
-          <label style="display:flex;align-items:center;gap:0.4rem;color:var(--muted);width:auto;margin:0">
-            <input type="checkbox" id="researchUnadj" style="width:auto;margin:0" /> 研究未复权<span style="color:var(--muted);font-size:0.85em">（复权因子不全时可勾选以继续回测）</span>
-          </label>
-          <label style="display:flex;align-items:center;gap:0.4rem;color:var(--muted);width:auto;margin:0">
-            <input type="checkbox" id="researchUnconf" style="width:auto;margin:0" /> 允许未确认公式（研究）
-          </label>
-        </div>
-        <div class="actions" style="margin-top:0.75rem">
-          <button type="button" id="btnRun">开始回测</button>
-          <button type="button" class="secondary" id="btnLoadRuns">历史任务</button>
-        </div>
-        <div id="runMsg" style="margin-top:0.5rem"></div>
-        <div id="progressWrap" class="progress-wrap">
-          <div class="progress-meta">
-            <span id="progressLabel"><strong>进度</strong></span>
-            <span id="progressPct">0%</span>
-          </div>
-          <div class="progress-bar" id="progressBar"><i id="progressFill"></i></div>
-          <div class="progress-detail" id="progressDetail">—</div>
+          <div id="history" class="history-empty">点击「历史任务」页签加载</div>
         </div>
       </div>
 
-      <div class="card" id="resultCard">
-        <h2>回测结果 <span id="resultRunId" style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0"></span></h2>
-        <p class="muted-note" id="resultHint">回测完成后在此展示指标、曲线与下载。</p>
-        <div class="result-toolbar" id="resultToolbar" style="display:none">
-          <a class="dl-btn primary" id="dlExcel" href="#" target="_blank" rel="noopener">下载回测Excel（汇总+交易明细）</a>
-          <a class="dl-btn" id="dlTrades" href="#" target="_blank" rel="noopener">交易明细 trades.csv</a>
-          <a class="dl-btn" id="dlFills" href="#" target="_blank" rel="noopener">成交 fills.csv</a>
-          <a class="dl-btn" id="dlSignals" href="#" target="_blank" rel="noopener">信号 signals.csv</a>
-          <a class="dl-btn" id="dlMetrics" href="#" target="_blank" rel="noopener">指标 metrics.json</a>
-          <a class="dl-btn" id="dlMeta" href="#" target="_blank" rel="noopener">元数据 run_meta.json</a>
-          <button type="button" class="dl-btn" id="btnToggleJson">显示/隐藏原始 JSON</button>
-          <div class="path-hint" id="resultPathHint"></div>
-        </div>
-        <div class="metrics" id="metrics"></div>
-        <canvas id="equityChart" height="200"></canvas>
-        <div id="resultJsonWrap">
-          <pre id="resultJson"></pre>
+      <div class="bt-page" id="pageDetail">
+        <div class="card" id="resultCard">
+          <div class="detail-hero">
+            <div style="min-width:0;flex:1">
+              <h2 id="detailTitle">回测详情</h2>
+              <div class="detail-meta" id="detailMeta"></div>
+              <p class="muted-note" id="resultHint" style="margin:0.45rem 0 0">从历史任务点击「查看」打开详情。</p>
+            </div>
+            <div class="detail-actions" id="resultToolbar" style="display:none">
+              <button type="button" class="secondary" id="btnCopyParams">复制参数</button>
+              <button type="button" class="secondary" id="btnRerun">重新回测</button>
+              <a class="dl-btn primary" id="dlExcel" href="#" target="_blank" rel="noopener">导出Excel</a>
+              <div class="export-menu-wrap">
+                <button type="button" class="secondary" id="btnExportMore">导出数据 ▾</button>
+                <div class="export-menu" id="exportMenu">
+                  <a id="dlTrades" href="#" target="_blank" rel="noopener">trades.csv 交易明细</a>
+                  <a id="dlFills" href="#" target="_blank" rel="noopener">fills.csv 成交</a>
+                  <a id="dlSignals" href="#" target="_blank" rel="noopener">signals.csv 信号</a>
+                  <a id="dlMetrics" href="#" target="_blank" rel="noopener">metrics.json 指标</a>
+                  <a id="dlMeta" href="#" target="_blank" rel="noopener">run_meta.json 元数据</a>
+                </div>
+              </div>
+              <button type="button" class="secondary" id="btnBackHistory">返回历史</button>
+            </div>
+          </div>
+          <div id="perSymbolWarn" class="virtual-warn" style="display:none"></div>
+          <div class="detail-core-metrics" id="coreMetrics"></div>
+          <div class="detail-tabs" id="detailTabs">
+            <button type="button" class="detail-tab active" data-pane="overview">概览</button>
+            <button type="button" class="detail-tab" data-pane="equity">净值与回撤</button>
+            <button type="button" class="detail-tab" data-pane="trades">交易统计</button>
+            <button type="button" class="detail-tab" data-pane="settings">回测设置</button>
+            <button type="button" class="detail-tab" data-pane="advanced">高级信息</button>
+          </div>
+          <div class="detail-pane active" id="pane-overview">
+            <div class="secondary-metrics" id="metrics"></div>
+            <div class="detail-kv" id="resultKv" style="margin-top:0.75rem"></div>
+          </div>
+          <div class="detail-pane" id="pane-equity">
+            <canvas id="equityChart" height="220"></canvas>
+            <p class="sub" id="equityNote" style="margin-top:0.5rem"></p>
+          </div>
+          <div class="detail-pane" id="pane-trades">
+            <div class="secondary-metrics" id="tradeStats"></div>
+          </div>
+          <div class="detail-pane" id="pane-settings">
+            <div class="detail-kv" id="settingsKv"></div>
+          </div>
+          <div class="detail-pane" id="pane-advanced">
+            <div class="detail-kv" id="advancedKv"></div>
+            <div class="actions" style="margin-top:0.6rem">
+              <button type="button" class="secondary" id="btnToggleJson">显示/隐藏原始 JSON</button>
+            </div>
+            <div id="resultJsonWrap"><pre id="resultJson"></pre></div>
+            <div class="path-hint" id="resultPathHint"></div>
+            <span id="resultRunId" style="display:none"></span>
+          </div>
         </div>
       </div>
-
-      <div class="card">
-        <h2>历史任务</h2>
-        <div class="history-actions">
-          <button type="button" class="secondary" id="btnLoadRuns">刷新历史</button>
-          <button type="button" class="secondary" id="btnHistSelectAll">全选</button>
-          <button type="button" class="secondary" id="btnHistSelectNone">取消全选</button>
-          <button type="button" class="secondary btn-del-batch" id="btnDeleteSelected">删除所选</button>
-          <button type="button" class="secondary" id="btnClearHistory" title="删除当前列表全部记录及结果文件">全部删除</button>
-          <span class="sel-info" id="histSelInfo">已选 0 条</span>
-        </div>
-
-        <div id="history" class="history-empty">点击「历史任务」加载</div>
-      </div>
-    </section>
-  </main>
+</section>
+  <div class="card" id="guaDetailCard" style="display:none;margin:1rem 1.5rem"><h2>卦象条件</h2><div id="guaDetailBlock">—</div></div>
+</main>
 
   <main id="viewForecast" style="display:none;grid-template-columns:320px 1fr">
     <aside>
@@ -794,7 +1687,7 @@ XG:CROSS(MA5,MA10);</textarea>
         <h2>个股 / 批量查询</h2>
         <label>代码 / 名称 / 拼音（多个代码请用英文或中文逗号分隔）</label>
         <div style="display:flex;gap:0.5rem;align-items:flex-start">
-          <input id="fcQuery" placeholder="单个：000001 / 平安银行 / payh　批量：000001,000002,600000" style="flex:1;margin-bottom:0" />
+          <input id="fcQuery" placeholder="股票/ETF：000001 / 510300 / 平安银行 / payh　批量：000001,510300,159001" style="flex:1;margin-bottom:0" />
           <button type="button" id="fcSearchBtn">查询</button>
           <button type="button" class="secondary" id="fcExportBtn">导出全市场</button>
         </div>
@@ -964,15 +1857,122 @@ XG:CROSS(MA5,MA10);</textarea>
       }
     }
 
+    
+    function resolveTradeSchedule(r, m, summary, repro) {
+      // Prefer explicit weekday schedule; fall back to entry_lag/hold T+N labels.
+      const src = Object.assign({}, m || {}, r || {}, repro || {}, summary || {});
+      const req = (src.repro && src.repro.request) || src.request || {};
+      const pick = (k) => {
+        const v = src[k] != null && src[k] !== "" ? src[k] : req[k];
+        return v != null && v !== "" ? v : null;
+      };
+      let bw = pick("buy_weekday");
+      let ew = pick("exit_weekday");
+      // parse from title: "周一买 · 周四平"
+      if ((bw == null || ew == null) && src.title) {
+        const mt = String(src.title);
+        const mb = mt.match(/周([一二三四五六日天])买/);
+        const me = mt.match(/周([一二三四五六日天])平/);
+        const map = {一:1,二:2,三:3,四:4,五:5,六:6,日:7,天:7};
+        if (bw == null && mb) bw = map[mb[1]];
+        if (ew == null && me) ew = map[me[1]];
+      }
+      const buyOn = pick("buy_on") || "open";
+      const sellOn = pick("sell_on") || "open";
+      const boCn = (String(buyOn).toLowerCase().indexOf("close") >= 0 || buyOn === "收盘") ? "收盘" : "开盘";
+      const soCn = (String(sellOn).toLowerCase().indexOf("close") >= 0 || sellOn === "收盘") ? "收盘" : "开盘";
+      const lag = Number(src.entry_lag != null ? src.entry_lag : 1) || 1;
+      const hold = Number(src.hold != null ? src.hold : 1) || 1;
+      return {
+        buyWeekday: bw != null ? Number(bw) : null,
+        exitWeekday: ew != null ? Number(ew) : null,
+        buyOn, sellOn, boCn, soCn, lag, hold,
+        buyLabel: (bw != null && !Number.isNaN(Number(bw)))
+          ? (wdName(Number(bw)) + boCn + "买")
+          : ("T+" + lag + boCn + "买"),
+        sellLabel: (ew != null && !Number.isNaN(Number(ew)))
+          ? (wdName(Number(ew)) + soCn + "卖")
+          : ("T+" + (lag + hold) + soCn + "卖"),
+      };
+    }
+
+    function getBuyWeekday() {
+      const el = document.getElementById("buyWeekday");
+      const v = el ? parseInt(el.value, 10) : NaN;
+      return (v >= 1 && v <= 7) ? v : null;
+    }
+    function getExitWeekday() {
+      const el = document.getElementById("exitWeekday");
+      const v = el ? parseInt(el.value, 10) : NaN;
+      return (v >= 1 && v <= 7) ? v : null;
+    }
+    function setBuyWeekday(v) {
+      const el = document.getElementById("buyWeekday");
+      if (!el || v == null || v === "") return;
+      el.value = String(v);
+    }
+    function setExitWeekday(v) {
+      const el = document.getElementById("exitWeekday");
+      if (!el || v == null || v === "") return;
+      el.value = String(v);
+    }
+    const _WD = {1:"一",2:"二",3:"三",4:"四",5:"五",6:"六",7:"日"};
+    function wdName(n) { return "周" + (_WD[n] || n); }
+    function getBuyOn() {
+      const el = document.querySelector('input[name="buyOn"]:checked');
+      return (el && el.value === "close") ? "close" : "open";
+    }
+    function getSellOn() {
+      const el = document.querySelector('input[name="sellOn"]:checked');
+      return (el && el.value === "close") ? "close" : "open";
+    }
+    function setBuyOn(v) {
+      const want = (String(v || "open").toLowerCase().indexOf("close") >= 0 || String(v) === "收盘") ? "close" : "open";
+      document.querySelectorAll('input[name="buyOn"]').forEach((r) => { r.checked = r.value === want; });
+    }
+    function setSellOn(v) {
+      const want = (String(v || "open").toLowerCase().indexOf("close") >= 0 || String(v) === "收盘") ? "close" : "open";
+      document.querySelectorAll('input[name="sellOn"]').forEach((r) => { r.checked = r.value === want; });
+    }
+    function getSignalWeekdays() {
+      const boxes = document.querySelectorAll("#signalWeekdays input.swd:checked");
+      const days = Array.from(boxes).map((el) => parseInt(el.value, 10)).filter((n) => n >= 1 && n <= 5);
+      days.sort((a, b) => a - b);
+      return days;
+    }
+    function setSignalWeekdays(days) {
+      const set = new Set((days || []).map((x) => parseInt(x, 10)).filter((n) => n >= 1 && n <= 5));
+      document.querySelectorAll("#signalWeekdays input.swd").forEach((el) => {
+        el.checked = set.has(parseInt(el.value, 10));
+      });
+    }
     function updateTimeline() {
-      const lag = Math.max(1, parseInt(document.getElementById("entryLag").value || "1", 10));
-      const hold = Math.max(1, parseInt(document.getElementById("hold").value || "1", 10));
-      const buy = "T+" + lag;
-      const sellFromSignal = "T+" + (lag + hold);
-      document.getElementById("timeline").textContent =
-        "时间轴（交易日，DAY 示意）：信号日收盘确认 → " + buy + " 开盘买入 → 持有 hold=" + hold +
-        " → 约 " + sellFromSignal + " 开盘卖出（与引擎 hold 语义一致；涨跌停会 defer）。\n" +
-        "例：entry_lag=1, hold=1 → 信号 D1 → 买 D2 开 → 卖 D3 开。";
+      try { if (typeof updateSwdStatus === 'function') updateSwdStatus(); if (typeof updateBtSummary === 'function') updateBtSummary(); } catch (e) {}
+
+      const buyWd = getBuyWeekday();
+      const exitWd = getExitWeekday();
+      const buySess = getBuyOn() === "close" ? "收盘" : "开盘";
+      const sellSess = getSellOn() === "close" ? "收盘" : "开盘";
+      let line1 = "时间轴：T 日收盘确认信号";
+      if (buyWd) line1 += " → 之后第一个" + wdName(buyWd) + " " + buySess + "买入";
+      else line1 += " → entry_lag 个交易日后 " + buySess + "买入";
+      if (exitWd) line1 += " → 买入后第一个" + wdName(exitWd) + " " + sellSess + "强制平仓";
+      else line1 += " → hold N 期后 " + sellSess + "强制平仓";
+      line1 += "（涨跌停会 defer）。";
+      let line2 = "例：信号周五 → 选周一买 / 下周一平 → 周一" + buySess + "买、再下周一" + sellSess + "卖。";
+      if (buyWd && exitWd) {
+        line2 = "例：信号任意日 → 买入日=" + wdName(buyWd) + " " + buySess + "，平仓日=" + wdName(exitWd) + " " + sellSess + "（均取信号/买入之后第一个该星期的交易日）。";
+      }
+      const el = document.getElementById("timeline");
+      if (el) {
+        let text = line1 + "\n" + line2;
+        const swd = getSignalWeekdays();
+        if (swd.length) {
+          const label = swd.map((d) => wdName(d)).join("、");
+          text += "\n信号过滤：仅 " + label + " 出现的信号可交易。";
+        }
+        el.textContent = text;
+      }
     }
 
     function renderRules() {
@@ -1127,28 +2127,27 @@ XG:CROSS(MA5,MA10);</textarea>
       }
       tb.style.display = "flex";
       const arts = new Set(artifacts || []);
-      const bind = (id, file, primary) => {
+      const bind = (id, file) => {
         const el = document.getElementById(id);
         if (!el) return;
         const ok = !arts.size || arts.has(file);
-        el.style.display = ok ? "inline-block" : "none";
+        el.style.display = ok ? "" : "none";
         el.href = artifactUrl(runId, file);
         el.setAttribute("download", file);
-        if (primary) el.classList.add("primary");
       };
-      bind("dlExcel", "summary.xlsx", true);
-      bind("dlFills", "fills.csv", false);
-      bind("dlSignals", "signals.csv", false);
-      bind("dlMetrics", "metrics.json", false);
-      bind("dlMeta", "run_meta.json", false);
-      bind("dlTrades", "trades.csv", false);
-      // if excel failed file exists, still try summary.xlsx first; server 404 handled by browser
+      bind("dlExcel", "summary.xlsx");
+      bind("dlFills", "fills.csv");
+      bind("dlSignals", "signals.csv");
+      bind("dlMetrics", "metrics.json");
+      bind("dlMeta", "run_meta.json");
+      bind("dlTrades", "trades.csv");
       const hint = document.getElementById("resultPathHint");
       if (hint) {
-        hint.textContent = "服务器路径: outputs/astock/" + runId + "/  （主文件 summary.xlsx：含「汇总」「交易明细」两表）";
+        hint.textContent = "服务器路径: outputs/astock/" + runId + "/ （仅高级信息）";
+        hint.style.display = "block";
       }
       const ridEl = document.getElementById("resultRunId");
-      if (ridEl) ridEl.textContent = "· " + runId;
+      if (ridEl) ridEl.textContent = runId || "";
     }
 
     async function showRunResult(summary, { fromHistory = false } = {}) {
@@ -1172,80 +2171,252 @@ XG:CROSS(MA5,MA10);</textarea>
         }
       }
 
-      showMetrics(metrics);
+      window.__lastDetailSummary = summary;
+      window.__lastDetailMetrics = metrics;
+
       setupDownloads(runId, artifacts);
 
       const repro = (detail.meta && detail.meta.repro) || summary.repro || {};
-      const title = summary.title || repro.title || runId || "回测结果";
+      const primary = strategyPrimaryName(Object.assign({}, summary, {
+        indicator_names: summary.indicator_names || repro.indicator_names || summary.indicator_ids || repro.indicator_ids,
+        gua_filter: summary.gua_filter || repro.gua_filter || (detail.meta && detail.meta.gua_filter),
+        with_bagua: summary.with_bagua != null ? summary.with_bagua : repro.with_bagua,
+        bagua_filter_label: summary.bagua_filter_label || repro.bagua_filter_label,
+        title: summary.title || repro.title,
+      }));
+      const fullTitle = summary.title || repro.title || primary;
+      const title = primary || fullTitle || runId || "回测结果";
+      const titleEl = document.getElementById("detailTitle");
+      if (titleEl) {
+        titleEl.textContent = title;
+        titleEl.title = (fullTitle && fullTitle !== title ? fullTitle + " · " : "") + (runId || "");
+      }
       const ridEl = document.getElementById("resultRunId");
-      if (ridEl) ridEl.textContent = "· " + (title.length > 40 ? title.slice(0, 40) + "…" : title);
+      if (ridEl) ridEl.textContent = runId || "";
 
-      // Chinese key-value summary strip
-      let kv = document.getElementById("resultKv");
-      if (!kv) {
-        kv = document.createElement("div");
-        kv.id = "resultKv";
-        kv.className = "result-kv";
-        const metricsEl = document.getElementById("metrics");
-        if (metricsEl && metricsEl.parentNode) {
-          metricsEl.parentNode.insertBefore(kv, metricsEl);
+      const per = isPerSymbolMode(metrics, summary);
+      const lag = summary.entry_lag != null ? summary.entry_lag : (repro.entry_lag != null ? repro.entry_lag : 1);
+      const hold = summary.hold != null ? summary.hold : (repro.hold != null ? repro.hold : 1);
+      const period = periodLabel(summary.period || repro.period);
+      const modeText = per ? "单票独立资金" : "共享资金池";
+      const range = fmtYmd(summary.start || repro.start) + " ~ " + fmtYmd(summary.end || repro.end);
+      const meta = document.getElementById("detailMeta");
+      if (meta) {
+        const sch = resolveTradeSchedule(summary, metrics, summary, repro);
+        const chips = [
+          period,
+          sch.buyLabel,
+          sch.sellLabel,
+          modeText,
+          range,
+        ];
+        if (Array.isArray(summary.signal_weekdays || repro.signal_weekdays) && (summary.signal_weekdays || repro.signal_weekdays).length) {
+          chips.splice(1, 0, "信号" + (summary.signal_weekdays || repro.signal_weekdays).map((d) => wdName(Number(d))).join(""));
+        }
+        meta.innerHTML = chips.map((c) => "<span class='detail-chip" + (String(c).indexOf("单票") >= 0 ? " hi" : "") + "'>" + c + "</span>").join("");
+      }
+
+      const warn = document.getElementById("perSymbolWarn");
+      if (warn) {
+        if (per) {
+          warn.style.display = "block";
+          warn.innerHTML =
+            "<b>单票独立资金模式说明：</b>每只产生信号的股票使用独立虚拟本金；" +
+            "「虚拟账户合计权益」是多账户加总，<b>不是真实单一资金池结果</b>。" +
+            "核心结论请优先看单票平均收益、收益中位数、参与股票数、胜率与已平仓交易。" +
+            "年化/最大回撤/夏普当前由合计权益曲线推算（口径风险，待后端等权净值合成修复）。";
+        } else {
+          warn.style.display = "none";
+          warn.innerHTML = "";
         }
       }
-      const inds = summary.indicator_names || repro.indicator_ids || summary.indicator_ids || [];
-      const indText = Array.isArray(inds) ? inds.join("、") : String(inds || "—");
-      const rows = [
-        ["任务名称", title],
-        ["运行编号", runId || "—"],
-        ["状态", statusLabel(summary.status || detail.status)],
-        ["规则", indText],
-        ["周期", periodLabel(summary.period || repro.period)],
-        ["持有期", summary.hold != null ? summary.hold : (repro.hold != null ? repro.hold : "—")],
-        ["买入延迟", summary.entry_lag != null ? summary.entry_lag : (repro.entry_lag != null ? repro.entry_lag : "—")],
-        ["区间", fmtYmd(summary.start || repro.start) + " ~ " + fmtYmd(summary.end || repro.end)],
-        ["信号数", summary.n_events != null ? summary.n_events : "—"],
-        ["成交笔数", summary.n_fills != null ? summary.n_fills : "—"],
-      ];
-      kv.innerHTML = rows.map(([k, v]) => `<div class="k">${k}</div><div class="v">${v}</div>`).join("");
+
+      renderCoreMetrics(metrics, summary);
+      showMetrics(metrics, summary);
+      renderTradeStats(metrics);
+      renderSettingsKv(summary, repro, metrics, runId);
+      renderAdvancedKv(summary, detail, artifacts, runId, metrics);
+
+      const kv = document.getElementById("resultKv");
+      if (kv) {
+        const inds = summary.indicator_names || repro.indicator_ids || summary.indicator_ids || [];
+        const indText = Array.isArray(inds) ? inds.join("、") : String(inds || "—");
+        const rows = [
+          ["策略名称", title],
+          ["状态", statusLabel(summary.status || detail.status)],
+          ["规则", indText],
+          ["周期", period],
+          ["持有周期", hold],
+          ["买入延迟", lag],
+          ["买入时点", resolveTradeSchedule(summary, metrics, summary, repro).buyLabel],
+          ["卖出时点", resolveTradeSchedule(summary, metrics, summary, repro).sellLabel + "（到期）"],
+          ["资金模式", modeText],
+          ["区间", range],
+        ];
+        kv.innerHTML = rows.map(([k, v]) => "<div class='k'>" + k + "</div><div class='v'>" + (v == null || v === "" ? "—" : v) + "</div>").join("");
+      }
 
       const chart = document.getElementById("equityChart");
+      const note = document.getElementById("equityNote");
       if (equity && equity.length) {
         if (chart) chart.classList.add("visible");
         drawEquity(equity);
+        if (note) {
+          note.textContent = per
+            ? "净值曲线来自虚拟账户合计权益（非正式等权标准化合成）。"
+            : "组合账户权益曲线。";
+        }
       } else if (chart) {
         chart.classList.remove("visible");
+        if (note) note.textContent = "无权益曲线数据";
       }
 
       const pre = document.getElementById("resultJson");
       if (pre) {
-        // Chinese-oriented view for optional JSON
         const view = {
-          "任务名称": title,
-          "运行编号": runId,
-          "状态": statusLabel(summary.status),
-          "规则": indText,
-          "周期": periodLabel(summary.period || repro.period),
-          "持有期": summary.hold != null ? summary.hold : repro.hold,
-          "买入延迟": summary.entry_lag != null ? summary.entry_lag : repro.entry_lag,
-          "开始日期": summary.start || repro.start,
-          "结束日期": summary.end || repro.end,
-          "指标": {},
-          "信号数": summary.n_events,
-          "成交笔数": summary.n_fills,
-          "文件": artifacts,
+          策略名称: title,
+          运行编号: runId,
+          状态: statusLabel(summary.status),
+          指标: metrics,
+          文件: artifacts,
         };
-        const mk = metrics || {};
-        Object.keys(mk).forEach(k => { view["指标"][metricLabel(k)] = mk[k]; });
         pre.textContent = JSON.stringify(view, null, 2);
       }
       const hint = document.getElementById("resultHint");
       if (hint) {
         hint.textContent = fromHistory
-          ? "当前为历史回测详情（中文）。可下载 Excel 查看逐笔交易。"
-          : ("回测已完成：" + statusLabel(summary.status) + (runId ? ("，编号 " + runId) : ""));
+          ? "当前为历史回测详情。导出 Excel 可查看格式化报告。"
+          : ("回测完成：" + statusLabel(summary.status));
       }
-      if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      const tabDetail = document.getElementById("tabDetail");
+      if (tabDetail) tabDetail.disabled = false;
+      switchBtPage("detail");
       return summary;
     }
+
+    function renderCoreMetrics(m, r) {
+      const box = document.getElementById("coreMetrics");
+      if (!box) return;
+      m = m || {};
+      const per = isPerSymbolMode(m, r);
+      const ret = primaryReturnValue(m, r);
+      const pl = m.payoff_ratio != null ? m.payoff_ratio : m.profit_loss_ratio;
+      const costDrag = m.cost_impact != null ? m.cost_impact : (m.zero_cost_return != null && m.total_return != null
+        ? Number(m.zero_cost_return) - Number(m.total_return)
+        : null);
+      const cards = [];
+      cards.push({ k: per ? "单票平均收益" : "组合总收益", v: fmtPct(ret.value, { html: true, title: ret.tip }), tip: ret.tip });
+      cards.push({
+        k: "年化收益",
+        v: fmtPct(m.annual_return, { html: true, title: per ? "当前口径（虚拟合计权益）" : "年化收益" }),
+        tip: per ? "TODO: 后端应以等权标准化净值合成后再算年化" : "",
+      });
+      cards.push({
+        k: "最大回撤",
+        v: fmtMaxDrawdownAbs(m.max_drawdown, { html: true }),
+        tip: per ? "当前口径（虚拟合计权益）" : "",
+      });
+      cards.push({
+        k: "夏普比率",
+        v: m.sharpe != null && !Number.isNaN(Number(m.sharpe)) ? formatNumber(m.sharpe, 2) : "—",
+        tip: per ? "当前口径（虚拟合计权益）" : "",
+      });
+      cards.push({ k: "已平仓交易", v: formatTradeCount(m), tip: tradeCountTitle(m) });
+      cards.push({ k: "胜率", v: fmtPct(m.win_rate, { html: true }) });
+      cards.push({
+        k: "盈亏比",
+        v: pl != null && !Number.isNaN(Number(pl)) ? formatNumber(pl, 2) : "—",
+        tip: "平均盈利÷平均亏损|；非盈利因子",
+      });
+      cards.push({
+        k: "成本拖累",
+        v: costDrag != null && !Number.isNaN(Number(costDrag)) ? fmtPct(costDrag, { html: true }) : (m.cost_total != null ? formatNumber(m.cost_total, 2) : "—"),
+        tip: m.cost_impact != null ? "成本对收益的拖累" : "总费用（金额）",
+      });
+      box.innerHTML = cards
+        .map((c) => {
+          return (
+            "<div class='core-metric' title='" +
+            escAttr(c.tip || c.k) +
+            "'><div class='k'>" +
+            c.k +
+            "</div><div class='v'>" +
+            (c.v == null ? "—" : c.v) +
+            "</div>" +
+            (c.tip ? "<div class='subtip'>" + c.tip + "</div>" : "") +
+            "</div>"
+          );
+        })
+        .join("");
+    }
+
+    function renderTradeStats(m) {
+      const box = document.getElementById("tradeStats");
+      if (!box) return;
+      m = m || {};
+      const items = [
+        ["信号数", m.n_events],
+        ["买入成交", m.n_buys],
+        ["卖出成交", m.n_sells],
+        ["已平仓交易", m.n_round_trips],
+        ["未平仓", m.n_open_positions],
+        ["胜率", m.win_rate != null ? fmtPct(m.win_rate, { html: true }) : "—"],
+        ["盈亏比", m.payoff_ratio != null ? formatNumber(m.payoff_ratio, 2) : (m.profit_loss_ratio != null ? formatNumber(m.profit_loss_ratio, 2) : "—")],
+        ["盈利因子", m.profit_factor != null ? formatNumber(m.profit_factor, 2) : "—"],
+        ["总费用", m.cost_total != null ? formatNumber(m.cost_total, 2) : "—"],
+        ["换手", m.turnover != null ? formatNumber(m.turnover, 2) : "—"],
+      ];
+      box.innerHTML = items
+        .map(([k, v]) => {
+          const vv = v == null || v === "" ? "—" : v;
+          return "<div class='metric'><div class='k'>" + k + "</div><div class='v'>" + vv + "</div></div>";
+        })
+        .join("");
+    }
+
+    function renderSettingsKv(summary, repro, metrics, runId) {
+      const box = document.getElementById("settingsKv");
+      if (!box) return;
+      const lag = summary.entry_lag != null ? summary.entry_lag : repro.entry_lag;
+      const hold = summary.hold != null ? summary.hold : repro.hold;
+      const per = isPerSymbolMode(metrics, summary);
+      const rows = [
+        ["K线周期", periodLabel(summary.period || repro.period)],
+        ["持有周期 hold", hold],
+        ["买入日（星期）", (function(){ const b=summary.buy_weekday||repro.buy_weekday; return b!=null&&b!=="" ? wdName(Number(b)) : ("entry_lag="+lag); })()],
+        ["平仓日（星期）", (function(){ const e=summary.exit_weekday||repro.exit_weekday; return e!=null&&e!=="" ? wdName(Number(e)) : ("hold="+hold); })()],
+        ["买入延迟 entry_lag", lag],
+        ["交易时点", (function(){
+          const sch = resolveTradeSchedule(summary, metrics, summary, repro);
+          return "T日收盘信号 → " + sch.buyLabel + " → " + sch.sellLabel + "（到期）";
+        })()],
+        ["资金模式", per ? "单票独立资金" : "共享资金池"],
+        ["回测区间", fmtYmd(summary.start || repro.start) + " ~ " + fmtYmd(summary.end || repro.end)],
+        ["止损", repro.stop_loss_pct != null ? repro.stop_loss_pct : (summary.stop_loss_pct != null ? summary.stop_loss_pct : "—")],
+        ["止盈", repro.stop_profit_pct != null ? repro.stop_profit_pct : (summary.stop_profit_pct != null ? summary.stop_profit_pct : "—")],
+      ];
+      box.innerHTML = rows.map(([k, v]) => "<div class='k'>" + k + "</div><div class='v'>" + (v == null || v === "" ? "—" : v) + "</div>").join("");
+    }
+
+    function renderAdvancedKv(summary, detail, artifacts, runId, metrics) {
+      const box = document.getElementById("advancedKv");
+      if (!box) return;
+      const per = isPerSymbolMode(metrics, summary);
+      const rows = [
+        ["运行编号", runId || "—"],
+        ["服务器路径", runId ? ("outputs/astock/" + runId + "/") : "—"],
+        ["产物文件", (artifacts || []).join(", ") || "—"],
+      ];
+      if (per) {
+        rows.push(["虚拟账户合计权益", metrics.final_equity != null ? formatNumber(metrics.final_equity, 2) + "（非真实资金池）" : "—"]);
+        rows.push(["虚拟账户数", metrics.n_symbol_accounts != null ? metrics.n_symbol_accounts : "—"]);
+        rows.push(["单票本金基数", metrics.capital_base != null ? formatNumber(metrics.capital_base, 2) : "—"]);
+      } else if (metrics.final_equity != null) {
+        rows.push(["期末权益", formatNumber(metrics.final_equity, 2)]);
+      }
+      box.innerHTML = rows.map(([k, v]) => "<div class='k'>" + k + "</div><div class='v' title='" + escAttr(v) + "'>" + v + "</div>").join("");
+    }
+
 
     function metricLabel(k) {
       const map = {
@@ -1258,11 +2429,14 @@ XG:CROSS(MA5,MA10);</textarea>
         max_drawdown: "最大回撤",
         volatility: "波动率",
         sharpe: "夏普比率",
-        final_equity: "期末权益",
+        final_equity: "期末权益/虚拟合计权益",
+        profit_factor: "盈利因子",
+        payoff_ratio: "盈亏比",
+        profit_loss_ratio: "盈亏比",
         n_days: "交易日数",
         n_buys: "买入次数",
         n_sells: "卖出次数",
-        n_round_trips: "完整回合",
+        n_round_trips: "已平仓交易",
         win_rate: "胜率",
         turnover: "换手",
         cost_total: "总成本",
@@ -1302,40 +2476,49 @@ XG:CROSS(MA5,MA10);</textarea>
       return s;
     }
 
-    function showMetrics(m) {
+    function showMetrics(m, r) {
       const box = document.getElementById("metrics");
+      if (!box) return;
       box.innerHTML = "";
       if (!m) return;
-      const keys = [
-        "total_return", "mean_symbol_return", "median_symbol_return", "annual_return", "max_drawdown", "final_equity",
-        "n_buys", "n_sells", "n_round_trips", "win_rate",
-        "n_days", "cost_total", "n_open_positions", "n_symbol_accounts", "zero_cost_return", "account_mode"
+      const per = isPerSymbolMode(m, r || {});
+      // 次要指标：不与核心卡片重复堆满
+      let keys = [
+        "median_symbol_return", "n_symbol_accounts", "pct_symbols_profitable",
+        "volatility", "n_days", "turnover", "zero_cost_return", "account_mode",
+        "n_buys", "n_sells", "n_open_positions", "cost_total",
       ];
-      keys.forEach(k => {
+      if (per) {
+        // 隐藏易误导的合计权益；若展示仅在高级信息
+        keys = keys.filter((k) => k !== "final_equity");
+      } else {
+        keys = ["final_equity"].concat(keys);
+      }
+      keys.forEach((k) => {
         if (m[k] === undefined || m[k] === null) return;
         const d = document.createElement("div");
         d.className = "metric";
         let v = m[k];
         let vHtml = null;
         if (typeof v === "number" && (k.includes("return") || k.includes("drawdown") || k === "win_rate" || k === "volatility" || k === "cost_impact" || k === "pct_symbols_profitable")) {
-          // 统一：小数 → 百分比（0.0046 → +0.46%）
-          vHtml = fmtPct(v, { html: true, showRaw: true });
+          vHtml = fmtPct(v, { html: true, showRaw: false });
           v = null;
         } else if (k === "account_mode") {
           const mode = String(v || "").toLowerCase();
           v = (mode === "per_symbol" || mode === "tdx")
-            ? "通达信对照·单票独立资金"
-            : (mode === "portfolio" ? "组合账户·共享资金" : String(v));
+            ? "单票独立资金"
+            : (mode === "portfolio" ? "共享资金池" : String(v));
         } else if (typeof v === "number") {
           if (k === "final_equity" || k === "cost_total" || k === "open_market_value" || k === "capital_base") {
             v = Number(v).toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+            if (k === "final_equity" && per) v += "（虚拟合计）";
           } else if (Number.isInteger(v) || Math.abs(v - Math.round(v)) < 1e-9) {
             v = Math.round(v).toLocaleString("zh-CN");
           } else {
-            v = Number(v).toFixed(2);
+            v = formatNumber(v, 2);
           }
         }
-        d.innerHTML = `<div class="k">${metricLabel(k)}</div><div class="v">${vHtml != null ? vHtml : v}</div>`;
+        d.innerHTML = "<div class='k'>" + metricLabel(k) + "</div><div class='v'>" + (vHtml != null ? vHtml : v) + "</div>";
         box.appendChild(d);
       });
     }
@@ -1497,6 +2680,34 @@ XG:CROSS(MA5,MA10);</textarea>
       if (x === undefined || x === null || Number.isNaN(n)) return null;
       return n * 100;
     }
+        function formatNumber(x, digits) {
+      if (x === undefined || x === null || Number.isNaN(Number(x))) return "—";
+      const n = Number(x);
+      const d = digits == null ? 2 : digits;
+      if (Math.abs(n) >= 1e6) return n.toLocaleString("zh-CN", { maximumFractionDigits: d });
+      // never scientific notation in main UI
+      const s = n.toFixed(d);
+      return s.replace(/\.0+$/, "").replace(/(\.[0-9]*?)0+$/, "$1").replace(/\.$/, "") || "0";
+    }
+    function formatPercent(x, opts) {
+      return fmtPct(x, opts);
+    }
+    function formatDrawdown(x, opts) {
+      return fmtMaxDrawdownAbs(x, opts);
+    }
+    function formatTradeCount(m) {
+      if (!m) return "—";
+      if (m.n_round_trips != null) return fmtInt(m.n_round_trips);
+      if (m.n_buys != null) return fmtInt(m.n_buys);
+      return "—";
+    }
+    function tradeCountTitle(m) {
+      if (!m) return "已平仓交易";
+      const buys = m.n_buys != null ? m.n_buys : "—";
+      const sells = m.n_sells != null ? m.n_sells : "—";
+      const open = m.n_open_positions != null ? m.n_open_positions : "—";
+      return "买入" + buys + "｜卖出" + sells + "｜未平仓" + open;
+    }
     function fmtPct(x, opts) {
       const p = fracToPctNumber(x);
       if (p === null) return "—";
@@ -1509,8 +2720,8 @@ XG:CROSS(MA5,MA10);</textarea>
       const body = sign + p.toFixed(digits) + "%";
       const raw = Number(x);
       const rawStr = (Math.abs(raw) > 0 && Math.abs(raw) < 0.01)
-        ? raw.toExponential(3)
-        : String(Math.round(raw * 1e8) / 1e8);
+        ? formatNumber(raw, 6)
+        : formatNumber(raw, 6);
       const tip = (opts && opts.title) ? opts.title : ("百分比 = 小数×100。原始小数 " + rawStr);
       if (opts && opts.html) {
         const cls = p > 1e-12 ? "pct-pos" : (p < -1e-12 ? "pct-neg" : "pct-zero");
@@ -1559,9 +2770,39 @@ XG:CROSS(MA5,MA10);</textarea>
       return body;
     }
     /** 策略名：优先 indicator_names，去掉技术前缀；否则从 title 取主段 */
+    function guaTitleFragment(r, summary, repro) {
+      try {
+        const src = r || summary || {};
+        const rp = repro || src.repro || (src.meta && src.meta.repro) || {};
+        const gf = src.gua_filter || rp.gua_filter || (src.meta && src.meta.gua_filter) || null;
+        if (!gf || !gf.enabled) {
+          // legacy bagua best3
+          if (src.with_bagua || rp.with_bagua || src.bagua_filter_label || rp.bagua_filter_label) {
+            const lab = src.bagua_filter_label || rp.bagua_filter_label || "八卦";
+            if (lab && lab !== "否") return String(lab);
+          }
+          return "";
+        }
+        if (typeof GuaUI !== "undefined" && GuaUI.historyShort) {
+          const hs = GuaUI.historyShort(gf);
+          if (hs && hs.short && hs.short.indexOf("未启用") < 0) return hs.short;
+        }
+        if (gf.selection_mode === "action_signal" && (gf.selected_action_signals || []).length) {
+          return "卦象信号：" + (gf.selected_action_signals || []).slice(0, 3).join("、");
+        }
+        const n = (gf.selected_state_ids || []).length || (gf.selected_main_hexagram_ids || []).length;
+        if (n) return "卦象" + n + "项";
+        if (gf.history_summary && gf.history_summary.short) return gf.history_summary.short;
+        if (gf.natural_language) return String(gf.natural_language).replace(/。$/, "");
+        return "卦象过滤";
+      } catch (e) {
+        return "";
+      }
+    }
     function strategyPrimaryName(r) {
-      let names = r.indicator_names || r.indicator_ids || [];
+      let names = (r && (r.indicator_names || r.indicator_ids)) || [];
       if (typeof names === "string") names = [names];
+      let head = "";
       if (Array.isArray(names) && names.length) {
         const nice = names.map((n) => {
           let s = String(n || "");
@@ -1570,13 +2811,22 @@ XG:CROSS(MA5,MA10);</textarea>
           });
           return s;
         }).filter(Boolean);
-        if (nice.length) return nice.join(" + ");
+        if (nice.length) head = nice.join(" + ");
       }
-      const title = String(r.title || "");
-      if (!title) return r.run_id || "回测任务";
-      // title 形如：策略 · 模式 · 日线 · 持有1 · 区间
-      const head = title.split(" · ")[0].trim();
-      return head || title;
+      if (!head) {
+        const title = String((r && r.title) || "");
+        if (title) {
+          // title 形如：策略 + 卦象 · 模式 · 日线 …
+          head = title.split(" · ")[0].trim();
+        }
+      }
+      if (!head) head = (r && r.run_id) || "回测任务";
+      // 若 head 已含「+ 卦象」则不重复；否则附加卦象摘要
+      const guaBit = guaTitleFragment(r);
+      if (guaBit && head.indexOf(guaBit) < 0 && head.indexOf("卦象") < 0 && head.indexOf("八卦") < 0) {
+        head = head + " + " + guaBit;
+      }
+      return head;
     }
     function strategyParamTags(r, m) {
       const tags = [];
@@ -1585,6 +2835,16 @@ XG:CROSS(MA5,MA10);</textarea>
       if (r.hold != null && r.hold !== "") tags.push("持有" + r.hold + "期");
       if (r.entry_lag != null && r.entry_lag !== "") tags.push("延迟" + r.entry_lag);
       tags.push(accountModeShort(m, r));
+      try {
+        const gf = r.gua_filter || (r.repro && r.repro.gua_filter) || null;
+        if (typeof GuaUI !== "undefined" && gf) {
+          const hs = GuaUI.historyShort(gf);
+          tags.push(hs.short);
+        } else if (gf && gf.enabled) {
+          tags.push("卦象过滤");
+        }
+      } catch (e) {}
+
       if (r.start || r.end) {
         tags.push(fmtYmd(r.start) + " ~ " + fmtYmd(r.end));
       }
@@ -1598,8 +2858,13 @@ XG:CROSS(MA5,MA10);</textarea>
       if (m.sharpe != null && !Number.isNaN(Number(m.sharpe))) {
         bits.push("夏普 " + Number(m.sharpe).toFixed(2));
       }
+      if (m.payoff_ratio != null && !Number.isNaN(Number(m.payoff_ratio))) {
+        bits.push("盈亏比 " + Number(m.payoff_ratio).toFixed(2));
+      } else if (m.profit_loss_ratio != null && !Number.isNaN(Number(m.profit_loss_ratio))) {
+        bits.push("盈亏比 " + Number(m.profit_loss_ratio).toFixed(2));
+      }
       if (m.profit_factor != null && !Number.isNaN(Number(m.profit_factor))) {
-        bits.push("盈亏比 " + Number(m.profit_factor).toFixed(2));
+        bits.push("盈利因子 " + Number(m.profit_factor).toFixed(2));
       }
       return bits.join(" ｜ ");
     }
@@ -1684,23 +2949,41 @@ XG:CROSS(MA5,MA10);</textarea>
     function renderHistory(rows, activeRunId) {
       const box = document.getElementById("history");
       if (!box) return;
-      window.__historyRows = rows || [];
+      window.__historyRowsAll = rows || [];
+      let list = filterSortHistory(rows || []);
+      window.__historyRows = list;
       const alive = new Set((rows || []).map((r) => r.run_id).filter(Boolean));
       Array.from(selectedRuns).forEach((id) => {
         if (!alive.has(id)) selectedRuns.delete(id);
       });
-      if (!rows || !rows.length) {
+      const countEl = document.getElementById("histCount");
+      if (countEl) countEl.textContent = "共 " + (list.length) + " 条" + (list.length !== (rows || []).length ? "（筛选后）" : "");
+      if (!list.length) {
         box.className = "history-empty";
-        box.textContent = "暂无历史任务（完成后会出现在这里）";
+        box.textContent = (rows && rows.length) ? "无匹配任务，请调整筛选条件" : "暂无历史任务（完成后会出现在这里）";
         updateHistSelInfo();
         return;
       }
       box.className = "";
 
-      // 统一列定义：表头与单元格共用，避免错位
-      // 主列表：策略分层 | 时间 | 状态 | 周期 | 资金模式 | 收益 | 年化 | 最大回撤 | 交易笔数 | 胜率 | 操作
+      // 表头与数据行共享同一套 colgroup + class，保证对齐
       const head =
         "<div class='history-wrap'><table class='history-table'>" +
+        "<colgroup>" +
+        "<col class='col-check' />" +
+        "<col class='col-strategy' />" +
+        "<col class='col-time' />" +
+        "<col class='col-status' />" +
+        "<col class='col-period' />" +
+        "<col class='col-mode' />" +
+        "<col class='col-ret' />" +
+        "<col class='col-ann' />" +
+        "<col class='col-mdd' />" +
+        "<col class='col-trades' />" +
+        "<col class='col-win' />" +
+        "<col class='col-pl' />" +
+        "<col class='col-ops' />" +
+        "</colgroup>" +
         "<thead><tr>" +
         "<th class='col-check'><input type='checkbox' class='hist-check' id='histCheckAll' title='全选/取消全选' /></th>" +
         "<th class='col-strategy'>策略/参数</th>" +
@@ -1708,20 +2991,20 @@ XG:CROSS(MA5,MA10);</textarea>
         "<th class='col-status'>状态</th>" +
         "<th class='col-period'>周期</th>" +
         "<th class='col-mode'>资金模式</th>" +
-        "<th class='num' title='组合=总收益；单票独立=等权平均单票收益'>收益</th>" +
-        "<th class='num' title='年化收益率'>年化</th>" +
+        "<th class='num' title='组合=组合总收益；单票独立=等权平均单票收益'>主收益</th>" +
+        "<th class='num' title='年化收益率（当前口径，见详情说明）'>年化收益</th>" +
         "<th class='num' title='最大回撤幅度（正数）'>最大回撤</th>" +
-        "<th class='num' title='优先完整回合数，否则买入次数'>交易笔数</th>" +
+        "<th class='num' title='已平仓完整交易数'>已平仓交易</th>" +
         "<th class='num' title='盈利回合/已平仓回合'>胜率</th>" +
+        "<th class='num' title='盈亏比=平均盈利÷平均亏损绝对值；若后端未返回则显示—'>盈亏比</th>" +
         "<th class='col-ops'>操作</th>" +
         "</tr></thead><tbody>";
 
-      const body = rows
+      const body = list
         .map((r, idx) => {
           const m = Object.assign({}, r.metrics_brief || {}, r.metrics || {});
           const primary = strategyPrimaryName(r);
-          const tags = strategyParamTags(r, m);
-          const extra = strategyExtraMetrics(m);
+          const tags = strategyParamTagsCompact(r, m);
           const retMeta = primaryReturnValue(m, r);
           const modeLabel = accountModeLabel(m, r);
           const modeCls = isPerSymbolMode(m, r) ? "per" : "pool";
@@ -1733,38 +3016,48 @@ XG:CROSS(MA5,MA10);</textarea>
               " | " +
               tags.join(" · ") +
               (r.run_id ? " | " + r.run_id : "") +
-              (extra ? " | " + extra : "")
+              (r.error || r.fail_reason || r.message ? " | " + (r.error || r.fail_reason || r.message) : "")
           );
-
           const tagHtml = tags
             .map((tg) => {
               let cls = "hist-tag";
-              if (tg.indexOf("单票") >= 0) cls += " mode-per";
-              if (tg.indexOf("组合") >= 0 || tg.indexOf("共享") >= 0) cls += " mode-pool";
+              if (String(tg).indexOf("单票") >= 0) cls += " mode-per";
+              if (String(tg).indexOf("共享") >= 0 || String(tg).indexOf("组合") >= 0) cls += " mode-pool";
               return "<span class='" + cls + "'>" + tg + "</span>";
             })
             .join("");
 
           const retHtml = fmtPct(retMeta.value, {
             html: true,
-            showRaw: false,
-            title: retMeta.tip + " · 表头口径：" + retMeta.label,
+            title: retMeta.tip + " · " + retMeta.label,
           });
-          const annHtml = fmtPct(m.annual_return, {
-            html: true,
-            showRaw: false,
-            title: "年化收益率",
-          });
+          const annTip = isPerSymbolMode(m, r)
+            ? "年化（当前口径：由虚拟账户合计权益曲线推算，非正式等权净值合成；见详情说明）"
+            : "年化收益率";
+          const annHtml = fmtPct(m.annual_return, { html: true, title: annTip });
           const mddHtml = fmtMaxDrawdownAbs(m.max_drawdown, {
             html: true,
-            title: "最大回撤幅度（权益峰值到谷底）",
+            title: isPerSymbolMode(m, r)
+              ? "最大回撤幅度（当前口径：虚拟合计权益曲线）"
+              : "最大回撤幅度（相对权益峰值）",
           });
           const winHtml = fmtPct(m.win_rate, {
             html: true,
-            showRaw: false,
             title: "胜率 = 盈利已平仓回合 / 已平仓回合",
           });
+          const plRatio = m.payoff_ratio != null ? m.payoff_ratio : m.profit_loss_ratio;
+          const plHtml =
+            plRatio != null && !Number.isNaN(Number(plRatio))
+              ? formatNumber(plRatio, 2)
+              : "—";
           const nTrade = tradeCountValue(m);
+          const stLabel = r.status_label || statusLabel(r.status) || "—";
+          const stTip = escAttr(
+            stLabel +
+              (r.error || r.fail_reason || r.message
+                ? " · " + (r.error || r.fail_reason || r.message)
+                : "")
+          );
 
           return (
             "<tr class='hist-row" +
@@ -1782,12 +3075,12 @@ XG:CROSS(MA5,MA10);</textarea>
             "<td class='col-strategy' title=\"" +
             fullTitle +
             '">' +
-            "<div class='hist-title'>" +
+            "<div class='hist-title' title=\"" +
+            escAttr(primary) +
+            '">' +
             primary +
             "</div>" +
             (tagHtml ? "<div class='hist-tags'>" + tagHtml + "</div>" : "") +
-            (extra ? "<div class='hist-extra' title='" + escAttr(extra) + "'>" + extra + "</div>" : "") +
-            (r.run_id ? "<div class='hist-id'>编号 " + r.run_id + "</div>" : "") +
             "</td>" +
             "<td class='col-time'>" +
             fmtTime(r.created_at) +
@@ -1795,9 +3088,9 @@ XG:CROSS(MA5,MA10);</textarea>
             "<td class='col-status'><span class='badge-status " +
             statusClass(r.status) +
             "' title='" +
-            escAttr(r.status_label || statusLabel(r.status) || r.status || "") +
+            stTip +
             "'>" +
-            (r.status_label || statusLabel(r.status) || "—") +
+            stLabel +
             "</span></td>" +
             "<td class='col-period'>" +
             periodText +
@@ -1820,19 +3113,27 @@ XG:CROSS(MA5,MA10);</textarea>
             "<td class='num'>" +
             mddHtml +
             "</td>" +
-            "<td class='num' title='完整回合优先，否则买入次数'>" +
+            "<td class='num' title='" +
+            escAttr(tradeCountTitle(m)) +
+            "'>" +
             fmtInt(nTrade) +
             "</td>" +
             "<td class='num'>" +
             winHtml +
             "</td>" +
+            "<td class='num' title='盈亏比；非盈利因子'>" +
+            plHtml +
+            "</td>" +
             "<td class='col-ops'><div class='ops-row'>" +
             "<button type='button' class='btn-op' data-view-run='" +
             (r.run_id || "") +
-            "' title='查看回测报告'>查看</button>" +
+            "' title='查看回测详情'>查看</button>" +
+            "<button type='button' class='btn-op' data-copy-run='" +
+            (r.run_id || "") +
+            "' title='复制参数到新建回测'>复制参数</button>" +
             "<button type='button' class='btn-op btn-del' data-del-run='" +
             (r.run_id || "") +
-            "' title='删除此任务及结果文件'>删除</button>" +
+            "' title='删除该任务及结果文件'>删除</button>" +
             "</div></td>" +
             "</tr>"
           );
@@ -1843,13 +3144,13 @@ XG:CROSS(MA5,MA10);</textarea>
 
       const checkAll = document.getElementById("histCheckAll");
       if (checkAll) {
-        const allIds = rows.map((r) => r.run_id).filter(Boolean);
+        const allIds = list.map((r) => r.run_id).filter(Boolean);
         checkAll.checked = allIds.length > 0 && allIds.every((id) => selectedRuns.has(id));
         checkAll.indeterminate = selectedRuns.size > 0 && !checkAll.checked;
         checkAll.addEventListener("change", () => {
           if (checkAll.checked) allIds.forEach((id) => selectedRuns.add(id));
           else allIds.forEach((id) => selectedRuns.delete(id));
-          renderHistory(window.__historyRows || [], activeRunId);
+          renderHistory(window.__historyRowsAll || [], activeRunId);
         });
       }
 
@@ -1875,37 +3176,21 @@ XG:CROSS(MA5,MA10);</textarea>
         box.querySelectorAll("tr.hist-row").forEach((x) => x.classList.remove("active"));
         const tr = box.querySelector("tr.hist-row[data-run='" + rid + "']");
         if (tr) tr.classList.add("active");
-        const msg = document.getElementById("runMsg");
-        if (msg) msg.textContent = "正在加载：" + rid + " …";
         try {
+          window.__historyScrollY = window.scrollY || 0;
           await showRunResult({ run_id: rid }, { fromHistory: true });
-          if (msg) msg.innerHTML = '<span class="okmsg">已打开历史回测</span>';
+          switchBtPage("detail");
         } catch (e) {
-          if (msg) msg.innerHTML = '<span class="err">' + e.message + "</span>";
+          alert("打开详情失败：" + (e.message || e));
         }
       };
 
-      box.querySelectorAll("tr.hist-row").forEach((tr) => {
-        tr.addEventListener("click", async (ev) => {
-          if (
-            ev.target &&
-            (ev.target.tagName === "BUTTON" ||
-              ev.target.tagName === "INPUT" ||
-              (ev.target.closest && (ev.target.closest("button") || ev.target.closest("input"))))
-          ) {
-            return;
-          }
-          await openRun(tr.getAttribute("data-run"));
-        });
-      });
-
       box.querySelectorAll("[data-view-run]").forEach((btn) => {
-        btn.addEventListener("click", async (ev) => {
+        btn.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          await openRun(btn.getAttribute("data-view-run"));
+          openRun(btn.getAttribute("data-view-run"));
         });
       });
-
       box.querySelectorAll("[data-del-run]").forEach((btn) => {
         btn.addEventListener("click", async (ev) => {
           ev.stopPropagation();
@@ -1914,10 +3199,185 @@ XG:CROSS(MA5,MA10);</textarea>
           await deleteRunsByIds([rid]);
         });
       });
-
+      box.querySelectorAll("[data-copy-run]").forEach((btn) => {
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          copyRunParams(btn.getAttribute("data-copy-run"));
+        });
+      });
+      box.querySelectorAll("tr.hist-row").forEach((tr) => {
+        tr.addEventListener("click", (ev) => {
+          if (ev.target.closest("button") || ev.target.closest("input")) return;
+          openRun(tr.getAttribute("data-run"));
+        });
+      });
       updateHistSelInfo();
     }
 
+    function strategyParamTagsCompact(r, m) {
+      const tags = [];
+      const sch = resolveTradeSchedule(r, m);
+      if (sch.buyWeekday != null) tags.push(sch.buyLabel);
+      else if (r.entry_lag != null && r.entry_lag !== "") tags.push(sch.buyLabel);
+      if (sch.exitWeekday != null) tags.push(sch.sellLabel);
+      else if (r.hold != null && r.hold !== "" && sch.buyWeekday == null) tags.push("持有" + r.hold + "期");
+      if (sch.exitWeekday == null && sch.buyWeekday == null && r.hold != null && r.hold !== "") {
+        // legacy N-period only when no weekday schedule
+        tags.push(sch.sellLabel);
+      } else if (sch.exitWeekday != null) {
+        // already pushed sellLabel
+      } else if (sch.buyWeekday != null && sch.exitWeekday == null) {
+        tags.push(sch.sellLabel);
+      }
+      // de-dup while preserving order
+      const seen = new Set();
+      const out = [];
+      tags.forEach((tg) => {
+        if (!tg || seen.has(tg)) return;
+        seen.add(tg);
+        out.push(tg);
+      });
+      // signal weekday filter tags
+      const swd = r.signal_weekdays || (r.repro && r.repro.signal_weekdays) || (m && m.signal_weekdays);
+      if (Array.isArray(swd) && swd.length) {
+        out.push("信号" + swd.map((d) => wdName(Number(d))).join(""));
+      }
+      if (r.start || r.end) out.push(fmtYmd(r.start) + "~" + fmtYmd(r.end));
+      return out;
+    }
+
+    function filterSortHistory(rows) {
+      const q = ((document.getElementById("histSearch") || {}).value || "").trim().toLowerCase();
+      const mode = ((document.getElementById("histFilterMode") || {}).value || "").toLowerCase();
+      const period = ((document.getElementById("histFilterPeriod") || {}).value || "").toUpperCase();
+      const status = ((document.getElementById("histFilterStatus") || {}).value || "").toLowerCase();
+      const sort = ((document.getElementById("histSort") || {}).value || "time_desc");
+      let list = (rows || []).slice();
+      list = list.filter((r) => {
+        const m = Object.assign({}, r.metrics_brief || {}, r.metrics || {});
+        if (mode) {
+          const per = isPerSymbolMode(m, r);
+          if (mode === "per_symbol" && !per) return false;
+          if (mode === "portfolio" && per) return false;
+        }
+        if (period) {
+          const p = String(r.period || "").toUpperCase();
+          if (p !== period) return false;
+        }
+        if (status) {
+          const st = String(r.status || "").toLowerCase();
+          if (status === "ok") {
+            if (!(st === "ok" || st === "succeeded" || st.indexOf("research") >= 0)) return false;
+          } else if (status === "failed") {
+            if (!(st === "failed" || st === "no_go" || st.indexOf("fail") >= 0)) return false;
+          } else if (status === "running") {
+            if (!(st === "running" || st === "queued")) return false;
+          }
+        }
+        if (q) {
+          const name = strategyPrimaryName(r).toLowerCase();
+          const rid = String(r.run_id || "").toLowerCase();
+          const title = String(r.title || "").toLowerCase();
+          if (name.indexOf(q) < 0 && rid.indexOf(q) < 0 && title.indexOf(q) < 0) return false;
+        }
+        return true;
+      });
+      const retOf = (r) => {
+        const m = Object.assign({}, r.metrics_brief || {}, r.metrics || {});
+        const v = primaryReturnValue(m, r).value;
+        return v == null || Number.isNaN(Number(v)) ? -Infinity : Number(v);
+      };
+      const mddOf = (r) => {
+        const m = Object.assign({}, r.metrics_brief || {}, r.metrics || {});
+        const v = m.max_drawdown;
+        return v == null || Number.isNaN(Number(v)) ? 0 : Math.abs(Number(v));
+      };
+      list.sort((a, b) => {
+        if (sort === "time_asc") return (a.created_at || 0) - (b.created_at || 0);
+        if (sort === "ret_desc") return retOf(b) - retOf(a);
+        if (sort === "ret_asc") return retOf(a) - retOf(b);
+        if (sort === "mdd_asc") return mddOf(a) - mddOf(b);
+        return (b.created_at || 0) - (a.created_at || 0);
+      });
+      return list;
+    }
+
+    function switchBtPage(name) {
+      const pages = ["new", "history", "detail"];
+      pages.forEach((p) => {
+        const el = document.getElementById("page" + p.charAt(0).toUpperCase() + p.slice(1));
+        if (el) el.classList.toggle("active", p === name);
+      });
+      document.querySelectorAll(".bt-subtab").forEach((b) => {
+        b.classList.toggle("active", b.getAttribute("data-bt-page") === name);
+      });
+      const main = document.getElementById("viewBacktest");
+      if (main) {
+        if (name === "history" || name === "detail") main.classList.add("fullwidth");
+        else main.classList.remove("fullwidth");
+      }
+      const tabDetail = document.getElementById("tabDetail");
+      if (tabDetail) {
+        const hasDetail = !!(document.getElementById("resultCard") && document.getElementById("resultCard").classList.contains("visible"));
+        const disable = name !== "detail" && !hasDetail;
+        tabDetail.disabled = disable;
+        if (disable) tabDetail.setAttribute("disabled", "disabled");
+        else tabDetail.removeAttribute("disabled");
+      }
+      if (name === "detail" && tabDetail) {
+        tabDetail.disabled = false;
+        tabDetail.removeAttribute("disabled");
+      }
+      if (name === "history") {
+        refreshHistory().catch(() => {});
+        if (window.__historyScrollY != null) {
+          requestAnimationFrame(() => window.scrollTo(0, window.__historyScrollY || 0));
+        }
+      }
+      if (name === "new") window.scrollTo(0, 0);
+    }
+
+    async function copyRunParams(runId) {
+      if (!runId) return;
+      try {
+        const detail = await api("/api/v1/backtests/" + encodeURIComponent(runId));
+        const repro = (detail.meta && detail.meta.repro) || detail.repro || {};
+        const period = repro.period || detail.period;
+        if (period && document.getElementById("period")) document.getElementById("period").value = period;
+        if (repro.hold != null && document.getElementById("hold")) document.getElementById("hold").value = repro.hold;
+        if (repro.entry_lag != null && document.getElementById("entryLag")) document.getElementById("entryLag").value = repro.entry_lag;
+        if (repro.start && document.getElementById("start")) document.getElementById("start").value = repro.start;
+        if (repro.end && document.getElementById("end")) document.getElementById("end").value = repro.end;
+        const mode = (detail.metrics && detail.metrics.account_mode) || repro.account_mode || detail.account_mode;
+        if (mode) {
+          const per = String(mode).toLowerCase().indexOf("per") >= 0 || String(mode).toLowerCase() === "tdx";
+          try {
+          const gf = repro.gua_filter || detail.gua_filter;
+          if (typeof GuaUI !== "undefined" && gf) GuaUI.setFromConfig(gf);
+        } catch (e) {}
+        const radios = document.querySelectorAll('input[name="accountMode"]');
+          radios.forEach((r) => { r.checked = per ? r.value === "per_symbol" : r.value === "portfolio"; });
+        }
+        const inds = detail.indicator_ids || repro.indicator_ids || [];
+        if (Array.isArray(inds) && inds.length && typeof selected !== "undefined") {
+          selected.clear();
+          inds.forEach((id) => selected.add(id));
+          if (typeof renderRules === "function") renderRules();
+          if (typeof updateSelectedLabel === "function") updateSelectedLabel();
+        }
+        const swd = repro.signal_weekdays || detail.signal_weekdays;
+        if (typeof setSignalWeekdays === "function") setSignalWeekdays(swd || []);
+        if (typeof setBuyOn === "function") setBuyOn(repro.buy_on || detail.buy_on || "open");
+        if (typeof setBuyWeekday === "function" && (repro.buy_weekday != null || detail.buy_weekday != null)) setBuyWeekday(repro.buy_weekday != null ? repro.buy_weekday : detail.buy_weekday);
+        if (typeof setExitWeekday === "function" && (repro.exit_weekday != null || detail.exit_weekday != null)) setExitWeekday(repro.exit_weekday != null ? repro.exit_weekday : detail.exit_weekday);
+        if (typeof setSellOn === "function") setSellOn(repro.sell_on || detail.sell_on || "open");
+        if (typeof updateTimeline === "function") updateTimeline();
+        switchBtPage("new");
+        alert("已复制参数到「新建回测」（请核对股票池与日期）");
+      } catch (e) {
+        alert("复制参数失败：" + (e.message || e));
+      }
+    }
 
 
     async function refreshHistory() {
@@ -1925,8 +3385,9 @@ XG:CROSS(MA5,MA10);</textarea>
       try {
         box.className = "history-empty";
         box.textContent = "加载中…";
-        const rows = await api("/api/v1/runs?limit=50");
+        const rows = await api("/api/v1/runs?limit=200");
         renderHistory(rows);
+        window.__historyRowsAll = rows;
       } catch (e) {
         box.className = "history-empty";
         box.textContent = e.message;
@@ -2021,6 +3482,66 @@ XG:CROSS(MA5,MA10);</textarea>
     const holdEl = document.getElementById("hold");
     if (entryLagEl) entryLagEl.oninput = updateTimeline;
     if (holdEl) holdEl.oninput = updateTimeline;
+    function updateSwdStatus() {
+      const days = getSignalWeekdays();
+      const el = document.getElementById("swdStatus");
+      if (!el) return;
+      if (!days.length) {
+        el.textContent = "当前：不限制（任意交易日信号均有效）";
+        return;
+      }
+      const names = {1:"周一",2:"周二",3:"周三",4:"周四",5:"周五",6:"周六",7:"周日"};
+      el.textContent = "当前：仅 " + days.map((d) => names[d] || d).join("、") + " 的信号有效";
+    }
+    function updateBtSummary() {
+      const el = document.getElementById("btSummaryBody");
+      if (!el) return;
+      const strat = (document.getElementById("selectedLabel") || {}).textContent || "无";
+      const am = (document.querySelector('input[name="accountMode"]:checked') || {}).value || "portfolio";
+      const amLab = am === "per_symbol" ? "单票独立" : "组合账户";
+      const period = (document.getElementById("period") || {}).value || "DAY";
+      const periodLab = {DAY:"日线",WEEK:"周线",MONTH:"月线",DWM:"日周月",MIN60:"60分钟"}[period] || period;
+      const swd = getSignalWeekdays();
+      const swdLab = swd.length ? ("信号" + swd.map((d)=>({1:"一",2:"二",3:"三",4:"四",5:"五",6:"六",7:"日"}[d]||d)).join("")) : "信号不限";
+      const buyWd = (typeof getBuyWeekday === "function" ? getBuyWeekday() : 5);
+      const exitWd = (typeof getExitWeekday === "function" ? getExitWeekday() : 1);
+      const wd = {1:"周一",2:"周二",3:"周三",4:"周四",5:"周五",6:"周六",7:"周日"};
+      const buyOn = (typeof getBuyOn === "function" && getBuyOn() === "close") ? "收盘买" : "开盘买";
+      const sellOn = (typeof getSellOn === "function" && getSellOn() === "close") ? "收盘卖" : "开盘卖";
+      const pool = (document.querySelector('input[name="poolMode"]:checked') || {}).value || "demo";
+      const poolLab = {demo:"演示池",custom:"自定义",full:"全市场"}[pool] || pool;
+      let guaLab = "卦象未启用";
+      try {
+        if (typeof GuaUI !== "undefined") {
+          const gf = GuaUI.getPayload();
+          if (gf && gf.enabled) {
+            const hs = GuaUI.historyShort(gf);
+            guaLab = hs.short || "卦象已启用";
+          }
+        }
+      } catch (e) {}
+      el.textContent = [strat, amLab, periodLab, swdLab, (wd[buyWd]||"") + buyOn, (wd[exitWd]||"") + "平/" + sellOn, poolLab, guaLab].filter(Boolean).join(" · ");
+    }
+    document.getElementById("btnSwdClear")?.addEventListener("click", () => { setSignalWeekdays([]); updateTimeline(); updateSwdStatus(); updateBtSummary(); });
+    document.getElementById("btnSwdWeekdays")?.addEventListener("click", () => { setSignalWeekdays([1,2,3,4,5]); updateTimeline(); updateSwdStatus(); updateBtSummary(); });
+    document.getElementById("btnSwdFri")?.addEventListener("click", () => { setSignalWeekdays([5]); updateTimeline(); updateSwdStatus(); updateBtSummary(); });
+    document.querySelectorAll("#signalWeekdays input.swd").forEach((el) => {
+      el.addEventListener("change", () => { updateSwdStatus(); updateBtSummary(); });
+    });
+    document.querySelectorAll('input[name="accountMode"], #period, #combine, #buyWeekday, #exitWeekday, input[name="buyOn"], input[name="sellOn"], input[name="poolMode"]').forEach((el) => {
+      el.addEventListener("change", () => { try { updateBtSummary(); } catch (e) {} });
+    });
+    try { updateSwdStatus(); updateBtSummary(); } catch (e) {}
+    document.querySelectorAll('input[name="buyOn"], input[name="sellOn"]').forEach((el) => {
+      el.addEventListener("change", updateTimeline);
+    });
+    document.getElementById("buyWeekday")?.addEventListener("change", updateTimeline);
+    document.getElementById("exitWeekday")?.addEventListener("change", updateTimeline);
+
+    document.querySelectorAll("#signalWeekdays input.swd").forEach((el) => {
+      el.addEventListener("change", updateTimeline);
+    });
+
     document.querySelectorAll('input[name="poolMode"]').forEach(el => {
       el.onchange = syncPoolUI;
     });
@@ -2082,9 +3603,14 @@ XG:CROSS(MA5,MA10);</textarea>
         const body = {
           rule_ids: tradeIds,
           period: document.getElementById("period").value,
-          hold: parseInt(document.getElementById("hold").value, 10) || 1,
           account_mode: (document.querySelector('input[name="accountMode"]:checked') || {}).value || "portfolio",
-          entry_lag: parseInt(document.getElementById("entryLag").value, 10) || 1,
+          entry_lag: parseInt((document.getElementById("entryLag")||{}).value, 10) || 1,
+          hold: parseInt((document.getElementById("hold")||{}).value, 10) || 1,
+          buy_weekday: getBuyWeekday(),
+          exit_weekday: getExitWeekday(),
+          signal_weekdays: (function(){ const d=getSignalWeekdays(); return d.length ? d : null; })(),
+          buy_on: getBuyOn(),
+          sell_on: getSellOn(),
           combine: document.getElementById("combine").value || null,
           codes,
           use_full_market,
@@ -2119,7 +3645,7 @@ XG:CROSS(MA5,MA10);</textarea>
         hideProgressSoon();
         await showRunResult(r, { fromHistory: false });
         try {
-          const rows = await api("/api/v1/runs?limit=50");
+          const rows = await api("/api/v1/runs?limit=200");
           renderHistory(rows, r.run_id);
         } catch (_) {}
       } catch (e) {
@@ -2143,7 +3669,7 @@ XG:CROSS(MA5,MA10);</textarea>
     loadUniverseAndCalendar();
     hideResultPanel();
     // auto-load history so recent runs are visible
-    api("/api/v1/runs?limit=50").then(renderHistory).catch(() => {});
+    api("/api/v1/runs?limit=200").then(renderHistory).catch(() => {});
 
     // ----- Forecast module UI -----
     function setModule(mod) {
@@ -2174,7 +3700,7 @@ XG:CROSS(MA5,MA10);</textarea>
         }
         if (wk) {
           wk.textContent = h.active_week_key
-            ? ("当前周 " + h.active_week_key + " · " + (h.stock_count || 0) + " 只股票")
+            ? ("当前周 " + h.active_week_key + " · " + (h.stock_count || 0) + " 股 + " + (h.etf_count || 0) + " ETF")
             : "未导入周报";
         }
         await refreshWeekSelect(h.active_week_key);
@@ -2201,7 +3727,7 @@ XG:CROSS(MA5,MA10);</textarea>
       list.forEach(w => {
         const o = document.createElement("option");
         o.value = w.week_key;
-        o.textContent = w.label || (w.week_key + (w.source_filename ? (" · " + w.source_filename) : "") + (w.stock_count != null ? (" · " + w.stock_count + "只") : ""));
+        o.textContent = w.label || (w.week_key + (w.source_filename ? (" · " + w.source_filename) : "") + (w.stock_count != null ? (" · " + w.stock_count + "股") : "") + (w.etf_count != null ? ("+" + w.etf_count + "ETF") : ""));
         if (w.week_key === active) o.selected = true;
         sel.appendChild(o);
       });
@@ -2249,7 +3775,7 @@ XG:CROSS(MA5,MA10);</textarea>
         await refreshWeekSelect(j.week_key);
         const sel = document.getElementById("fcWeekSelect");
         if (sel && j.week_key) sel.value = j.week_key;
-        alert("周报已导入: " + j.week_key + " 股票=" + j.stock_count + "\n已在下拉框中选中该周报。");
+        alert("周报已导入: " + j.week_key + " 股票=" + j.stock_count + " ETF=" + (j.etf_count != null ? j.etf_count : 0) + "\n已在下拉框中选中该周报。");
       } catch (e) { alert(e.message); }
     });
     document.getElementById("fcWeekActivate")?.addEventListener("click", async () => {
@@ -2331,6 +3857,12 @@ XG:CROSS(MA5,MA10);</textarea>
       const qinfo = data.quote || {};
       const tone = (toneIdx != null ? toneIdx : nextCardTone(data.code)) % 6;
       const name = escHtml(data.name || "（无名称）");
+      const kind = String(data.kind || "stock").toLowerCase();
+      const kindBadge = kind === "etf"
+        ? "<span class=\"fc-kind-badge etf\">ETF</span>"
+        : "<span class=\"fc-kind-badge stock\">股票</span>";
+      const industry = data.industry ? (" · " + escHtml(String(data.industry))) : "";
+
       const code = escHtml(data.code || "");
       const ret = qinfo.ret_w_pct;
       // 红涨绿跌
@@ -2340,7 +3872,7 @@ XG:CROSS(MA5,MA10);</textarea>
           "<div>" +
             "<div class=\"fc-stock-title-row\">" +
               "<span class=\"fc-stock-code\">" + code + "</span>" +
-              "<span class=\"fc-stock-name\">" + name + "</span>" +
+              "<span class=\"fc-stock-name\">" + name + "</span> " + kindBadge +
             "</div>" +
             "<div class=\"fc-stock-meta\">" +
               "<span><b>周</b> " + escHtml(data.week_key || "—") + "</span>" +
@@ -2374,6 +3906,72 @@ XG:CROSS(MA5,MA10);</textarea>
       }
       return [s];
     }
+
+    
+    // ---- 回测子页签 / 历史筛选 / 详情页签（必须在顶层执行，不可塞进其它函数） ----
+    function bindBacktestNav() {
+      document.querySelectorAll(".bt-subtab").forEach((btn) => {
+        btn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          const page = btn.getAttribute("data-bt-page");
+          if (!page) return;
+          if (btn.disabled || btn.getAttribute("disabled") !== null) {
+            if (page === "detail") {
+              alert("请先从历史任务点击「查看」打开详情");
+            }
+            return;
+          }
+          switchBtPage(page);
+        });
+      });
+      const goHist = document.getElementById("btnGoHistory");
+      if (goHist) {
+        goHist.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          switchBtPage("history");
+        });
+      }
+      ["histSearch", "histFilterMode", "histFilterPeriod", "histFilterStatus", "histSort"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener("input", () => renderHistory(window.__historyRowsAll || [], null));
+        el.addEventListener("change", () => renderHistory(window.__historyRowsAll || [], null));
+      });
+      document.getElementById("btnBackHistory")?.addEventListener("click", () => switchBtPage("history"));
+      document.getElementById("btnExportMore")?.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        document.getElementById("exportMenu")?.classList.toggle("open");
+      });
+      document.addEventListener("click", () => {
+        document.getElementById("exportMenu")?.classList.remove("open");
+      });
+      document.querySelectorAll(".detail-tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          const pane = tab.getAttribute("data-pane");
+          document.querySelectorAll(".detail-tab").forEach((x) => x.classList.toggle("active", x === tab));
+          document.querySelectorAll(".detail-pane").forEach((p) => {
+            p.classList.toggle("active", p.id === "pane-" + pane);
+          });
+        });
+      });
+      document.getElementById("btnToggleJson")?.addEventListener("click", () => {
+        document.getElementById("resultJsonWrap")?.classList.toggle("open");
+      });
+      document.getElementById("btnCopyParams")?.addEventListener("click", () => {
+        const rid = (document.getElementById("resultRunId") || {}).textContent;
+        if (rid) copyRunParams(rid.trim());
+      });
+      document.getElementById("btnRerun")?.addEventListener("click", () => {
+        const rid = (document.getElementById("resultRunId") || {}).textContent;
+        if (rid) copyRunParams(rid.trim());
+      });
+    }
+    bindBacktestNav();
+
+
+    // 默认停留在新建回测
+    switchBtPage("new");
+
 
     async function runForecastQuery(raw) {
       const card = document.getElementById("fcResultCard");
@@ -2453,6 +4051,1149 @@ XG:CROSS(MA5,MA10);</textarea>
     document.getElementById("fcExportBtn")?.addEventListener("click", () => {
       window.location.href = "/api/v1/forecast/export";
     });
-  </script>
+  
+
+    /* ========== Gua filter UI ========== */
+    
+    function renderGuaDetailSection(summary, repro) {
+      const gf = (summary && summary.gua_filter) || (repro && repro.gua_filter) || null;
+      const box = document.getElementById("guaDetailBlock");
+      if (!box) return;
+      if (!gf || !gf.enabled) {
+        box.innerHTML = "<div class='sub'>卦象过滤：未启用</div>";
+        return;
+      }
+      const before = summary.n_signals_before_bagua != null ? summary.n_signals_before_bagua : (gf.n_signals_before != null ? gf.n_signals_before : "—");
+      const after = summary.n_signals_after_bagua != null ? summary.n_signals_after_bagua : (gf.n_signals_after != null ? gf.n_signals_after : "—");
+      let rate = "—";
+      if (typeof before === "number" && before > 0 && typeof after === "number") rate = ((after/before)*100).toFixed(2) + "%";
+      else if (gf.retention_rate != null) rate = (gf.retention_rate*100).toFixed(2) + "%";
+      const nl = gf.natural_language || (summary.bagua_filter_label) || "—";
+      let tags = "";
+      const sids = gf.selected_state_ids || [];
+      const mains = gf.selected_main_hexagram_ids || [];
+      const acts = gf.selected_action_signals || [];
+      const items = [];
+      sids.forEach(s => items.push(typeof GuaUI !== "undefined" ? GuaUI.stateLabel(s) : s));
+      mains.forEach(id => items.push(typeof GuaUI !== "undefined" ? GuaUI.mainName(id) : ("主卦"+id)));
+      acts.forEach(a => items.push(a));
+      const max = 8;
+      tags = items.slice(0,max).map(t => "<span class='gua-tag'>"+t+"</span>").join(" ");
+      if (items.length > max) tags += " <span class='gua-tag'>+另外"+(items.length-max)+"项</span>";
+      box.innerHTML = "<div style='display:grid;grid-template-columns:1fr 1fr;gap:0.35rem 1rem;font-size:0.85rem'>"
+        + "<div>启用：<b>是</b></div><div>模式：<b>"+(gf.selection_mode||"—")+"</b></div>"
+        + "<div>规则版本：<b>"+(gf.rule_version||"—")+"</b></div><div>保留率：<b>"+rate+"</b></div>"
+        + "<div>原始信号：<b>"+before+"</b></div><div>过滤后：<b>"+after+"</b></div>"
+        + "</div><div class='gua-rule' style='margin-top:0.45rem'>"+nl+"</div>"
+        + "<div class='gua-tags' style='margin-top:0.45rem'>"+tags+"</div>";
+    }
+
+    const GuaUI = (function(){
+      let hexagrams = null;
+      let ruleVersion = "gua_rules_v20260721";
+      let loadError = null;
+      let committed = {
+        enabled: false,
+        selection_mode: "none",
+        selected_main_hexagram_ids: [],
+        selected_state_ids: [],
+        selected_action_signals: [],
+        rule_version: ruleVersion,
+      };
+      let draft = null;
+      let draftBeforeOpen = null;
+      let activeGuaId = 1;
+      let searchTimer = null;
+      let previewTimer = null;
+      let hitKbIndex = -1;
+      let hitsCache = [];
+      let viewMode = "by_name";
+      let usageMode = "action"; // action | preset | advanced
+      let activePreset = null; // best3 | bull | last | null
+      const PRESET_BEST3_STATE_IDS = ["24-1", "46-1", "11-1"]; // 地雷复初九 / 地风升初六 / 地天泰初九
+      const PRESET_BEST3_LABELS = ["地雷复·初九", "地风升·初六", "地天泰·初九"];
+      const LS_KEY = "astock_gua_filter_last";
+
+      function $(id){ return document.getElementById(id); }
+
+      function emptyDisp(v){
+        if (v === null || v === undefined || v === "") return "未配置";
+        return String(v);
+      }
+
+      function clone(o){ return JSON.parse(JSON.stringify(o)); }
+
+      function getMode(){
+        if (!$("guaEnabled") || !$("guaEnabled").checked) return "none";
+        if (usageMode === "action") return "action_signal";
+        if (usageMode === "preset") {
+          // presets write either action or exact_line into committed/draft
+          const cfg = draft || committed;
+          if ((cfg.selected_state_ids || []).length) return "exact_line";
+          if ((cfg.selected_action_signals || []).length || readActions().length) return "action_signal";
+          if ((cfg.selected_main_hexagram_ids || []).length) return "main_hexagram";
+          return "exact_line";
+        }
+        // advanced
+        const cfg = draft || committed;
+        if ((cfg.selected_main_hexagram_ids || []).length && !(cfg.selected_state_ids || []).length) return "main_hexagram";
+        return "exact_line";
+      }
+
+      function setMode(m){
+        if (m === "none") {
+          if ($("guaEnabled")) $("guaEnabled").checked = false;
+          return;
+        }
+        if ($("guaEnabled")) $("guaEnabled").checked = true;
+        if (m === "action_signal") setUsage("action", false);
+        else if (m === "main_hexagram" || m === "exact_line") setUsage("advanced", false);
+      }
+
+      function setUsage(u, syncUi){
+        usageMode = (u || "action").toString();
+        document.querySelectorAll(".gua-usage-card").forEach((btn) => {
+          btn.classList.toggle("active", btn.getAttribute("data-usage") === usageMode);
+        });
+        const showPanel = function(el, on) {
+          if (!el) return;
+          el.hidden = !on;
+          if (on) {
+            el.classList.add("is-on");
+            el.style.display = "block";
+            el.removeAttribute("hidden");
+          } else {
+            el.classList.remove("is-on");
+            el.style.display = "none";
+            el.setAttribute("hidden", "hidden");
+          }
+        };
+        showPanel($("guaPanelAction"), usageMode === "action");
+        showPanel($("guaPanelPreset"), usageMode === "preset");
+        showPanel($("guaPanelAdvanced"), usageMode === "advanced");
+        markPresetButtons();
+        if (syncUi !== false) {
+          try { renderTags(); } catch (e) { console.warn(e); }
+          try { schedulePreview(); } catch (e) { console.warn(e); }
+          try { if (typeof updateBtSummary === "function") updateBtSummary(); } catch (e) {}
+        }
+      }
+
+      function markPresetButtons(){
+        const map = { best3: "btnGuaPresetBest3", bull: "btnGuaPresetBull", last: "btnGuaPresetLast" };
+        Object.keys(map).forEach(function(k){
+          const el = $(map[k]);
+          if (!el) return;
+          el.classList.toggle("active-preset", activePreset === k);
+          // keep secondary look when not active
+          if (activePreset === k) el.classList.remove("secondary");
+          else el.classList.add("secondary");
+        });
+        const hint = $("guaPresetHint");
+        if (!hint) return;
+        if (activePreset === "best3") {
+          hint.textContent = "当前方案：① 最佳 3 爻 —— " + PRESET_BEST3_LABELS.join("、") + "。";
+        } else if (activePreset === "bull") {
+          hint.textContent = "当前方案：② 偏多操作信号 —— 新开仓 或 加仓。";
+        } else if (activePreset === "last") {
+          hint.textContent = "当前方案：③ 已恢复上次选择。";
+        } else {
+          hint.textContent = "请点选方案。①/② 会自动记住，便于点「③ 恢复上次」。① 与 ② 互斥覆盖。";
+        }
+      }
+
+      function detectActivePreset(cfg){
+        if (!cfg) return null;
+        const states = (cfg.selected_state_ids || []).slice().sort().join(",");
+        const best = PRESET_BEST3_STATE_IDS.slice().sort().join(",");
+        if (states && states === best && !(cfg.selected_action_signals || []).length) return "best3";
+        const acts = (cfg.selected_action_signals || []).slice().sort().join(",");
+        if (acts === "加仓,新开仓" || acts === "新开仓,加仓") {
+          if (!(cfg.selected_state_ids || []).length) return "bull";
+        }
+        return null;
+      }
+
+      function syncOffHint(){
+        refreshGuaUiStatus();
+      }
+
+      function saveLast(cfg){
+        try {
+          var data = cfg;
+          if (!data) {
+            try { data = buildConfigFromUI(); } catch (e1) { data = null; }
+          }
+          if (!data) return false;
+          // Persist even if only switch_on + selection (enabled may be derived)
+          var snap = {
+            enabled: !!(data.enabled || (data.switch_on && data.has_selection)),
+            switch_on: data.switch_on != null ? !!data.switch_on : !!data.enabled,
+            has_selection: !!data.has_selection,
+            selection_mode: data.selection_mode || "none",
+            match_mode: data.match_mode || "any",
+            selected_main_hexagram_ids: (data.selected_main_hexagram_ids || []).slice(),
+            selected_state_ids: (data.selected_state_ids || []).slice(),
+            selected_action_signals: (data.selected_action_signals || []).slice(),
+            rule_version: data.rule_version || ruleVersion,
+            saved_at: Date.now(),
+            preset: activePreset || detectActivePreset(data) || null,
+          };
+          var has = snap.selected_main_hexagram_ids.length || snap.selected_state_ids.length || snap.selected_action_signals.length;
+          if (!has) return false;
+          localStorage.setItem(LS_KEY, JSON.stringify(snap));
+          return true;
+        } catch (e) {
+          console.warn("saveLast failed", e);
+          return false;
+        }
+      }
+      function loadLast(){
+        try {
+          const raw = localStorage.getItem(LS_KEY);
+          if (!raw) return null;
+          const data = JSON.parse(raw);
+          if (!data || typeof data !== "object") return null;
+          const has = (data.selected_main_hexagram_ids || []).length ||
+            (data.selected_state_ids || []).length ||
+            (data.selected_action_signals || []).length;
+          if (!has) return null;
+          return data;
+        } catch (e) {
+          console.warn("loadLast failed", e);
+          return null;
+        }
+      }
+      function describeLast(cfg){
+        if (!cfg) return "无";
+        const p = cfg.preset || detectActivePreset(cfg);
+        if (p === "best3") return "最佳 3 爻（" + PRESET_BEST3_LABELS.join("、") + "）";
+        if (p === "bull") return "偏多操作信号（新开仓、加仓）";
+        if (cfg.selection_mode === "action_signal") {
+          return "操作信号：" + (cfg.selected_action_signals || []).join("、");
+        }
+        if ((cfg.selected_state_ids || []).length) {
+          return "精确爻象 " + cfg.selected_state_ids.length + " 条";
+        }
+        if ((cfg.selected_main_hexagram_ids || []).length) {
+          return "主卦 " + cfg.selected_main_hexagram_ids.length + " 个";
+        }
+        return "已保存的选择";
+      }
+
+      function readActions(){
+        return Array.from(document.querySelectorAll("#guaActionChecks input[type=checkbox]:checked")).map(x => x.value);
+      }
+
+      function writeActions(arr){
+        const set = new Set(arr || []);
+        document.querySelectorAll("#guaActionChecks input[type=checkbox]").forEach(cb => {
+          cb.checked = set.has(cb.value);
+        });
+      }
+
+      function stateLabel(sid){
+        if (!hexagrams) return sid;
+        for (const h of hexagrams){
+          for (const ln of (h.lines||[])){
+            if (ln.state_id === sid){
+              return (h.hexagram_symbol||"") + " " + (h.main_hexagram_name||"") + "·" + (ln.line_name||"");
+            }
+          }
+        }
+        return sid;
+      }
+
+      function mainName(id){
+        if (!hexagrams) return "第"+String(id).padStart(2,"0")+"卦";
+        const h = hexagrams.find(x => x.main_hexagram_id === id || x.gua_order === id);
+        return h ? ((h.hexagram_symbol||"")+" "+(h.main_hexagram_name||"")) : ("第"+String(id).padStart(2,"0")+"卦");
+      }
+
+      function buildConfigFromUI(){
+        // UI config follows checkbox + current usage selections (may be empty).
+        const switchOn = !!( $("guaEnabled") && $("guaEnabled").checked );
+        const src = draft || committed;
+        let mains = (src.selected_main_hexagram_ids || []).slice();
+        let states = (src.selected_state_ids || []).slice();
+        let actions = (src.selected_action_signals || []).slice();
+        let mode = "none";
+        if (switchOn) {
+          if (usageMode === "action") {
+            mode = "action_signal";
+            actions = readActions();
+            mains = [];
+            states = [];
+          } else if (usageMode === "preset") {
+            actions = actions.length ? actions : readActions();
+            if (states.length) {
+              mode = "exact_line";
+              actions = [];
+              mains = [];
+            } else if (actions.length) {
+              mode = "action_signal";
+              states = [];
+              mains = [];
+            } else if (mains.length) {
+              mode = "main_hexagram";
+            } else {
+              mode = "exact_line"; // waiting for preset click
+            }
+          } else {
+            // advanced
+            actions = [];
+            if (mains.length && !states.length) mode = "main_hexagram";
+            else {
+              mode = "exact_line";
+              if (states.length) mains = [];
+            }
+          }
+        }
+        return {
+          enabled: switchOn,
+          selection_mode: switchOn ? mode : "none",
+          match_mode: "any",
+          selected_main_hexagram_ids: switchOn ? mains : [],
+          selected_state_ids: switchOn ? states : [],
+          selected_action_signals: switchOn ? actions : [],
+          rule_version: ruleVersion,
+          switch_on: switchOn,
+          has_selection: !!(mains.length || states.length || actions.length),
+        };
+      }
+
+      function naturalLanguage(cfg){
+        if (!cfg) return "卦象过滤：未启用";
+        const on = !!(cfg.switch_on != null ? cfg.switch_on : cfg.enabled);
+        if (!on) return "卦象过滤：未启用（开关关闭）";
+        const mode = cfg.selection_mode || "none";
+        if (mode === "main_hexagram"){
+          const names = (cfg.selected_main_hexagram_ids||[]).map(mainName);
+          if (!names.length) return "已启用 · 按主卦：尚未选择主卦";
+          return "已启用 · 主卦属于" + names.join("或") + "。";
+        }
+        if (mode === "exact_line"){
+          const n = (cfg.selected_state_ids||[]).length;
+          const preset = detectActivePreset(cfg);
+          if (preset === "best3") return "已启用 · 方案「最佳 3 爻」：" + PRESET_BEST3_LABELS.join("、") + "。";
+          return n ? ("已启用 · 精确爻象 " + n + " 条。") : "已启用 · 精确爻象：尚未选择（请点「最佳3爻」或打开目录勾选）";
+        }
+        if (mode === "action_signal"){
+          const a = cfg.selected_action_signals||[];
+          const preset = detectActivePreset(cfg);
+          if (preset === "bull") return "已启用 · 方案「偏多操作信号」：新开仓 或 加仓。";
+          return a.length ? ("已启用 · 操作信号属于" + a.join("或") + "。") : "已启用 · 按操作信号：尚未勾选（可点「一键偏多」）";
+        }
+        return "已启用 · 请选择用法与条件";
+      }
+
+      function refreshGuaUiStatus(){
+        try {
+          const cfg = buildConfigFromUI();
+          const rule = $("guaRuleText");
+          if (rule) rule.textContent = naturalLanguage(cfg);
+          const hint = $("guaOffHint");
+          if (hint) {
+            if (cfg.switch_on) {
+              if (cfg.has_selection) {
+                hint.style.display = "none";
+              } else {
+                hint.style.display = "";
+                hint.innerHTML = "<b>已启用，但尚未选择过滤条件。</b>请在下方选择操作信号、现成方案或具体爻象；选好后才会真正过滤信号。关闭开关可恢复「不过滤」。";
+              }
+            } else {
+              hint.style.display = "";
+              hint.innerHTML = "<b>当前未启用。</b>技术信号不会按卦象过滤。建议先跑一版纯策略，再打开启用做对比；历史标题会显示「策略 + 卦象…」。下方可先浏览用法，打开「启用」并完成选择后才会生效。";
+            }
+          }
+          const box = $("guaPreviewBox");
+          if (box && !cfg.switch_on) {
+            box.className = "gua-preview";
+            box.textContent = "卦象过滤未启用：不限制爻象状态。";
+          } else if (box && cfg.switch_on && !cfg.has_selection) {
+            box.className = "gua-preview warn";
+            box.textContent = "已启用开关，请先选择操作信号 / 现成方案 / 具体爻象，然后再看命中预览。";
+          }
+        } catch (e) { console.warn(e); }
+      }
+
+      function renderTags(){
+        const cfg = buildConfigFromUI();
+        const box = $("guaSelectedTags");
+        box.innerHTML = "";
+        let labels = [];
+        if (cfg.selection_mode === "main_hexagram"){
+          labels = (cfg.selected_main_hexagram_ids||[]).map(id => ({key:"m"+id, text: mainName(id), kind:"main", id:id}));
+        } else if (cfg.selection_mode === "exact_line"){
+          labels = (cfg.selected_state_ids||[]).map(sid => ({key:sid, text: stateLabel(sid), kind:"state", id:sid}));
+        } else if (cfg.selection_mode === "action_signal"){
+          labels = (cfg.selected_action_signals||[]).map(a => ({key:a, text:a, kind:"act", id:a}));
+        }
+        const max = 3;
+        const show = labels.slice(0, max);
+        show.forEach(item => {
+          const el = document.createElement("span");
+          el.className = "gua-tag";
+          el.innerHTML = "<span></span><button type='button' title='移除'>×</button>";
+          el.querySelector("span").textContent = item.text;
+          el.querySelector("button").onclick = function(){
+            removeItem(item);
+          };
+          box.appendChild(el);
+        });
+        if (labels.length > max){
+          const more = document.createElement("span");
+          more.className = "gua-tag";
+          more.style.cursor = "pointer";
+          more.textContent = "+另外" + (labels.length - max) + "项";
+          more.title = labels.slice(max).map(x => x.text).join("\n");
+          more.onclick = function(){ openDrawer(); };
+          box.appendChild(more);
+        }
+        refreshGuaUiStatus();
+        // tags only; status text via refreshGuaUiStatus
+      }
+
+      function removeItem(item){
+        const mode = getMode();
+        const target = draft || committed;
+        if (item.kind === "main"){
+          target.selected_main_hexagram_ids = target.selected_main_hexagram_ids.filter(x => x !== item.id);
+        } else if (item.kind === "state"){
+          target.selected_state_ids = target.selected_state_ids.filter(x => x !== item.id);
+        } else if (item.kind === "act"){
+          writeActions(readActions().filter(x => x !== item.id));
+        }
+        renderTags();
+        schedulePreview();
+      }
+
+      async function ensureData(){
+        if (hexagrams) return true;
+        $("guaDrawerStatus").textContent = "加载卦象数据…";
+        try {
+          const r = await fetch("/api/v1/gua/hexagrams");
+          if (!r.ok) throw new Error("HTTP "+r.status);
+          const data = await r.json();
+          hexagrams = data.items || [];
+          ruleVersion = data.rule_version || ruleVersion;
+          loadError = null;
+          $("guaDrawerStatus").textContent = "规则 " + ruleVersion + " · " + (data.count_yao||384) + " 爻";
+          return true;
+        } catch (e){
+          loadError = e;
+          $("guaDrawerStatus").textContent = "加载失败";
+          $("guaNavList").innerHTML = "<div class='sub' style='padding:0.75rem'>加载失败 <button type='button' class='secondary' id='btnGuaRetry'>重试</button></div>";
+          const b = $("btnGuaRetry");
+          if (b) b.onclick = function(){ hexagrams=null; ensureData().then(renderDrawer); };
+          return false;
+        }
+      }
+
+      function selectedCountForGua(gid, cfg){
+        if (!hexagrams) return 0;
+        const h = hexagrams.find(x => x.main_hexagram_id === gid);
+        if (!h) return 0;
+        if (cfg.selection_mode === "main_hexagram"){
+          return (cfg.selected_main_hexagram_ids||[]).indexOf(gid) >= 0 ? 6 : 0;
+        }
+        const set = new Set(cfg.selected_state_ids||[]);
+        return (h.lines||[]).filter(ln => set.has(ln.state_id)).length;
+      }
+
+      function renderNav(){
+        const cfg = draft || committed;
+        const q = (($("guaDrawerSearch")||{}).value || "").trim().toLowerCase();
+        const box = $("guaNavList");
+        if (!hexagrams){ box.innerHTML = "<div class='sub' style='padding:0.75rem'>加载中…</div>"; return; }
+        box.innerHTML = "";
+        hexagrams.forEach(h => {
+          const gid = h.main_hexagram_id;
+          const label = String(gid).padStart(2,"0") + " " + (h.hexagram_symbol||"") + " " + (h.main_hexagram_name||"");
+          if (q){
+            const blob = (label + " " + (h.core_gang||"") + " " + (h.lines||[]).map(l=>l.line_name+" "+(l.line_text||"")+" "+(l.action_signal||"")+" "+(l.biangua||"")).join(" ")).toLowerCase();
+            if (blob.indexOf(q) < 0 && String(gid) !== q && String(gid).padStart(2,"0") !== q) return;
+          }
+          const cnt = selectedCountForGua(gid, cfg);
+          const div = document.createElement("div");
+          div.className = "gua-nav-item" + (gid === activeGuaId ? " active" : "");
+          div.innerHTML = "<span></span><span class='cnt'></span>";
+          div.querySelector("span").textContent = label;
+          const c = div.querySelector(".cnt");
+          c.textContent = cnt + "/6";
+          if (cnt) c.classList.add("has");
+          div.onclick = function(){ activeGuaId = gid; renderNav(); renderDetail(); };
+          box.appendChild(div);
+        });
+      }
+
+      function renderDetail(){
+        const cfg = draft || committed;
+        const pane = $("guaDetailPane");
+        if (!hexagrams){ pane.innerHTML = "<div class='sub'>—</div>"; return; }
+        const h = hexagrams.find(x => x.main_hexagram_id === activeGuaId);
+        if (!h){ pane.innerHTML = "<div class='sub'>请选择左侧主卦</div>"; return; }
+        const mode = getMode();
+        let html = "<div style='margin-bottom:0.65rem'>";
+        html += "<div style='font-size:1.15rem;font-weight:700'>"+(h.hexagram_symbol||"")+" "+(h.main_hexagram_name||"")+" <span class='sub'>第"+String(h.gua_order).padStart(2,"0")+"卦</span></div>";
+        html += "<div class='sub' style='margin-top:0.25rem'>"+ (h.core_gang || h.gua_ci || "—") +"</div>";
+        html += "<label style='display:inline-flex;gap:0.35rem;margin-top:0.45rem;font-size:0.85rem'><input type='checkbox' id='guaSelectAll6' /> 选择全部六爻</label>";
+        html += "</div>";
+        (h.lines||[]).forEach(ln => {
+          let checked = false;
+          if (mode === "main_hexagram"){
+            checked = (cfg.selected_main_hexagram_ids||[]).indexOf(h.main_hexagram_id) >= 0;
+          } else {
+            checked = (cfg.selected_state_ids||[]).indexOf(ln.state_id) >= 0;
+          }
+          const bg = emptyDisp(ln.biangua);
+          const act = ln.action_signal || "—";
+          html += "<div class='gua-line'>";
+          html += "<label class='chk'><input type='checkbox' data-sid='"+ln.state_id+"' data-gid='"+h.main_hexagram_id+"' "+(checked?"checked":"")+" /><span><b>"+(ln.line_name||"")+"</b> "+(ln.line_text||"")+"</span></label>";
+          html += "<div class='sub' style='grid-column:2'>变卦："+bg+" · 行情："+(ln.market_summary||ln.market_judgement||"—")+" <span class='gua-act gua-act-"+(ln.action_signal||"")+"'>"+act+"</span></div>";
+          html += "</div>";
+        });
+        pane.innerHTML = html;
+        const allCb = $("guaSelectAll6");
+        if (allCb){
+          const n = selectedCountForGua(h.main_hexagram_id, cfg);
+          allCb.checked = n === 6;
+          allCb.onchange = function(){
+            toggleAllSix(h, allCb.checked);
+          };
+        }
+        pane.querySelectorAll("input[data-sid]").forEach(cb => {
+          cb.onchange = function(){ toggleLine(parseInt(cb.getAttribute("data-gid"),10), cb.getAttribute("data-sid"), cb.checked); };
+        });
+      }
+
+      function toggleAllSix(h, on){
+        const mode = getMode();
+        if (!draft) draft = clone(committed);
+        if (mode === "main_hexagram" || mode === "none"){
+          setMode("main_hexagram");
+          const set = new Set(draft.selected_main_hexagram_ids||[]);
+          if (on) set.add(h.main_hexagram_id); else set.delete(h.main_hexagram_id);
+          draft.selected_main_hexagram_ids = Array.from(set).sort((a,b)=>a-b);
+          draft.selected_state_ids = [];
+        } else {
+          setMode("exact_line");
+          const set = new Set(draft.selected_state_ids||[]);
+          (h.lines||[]).forEach(ln => { if (on) set.add(ln.state_id); else set.delete(ln.state_id); });
+          draft.selected_state_ids = Array.from(set).sort();
+          draft.selected_main_hexagram_ids = [];
+        }
+        renderNav(); renderDetail(); updateSelCount(); schedulePreview();
+      }
+
+      function toggleLine(gid, sid, on){
+        activePreset = null;
+        try { markPresetButtons(); } catch (e) {}
+        const mode = getMode();
+        if (!draft) draft = clone(committed);
+        if (mode === "main_hexagram"){
+          // switching to exact: expand current main selections? simple: move to exact_line
+          setMode("exact_line");
+          const set = new Set(draft.selected_state_ids||[]);
+          // if whole main was selected, expand first
+          if ((draft.selected_main_hexagram_ids||[]).indexOf(gid) >= 0){
+            const h = hexagrams.find(x => x.main_hexagram_id === gid);
+            (h.lines||[]).forEach(ln => set.add(ln.state_id));
+            draft.selected_main_hexagram_ids = draft.selected_main_hexagram_ids.filter(x => x !== gid);
+          }
+          if (on) set.add(sid); else set.delete(sid);
+          draft.selected_state_ids = Array.from(set).sort();
+        } else if (mode === "action_signal"){
+          setMode("exact_line");
+          const set = new Set(draft.selected_state_ids||[]);
+          if (on) set.add(sid); else set.delete(sid);
+          draft.selected_state_ids = Array.from(set).sort();
+        } else {
+          setMode("exact_line");
+          const set = new Set(draft.selected_state_ids||[]);
+          if (on) set.add(sid); else set.delete(sid);
+          draft.selected_state_ids = Array.from(set).sort();
+        }
+        renderNav(); renderDetail(); updateSelCount(); schedulePreview();
+      }
+
+      function updateSelCount(){
+        const cfg = draft || committed;
+        let n = 0;
+        if (getMode() === "main_hexagram") n = (cfg.selected_main_hexagram_ids||[]).length;
+        else if (getMode() === "exact_line") n = (cfg.selected_state_ids||[]).length;
+        else if (getMode() === "action_signal") n = readActions().length;
+        $("guaSelCount").textContent = "已选 " + n;
+      }
+
+      async function runSearch(q){
+        const box = $("guaSearchHits");
+        hitKbIndex = -1;
+        if (!q || !q.trim()){
+          box.classList.remove("open");
+          box.innerHTML = "";
+          hitsCache = [];
+          renderNav();
+          return;
+        }
+        try {
+          const r = await fetch("/api/v1/gua/states?search="+encodeURIComponent(q.trim())+"&page_size=40");
+          const data = await r.json();
+          hitsCache = data.items || [];
+          box.innerHTML = "";
+          hitsCache.forEach((it, idx) => {
+            const div = document.createElement("div");
+            div.className = "gua-hit";
+            div.dataset.idx = String(idx);
+            const bg = emptyDisp(it.biangua || it.changed_hexagram_name);
+            div.innerHTML = "<input type='checkbox' /> <div><b>"+(it.hexagram_symbol||"")+" "+(it.main_hexagram_name||"")+" · "+(it.line_name||"")+"</b><div class='sub'>"+(it.line_text||"")+" · 变卦:"+bg+" · <span class='gua-act gua-act-"+(it.action_signal||"")+"'>"+(it.action_signal||"—")+"</span></div></div>";
+            const cb = div.querySelector("input");
+            const cfg = draft || committed;
+            cb.checked = (cfg.selected_state_ids||[]).indexOf(it.state_id) >= 0;
+            div.onclick = function(ev){
+              if (ev.target.tagName === "INPUT") return;
+              cb.checked = !cb.checked;
+              toggleLine(it.main_hexagram_id, it.state_id, cb.checked);
+              activeGuaId = it.main_hexagram_id;
+            };
+            cb.onchange = function(){ toggleLine(it.main_hexagram_id, it.state_id, cb.checked); };
+            box.appendChild(div);
+          });
+          box.classList.add("open");
+        } catch (e){
+          box.innerHTML = "<div class='sub' style='padding:0.5rem'>搜索失败</div>";
+          box.classList.add("open");
+        }
+      }
+
+      function setDrawerView(mode){
+        viewMode = mode === "by_action" ? "by_action" : "by_name";
+        document.querySelectorAll("#guaViews button[data-view]").forEach(function(btn){
+          btn.classList.toggle("active", btn.getAttribute("data-view") === viewMode);
+        });
+        const body = $("guaDrawerBody");
+        const browse = $("guaActionBrowse");
+        const nav = $("guaNavList");
+        const detail = $("guaDetailPane");
+        if (body) {
+          body.classList.toggle("view-action", viewMode === "by_action");
+          body.classList.toggle("view-name", viewMode === "by_name");
+        }
+        if (viewMode === "by_action") {
+          if (nav) nav.style.display = "none";
+          if (detail) detail.style.display = "none";
+          if (browse) { browse.style.display = "block"; browse.style.flex = "1"; }
+          renderActionBrowse();
+        } else {
+          if (nav) nav.style.display = "";
+          if (detail) detail.style.display = "";
+          if (browse) browse.style.display = "none";
+          renderNav();
+          renderDetail();
+        }
+        updateSelCount();
+      }
+
+      function renderActionBrowse(){
+        const box = $("guaActionBrowse");
+        if (!box) return;
+        if (!hexagrams) {
+          box.innerHTML = "<div class='sub' style='padding:0.75rem'>加载中…</div>";
+          return;
+        }
+        const cfg = draft || committed;
+        const selected = new Set(cfg.selected_state_ids || []);
+        const order = ["新开仓", "加仓", "持有", "减仓", "清仓"];
+        const groups = {};
+        order.forEach(function(a){ groups[a] = []; });
+        groups["其他"] = [];
+        hexagrams.forEach(function(h){
+          (h.lines || []).forEach(function(ln){
+            const act = (ln.action_signal || "").trim() || "其他";
+            if (!groups[act]) groups[act] = [];
+            groups[act].push({ h: h, ln: ln });
+          });
+        });
+        let html = "<div class='sub' style='margin-bottom:0.5rem'>按操作信号浏览全部爻象，勾选即加入精确爻象过滤。</div>";
+        order.concat(["其他"]).forEach(function(act){
+          const rows = groups[act] || [];
+          if (!rows.length) return;
+          html += "<div class='gua-act-group'>";
+          html += "<h4><span class='gua-act gua-act-" + act + "'>" + act + "</span> <span class='sub'>" + rows.length + " 条</span>";
+          html += " <button type='button' class='secondary' data-act-all='" + act + "' style='margin-left:auto;padding:0.1rem 0.4rem;font-size:0.72rem'>本信号全选</button>";
+          html += " <button type='button' class='secondary' data-act-none='" + act + "' style='padding:0.1rem 0.4rem;font-size:0.72rem'>清空</button></h4>";
+          rows.forEach(function(item){
+            const sid = item.ln.state_id;
+            const checked = selected.has(sid) ? " checked" : "";
+            const bg = emptyDisp(item.ln.biangua);
+            html += "<div class='gua-act-row'>";
+            html += "<label class='chk'><input type='checkbox' data-sid='" + sid + "' data-gid='" + item.h.main_hexagram_id + "'" + checked + "/>";
+            html += "<span><b>" + (item.h.hexagram_symbol || "") + " " + (item.h.main_hexagram_name || "") + " · " + (item.ln.line_name || "") + "</b>";
+            html += "<div class='sub'>" + (item.ln.line_text || "—") + " · 变卦：" + bg + "</div></span></label>";
+            html += "</div>";
+          });
+          html += "</div>";
+        });
+        box.innerHTML = html;
+        box.querySelectorAll("input[data-sid]").forEach(function(cb){
+          cb.onchange = function(){
+            toggleLine(parseInt(cb.getAttribute("data-gid"), 10), cb.getAttribute("data-sid"), cb.checked);
+            activePreset = null;
+            markPresetButtons();
+          };
+        });
+        box.querySelectorAll("[data-act-all]").forEach(function(btn){
+          btn.onclick = function(){
+            const act = btn.getAttribute("data-act-all");
+            if (!draft) draft = clone(committed);
+            const set = new Set(draft.selected_state_ids || []);
+            hexagrams.forEach(function(h){
+              (h.lines || []).forEach(function(ln){
+                if ((ln.action_signal || "").trim() === act) set.add(ln.state_id);
+              });
+            });
+            draft.selected_state_ids = Array.from(set).sort();
+            draft.selected_main_hexagram_ids = [];
+            draft.selected_action_signals = [];
+            writeActions([]);
+            activePreset = null;
+            markPresetButtons();
+            renderActionBrowse();
+            updateSelCount();
+            schedulePreview();
+          };
+        });
+        box.querySelectorAll("[data-act-none]").forEach(function(btn){
+          btn.onclick = function(){
+            const act = btn.getAttribute("data-act-none");
+            if (!draft) draft = clone(committed);
+            const drop = new Set();
+            hexagrams.forEach(function(h){
+              (h.lines || []).forEach(function(ln){
+                if ((ln.action_signal || "").trim() === act) drop.add(ln.state_id);
+              });
+            });
+            draft.selected_state_ids = (draft.selected_state_ids || []).filter(function(s){ return !drop.has(s); });
+            activePreset = null;
+            markPresetButtons();
+            renderActionBrowse();
+            updateSelCount();
+            schedulePreview();
+          };
+        });
+      }
+
+      function renderDrawer(){
+        setDrawerView(viewMode || "by_name");
+      }
+
+      function openDrawer(){
+        setUsage("advanced", false);
+        draftBeforeOpen = clone(committed);
+        draft = clone(committed);
+        // sync actions from UI
+        draft.selected_action_signals = readActions();
+        $("guaDrawerMask").classList.add("open");
+        $("guaDrawer").classList.add("open");
+        viewMode = "by_name";
+        ensureData().then(function(ok){ if (ok) renderDrawer(); });
+        setTimeout(function(){ const s=$("guaDrawerSearch"); if(s) s.focus(); }, 50);
+      }
+
+      function closeDrawer(restore){
+        if (restore && draftBeforeOpen){
+          committed = clone(draftBeforeOpen);
+          applyCommittedToUI();
+        }
+        draft = null;
+        draftBeforeOpen = null;
+        $("guaDrawerMask").classList.remove("open");
+        $("guaDrawer").classList.remove("open");
+        $("guaSearchHits").classList.remove("open");
+        renderTags();
+        schedulePreview();
+      }
+
+      function commitDrawer(){
+        if (draft){
+          committed = clone(draft);
+          if ((committed.selected_state_ids||[]).length || (committed.selected_main_hexagram_ids||[]).length) {
+            usageMode = "advanced";
+            setUsage("advanced", false);
+            if ((committed.selected_state_ids||[]).length) committed.selected_action_signals = [];
+          }
+          committed.selection_mode = getMode();
+          if ($("guaEnabled")) $("guaEnabled").checked = true;
+          committed.enabled = true;
+          committed.rule_version = ruleVersion;
+          syncOffHint();
+        }
+        draft = null;
+        draftBeforeOpen = null;
+        $("guaDrawerMask").classList.remove("open");
+        $("guaDrawer").classList.remove("open");
+        try { saveLast(committed); } catch (e) {}
+        renderTags();
+        schedulePreview();
+      }
+
+      function applyCommittedToUI(){
+        if ($("guaEnabled")) $("guaEnabled").checked = !!committed.enabled;
+        writeActions(committed.selected_action_signals || []);
+        draft = null;
+        renderTags();
+        syncOffHint();
+      }
+
+      function getPayload(){
+        // For backtest submit: only truly active when switch ON and selection non-empty.
+        const ui = buildConfigFromUI();
+        const switchOn = !!ui.switch_on;
+        const has = !!ui.has_selection;
+        const cfg = {
+          enabled: switchOn && has,
+          selection_mode: (switchOn && has) ? ui.selection_mode : "none",
+          match_mode: "any",
+          selected_main_hexagram_ids: (switchOn && has) ? (ui.selected_main_hexagram_ids || []) : [],
+          selected_state_ids: (switchOn && has) ? (ui.selected_state_ids || []) : [],
+          selected_action_signals: (switchOn && has) ? (ui.selected_action_signals || []) : [],
+          rule_version: ruleVersion,
+          switch_on: switchOn,
+          has_selection: has,
+        };
+        if (cfg.enabled) {
+          try { saveLast(cfg); } catch (e) {}
+        }
+        return cfg;
+      }
+
+      function getUiState(){
+        return buildConfigFromUI();
+      }
+
+      function setFromConfig(cfg){
+        if (!cfg || typeof cfg !== "object"){
+          committed = {enabled:false,selection_mode:"none",selected_main_hexagram_ids:[],selected_state_ids:[],selected_action_signals:[],rule_version:ruleVersion};
+        } else {
+          committed = {
+            enabled: !!cfg.enabled,
+            selection_mode: cfg.selection_mode || "none",
+            selected_main_hexagram_ids: (cfg.selected_main_hexagram_ids||[]).map(Number),
+            selected_state_ids: (cfg.selected_state_ids||[]).map(String),
+            selected_action_signals: (cfg.selected_action_signals||[]).map(String),
+            rule_version: cfg.rule_version || ruleVersion,
+          };
+        }
+        applyCommittedToUI();
+        if (committed.selection_mode === "action_signal") setUsage("action", false);
+        else if (committed.selection_mode in {exact_line:1, main_hexagram:1}) setUsage("advanced", false);
+        else setUsage("action", false);
+        syncOffHint();
+        schedulePreview();
+        try { updateBtSummary(); } catch (e) {}
+      }
+
+      async function schedulePreview(){
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(doPreview, 350);
+      }
+
+      async function doPreview(){
+        const box = $("guaPreviewBox");
+        if (!box) return;
+        const ui = buildConfigFromUI();
+        refreshGuaUiStatus();
+        if (!ui.switch_on){
+          box.className = "gua-preview";
+          box.textContent = "卦象过滤未启用：不限制爻象状态。";
+          return;
+        }
+        if (!ui.has_selection){
+          box.className = "gua-preview warn";
+          box.textContent = "已启用开关，请先选择过滤条件（操作信号 / 现成方案 / 具体爻象）。";
+          return;
+        }
+        const cfg = getPayload();
+        try {
+          const r = await fetch("/api/v1/gua/preview", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({ gua_filter: cfg }),
+          });
+          const d = await r.json();
+          const lines = [];
+          lines.push("选中主卦：" + (d.selected_main_hexagram_count||0) + " · 精确爻象：" + (d.selected_exact_line_count||0) + " · 操作信号：" + (d.selected_action_signal_count||0));
+          lines.push("匹配爻象状态：" + (d.matched_state_count||0) + " / " + (d.total_state_count||384) + "（覆盖 " + ((d.state_coverage_ratio||0)*100).toFixed(2) + "%）");
+          if (d.natural_language) lines.push(d.natural_language);
+          if (d.warnings && d.warnings.length) lines.push(d.warnings.join(" "));
+          if (d.note) lines.push(d.note);
+          box.textContent = lines.join("\n");
+          box.className = "gua-preview";
+          if (d.matched_state_count === 0) box.classList.add("bad");
+          else if (d.matched_state_count < 12) box.classList.add("warn");
+        } catch (e){
+          box.className = "gua-preview warn";
+          box.textContent = "预览失败，可稍后重试。";
+        }
+      }
+
+      function bind(){
+        const usageGrid = $("guaUsageGrid") || document.getElementById("guaUsageGrid");
+        if (usageGrid) {
+          usageGrid.addEventListener("click", function(ev) {
+            const card = ev.target && ev.target.closest ? ev.target.closest(".gua-usage-card") : null;
+            if (!card || !usageGrid.contains(card)) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            const u = card.getAttribute("data-usage");
+            if (u) setUsage(u);
+          });
+        }
+        document.querySelectorAll(".gua-usage-card").forEach((btn) => {
+          btn.addEventListener("click", function(ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const u = btn.getAttribute("data-usage");
+            if (u) setUsage(u);
+          });
+        });
+        if ($("btnGuaActBull")) $("btnGuaActBull").onclick = function(){
+          writeActions(["新开仓", "加仓"]);
+          setUsage("action");
+          if ($("guaEnabled")) $("guaEnabled").checked = true;
+          syncOffHint();
+          committed.selected_action_signals = readActions();
+          committed.selected_state_ids = [];
+          committed.selected_main_hexagram_ids = [];
+          committed.selection_mode = "action_signal";
+          committed.enabled = true;
+          draft = null;
+          activePreset = "bull";
+          try { saveLast(committed); } catch (e) {}
+          markPresetButtons();
+          renderTags(); schedulePreview();
+          try { updateBtSummary(); } catch (e) {}
+        };
+        if ($("btnGuaPresetBest3")) $("btnGuaPresetBest3").onclick = function(){
+          if ($("guaEnabled")) $("guaEnabled").checked = true;
+          activePreset = "best3";
+          writeActions([]);
+          committed = {
+            enabled: true,
+            selection_mode: "exact_line",
+            selected_main_hexagram_ids: [],
+            selected_state_ids: PRESET_BEST3_STATE_IDS.slice(),
+            selected_action_signals: [],
+            rule_version: ruleVersion,
+          };
+          draft = null;
+          setUsage("preset", false);
+          markPresetButtons();
+          try { saveLast(committed); } catch (e) {}
+          ensureData().then(function(){
+            refreshGuaUiStatus();
+            renderTags();
+            schedulePreview();
+            try { updateBtSummary(); } catch (e) {}
+          });
+        };
+        if ($("btnGuaPresetBull")) $("btnGuaPresetBull").onclick = function(){
+          if ($("guaEnabled")) $("guaEnabled").checked = true;
+          activePreset = "bull";
+          writeActions(["新开仓", "加仓"]);
+          committed = {
+            enabled: true,
+            selection_mode: "action_signal",
+            selected_main_hexagram_ids: [],
+            selected_state_ids: [],
+            selected_action_signals: ["新开仓", "加仓"],
+            rule_version: ruleVersion,
+          };
+          draft = null;
+          setUsage("preset", false);
+          markPresetButtons();
+          try { saveLast(committed); } catch (e) {}
+          refreshGuaUiStatus();
+          renderTags();
+          schedulePreview();
+          try { updateBtSummary(); } catch (e) {}
+        };
+        if ($("btnGuaPresetLast")) $("btnGuaPresetLast").onclick = function(){
+          const last = loadLast();
+          const hint = $("guaPresetHint");
+          if (!last) {
+            const msg = "暂无「上次选择」。请先采用「最佳 3 爻」或「偏多操作信号」，或在完整目录中勾选后点确定；系统会自动记住。";
+            if (hint) hint.textContent = msg;
+            try { alert(msg); } catch (e) {}
+            return;
+          }
+          activePreset = "last";
+          if ($("guaEnabled")) $("guaEnabled").checked = true;
+          // Prefer full restore of lists
+          committed = {
+            enabled: true,
+            selection_mode: last.selection_mode || "none",
+            selected_main_hexagram_ids: (last.selected_main_hexagram_ids || []).map(Number),
+            selected_state_ids: (last.selected_state_ids || []).map(String),
+            selected_action_signals: (last.selected_action_signals || []).map(String),
+            rule_version: last.rule_version || ruleVersion,
+          };
+          draft = null;
+          writeActions(committed.selected_action_signals || []);
+          const det = detectActivePreset(committed);
+          if (det) activePreset = det;
+          else if (last.preset === "best3" || last.preset === "bull") activePreset = last.preset;
+          else activePreset = "last";
+          setUsage("preset", false);
+          markPresetButtons();
+          if (hint) {
+            hint.textContent = "已恢复上次选择：" + describeLast(last) +
+              (last.saved_at ? ("（保存于 " + new Date(last.saved_at).toLocaleString() + "）") : "");
+          }
+          ensureData().then(function(){
+            refreshGuaUiStatus();
+            renderTags();
+            schedulePreview();
+            try { updateBtSummary(); } catch (e) {}
+          });
+        };
+        const views = $("guaViews");
+        if (views) {
+          views.addEventListener("click", function(ev){
+            const btn = ev.target && ev.target.closest ? ev.target.closest("button[data-view]") : null;
+            if (!btn) return;
+            ev.preventDefault();
+            setDrawerView(btn.getAttribute("data-view"));
+          });
+        }
+        $("btnGuaOpen").onclick = openDrawer;
+        $("btnGuaClose").onclick = function(){ closeDrawer(true); };
+        $("btnGuaCancel").onclick = function(){ closeDrawer(true); };
+        $("btnGuaCancel2").onclick = function(){ closeDrawer(true); };
+        $("btnGuaOk").onclick = commitDrawer;
+        $("btnGuaOk2").onclick = commitDrawer;
+        $("guaDrawerMask").onclick = function(){ closeDrawer(true); };
+        $("btnGuaClear").onclick = function(){
+          if (!confirm("确认清空当前卦象选择？")) return;
+          if (!draft) draft = clone(committed);
+          draft.selected_main_hexagram_ids = [];
+          draft.selected_state_ids = [];
+          draft.selected_action_signals = [];
+          writeActions([]);
+          renderDrawer();
+          schedulePreview();
+        };
+        const enEl = $("guaEnabled");
+        if (enEl) {
+          const onEnableChange = function(){
+            committed.enabled = !!enEl.checked;
+            refreshGuaUiStatus();
+            renderTags();
+            schedulePreview();
+            try { updateBtSummary(); } catch (e) {}
+          };
+          enEl.addEventListener("change", onEnableChange);
+          enEl.addEventListener("input", onEnableChange);
+          enEl.addEventListener("click", function(){
+            // defer to allow checked state to flip first
+            setTimeout(onEnableChange, 0);
+          });
+        }
+        document.querySelectorAll("#guaActionChecks input").forEach(cb => {
+          cb.onchange = function(){
+            if (readActions().length && $("guaEnabled")) {
+              // soft: do not auto-enable; user controls switch
+            }
+            if (usageMode !== "action") setUsage("action", false);
+            committed.selected_action_signals = readActions();
+            committed.selected_state_ids = [];
+            committed.selected_main_hexagram_ids = [];
+            renderTags(); schedulePreview();
+            try { updateBtSummary(); } catch (e) {}
+          };
+        });
+        setUsage("action", false);
+        refreshGuaUiStatus();
+        $("guaDrawerSearch").addEventListener("input", function(){
+          clearTimeout(searchTimer);
+          const q = $("guaDrawerSearch").value;
+          searchTimer = setTimeout(function(){ runSearch(q); }, 220);
+        });
+        $("guaQuickSearch").addEventListener("keydown", function(ev){
+          if (ev.key === "Enter"){ openDrawer(); $("guaDrawerSearch").value = $("guaQuickSearch").value; runSearch($("guaQuickSearch").value); }
+        });
+        document.addEventListener("keydown", function(ev){
+          if (!$("guaDrawer").classList.contains("open")) return;
+          if (ev.key === "Escape"){ ev.preventDefault(); closeDrawer(true); }
+          if (ev.key === "Enter" && !ev.shiftKey && document.activeElement && document.activeElement.id !== "guaDrawerSearch"){
+            // allow confirm when not typing search exclusively — still ok
+          }
+          if (ev.key === "Enter" && ev.ctrlKey){ ev.preventDefault(); commitDrawer(); }
+          const hits = $("guaSearchHits");
+          if (hits.classList.contains("open") && hitsCache.length){
+            if (ev.key === "ArrowDown"){ ev.preventDefault(); hitKbIndex = Math.min(hitsCache.length-1, hitKbIndex+1); highlightHit(); }
+            if (ev.key === "ArrowUp"){ ev.preventDefault(); hitKbIndex = Math.max(0, hitKbIndex-1); highlightHit(); }
+            if (ev.key === "Enter" && hitKbIndex >= 0){
+              ev.preventDefault();
+              const it = hitsCache[hitKbIndex];
+              toggleLine(it.main_hexagram_id, it.state_id, true);
+              activeGuaId = it.main_hexagram_id;
+              renderDrawer();
+            }
+          }
+        });
+        renderTags();
+        schedulePreview();
+        // warm cache
+        ensureData();
+      }
+
+      function highlightHit(){
+        const nodes = $("guaSearchHits").querySelectorAll(".gua-hit");
+        nodes.forEach((n,i) => n.classList.toggle("kb", i === hitKbIndex));
+        if (nodes[hitKbIndex]) nodes[hitKbIndex].scrollIntoView({block:"nearest"});
+      }
+
+      function historyShort(cfg){
+        if (!cfg) return {short:"卦象过滤：未启用", tip:""};
+        if (cfg.switch_on && !cfg.enabled) return {short:"卦象已开·未选条件", tip:"开关已开但未选择过滤条件，提交时不会过滤"};
+        if (!cfg.enabled && !cfg.switch_on) return {short:"卦象过滤：未启用", tip:""};
+        if (!cfg.enabled) return {short:"卦象过滤：未启用", tip:""};
+        const preset = detectActivePreset(cfg);
+        if (preset === "best3") return {short: "卦象·最佳3爻", tip: PRESET_BEST3_LABELS.join("\n")};
+        if (preset === "bull") return {short: "卦象·偏多信号", tip: "新开仓、加仓"};
+        if (cfg.selection_mode === "action_signal"){
+          const a = cfg.selected_action_signals||[];
+          return {short: "卦象信号："+a.slice(0,3).join("、"), tip: a.join("\n")};
+        }
+        const n = (cfg.selected_state_ids||[]).length || (cfg.selected_main_hexagram_ids||[]).length;
+        if (n) return {short: "卦象"+n+"项", tip: (cfg.selected_state_ids||[]).map(stateLabel).concat((cfg.selected_main_hexagram_ids||[]).map(mainName)).join("\n")};
+        return {short:"卦象过滤", tip:""};
+      }
+
+      return { bind, getPayload, setFromConfig, historyShort, naturalLanguage, ensureData, stateLabel, mainName };
+    })();
+
+    // Must run AFTER const GuaUI is initialized (avoid TDZ ReferenceError)
+    (function initGuaAndSteps() {
+      try { GuaUI.bind(); } catch (e) { console.warn("GuaUI.bind", e); }
+      document.querySelectorAll(".bt-steps-nav a").forEach(function (a) {
+        a.addEventListener("click", function (ev) {
+          var id = (a.getAttribute("href") || "").replace("#", "");
+          var el = document.getElementById(id);
+          if (el) {
+            ev.preventDefault();
+            el.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        });
+      });
+      try {
+        if (typeof updateSwdStatus === "function") updateSwdStatus();
+        if (typeof updateBtSummary === "function") updateBtSummary();
+      } catch (e) {}
+    })();
+
+
+</script>
 </body>
 </html>

@@ -41,6 +41,10 @@ def write_signals_csv(path: Path, events: Sequence[SignalEvent]) -> Path:
         "bagua_gua_order",
         "bagua_judgement",
         "bagua_core_gang",
+        "bagua_state_id",
+        "bagua_action_signal",
+        "bagua_biangua",
+        "bagua_rule_version",
     ]
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields)
@@ -60,6 +64,10 @@ def write_signals_csv(path: Path, events: Sequence[SignalEvent]) -> Path:
                     "bagua_gua_order": bg.get("gua_order", ""),
                     "bagua_judgement": bg.get("market_judgement", ""),
                     "bagua_core_gang": bg.get("core_gang", ""),
+                    "bagua_state_id": bg.get("state_id", ""),
+                    "bagua_action_signal": bg.get("action_signal", ""),
+                    "bagua_biangua": bg.get("biangua") or bg.get("changed_hexagram_name") or "",
+                    "bagua_rule_version": "",
                 }
             )
     return path
@@ -130,21 +138,28 @@ def pair_round_trips(
     events: Optional[Sequence[SignalEvent]] = None,
 ) -> List[Dict[str, Any]]:
     """Match BUY->SELL per stock (FIFO) and attach nearest prior signal date."""
-    # (date, indicator_id, bagua_full_name, bagua_yao_name, bagua_judgement)
-    sig_by_code: Dict[str, List[Tuple[int, str, str, str, str]]] = defaultdict(list)
+    # (date, indicator_id, full_name, yao, judge, state_id, action, biangua, gua_order)
+    sig_by_code: Dict[str, List[Tuple]] = defaultdict(list)
     if events:
         for e in events:
             try:
                 bg = e.bagua or {}
                 if not isinstance(bg, dict):
                     bg = {}
+                sid = bg.get("state_id") or ""
+                if not sid and bg.get("gua_order") is not None and bg.get("yao_order") is not None:
+                    sid = f"{int(bg['gua_order']):02d}-{int(bg['yao_order'])}"
                 sig_by_code[e.std_code].append(
                     (
                         int(e.date),
                         str(e.indicator_id or ""),
                         str(bg.get("full_name") or bg.get("gua_name") or ""),
-                        str(bg.get("yao_name") or ""),
-                        str(bg.get("market_judgement") or "").replace("\n", " | "),
+                        str(bg.get("yao_name") or bg.get("line_name") or ""),
+                        str(bg.get("market_judgement") or bg.get("market_summary") or "").replace("\n", " | "),
+                        str(sid or ""),
+                        str(bg.get("action_signal") or ""),
+                        str(bg.get("biangua") or bg.get("changed_hexagram_name") or ""),
+                        bg.get("gua_order") if bg.get("gua_order") is not None else "",
                     )
                 )
             except Exception:
@@ -152,9 +167,9 @@ def pair_round_trips(
         for k in sig_by_code:
             sig_by_code[k].sort(key=lambda x: x[0])
 
-    def find_signal(code: str, buy_date: int) -> Tuple[Optional[int], str, str, str, str]:
+    def find_signal(code: str, buy_date: int):
         arr = sig_by_code.get(code) or []
-        best: Optional[Tuple[int, str, str, str, str]] = None
+        best = None
         for row in arr:
             d = row[0]
             if d <= buy_date:
@@ -162,8 +177,8 @@ def pair_round_trips(
             else:
                 break
         if best:
-            return best[0], best[1], best[2], best[3], best[4]
-        return None, "", "", "", ""
+            return best
+        return (None, "", "", "", "", "", "", "", "")
 
     # queue of open buy lots: (fill, remaining_shares)
     open_buys: Dict[str, deque] = defaultdict(deque)
@@ -247,7 +262,8 @@ def pair_round_trips(
             net = gross - buy_fee - sell_cost
             gross_ret = (gross / buy_amount) if buy_amount else None
             net_ret = (net / buy_amount) if buy_amount else None
-            sig_d, ind, gua, yao, judge = find_signal(code, buy_date)
+            sig_row = find_signal(code, buy_date)
+            sig_d, ind, gua, yao, judge, st_id, act_sig, biangua, gua_ord = (list(sig_row) + [""] * 9)[:9]
             trips.append(
                 {
                     "序号": seq,
@@ -257,6 +273,10 @@ def pair_round_trips(
                     "指标": ind,
                     "卦名": gua,
                     "爻位": yao,
+                    "卦序": gua_ord,
+                    "变卦": biangua or "未配置",
+                    "操作信号": act_sig,
+                    "state_id": st_id,
                     "卦象简判": judge,
                     "买入日期": buy_date,
                     "买入价": buy_price,
@@ -291,7 +311,8 @@ def pair_round_trips(
             ratio = left / float(b_sh)
             buy_amount = float(b.amount or 0.0) * ratio or (buy_price * left)
             buy_fee = float(b.commission or 0.0) * ratio
-            sig_d, ind, gua, yao, judge = find_signal(code, buy_date)
+            sig_row = find_signal(code, buy_date)
+            sig_d, ind, gua, yao, judge, st_id, act_sig, biangua, gua_ord = (list(sig_row) + [""] * 9)[:9]
             trips.append(
                 {
                     "序号": seq,
@@ -301,6 +322,10 @@ def pair_round_trips(
                     "指标": ind,
                     "卦名": gua,
                     "爻位": yao,
+                    "卦序": gua_ord,
+                    "变卦": biangua or "未配置",
+                    "操作信号": act_sig,
+                    "state_id": st_id,
                     "卦象简判": judge,
                     "买入日期": buy_date,
                     "买入价": buy_price,
@@ -400,6 +425,10 @@ def write_backtest_csv(
         "指标",
         "卦名",
         "爻位",
+        "卦序",
+        "变卦",
+        "操作信号",
+        "state_id",
         "卦象简判",
         "买入日期",
         "买入价",
@@ -442,6 +471,32 @@ def write_backtest_csv(
     }
     if meta:
         full_meta["repro"] = meta
+        if isinstance(meta.get("config"), dict):
+            full_meta["config"] = meta["config"]
+        for k in (
+            "title",
+            "indicator_names",
+            "indicator_ids",
+            "hold",
+            "entry_lag",
+            "period",
+            "with_bagua",
+            "gua_filter",
+            "n_signals_before_bagua",
+            "n_signals_after_bagua",
+            "buy_weekday",
+            "exit_weekday",
+            "buy_on",
+            "sell_on",
+            "signal_weekdays",
+            "account_mode",
+            "bagua_filter_mode",
+            "bagua_filter_label",
+            "start",
+            "end",
+        ):
+            if k in meta and k not in full_meta:
+                full_meta[k] = meta[k]
     # keep a tiny sample for debugging only
     full_meta["fills_sample"] = [
         asdict(f) if is_dataclass(f) else str(f) for f in result.fills[:20]
@@ -539,6 +594,8 @@ def write_excel_summary(
         ("指标", ",".join(repro.get("indicator_ids") or [])),
         ("八卦过滤", repro.get("bagua_filter_label") or ("否" if not repro.get("with_bagua") else "是")),
         ("八卦白名单", ",".join(repro.get("bagua_allowlist") or []) if repro.get("bagua_allowlist") else ""),
+        ("卦象规则版本", (repro.get("gua_filter") or {}).get("rule_version") if isinstance(repro.get("gua_filter"), dict) else ""),
+        ("卦象选择模式", (repro.get("gua_filter") or {}).get("selection_mode") if isinstance(repro.get("gua_filter"), dict) else ""),
         ("过滤前信号数", repro.get("n_signals_before_bagua") if repro.get("n_signals_before_bagua") is not None else ""),
         ("过滤后信号数", repro.get("n_signals_after_bagua") if repro.get("n_signals_after_bagua") is not None else ""),
         ("周期", repro.get("period") or ""),
@@ -627,6 +684,10 @@ def write_excel_summary(
         "指标",
         "卦名",
         "爻位",
+        "卦序",
+        "变卦",
+        "操作信号",
+        "state_id",
         "卦象简判",
         "买入日期",
         "买入价",
@@ -645,6 +706,13 @@ def write_excel_summary(
         "卖出原因",
         "状态",
     ]
+    excel_cap = 3000
+    trips_for_excel = list(trips)
+    excel_truncated = False
+    if len(trips_for_excel) > excel_cap:
+        excel_truncated = True
+        trips_for_excel = trips_for_excel[:excel_cap]
+
     # banner
     ws2.append(
         [
@@ -673,13 +741,6 @@ def write_excel_summary(
 
     # openpyxl is very slow for tens of thousands of styled rows (UI stuck at 96%).
     # Full FIFO list is always in trades.csv; Excel keeps a preview + summary.
-    excel_cap = 3000
-    trips_for_excel = list(trips)
-    excel_truncated = False
-    if len(trips_for_excel) > excel_cap:
-        excel_truncated = True
-        trips_for_excel = trips_for_excel[:excel_cap]
-
     for t in trips_for_excel:
         row = [
             t.get("序号"),
@@ -689,6 +750,10 @@ def write_excel_summary(
             t.get("指标"),
             t.get("卦名"),
             t.get("爻位"),
+            t.get("卦序"),
+            t.get("变卦"),
+            t.get("操作信号"),
+            t.get("state_id"),
             t.get("卦象简判"),
             _fmt_date(t.get("买入日期")),
             _fmt_num(t.get("买入价"), 4),
@@ -739,7 +804,7 @@ def write_excel_summary(
         "交易明细超过 3000 行时，Excel 仅预览前 3000 行；完整明细见同目录 trades.csv。",
         "毛利润 = 卖出金额 - 买入金额；净利润 = 毛利润 - 买入手续费 - 卖出手续费及印花税。",
         "收益率分母为买入金额。卖出原因含 hold_expired / stop_loss / take_profit 等。",
-        "hold_expired：持有期满强制平仓，成交价为平仓日收盘价；止损/止盈仍为触发后下一可交易日开盘价。",
+        "hold_expired：持有期满强制平仓，成交价为平仓日开盘价；止损/止盈为触发后下一可交易日开盘价。",
         "组合层总收益受仓位权重、资金不足拒单等影响，与明细净利润简单加总可能不完全一致。",
         f"run_id={result.run_id}",
         f"indicator_ids={repro.get('indicator_ids')}",

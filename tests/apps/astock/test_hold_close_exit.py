@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Time-stop (hold) exits at close; risk exits still at open."""
+"""Time-stop (hold) exits at open; risk exits also at open (next session)."""
 from __future__ import annotations
 
 import tests.apps.astock.conftest  # noqa: F401
@@ -20,14 +20,15 @@ def _cfg():
     return cfg
 
 
-def test_hold1_sells_at_close_not_open():
+def test_hold1_sells_at_open_t1_buy_t2_sell():
+    """entry_lag=1, hold=1: signal D1 close → buy D2 open → sell D3 open."""
     code = "SSE.STK.600000"
     dates = [20240103, 20240104, 20240105]
     bars = {
         code: [
             DayBar(20240103, 10, 10.5, 9.8, 10.0, 1, 1000),  # signal
             DayBar(20240104, 10.0, 11.0, 9.9, 10.5, 1, 1000),  # buy open 10
-            DayBar(20240105, 10.8, 11.2, 10.5, 11.0, 1, 1000),  # hold exit: close 11 not open 10.8
+            DayBar(20240105, 10.8, 11.2, 10.5, 11.0, 1, 1000),  # hold exit: open 10.8 not close 11
         ]
     }
     res = PortfolioBacktester(_cfg(), TradeCalendar(dates), bars).run(
@@ -40,7 +41,7 @@ def test_hold1_sells_at_close_not_open():
     sells = [f for f in res.fills if f.side == "SELL"]
     assert len(sells) == 1
     assert sells[0].date == 20240105
-    assert abs(sells[0].price - 11.0) < 1e-9
+    assert abs(sells[0].price - 10.8) < 1e-9
     assert sells[0].reason == "hold_expired"
 
 

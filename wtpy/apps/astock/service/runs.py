@@ -56,6 +56,10 @@ def _metrics_brief(metrics: Optional[dict]) -> Optional[dict]:
         "pct_symbols_profitable",
         "sharpe",
         "profit_factor",
+        "payoff_ratio",
+        "profit_loss_ratio",
+        "avg_win",
+        "avg_loss",
         "cost_total",
     )
     return {k: metrics[k] for k in keys if k in metrics}
@@ -109,6 +113,25 @@ def _enrich_row(row: dict, out_dir: Optional[Path] = None) -> dict:
                     "entry_lag",
                     meta.get("entry_lag") or (meta.get("repro") or {}).get("entry_lag"),
                 )
+                _repro = meta.get("repro") or {}
+                _req = _repro.get("request") if isinstance(_repro.get("request"), dict) else {}
+                if not isinstance(_req, dict):
+                    _req = {}
+                for _k in (
+                    "buy_weekday",
+                    "exit_weekday",
+                    "buy_on",
+                    "sell_on",
+                    "signal_weekdays",
+                ):
+                    if r.get(_k) in (None, "", []):
+                        val = meta.get(_k)
+                        if val in (None, "", []):
+                            val = _repro.get(_k)
+                        if val in (None, "", []):
+                            val = _req.get(_k)
+                        if val not in (None, "", []):
+                            r[_k] = val
                 r.setdefault(
                     "period", meta.get("period") or (meta.get("repro") or {}).get("period")
                 )
@@ -116,6 +139,18 @@ def _enrich_row(row: dict, out_dir: Optional[Path] = None) -> dict:
                 r.setdefault("end", meta.get("end") or (meta.get("repro") or {}).get("end"))
                 r.setdefault("title", meta.get("title") or (meta.get("repro") or {}).get("title"))
                 r.setdefault("indicator_names", meta.get("indicator_names") or (meta.get("repro") or {}).get("indicator_names"))
+                if r.get("gua_filter") is None:
+                    gf = meta.get("gua_filter")
+                    if gf is None:
+                        gf = (meta.get("repro") or {}).get("gua_filter")
+                    if gf is not None:
+                        r["gua_filter"] = gf
+                r.setdefault("with_bagua", meta.get("with_bagua") if meta.get("with_bagua") is not None else (meta.get("repro") or {}).get("with_bagua"))
+                r.setdefault("bagua_filter_label", meta.get("bagua_filter_label") or (meta.get("repro") or {}).get("bagua_filter_label"))
+                # Rebuild title if meta has better title including 卦象
+                mt = meta.get("title") or (meta.get("repro") or {}).get("title")
+                if mt and (not r.get("title") or (r.get("gua_filter") or {}).get("enabled") and "卦象" not in str(r.get("title") or "") and "八卦" not in str(r.get("title") or "")):
+                    r["title"] = mt
                 if not metrics and isinstance(meta.get("metrics"), dict):
                     metrics = meta["metrics"]
             except Exception:
@@ -235,13 +270,51 @@ def load_run_summary(cfg: AStockConfig, run_id: str) -> Dict[str, Any]:
             meta = json.loads(p.read_text(encoding="utf-8"))
             break
     metrics = meta.get("metrics") if isinstance(meta.get("metrics"), dict) else {}
+    repro = meta.get("repro") if isinstance(meta.get("repro"), dict) else {}
     result = {
         "run_id": run_id,
         "status": meta.get("status", "ok"),
         "metrics": metrics,
         "meta": meta,
         "artifacts": sorted([p.name for p in out_dir.iterdir() if p.is_file()]),
+        "title": meta.get("title") or repro.get("title"),
+        "indicator_ids": meta.get("indicator_ids") or repro.get("indicator_ids"),
+        "indicator_names": meta.get("indicator_names") or repro.get("indicator_names"),
+        "gua_filter": meta.get("gua_filter") if meta.get("gua_filter") is not None else repro.get("gua_filter"),
+        "with_bagua": meta.get("with_bagua") if meta.get("with_bagua") is not None else repro.get("with_bagua"),
+        "bagua_filter_label": meta.get("bagua_filter_label") or repro.get("bagua_filter_label"),
+        "n_signals_before_bagua": meta.get("n_signals_before_bagua")
+        if meta.get("n_signals_before_bagua") is not None
+        else repro.get("n_signals_before_bagua"),
+        "n_signals_after_bagua": meta.get("n_signals_after_bagua")
+        if meta.get("n_signals_after_bagua") is not None
+        else repro.get("n_signals_after_bagua"),
+        "hold": meta.get("hold") if meta.get("hold") is not None else repro.get("hold"),
+        "entry_lag": meta.get("entry_lag") if meta.get("entry_lag") is not None else repro.get("entry_lag"),
+        "period": meta.get("period") or repro.get("period"),
+        "start": meta.get("start") if meta.get("start") is not None else repro.get("start"),
+        "end": meta.get("end") if meta.get("end") is not None else repro.get("end"),
+        "buy_weekday": meta.get("buy_weekday") if meta.get("buy_weekday") is not None else repro.get("buy_weekday"),
+        "exit_weekday": meta.get("exit_weekday") if meta.get("exit_weekday") is not None else repro.get("exit_weekday"),
+        "buy_on": meta.get("buy_on") or repro.get("buy_on"),
+        "sell_on": meta.get("sell_on") or repro.get("sell_on"),
+        "signal_weekdays": meta.get("signal_weekdays") if meta.get("signal_weekdays") is not None else repro.get("signal_weekdays"),
+        "account_mode": meta.get("account_mode") or repro.get("account_mode"),
+        "repro": repro,
     }
+    # Prefer title from runs_index when meta lacks a human title
+    if not result.get("title"):
+        try:
+            for row in list_runs(cfg, limit=200):
+                if row.get("run_id") == run_id and row.get("title"):
+                    result["title"] = row.get("title")
+                    if not result.get("indicator_names") and row.get("indicator_names"):
+                        result["indicator_names"] = row.get("indicator_names")
+                    if result.get("gua_filter") is None and row.get("gua_filter") is not None:
+                        result["gua_filter"] = row.get("gua_filter")
+                    break
+        except Exception:
+            pass
     mp = out_dir / "metrics.json"
     if mp.exists():
         try:

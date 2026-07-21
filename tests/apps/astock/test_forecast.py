@@ -234,3 +234,31 @@ def test_kb_import_xlsx_if_present(forecast_cfg):
     assert res["count_yao"] == 384
     assert svc._kb is not None
     assert svc._kb.lookup_ben_yao("乾为天", 1) is not None
+
+
+def test_weekly_etf_searchable(svc: ForecastService):
+    """New weekly xlsx has etf-all; codes must be quote/searchable."""
+    # prefer the (新) file with non-empty etf-all
+    candidates = []
+    raw_dir = ROOT / "storage" / "astock" / "forecast" / "weekly" / "raw"
+    if raw_dir.exists():
+        candidates.extend(sorted(raw_dir.glob("*W29*.xlsx"), key=lambda x: -x.stat().st_size))
+    candidates.append(ROOT / "weekly_analysis_v2_20260717-W29.xlsx")
+    xlsx = next((c for c in candidates if c.exists() and c.stat().st_size > 900_000), None)
+    if xlsx is None:
+        pytest.skip("weekly xlsx with ETF not available")
+    meta = svc.upload_weekly(xlsx)
+    assert meta.get("etf_count", 0) >= 100, meta
+    assert meta["stock_count"] >= 1000
+    # known sample from etf-all
+    q = svc.quote("159001")
+    assert q["found"] is True, q
+    assert q.get("kind") == "etf"
+    assert "ETF" in (q.get("name") or "").upper() or "货币" in (q.get("name") or "")
+    hits = svc.search("159001")
+    assert any(h["code"] == "159001" for h in hits)
+    # health exposes etf_count
+    h = svc.health()
+    assert h.get("etf_count", 0) >= 100
+    assert h.get("instrument_count", 0) >= h["stock_count"]
+

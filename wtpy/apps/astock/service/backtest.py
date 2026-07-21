@@ -11,8 +11,13 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 from ..bagua.calculator import BaguaCalculator
 from ..bagua.filter_rules import (
     DEFAULT_BAGUA_FILTER_MODE,
+    DEFAULT_RULE_VERSION,
+    GuaFilter,
     best3_display_pairs,
     filter_events_by_bagua_mode,
+    filter_events_by_gua_filter,
+    gua_filter_history_summary,
+    gua_filter_natural_language,
     mode_label as bagua_mode_label,
 )
 from ..config import AStockConfig, get_default_config
@@ -26,7 +31,15 @@ from ..data.universe import AShareUniverse
 from ..indicators.registry import IndicatorRegistry
 from ..indicators.tn6_importer import load_source_map, resolve_formula_audit
 from ..reports import write_backtest_csv, write_signals_csv
-from ..strategy import PortfolioBacktester
+from ..strategy import (
+    PortfolioBacktester,
+    format_signal_weekdays,
+    parse_price_session,
+    parse_signal_weekdays,
+    parse_single_weekday,
+    format_single_weekday,
+    session_label_cn,
+)
 from ..study import (
     SignalEvent,
     attach_bagua,
@@ -130,6 +143,14 @@ class BacktestRequest:
     period: str = "DAY"
     hold: int = 1
     entry_lag: int = 1
+    # ISO weekdays 1=Mon..7=Sun; empty/None = all. Example: [5] = Friday only.
+    signal_weekdays: Optional[List] = None
+    # open | close — default open (T+N open buy / open sell)
+    buy_on: str = "open"
+    sell_on: str = "open"
+    # Preferred UI: ISO weekday 1=Mon..7=Sun; overrides entry_lag / hold when set
+    buy_weekday: Optional[int] = None
+    exit_weekday: Optional[int] = None
     combine: Optional[str] = None  # all | any | None
     codes: Optional[List[str]] = None
     start: Optional[int] = None
@@ -138,6 +159,8 @@ class BacktestRequest:
     with_bagua: bool = False
     # When with_bagua / bagua_ohlc is on: default best3 (最佳3爻) filter.
     bagua_filter_mode: Optional[str] = None
+    # Flexible gua filter (UI); when active, takes precedence over bagua_filter_mode.
+    gua_filter: Optional[dict] = None
     research_unadjusted: bool = False
     research_unconfirmed_formula: bool = False
     stop_loss: Optional[float] = None
@@ -186,6 +209,11 @@ def run_backtest(
     entry_lag = int(req.entry_lag or 1)
     if entry_lag < 1:
         raise ValueError("entry_lag must be >= 1")
+    signal_weekdays = parse_signal_weekdays(getattr(req, "signal_weekdays", None))
+    buy_on = parse_price_session(getattr(req, "buy_on", None), default="open")
+    sell_on = parse_price_session(getattr(req, "sell_on", None), default="open")
+    buy_weekday = parse_single_weekday(getattr(req, "buy_weekday", None))
+    exit_weekday = parse_single_weekday(getattr(req, "exit_weekday", None))
     codes = select_universe(cfg, req.codes)
 
     def _progress(payload: dict) -> None:
@@ -395,6 +423,11 @@ def run_backtest(
             "indicator_ids": [s.id for s in trade_specs],
             "hold": hold,
             "entry_lag": entry_lag,
+            "signal_weekdays": signal_weekdays,
+        "buy_on": buy_on,
+        "sell_on": sell_on,
+        "buy_weekday": buy_weekday,
+        "exit_weekday": exit_weekday,
             "period": period,
             "start": start,
             "end": end,
@@ -493,27 +526,68 @@ def run_backtest(
                     "run_id": None,
                 }
 
-    bagua_enabled = any(s.id == "bagua_ohlc" for s in specs) or bool(req.with_bagua)
+    gf = GuaFilter.from_dict(getattr(req, "gua_filter", None))
+    try:
+        from .gua import rule_version as _gua_rule_ver, hexagram_name_map, state_label_map
+
+        if not gf.rule_version:
+            gf.rule_version = _gua_rule_ver(cfg)
+    except Exception:
+        if not gf.rule_version:
+            gf.rule_version = DEFAULT_RULE_VERSION
+
+    bagua_enabled = (
+        any(s.id == "bagua_ohlc" for s in specs)
+        or bool(req.with_bagua)
+        or gf.is_active()
+    )
     bagua_filter_mode = None
     bagua_n_before = len(events)
     bagua_n_after = len(events)
+    gua_filter_meta = None
     if bagua_enabled:
         calc = BaguaCalculator.from_json(cfg.bagua_json)
         attach_bagua(events, period_raw_map, calc)
-        # Product policy: 八卦 is not label-only — apply 最佳3爻 (or explicit mode).
-        bagua_filter_mode = (req.bagua_filter_mode or DEFAULT_BAGUA_FILTER_MODE).strip()
         bagua_n_before = len(events)
-        events = filter_events_by_bagua_mode(events, bagua_filter_mode)
-        bagua_n_after = len(events)
+        if gf.is_active():
+            events = filter_events_by_gua_filter(events, gf)
+            bagua_n_after = len(events)
+            bagua_filter_mode = f"gua_filter:{gf.selection_mode}"
+            try:
+                names = hexagram_name_map(cfg)
+                labels = state_label_map(cfg)
+            except Exception:
+                names, labels = {}, {}
+            gua_filter_meta = {
+                **gf.to_dict(),
+                "natural_language": gua_filter_natural_language(gf, hexagram_names=names),
+                "history_summary": gua_filter_history_summary(
+                    gf, hexagram_names=names, state_labels=labels
+                ),
+                "n_signals_before": bagua_n_before,
+                "n_signals_after": bagua_n_after,
+                "retention_rate": (
+                    (bagua_n_after / bagua_n_before) if bagua_n_before else 0.0
+                ),
+            }
+            msg = (
+                f"卦象过滤·{gf.selection_mode}："
+                f"{bagua_n_before} → {bagua_n_after} 条信号"
+            )
+        else:
+            bagua_filter_mode = (req.bagua_filter_mode or DEFAULT_BAGUA_FILTER_MODE).strip()
+            events = filter_events_by_bagua_mode(events, bagua_filter_mode)
+            bagua_n_after = len(events)
+            msg = (
+                f"八卦过滤·{bagua_mode_label(bagua_filter_mode)}："
+                f"{bagua_n_before} → {bagua_n_after} 条信号"
+            )
         _progress({
             "phase": "bagua_filter",
             "pct": 88.0,
             "current": n_codes,
             "total": n_codes,
-            "message": (
-                f"八卦过滤·{bagua_mode_label(bagua_filter_mode)}："
-                f"{bagua_n_before} → {bagua_n_after} 条信号"
-            ),
+            "message": msg,
             "code": None,
             "n_signals": bagua_n_after,
             "n_signals_before_bagua": bagua_n_before,
@@ -574,6 +648,11 @@ def run_backtest(
         take_profit_pct=req.take_profit,
         entry_lag=entry_lag,
         account_mode=getattr(req, "account_mode", None) or "portfolio",
+        signal_weekdays=signal_weekdays,
+        buy_on=buy_on,
+        sell_on=sell_on,
+        buy_weekday=buy_weekday,
+        exit_weekday=exit_weekday,
     )
     if unconfirmed_run:
         result.status = "research_unconfirmed_formula"
@@ -645,11 +724,16 @@ def run_backtest(
         "with_bagua": bagua_enabled,
         "bagua_filter_mode": bagua_filter_mode,
         "bagua_filter_label": (
-            bagua_mode_label(bagua_filter_mode) if bagua_filter_mode else None
+            (gua_filter_meta or {}).get("natural_language")
+            if gua_filter_meta
+            else (bagua_mode_label(bagua_filter_mode) if bagua_filter_mode else None)
         ),
         "bagua_allowlist": (
-            best3_display_pairs() if bagua_filter_mode else None
+            best3_display_pairs()
+            if bagua_filter_mode and not gua_filter_meta
+            else None
         ),
+        "gua_filter": gua_filter_meta or (gf.to_dict() if gf else None),
         "n_signals_before_bagua": bagua_n_before if bagua_enabled else None,
         "n_signals_after_bagua": bagua_n_after if bagua_enabled else None,
         "code_version": "astock-0.5.0",
@@ -678,8 +762,6 @@ def run_backtest(
         "run_id": run_id,
         "n_fills": len(result.fills),
     })
-    paths = write_backtest_csv(out_dir, result, meta=repro, events=events)
-
     rule_names = [s.name for s in trade_specs]
     period_label = {
         "DAY": "日线",
@@ -689,7 +771,11 @@ def run_backtest(
         "MIN60": "60分钟",
     }.get(period, period)
     title = "、".join(rule_names) if rule_names else "回测"
-    if bagua_enabled and bagua_filter_mode:
+    if gua_filter_meta:
+        hs = (gua_filter_meta.get("history_summary") or {}).get("short") or "卦象过滤"
+        # Prefer compact but explicit: 卦象3项 / 卦象信号：新开仓、加仓
+        title = f"{title} + {hs}"
+    elif bagua_enabled and bagua_filter_mode:
         title = f"{title} + {bagua_mode_label(bagua_filter_mode)}"
     elif bagua_enabled:
         title = f"{title} + 八卦"
@@ -701,8 +787,24 @@ def run_backtest(
     else:
         title = f"{title} · 组合账户"
     title = f"{title} · {period_label} · 持有{hold}"
+    if signal_weekdays:
+        title = f"{title} · 仅{format_signal_weekdays(signal_weekdays)}信号"
+    title = f"{title} · {session_label_cn(buy_on)}买/{session_label_cn(sell_on)}卖"
+    if buy_weekday is not None:
+        title = f"{title} · {format_single_weekday(buy_weekday)}买"
+    if exit_weekday is not None:
+        title = f"{title} · {format_single_weekday(exit_weekday)}平"
     if start or end:
         title += f" · {start or ''}~{end or ''}"
+
+    repro["title"] = title
+    repro["indicator_names"] = rule_names
+    if gua_filter_meta is not None:
+        repro["gua_filter"] = gua_filter_meta
+    elif "gua_filter" not in repro:
+        repro["gua_filter"] = gf.to_dict() if gf else None
+
+    paths = write_backtest_csv(out_dir, result, meta=repro, events=events)
 
     # index for history UI
     try:
@@ -720,7 +822,16 @@ def run_backtest(
                 "indicator_names": rule_names,
                 "hold": hold,
                 "entry_lag": entry_lag,
+                "buy_weekday": buy_weekday,
+                "exit_weekday": exit_weekday,
+                "buy_on": buy_on,
+                "sell_on": sell_on,
+                "signal_weekdays": signal_weekdays,
                 "account_mode": (getattr(req, "account_mode", None) or "portfolio"),
+                "gua_filter": gua_filter_meta,
+                "with_bagua": bagua_enabled,
+                "n_signals_before_bagua": bagua_n_before if bagua_enabled else None,
+                "n_signals_after_bagua": bagua_n_after if bagua_enabled else None,
                 "period": period,
                 "period_label": period_label,
                 "start": start,
@@ -751,8 +862,11 @@ def run_backtest(
         "with_bagua": bagua_enabled,
         "bagua_filter_mode": bagua_filter_mode,
         "bagua_filter_label": (
-            bagua_mode_label(bagua_filter_mode) if bagua_filter_mode else None
+            (gua_filter_meta or {}).get("natural_language")
+            if gua_filter_meta
+            else (bagua_mode_label(bagua_filter_mode) if bagua_filter_mode else None)
         ),
+        "gua_filter": gua_filter_meta or (gf.to_dict() if gf else None),
         "n_signals_before_bagua": bagua_n_before if bagua_enabled else None,
         "n_signals_after_bagua": bagua_n_after if bagua_enabled else None,
         "n_fills": len(result.fills),
@@ -763,7 +877,12 @@ def run_backtest(
         "errors_sample": errors[:20],
         "notes": result.notes,
         "entry_lag": entry_lag,
-        "hold": hold,
+            "signal_weekdays": signal_weekdays,
+        "buy_on": buy_on,
+        "sell_on": sell_on,
+        "buy_weekday": buy_weekday,
+        "exit_weekday": exit_weekday,
+            "hold": hold,
         "account_mode": (getattr(req, "account_mode", None) or "portfolio"),
         "period": period,
         "repro": {
@@ -771,8 +890,18 @@ def run_backtest(
             "entry_lag": entry_lag,
             "hold": hold,
             "period": period,
+            "signal_weekdays": signal_weekdays,
+            "buy_on": buy_on,
+            "sell_on": sell_on,
+            "buy_weekday": buy_weekday,
+            "exit_weekday": exit_weekday,
             "indicator_ids": repro["indicator_ids"],
             "astock_code_sha": repro.get("astock_code_sha"),
         },
+        "buy_weekday": buy_weekday,
+        "exit_weekday": exit_weekday,
+        "buy_on": buy_on,
+        "sell_on": sell_on,
+        "signal_weekdays": signal_weekdays,
     }
     return summary

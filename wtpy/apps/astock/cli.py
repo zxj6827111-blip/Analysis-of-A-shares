@@ -480,6 +480,11 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         period=period,
         hold=int(args.hold or 1),
         entry_lag=int(getattr(args, "entry_lag", 1) or 1),
+        signal_weekdays=getattr(args, "signal_weekdays", None),
+        buy_on=getattr(args, "buy_on", "open"),
+        sell_on=getattr(args, "sell_on", "open"),
+        buy_weekday=getattr(args, "buy_weekday", None),
+        exit_weekday=getattr(args, "exit_weekday", None),
         combine=getattr(args, "combine", None),
         codes=codes,
         start=int(args.start) if args.start else None,
@@ -833,6 +838,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--hold", type=int, default=1)
     sp.add_argument("--entry-lag", type=int, default=1, dest="entry_lag",
                     help="buy at open of N-th trading day after signal (default 1 = T+1)")
+    sp.add_argument("--signal-weekdays", default=None, dest="signal_weekdays",
+                    help="only trade signals on these weekdays: 1=Mon..7=Sun, e.g. 5 or fri,1,3,5")
+    sp.add_argument("--buy-on", default="open", dest="buy_on",
+                    choices=["open", "close", "开盘", "收盘"],
+                    help="buy at open or close of entry day (default open)")
+    sp.add_argument("--sell-on", default="open", dest="sell_on",
+                    choices=["open", "close", "开盘", "收盘"],
+                    help="sell at open or close of exit day (default open)")
+    sp.add_argument("--buy-weekday", default=None, dest="buy_weekday",
+                    help="buy on this weekday after signal: 1=Mon..7=Sun or fri (overrides --entry-lag)")
+    sp.add_argument("--exit-weekday", default=None, dest="exit_weekday",
+                    help="force flat on this weekday after entry (overrides --hold)")
     sp.add_argument("--codes", default=None)
     sp.add_argument("--combine", choices=["all", "any"], default=None)
     sp.add_argument("--start", default=None)

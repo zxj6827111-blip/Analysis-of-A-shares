@@ -2,13 +2,15 @@
 
 Business rules (locked):
 - Signal confirmed on period close; buy at open of the N-th trading day after signal (entry_lag, default 1).
+- Optional signal_weekdays: only signals whose calendar weekday is in the allow-list (1=Mon … 7=Sun) are tradable; empty = all weekdays.
 - DAY hold=N: hold N trading days; DAY hold=1 exits on next session (T+1, cannot sell entry day).
 - WEEK/MONTH hold=N: after N completed periods, exit on next tradable day.
 - DWM hold=N: N trading days (same as day holds).
-- Time-stop (hold expiry, no SL/TP trigger): sell at that day's **close** *(1-slippage), reason hold_expired.
+- Time-stop (hold expiry, no SL/TP trigger): sell at that day's **open** *(1-slippage), reason hold_expired.
 - Risk exits (stop_loss / take_profit): still trigger on high/low, execute next tradable day **open** *(1-slippage).
 - Repeat signals do not reset remaining hold.
-- Buy px = open*(1+slippage).
+- Buy px = open|close *(1+slippage) per buy_on (default open).
+- Sell px (hold_expired / deferred risk): open|close *(1-slippage) per sell_on (default open).
 - account_mode=portfolio: shared cash + max_weight.
 - account_mode=per_symbol: each stock independent virtual capital (通达信对照).
 - Suspended days: mark with last valid close.
@@ -18,7 +20,8 @@ Business rules (locked):
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from datetime import date as _date
+from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 
 import numpy as np
 
@@ -54,6 +57,8 @@ class Position:
     take_profit_pct: Optional[float] = None
     trigger_reason: Optional[str] = None  # stop_loss | take_profit (sticky once set)
     defer_reason: Optional[str] = None  # suspended | limit_down | bad_price while waiting to sell
+    # When set: force time-stop on this calendar trading day (weekday-based exit).
+    exit_date: Optional[int] = None
 
 
 @dataclass
@@ -114,6 +119,149 @@ def validate_risk_pct(name: str, value: Optional[float]) -> Optional[float]:
     if not (0.0 < v < 1.0):
         raise ValueError(f"{name} must satisfy 0 < value < 1, got {v}")
     return v
+
+
+
+# Weekday allow-list: ISO 1=Monday … 7=Sunday (matches datetime.isoweekday()).
+_WEEKDAY_ALIASES = {
+    "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7,
+    "mon": 1, "monday": 1, "一": 1, "周一": 1, "星期一": 1,
+    "tue": 2, "tues": 2, "tuesday": 2, "二": 2, "周二": 2, "星期二": 2,
+    "wed": 3, "wednesday": 3, "三": 3, "周三": 3, "星期三": 3,
+    "thu": 4, "thur": 4, "thurs": 4, "thursday": 4, "四": 4, "周四": 4, "星期四": 4,
+    "fri": 5, "friday": 5, "五": 5, "周五": 5, "星期五": 5,
+    "sat": 6, "saturday": 6, "六": 6, "周六": 6, "星期六": 6,
+    "sun": 7, "sunday": 7, "日": 7, "天": 7, "周日": 7, "周天": 7, "星期日": 7, "星期天": 7,
+}
+_WEEKDAY_CN = {1: "周一", 2: "周二", 3: "周三", 4: "周四", 5: "周五", 6: "周六", 7: "周日"}
+
+
+
+def parse_price_session(value, *, default: str = "open") -> str:
+    """Normalize buy/sell session: 'open' or 'close'."""
+    if value is None or value == "":
+        return default
+    s = str(value).strip().lower()
+    if s in ("open", "o", "开盘", "开", "op"):
+        return "open"
+    if s in ("close", "c", "收盘", "收", "cl"):
+        return "close"
+    raise ValueError("price session must be open or close, got %r" % (value,))
+
+
+def session_label_cn(session: str) -> str:
+    return "开盘" if parse_price_session(session) == "open" else "收盘"
+
+
+def bar_session_price(bar, session: str) -> float:
+    """Raw price from bar for open/close session (no slippage)."""
+    session = parse_price_session(session)
+    if session == "close":
+        return float(bar.close)
+    return float(bar.open)
+
+
+def parse_signal_weekdays(value) -> Optional[List[int]]:
+    """Parse weekday allow-list.
+
+    Accepts None / empty (all days), list/tuple of ints or strings, or comma-separated
+    string like "5" / "fri,五" / "1,3,5". Returns sorted unique ints in 1..7, or None.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        s = value.strip()
+        if not s or s in ("*", "all", "全部", "any"):
+            return None
+        parts = [p.strip() for p in s.replace("，", ",").replace("、", ",").split(",") if p.strip()]
+        value = parts
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        value = [int(value)]
+    if not isinstance(value, (list, tuple, set)):
+        raise ValueError("signal_weekdays must be list/str/int, got %r" % (type(value),))
+    if len(value) == 0:
+        return None
+    out: Set[int] = set()
+    for item in value:
+        if item is None or item == "":
+            continue
+        if isinstance(item, (int, float)) and not isinstance(item, bool):
+            n = int(item)
+            if n == 0:
+                n = 7  # allow 0 as Sunday alias
+            if n < 1 or n > 7:
+                raise ValueError("signal_weekdays item out of range 1..7: %s" % item)
+            out.add(n)
+            continue
+        key = str(item).strip().lower()
+        if key in _WEEKDAY_ALIASES:
+            out.add(_WEEKDAY_ALIASES[key])
+            continue
+        # bare digit string already handled via int path if pure digit
+        if key.isdigit():
+            n = int(key)
+            if n == 0:
+                n = 7
+            if 1 <= n <= 7:
+                out.add(n)
+                continue
+        raise ValueError("unknown weekday in signal_weekdays: %r" % (item,))
+    if not out:
+        return None
+    return sorted(out)
+
+
+
+def parse_single_weekday(value) -> Optional[int]:
+    """Parse one weekday 1..7, or None if empty (use legacy lag/hold)."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return None
+        value = value[0]
+    days = parse_signal_weekdays(value if not isinstance(value, (int, float)) else int(value))
+    if not days:
+        return None
+    return int(days[0])
+
+
+def format_single_weekday(day: Optional[int]) -> str:
+    if day is None:
+        return "—"
+    return format_signal_weekdays([int(day)])
+
+
+def format_signal_weekdays(days: Optional[Sequence[int]]) -> str:
+    if not days:
+        return "全部"
+    return "、".join(_WEEKDAY_CN.get(int(d), str(d)) for d in days)
+
+
+def yyyymmdd_isoweekday(d: int) -> int:
+    """Return ISO weekday 1..7 for YYYYMMDD int."""
+    y, m, day = int(d) // 10000, (int(d) // 100) % 100, int(d) % 100
+    return _date(y, m, day).isoweekday()
+
+
+def filter_events_by_signal_weekdays(
+    events: Sequence[SignalEvent],
+    weekdays: Optional[Sequence[int]],
+) -> List[SignalEvent]:
+    """Keep only events whose signal date weekday is allowed. None/empty = all."""
+    allowed = parse_signal_weekdays(weekdays)
+    if not allowed:
+        return list(events)
+    allow_set = set(int(x) for x in allowed)
+    kept: List[SignalEvent] = []
+    for ev in events:
+        try:
+            wd = yyyymmdd_isoweekday(int(ev.date))
+        except Exception:
+            continue
+        if wd in allow_set:
+            kept.append(ev)
+    return kept
 
 
 def compose_sell_reason(trigger: Optional[str], defer: Optional[str], fallback: str = "hold_expired") -> str:
@@ -199,12 +347,24 @@ class PortfolioBacktester:
         take_profit_pct: Optional[float] = None,
         entry_lag: int = 1,
         account_mode: str = "portfolio",
+        signal_weekdays: Optional[Union[Sequence[int], str, int]] = None,
+        buy_on: str = "open",
+        sell_on: str = "open",
+        buy_weekday: Optional[Union[int, str]] = None,
+        exit_weekday: Optional[Union[int, str]] = None,
     ) -> BacktestResult:
         stop_loss_pct = validate_risk_pct("stop_loss_pct", stop_loss_pct)
         take_profit_pct = validate_risk_pct("take_profit_pct", take_profit_pct)
         entry_lag = int(entry_lag)
         if entry_lag < 1:
             raise ValueError("entry_lag must be >= 1, got %s" % entry_lag)
+        signal_weekdays = parse_signal_weekdays(signal_weekdays)
+        if signal_weekdays:
+            events = filter_events_by_signal_weekdays(events, signal_weekdays)
+        buy_on = parse_price_session(buy_on, default="open")
+        sell_on = parse_price_session(sell_on, default="open")
+        buy_weekday = parse_single_weekday(buy_weekday)
+        exit_weekday = parse_single_weekday(exit_weekday)
         account_mode = (account_mode or "portfolio").strip().lower()
         if account_mode in ("tdx", "per_stock", "independent", "通达信", "单票"):
             account_mode = "per_symbol"
@@ -217,14 +377,33 @@ class PortfolioBacktester:
             "Example costs only; not user real trading costs.",
             "Survivor bias possible: local TDX may lack delisted stocks.",
             DefaultAShareLimitRule.BOUNDARY_NOTE,
-            "Buy at open of the N-th trading day after signal close (entry_lag=%d)." % entry_lag,
+            "Buy at %s of the N-th trading day after signal close (entry_lag=%d)." % (buy_on, entry_lag),
+            "Sell at %s on exit day for time-stop/deferred risk (sell_on=%s)." % (sell_on, sell_on),
+            (
+                "Buy weekday: first trading day after signal on %s (overrides entry_lag)."
+                % format_single_weekday(buy_weekday)
+                if buy_weekday
+                else "Buy schedule: entry_lag trading days after signal."
+            ),
+            (
+                "Exit weekday: first trading day after entry on %s (overrides hold N)."
+                % format_single_weekday(exit_weekday)
+                if exit_weekday
+                else "Exit schedule: hold N periods/sessions."
+            ),
+            (
+                "Signal weekday filter: only signals on %s are tradable."
+                % format_signal_weekdays(signal_weekdays)
+                if signal_weekdays
+                else "Signal weekday filter: all weekdays."
+            ),
             (
                 "Account mode: per_symbol (通达信对照) — each stock has its own virtual capital; "
                 "no cross-stock cash competition; metrics include equal-weight mean stock return."
                 if account_mode == "per_symbol"
                 else "Account mode: portfolio — single shared cash account with max_weight cap."
             ),
-            "Time-stop: after hold periods, force flat at that day close (hold_expired), regardless of P&L.",
+            "Time-stop: after hold periods, force flat at that day open (hold_expired), regardless of P&L.",
             "Risk: trigger_on_daily_high_low (incl. entry day); execute_next_trading_day_open (T+1).",
             "Risk conflict policy: stop_first when same bar hits both SL and TP.",
         ]
@@ -258,7 +437,10 @@ class PortfolioBacktester:
         # trading dates window: from min signal next day to end
         pending_buys: Dict[int, List[str]] = {}
         for sig_date, codes in sig_map.items():
-            entry = self.calendar.nth_trading_day_after(sig_date, entry_lag)
+            if buy_weekday is not None:
+                entry = self.calendar.next_weekday_trading_day(sig_date, buy_weekday, strict=True)
+            else:
+                entry = self.calendar.nth_trading_day_after(sig_date, entry_lag)
             if entry is None:
                 continue
             if start and entry < start:
@@ -341,10 +523,8 @@ class PortfolioBacktester:
                     pos.defer_reason = "limit_down"
                     deferred_sells[code] = {"trigger": trigger, "defer": "limit_down"}
                     continue
-                # Time-stop (no risk trigger): force flat at **close**.
-                # Stop-loss / take-profit: keep next-day **open** execution.
-                use_close = not trigger
-                raw_px = float(bar.close if use_close else bar.open)
+                # Time-stop / deferred risk: execute at buy/sell session (open or close).
+                raw_px = bar_session_price(bar, sell_on)
                 px = raw_px * (1.0 - self.cfg.costs.slippage)
                 if px <= 0:
                     pos.defer_reason = "bad_price"
@@ -378,13 +558,16 @@ class PortfolioBacktester:
                     )
                 )
 
-            # 2) entries at open
+            # 2) entries at open/close (buy_on)
             for code in pending_buys.get(d, []):
                 if code in positions:
                     # do not reset hold
                     continue
                 bar = self._index.get(code, {}).get(d)
-                if not bar or bar.open <= 0:
+                if not bar:
+                    continue
+                raw_buy = bar_session_price(bar, buy_on)
+                if raw_buy <= 0:
                     continue
                 prev_c = self._prev_close.get(code, {}).get(d, bar.open)
                 ctx = LimitContext(
@@ -419,7 +602,7 @@ class PortfolioBacktester:
                     n_new = max(1, len(pending_buys.get(d, [])))
                     alloc = min(target_value, equity / n_new)
                     avail_cash = cash
-                px = bar.open * (1.0 + self.cfg.costs.slippage)
+                px = raw_buy * (1.0 + self.cfg.costs.slippage)
                 shares = int(alloc // (px * self.cfg.lot_size)) * self.cfg.lot_size
                 if shares < self.cfg.lot_size:
                     continue
@@ -456,6 +639,13 @@ class PortfolioBacktester:
                     h_sess = int(hold)
                     h_per = 0
                     pkey = None
+                exit_date = None
+                if exit_weekday is not None:
+                    exit_date = self.calendar.next_weekday_trading_day(d, exit_weekday, strict=True)
+                    # A-share T+1: never exit same day as entry; next_weekday already strict after d.
+                    # Disable session/period countdown; exit_date drives time-stop.
+                    h_sess = 10**9
+                    h_per = 10**9
                 positions[code] = Position(
                     std_code=code,
                     shares=shares,
@@ -469,6 +659,7 @@ class PortfolioBacktester:
                     stop_loss_pct=stop_loss_pct,
                     take_profit_pct=take_profit_pct,
                     trigger_reason=None,
+                    exit_date=exit_date,
                     defer_reason=None,
                 )
                 fills.append(
@@ -615,6 +806,11 @@ class PortfolioBacktester:
                     stop_loss_pct=stop_loss_pct,
                     take_profit_pct=take_profit_pct,
                     entry_lag=entry_lag,
+                    signal_weekdays=signal_weekdays,
+                    buy_on=buy_on,
+                    sell_on=sell_on,
+                    buy_weekday=buy_weekday,
+                    exit_weekday=exit_weekday,
                     account_mode=account_mode,
                 )
                 z_ret = z_res.metrics.get("total_return")
@@ -639,6 +835,11 @@ class PortfolioBacktester:
                 "hold": hold,
                 "period": period,
                 "entry_lag": entry_lag,
+                "signal_weekdays": signal_weekdays,
+                "buy_on": buy_on,
+                "sell_on": sell_on,
+                "buy_weekday": buy_weekday,
+                "exit_weekday": exit_weekday,
                 "account_mode": account_mode,
                 "costs": asdict(self.cfg.costs),
                 "start": start,
@@ -668,6 +869,9 @@ class PortfolioBacktester:
     ) -> bool:
         if date <= pos.entry_date:
             return False
+        # Weekday-based force flat: exit on/after scheduled trading day
+        if getattr(pos, "exit_date", None) is not None:
+            return int(date) >= int(pos.exit_date)
         if pos.period_mode in ("DAY", "DWM"):
             return pos.hold_left_sessions <= 0
         if pos.period_mode in ("WEEK", "MONTH"):
@@ -758,6 +962,10 @@ def compute_metrics(
     lots: Dict[str, deque] = defaultdict(deque)
     wins = 0
     closed = 0
+    win_pnls: List[float] = []
+    loss_pnls: List[float] = []  # absolute magnitudes of losing trades
+    gross_profit = 0.0
+    gross_loss = 0.0  # positive number = sum of |loss|
     for f in fills:
         if f.side == "BUY":
             lots[f.std_code].append(f)
@@ -768,7 +976,30 @@ def compute_metrics(
                 closed += 1
                 if pnl > 0:
                     wins += 1
+                    win_pnls.append(float(pnl))
+                    gross_profit += float(pnl)
+                elif pnl < 0:
+                    loss_pnls.append(float(-pnl))
+                    gross_loss += float(-pnl)
+                # pnl == 0: closed but neither win nor loss for avg
     win_rate = wins / closed if closed else 0.0
+    avg_win = float(sum(win_pnls) / len(win_pnls)) if win_pnls else None
+    avg_loss = float(sum(loss_pnls) / len(loss_pnls)) if loss_pnls else None
+    # 盈亏比 = 平均盈利 ÷ 平均亏损绝对值
+    if avg_win is not None and avg_loss is not None and avg_loss > 1e-12:
+        payoff_ratio = float(avg_win / avg_loss)
+    elif avg_win is not None and (avg_loss is None or avg_loss <= 1e-12):
+        payoff_ratio = None  # no losing trades — undefined / infinite
+    else:
+        payoff_ratio = None
+    # 盈利因子 = 总盈利 ÷ 总亏损绝对值
+    if gross_loss > 1e-12:
+        profit_factor = float(gross_profit / gross_loss)
+    elif gross_profit > 0 and gross_loss <= 1e-12:
+        profit_factor = None
+    else:
+        profit_factor = 0.0 if closed else None
+
     cost_total = sum(f.commission + f.stamp_tax for f in fills)
     # slippage cost is embedded in fill prices; track explicit fees only here
     turnover = sum(f.amount for f in fills) / init if init else 0.0
@@ -785,6 +1016,13 @@ def compute_metrics(
         "n_sells": n_sells,
         "n_round_trips": closed,
         "win_rate": float(win_rate),
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "payoff_ratio": payoff_ratio,
+        "profit_loss_ratio": payoff_ratio,  # alias for UI
+        "gross_profit": float(gross_profit),
+        "gross_loss": float(gross_loss),
+        "profit_factor": profit_factor,
         "turnover": float(turnover),
         "cost_total": float(cost_total),
     }
