@@ -212,7 +212,12 @@ def test_ui_has_experiment_panel():
         / "static"
         / "index.html"
     ).read_text(encoding="utf-8")
-    assert "experimentPanel" in html
+    assert 'id="pageExperiment"' in html
+    assert 'data-bt-page="experiment"' in html
     assert "/api/v1/experiments" in html
     assert "btnExpCreate" in html
     assert "实验中心" in html
+    assert "exp-hero" in html
+    assert "将运行" in html or "expComboCount" in html
+    # no longer buried only under history as chaotic MVP strip
+    assert "用同一条选股规则" in html or "同一条选股规则" in html
