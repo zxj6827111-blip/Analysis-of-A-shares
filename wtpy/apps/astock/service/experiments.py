@@ -907,13 +907,40 @@ class ExperimentRunner:
             research_fp = research_fingerprint_from_params(params).full_hex(16)
         except Exception:
             research_fp = None
-        # de-dup
+        # de-dup: only skip if prior run has real activity (signals/trades).
+        # Empty historical runs (0 trades / 0 signals) must be re-executed.
         existing = exp_db.find_run_id_by_param_hash(self.cfg, ph)
         if existing:
-            exp_db.update_variant(
-                self.cfg, vid, status="skipped", run_id=existing, error="param_hash dedup"
-            )
-            return vid, "skipped", existing, None
+            reuse = True
+            try:
+                from .runs import load_run_summary
+                prev = load_run_summary(self.cfg, existing) or {}
+                pm = prev.get("metrics") if isinstance(prev.get("metrics"), dict) else {}
+                if not pm and isinstance(prev.get("summary"), dict):
+                    pm = (prev.get("summary") or {}).get("metrics") or {}
+                n_tr = pm.get("n_trades")
+                if n_tr is None:
+                    n_tr = pm.get("n_round_trips")
+                if n_tr is None:
+                    n_tr = pm.get("n_buys")
+                n_sig = pm.get("n_signals_fast")
+                if n_sig is None:
+                    n_sig = pm.get("n_events")
+                if n_sig is None:
+                    n_sig = pm.get("n_signals_after_bagua")
+                # reuse only when we have evidence of a non-empty or intentional run
+                empty = (n_tr is None or int(n_tr or 0) == 0) and (n_sig is None or int(n_sig or 0) == 0)
+                # if metrics missing entirely, also re-run
+                if not pm or empty:
+                    reuse = False
+            except Exception:
+                reuse = True  # keep old skip behavior if summary unreadable
+            if reuse:
+                exp_db.update_variant(
+                    self.cfg, vid, status="skipped", run_id=existing, error="param_hash dedup"
+                )
+                return vid, "skipped", existing, None
+            # fall through to re-run with a fresh run_id
 
         exp_db.update_variant(self.cfg, vid, status="running")
         try:

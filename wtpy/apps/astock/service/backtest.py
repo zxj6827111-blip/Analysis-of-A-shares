@@ -33,6 +33,7 @@ from ..indicators.tn6_importer import load_source_map, resolve_formula_audit
 from ..reports import write_backtest_csv, write_signals_csv
 from ..strategy import (
     PortfolioBacktester,
+    filter_events_by_signal_weekdays,
     format_signal_weekdays,
     parse_price_session,
     parse_signal_weekdays,
@@ -523,6 +524,13 @@ def run_backtest(
     else:
         events = _load_maps_and_maybe_signals(compute_signals=True)
 
+    # Weekday filter BEFORE bagua: "周五信号 + 最佳3爻" = Friday tech signals that pass gua.
+    n_events_raw_signals = len(events)
+    n_events_after_weekday = n_events_raw_signals
+    if signal_weekdays:
+        events = filter_events_by_signal_weekdays(events, signal_weekdays)
+        n_events_after_weekday = len(events)
+
     _progress({
         "phase": "factors",
         "pct": 86.0,
@@ -913,6 +921,12 @@ def run_backtest(
         )
         result.metrics["engine"] = "fast"
         result.metrics["n_signals_fast"] = fast_res.n_signals
+        result.metrics["n_events"] = len(events)
+        result.metrics["n_events_raw_signals"] = int(n_events_raw_signals)
+        result.metrics["n_events_after_weekday"] = int(n_events_after_weekday)
+        if bagua_enabled:
+            result.metrics["n_signals_before_bagua"] = bagua_n_before
+            result.metrics["n_signals_after_bagua"] = bagua_n_after
         result.config["engine"] = "fast"
         result.config["holiday_policy"] = holiday_policy
         result.config["artifact_level"] = artifact_level
@@ -940,6 +954,12 @@ def run_backtest(
         )
         result.config["engine"] = "full"
         result.config["artifact_level"] = artifact_level
+        result.metrics["n_events"] = len(events)
+        result.metrics["n_events_raw_signals"] = int(n_events_raw_signals)
+        result.metrics["n_events_after_weekday"] = int(n_events_after_weekday)
+        if bagua_enabled:
+            result.metrics["n_signals_before_bagua"] = bagua_n_before
+            result.metrics["n_signals_after_bagua"] = bagua_n_after
     if unconfirmed_run:
         result.status = "research_unconfirmed_formula"
         result.notes = list(result.notes) + [
@@ -1332,6 +1352,8 @@ def run_backtest(
         "metrics": result.metrics,
         "costs": _costs,
         "n_events": len(events),
+        "n_events_raw_signals": int(n_events_raw_signals),
+        "n_events_after_weekday": int(n_events_after_weekday),
         "with_bagua": bagua_enabled,
         "bagua_filter_mode": bagua_filter_mode,
         "bagua_filter_label": (

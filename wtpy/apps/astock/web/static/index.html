@@ -5608,9 +5608,14 @@ XG:CROSS(MA5,MA10);</textarea>
     }
     function _expStatusHint(row) {
       const m = row.metrics || {};
+      const err = String(row.error || "");
+      if (row.status === "skipped" || err.indexOf("dedup") >= 0) {
+        return "（复用历史·未重跑）";
+      }
       const tr = _expMetricTrades(m);
-      const nSig = m.n_signals_fast != null ? m.n_signals_fast : m.n_events;
-      if (row.status === "succeeded" && (tr === 0 || tr === "0") && (nSig === 0 || nSig === "0")) {
+      const nSig = m.n_signals_fast != null ? m.n_signals_fast
+        : (m.n_signals_after_bagua != null ? m.n_signals_after_bagua : m.n_events);
+      if (row.status === "succeeded" && (tr === 0 || tr === "0") && (nSig === 0 || nSig === "0" || nSig == null)) {
         return "（无信号/无成交）";
       }
       if (row.status === "succeeded" && (tr === 0 || tr === "0")) {
@@ -5637,7 +5642,7 @@ XG:CROSS(MA5,MA10);</textarea>
           return;
         }
         let html = "<table class='exp-table'><thead><tr>" +
-          "<th>规则</th><th>卦象</th><th>买卖日程</th><th>状态</th><th>总收益</th><th>最大回撤</th><th>胜率</th><th>成交回合</th><th>任务</th>" +
+          "<th>规则</th><th>卦象</th><th>买卖日程</th><th>状态</th><th>信号数</th><th>总收益</th><th>最大回撤</th><th>胜率</th><th>成交</th><th>任务</th>" +
           "</tr></thead><tbody>";
         (d.rows || []).forEach((row) => {
           const p = row.params || {};
@@ -5663,6 +5668,7 @@ XG:CROSS(MA5,MA10);</textarea>
             "<td>" + escAttr(_expGuaLabel(meta, p)) + "</td>" +
             "<td>" + escAttr(sched) + "</td>" +
             "<td>" + escAttr((stLab[row.status] || row.status || "—") + _expStatusHint(row)) + "</td>" +
+            "<td class='num'>" + (function(){ const m=row.metrics||{}; const n=m.n_signals_after_bagua!=null?m.n_signals_after_bagua:(m.n_signals_fast!=null?m.n_signals_fast:(m.n_events!=null?m.n_events:"—")); return n; })() + "</td>" +
             "<td class='num'>" + ret + "</td>" +
             "<td class='num'>" + mdd + "</td>" +
             "<td class='num'>" + wr + "</td>" +
@@ -5710,7 +5716,24 @@ XG:CROSS(MA5,MA10);</textarea>
             html += mh;
           }
         } catch (eMat) {}
-        box.innerHTML = html;
+        // banner for empty/skip
+        let nSkip = 0, nZero = 0, nOk = 0;
+        (d.rows || []).forEach((row) => {
+          if (row.status === "skipped") nSkip++;
+          const m = row.metrics || {};
+          const tr = (typeof _expMetricTrades === "function") ? _expMetricTrades(m) : m.n_trades;
+          if (row.status === "succeeded" || row.status === "completed") {
+            if (tr === 0 || tr == null) nZero++; else nOk++;
+          }
+        });
+        let banner = "";
+        if (nSkip > 0) {
+          banner += "<div class='warn' style='margin:0.4rem 0;padding:0.45rem 0.6rem;border:1px solid rgba(255,193,7,0.4);border-radius:8px'>本实验有 <b>" + nSkip + "</b> 组被标记为「复用历史(dedup)」——可能直接复用了更早一次空结果，并非本次重新计算。请新建实验重跑，或清空重复 run 后再试。</div>";
+        }
+        if (nZero > 0 && nOk === 0) {
+          banner += "<div class='warn' style='margin:0.4rem 0;padding:0.45rem 0.6rem;border:1px solid rgba(243,18,96,0.35);border-radius:8px'>任务已执行，但成交为 0。常见原因：①仅勾「最佳3爻」时周五信号极少；②演示池仅 2 只股票。建议：同时勾选「不加卦象」对照，或扩大股票池/日期。</div>";
+        }
+        box.innerHTML = banner + html;
         box.querySelectorAll("[data-exp-open-run]").forEach((btn) => {
           btn.addEventListener("click", () => {
             const rid = btn.getAttribute("data-exp-open-run");
