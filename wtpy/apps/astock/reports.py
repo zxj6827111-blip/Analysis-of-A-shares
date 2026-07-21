@@ -489,6 +489,7 @@ def write_backtest_csv(
             "buy_on",
             "sell_on",
             "signal_weekdays",
+            "schedule_mode",
             "account_mode",
             "bagua_filter_mode",
             "bagua_filter_label",
@@ -599,12 +600,29 @@ def write_excel_summary(
         ("过滤前信号数", repro.get("n_signals_before_bagua") if repro.get("n_signals_before_bagua") is not None else ""),
         ("过滤后信号数", repro.get("n_signals_after_bagua") if repro.get("n_signals_after_bagua") is not None else ""),
         ("周期", repro.get("period") or ""),
-        ("持有天数/期数 hold", repro.get("hold") or ""),
+        ("持有天数/期数 hold", (
+            "（由平仓星期覆盖；hold 仅复现）"
+            if repro.get("exit_weekday") is not None
+            else (repro.get("hold") if repro.get("hold") is not None else "")
+        )),
         ("账户模式", (
             "通达信对照·单票独立资金" if str(repro.get("account_mode") or "").lower() in
             ("per_symbol", "tdx", "per_stock") else "组合账户·共享资金"
         )),
-        ("入场滞后 entry_lag", repro.get("entry_lag") or ""),
+        ("日程模式 schedule_mode", repro.get("schedule_mode") or ("weekday" if repro.get("buy_weekday") is not None or repro.get("exit_weekday") is not None else "tn")),
+        ("信号星期", (
+            "、".join(str(x) for x in (repro.get("signal_weekdays") or []))
+            if repro.get("signal_weekdays")
+            else "不限制"
+        )),
+        ("买入日（星期）", repro.get("buy_weekday") if repro.get("buy_weekday") is not None else "—（用 entry_lag）"),
+        ("平仓日（星期）", repro.get("exit_weekday") if repro.get("exit_weekday") is not None else "—（用 hold）"),
+        ("买入/卖出时点", f"{repro.get('buy_on') or 'open'} / {repro.get('sell_on') or 'open'}"),
+        ("入场滞后 entry_lag", (
+            f"{repro.get('entry_lag') or ''}（星期买入覆盖步进时仅作复现字段）"
+            if repro.get("buy_weekday") is not None
+            else (repro.get("entry_lag") or "")
+        )),
         ("回测区间", f"{repro.get('start') or ''} ~ {repro.get('end') or ''}"),
         ("股票池数量", repro.get("selected_codes_count") or ""),
         ("价格模式", repro.get("price_mode") or ""),
@@ -648,8 +666,11 @@ def write_excel_summary(
         ("【说明】", ""),
         (
             "字段含义",
-            "信号日期=指标触发日；买入一般为信号后第 entry_lag 个交易日（系统规则）；"
-            "净利润=卖出金额-买入金额-买卖费用；组合收益受仓位/拒单影响，与逐笔简单加总可能不一致。",
+            "信号日期=指标触发日（收盘确认）。"
+            "买卖日程在交易日序列上计算：有买入/平仓星期时，取信号/买入之后第一个该 ISO 星期的可交易日（节假日顺延）；"
+            "无星期配置时用 entry_lag（信号后第 N 个交易日入场）与 hold（持有 N 期后强平）。"
+            "开盘/收盘由 buy_on/sell_on 决定。净利润=卖出金额-买入金额-买卖费用；"
+            "组合收益受仓位/拒单影响，与逐笔简单加总可能不一致。",
         ),
         ("免责", "研究用途，非投资建议；费率/涨跌停/停牌规则为系统近似。"),
     ]
@@ -714,10 +735,25 @@ def write_excel_summary(
         trips_for_excel = trips_for_excel[:excel_cap]
 
     # banner
+    _bw = repro.get("buy_weekday")
+    _ew = repro.get("exit_weekday")
+    _sched = repro.get("schedule_mode") or (
+        "weekday" if _bw is not None or _ew is not None else "tn"
+    )
+    if _sched == "weekday":
+        _sched_txt = (
+            f"schedule=weekday buy_wd={_bw} exit_wd={_ew} "
+            f"buy_on={repro.get('buy_on') or 'open'} sell_on={repro.get('sell_on') or 'open'}"
+        )
+    else:
+        _sched_txt = (
+            f"schedule=tn entry_lag={repro.get('entry_lag')} hold={repro.get('hold')} "
+            f"buy_on={repro.get('buy_on') or 'open'} sell_on={repro.get('sell_on') or 'open'}"
+        )
     ws2.append(
         [
             f"run_id={result.run_id} | 区间 {repro.get('start') or ''}~{repro.get('end') or ''} | "
-            f"period={repro.get('period')} hold={repro.get('hold')} entry_lag={repro.get('entry_lag')} | "
+            f"period={repro.get('period')} | {_sched_txt} | "
             f"{repro.get('bagua_filter_label') or '无八卦过滤'} | "
             f"已平{len(closed)} 盈{win_n} 亏{loss_n} 未平{open_n} | 合计净利润≈{_fmt_num(net_sum, 2)} | "
             f"明细行{len(trips)}"
@@ -799,15 +835,20 @@ def write_excel_summary(
         "本工作簿为单次回测的一份总表，研究用途，非投资建议。",
         "「汇总」：组合层收益/回撤/买卖次数等。",
         "「交易明细」：按 FIFO 将买入与卖出配对；信号日期取不晚于买入日的最近信号。",
-        "启用八卦时默认按「最佳3爻」过滤：地雷复|初九、地风升|初六、地天泰|初九。",
-        "明细列「卦名/爻位/卦象简判」来自信号日 OHLC 标注（过滤后仅保留白名单卦爻）。",
+        "【交易日程 · 双层模型】前台用「信号星期 / 买入日星期 / 平仓日星期 / 开盘·收盘」配置；",
+        "后台一律在 A 股交易日日历上求解（T+N 体系）：有 buy_weekday 时用 next_weekday_trading_day（覆盖 entry_lag 步进），",
+        "有 exit_weekday 时同理覆盖 hold；未设星期时仍用 entry_lag + hold。节假日自动顺延到之后第一个可交易日。",
+        "「按星期」不是另一套经济逻辑，而是 T+N 在星期锚定约束下的日历求解。",
+        "启用八卦时默认可按「最佳3爻」等方案过滤；明细列「卦名/爻位/卦象简判」来自信号日 OHLC 标注。",
         "交易明细超过 3000 行时，Excel 仅预览前 3000 行；完整明细见同目录 trades.csv。",
         "毛利润 = 卖出金额 - 买入金额；净利润 = 毛利润 - 买入手续费 - 卖出手续费及印花税。",
         "收益率分母为买入金额。卖出原因含 hold_expired / stop_loss / take_profit 等。",
-        "hold_expired：持有期满强制平仓，成交价为平仓日开盘价；止损/止盈为触发后下一可交易日开盘价。",
+        "hold_expired：时间止损或星期平仓日强制平仓，成交价按 sell_on（开/收盘）；止损/止盈为触发后下一可交易日开盘价。",
         "组合层总收益受仓位权重、资金不足拒单等影响，与明细净利润简单加总可能不完全一致。",
         f"run_id={result.run_id}",
         f"indicator_ids={repro.get('indicator_ids')}",
+        f"schedule_mode={repro.get('schedule_mode')} buy_weekday={repro.get('buy_weekday')} exit_weekday={repro.get('exit_weekday')}",
+        f"entry_lag={repro.get('entry_lag')} hold={repro.get('hold')} buy_on={repro.get('buy_on')} sell_on={repro.get('sell_on')}",
         f"price_mode={repro.get('price_mode')} research_unadjusted={repro.get('research_unadjusted')}",
     ]:
         ws3.append([line])

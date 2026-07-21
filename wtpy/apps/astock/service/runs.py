@@ -123,6 +123,9 @@ def _enrich_row(row: dict, out_dir: Optional[Path] = None) -> dict:
                     "buy_on",
                     "sell_on",
                     "signal_weekdays",
+                    "schedule_mode",
+                    "gua_filter",
+                    "with_bagua",
                 ):
                     if r.get(_k) in (None, "", []):
                         val = meta.get(_k)
@@ -299,6 +302,7 @@ def load_run_summary(cfg: AStockConfig, run_id: str) -> Dict[str, Any]:
         "buy_on": meta.get("buy_on") or repro.get("buy_on"),
         "sell_on": meta.get("sell_on") or repro.get("sell_on"),
         "signal_weekdays": meta.get("signal_weekdays") if meta.get("signal_weekdays") is not None else repro.get("signal_weekdays"),
+        "schedule_mode": meta.get("schedule_mode") or repro.get("schedule_mode"),
         "account_mode": meta.get("account_mode") or repro.get("account_mode"),
         "repro": repro,
     }

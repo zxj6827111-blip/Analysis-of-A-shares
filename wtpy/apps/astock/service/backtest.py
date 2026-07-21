@@ -424,10 +424,15 @@ def run_backtest(
             "hold": hold,
             "entry_lag": entry_lag,
             "signal_weekdays": signal_weekdays,
-        "buy_on": buy_on,
-        "sell_on": sell_on,
-        "buy_weekday": buy_weekday,
-        "exit_weekday": exit_weekday,
+            "buy_on": buy_on,
+            "sell_on": sell_on,
+            "buy_weekday": buy_weekday,
+            "exit_weekday": exit_weekday,
+            "schedule_mode": (
+                "weekday"
+                if (buy_weekday is not None or exit_weekday is not None)
+                else "tn"
+            ),
             "period": period,
             "start": start,
             "end": end,
@@ -456,6 +461,12 @@ def run_backtest(
                     "indicator_ids": [s.id for s in trade_specs],
                     "hold": hold,
                     "entry_lag": entry_lag,
+                    "buy_weekday": buy_weekday,
+                    "exit_weekday": exit_weekday,
+                    "buy_on": buy_on,
+                    "sell_on": sell_on,
+                    "signal_weekdays": signal_weekdays,
+                    "schedule_mode": meta["schedule_mode"],
                     "period": period,
                     "metrics": None,
                     "error": adj_msg[:500],
@@ -685,6 +696,14 @@ def run_backtest(
         "risk_trigger_policy": "daily_high_low",
         "risk_execution_policy": "next_trading_day_open",
         "entry_lag": entry_lag,
+        "signal_weekdays": signal_weekdays,
+        "buy_on": buy_on,
+        "sell_on": sell_on,
+        "buy_weekday": buy_weekday,
+        "exit_weekday": exit_weekday,
+        "schedule_mode": (
+            "weekday" if (buy_weekday is not None or exit_weekday is not None) else "tn"
+        ),
         "account_mode": (getattr(req, "account_mode", None) or "portfolio"),
         "stop_loss_pct": req.stop_loss,
         "take_profit_pct": req.take_profit,
@@ -786,7 +805,12 @@ def run_backtest(
         title = f"{title} · 通达信对照(单票独立资金)"
     else:
         title = f"{title} · 组合账户"
-    title = f"{title} · {period_label} · 持有{hold}"
+    schedule_mode = (
+        "weekday" if (buy_weekday is not None or exit_weekday is not None) else "tn"
+    )
+    title = f"{title} · {period_label}"
+    if schedule_mode == "tn":
+        title = f"{title} · 持有{hold}"
     if signal_weekdays:
         title = f"{title} · 仅{format_signal_weekdays(signal_weekdays)}信号"
     title = f"{title} · {session_label_cn(buy_on)}买/{session_label_cn(sell_on)}卖"
@@ -798,6 +822,7 @@ def run_backtest(
         title += f" · {start or ''}~{end or ''}"
 
     repro["title"] = title
+    repro["schedule_mode"] = schedule_mode
     repro["indicator_names"] = rule_names
     if gua_filter_meta is not None:
         repro["gua_filter"] = gua_filter_meta
@@ -827,6 +852,7 @@ def run_backtest(
                 "buy_on": buy_on,
                 "sell_on": sell_on,
                 "signal_weekdays": signal_weekdays,
+                "schedule_mode": schedule_mode,
                 "account_mode": (getattr(req, "account_mode", None) or "portfolio"),
                 "gua_filter": gua_filter_meta,
                 "with_bagua": bagua_enabled,
@@ -877,12 +903,13 @@ def run_backtest(
         "errors_sample": errors[:20],
         "notes": result.notes,
         "entry_lag": entry_lag,
-            "signal_weekdays": signal_weekdays,
+        "signal_weekdays": signal_weekdays,
         "buy_on": buy_on,
         "sell_on": sell_on,
         "buy_weekday": buy_weekday,
         "exit_weekday": exit_weekday,
-            "hold": hold,
+        "schedule_mode": schedule_mode,
+        "hold": hold,
         "account_mode": (getattr(req, "account_mode", None) or "portfolio"),
         "period": period,
         "repro": {
@@ -895,13 +922,9 @@ def run_backtest(
             "sell_on": sell_on,
             "buy_weekday": buy_weekday,
             "exit_weekday": exit_weekday,
+            "schedule_mode": schedule_mode,
             "indicator_ids": repro["indicator_ids"],
             "astock_code_sha": repro.get("astock_code_sha"),
         },
-        "buy_weekday": buy_weekday,
-        "exit_weekday": exit_weekday,
-        "buy_on": buy_on,
-        "sell_on": sell_on,
-        "signal_weekdays": signal_weekdays,
     }
     return summary

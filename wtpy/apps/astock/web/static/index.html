@@ -1276,7 +1276,7 @@ XG:CROSS(MA5,MA10);</textarea>
             <div class="bt-step-num">3</div>
             <div>
               <h3>信号星期过滤 <span class="bt-step-opt">可选</span></h3>
-              <p class="bt-step-desc">限制「哪几天允许出现指标信号」。与下方「买入/平仓星期」不同：这里管信号日，下面管成交日。</p>
+              <p class="bt-step-desc">限制「哪几天允许出现指标信号」。与下方「买入/平仓星期」不同：这里管信号日，下面管成交日。系统在<strong>交易日序列</strong>上计算；遇节假日自动落到之后第一个可交易日。</p>
             </div>
           </div>
           <div class="bt-step-bd">
@@ -1301,33 +1301,35 @@ XG:CROSS(MA5,MA10);</textarea>
             <div class="bt-step-num">4</div>
             <div>
               <h3>交易日程</h3>
-              <p class="bt-step-desc">信号之后何时买入、何时平仓，以及按开盘价还是收盘价成交。</p>
+              <p class="bt-step-desc">信号之后何时买入、何时平仓，以及按开盘价还是收盘价成交。前台按「星期几」配置；后台在交易日日历上求解（T+N 体系）。遇节假日自动顺延到之后第一个可交易日。</p>
             </div>
           </div>
           <div class="bt-step-bd">
             <div class="param-pair">
               <div class="field">
-                <label>买入日（星期几）<br/><span style="font-weight:400;opacity:.85">信号后第一个该星期的交易日买入</span></label>
+                <label>买入日（星期几）<br/><span style="font-weight:400;opacity:.85">信号后第一个该星期的交易日买入；留空则用 T+N（entry_lag）</span></label>
                 <select id="buyWeekday">
+                  <option value="">— T+N（不用星期）—</option>
                   <option value="1">周一</option>
                   <option value="2">周二</option>
                   <option value="3">周三</option>
                   <option value="4">周四</option>
                   <option value="5" selected>周五</option>
                 </select>
-                <div class="hint">例：周五信号 → 选周一买 = 下周一。</div>
+                <div class="hint">例：周五信号 → 选周一买 = 下周一（节假日顺延）。</div>
                 <input type="hidden" id="entryLag" value="1" />
               </div>
               <div class="field">
-                <label>强制平仓日（星期几）<br/><span style="font-weight:400;opacity:.85">买入后第一个该星期的交易日强平</span></label>
+                <label>强制平仓日（星期几）<br/><span style="font-weight:400;opacity:.85">买入后第一个该星期的交易日强平；留空则用 hold</span></label>
                 <select id="exitWeekday">
+                  <option value="">— hold（不用星期）—</option>
                   <option value="1" selected>周一</option>
                   <option value="2">周二</option>
                   <option value="3">周三</option>
                   <option value="4">周四</option>
                   <option value="5">周五</option>
                 </select>
-                <div class="hint">例：周五买入 → 选周一平 = 下周一。</div>
+                <div class="hint">例：周五买入 → 选周一平 = 下周一（节假日顺延）。</div>
                 <input type="hidden" id="hold" value="1" />
               </div>
             </div>
@@ -1348,6 +1350,11 @@ XG:CROSS(MA5,MA10);</textarea>
               </div>
             </div>
             <div class="timeline" id="timeline" style="margin-top:0.55rem"></div>
+            <div class="row" style="margin-top:0.45rem;gap:0.45rem;flex-wrap:wrap">
+              <button type="button" class="secondary" id="btnPresetWeekday" style="padding:0.25rem 0.65rem;font-size:0.8rem" title="研究默认：按星期锚定买卖日">研究模板·星期日程</button>
+              <button type="button" class="secondary" id="btnPresetTn12" style="padding:0.25rem 0.65rem;font-size:0.8rem" title="清空买卖星期，改用 entry_lag=1 / hold=1，开盘买 / 收盘卖">经典 T+1 开买 · T+2 收卖</button>
+            </div>
+            <p class="sub" style="margin:0.35rem 0 0;font-size:0.78rem;opacity:.9" id="scheduleEngineHint">引擎说明：星期锚定 → 交易日序列上的 T+N 求解（非自然日硬编码）。</p>
             <details class="sub" style="margin-top:0.55rem">
               <summary style="cursor:pointer;color:var(--muted);font-size:0.82rem">风险控制（可选）：止损 / 止盈</summary>
               <div class="row" style="margin-top:0.45rem">
@@ -1955,13 +1962,16 @@ XG:CROSS(MA5,MA10);</textarea>
       const sellSess = getSellOn() === "close" ? "收盘" : "开盘";
       let line1 = "时间轴：T 日收盘确认信号";
       if (buyWd) line1 += " → 之后第一个" + wdName(buyWd) + " " + buySess + "买入";
-      else line1 += " → entry_lag 个交易日后 " + buySess + "买入";
+      else line1 += " → 第 entry_lag 个交易日后 " + buySess + "买入";
       if (exitWd) line1 += " → 买入后第一个" + wdName(exitWd) + " " + sellSess + "强制平仓";
-      else line1 += " → hold N 期后 " + sellSess + "强制平仓";
+      else line1 += " → hold N 个交易日/期后 " + sellSess + "强制平仓";
       line1 += "（涨跌停会 defer）。";
-      let line2 = "例：信号周五 → 选周一买 / 下周一平 → 周一" + buySess + "买、再下周一" + sellSess + "卖。";
+      let line2 = "系统在交易日序列上计算；遇节假日自动落到之后第一个可交易日。";
       if (buyWd && exitWd) {
-        line2 = "例：信号任意日 → 买入日=" + wdName(buyWd) + " " + buySess + "，平仓日=" + wdName(exitWd) + " " + sellSess + "（均取信号/买入之后第一个该星期的交易日）。";
+        line2 = "例：信号任意日 → 买入日=" + wdName(buyWd) + " " + buySess + "，平仓日=" + wdName(exitWd) + " " + sellSess +
+          "（均取信号/买入之后第一个该星期的交易日；节假日顺延）。";
+      } else if (!buyWd && !exitWd) {
+        line2 = "经典 T+N 路径：无买卖星期时用 entry_lag / hold；仍按交易日日历步进。";
       }
       const el = document.getElementById("timeline");
       if (el) {
@@ -1971,7 +1981,16 @@ XG:CROSS(MA5,MA10);</textarea>
           const label = swd.map((d) => wdName(d)).join("、");
           text += "\n信号过滤：仅 " + label + " 出现的信号可交易。";
         }
+        text += "\n引擎：星期锚定 → T+N 交易日体系（非自然日硬编码）。";
         el.textContent = text;
+      }
+      const hint = document.getElementById("scheduleEngineHint");
+      if (hint) {
+        if (buyWd || exitWd) {
+          hint.textContent = "引擎说明：已设买卖星期 → 后台用 next_weekday_trading_day 覆盖 entry_lag/hold 步进；仍属交易日 T+N 体系。";
+        } else {
+          hint.textContent = "引擎说明：未设买卖星期 → 后台用 entry_lag / hold 在交易日序列上 T+N 步进。";
+        }
       }
     }
 
@@ -2380,21 +2399,33 @@ XG:CROSS(MA5,MA10);</textarea>
       const lag = summary.entry_lag != null ? summary.entry_lag : repro.entry_lag;
       const hold = summary.hold != null ? summary.hold : repro.hold;
       const per = isPerSymbolMode(metrics, summary);
+      const sch = resolveTradeSchedule(summary, metrics, summary, repro);
+      const bw = summary.buy_weekday != null ? summary.buy_weekday : repro.buy_weekday;
+      const ew = summary.exit_weekday != null ? summary.exit_weekday : repro.exit_weekday;
+      const swd = summary.signal_weekdays || repro.signal_weekdays || [];
+      const mode = summary.schedule_mode || repro.schedule_mode ||
+        ((bw != null && bw !== "") || (ew != null && ew !== "") ? "weekday" : "tn");
+      const swdLab = (Array.isArray(swd) && swd.length)
+        ? swd.map((d) => wdName(Number(d))).join("、")
+        : "不限制";
       const rows = [
         ["K线周期", periodLabel(summary.period || repro.period)],
-        ["持有周期 hold", hold],
-        ["买入日（星期）", (function(){ const b=summary.buy_weekday||repro.buy_weekday; return b!=null&&b!=="" ? wdName(Number(b)) : ("entry_lag="+lag); })()],
-        ["平仓日（星期）", (function(){ const e=summary.exit_weekday||repro.exit_weekday; return e!=null&&e!=="" ? wdName(Number(e)) : ("hold="+hold); })()],
-        ["买入延迟 entry_lag", lag],
-        ["交易时点", (function(){
-          const sch = resolveTradeSchedule(summary, metrics, summary, repro);
-          return "T日收盘信号 → " + sch.buyLabel + " → " + sch.sellLabel + "（到期）";
-        })()],
+        ["信号星期", swdLab],
+        ["买入日（星期）", (bw != null && bw !== "") ? wdName(Number(bw)) : "—（T+N / entry_lag）"],
+        ["平仓日（星期）", (ew != null && ew !== "") ? wdName(Number(ew)) : "—（hold）"],
+        ["成交时点", (sch.boCn || "开盘") + "买 / " + (sch.soCn || "开盘") + "卖"],
+        ["交易时点示意", "T日收盘信号 → " + sch.buyLabel + " → " + sch.sellLabel],
+        ["引擎说明", mode === "weekday"
+          ? "星期锚定 → 交易日序列上 next_weekday_trading_day（覆盖 entry_lag/hold 步进）；节假日顺延"
+          : "无买卖星期 → entry_lag + hold 在交易日序列上 T+N 步进"],
         ["资金模式", per ? "单票独立资金" : "共享资金池"],
         ["回测区间", fmtYmd(summary.start || repro.start) + " ~ " + fmtYmd(summary.end || repro.end)],
         ["止损", repro.stop_loss_pct != null ? repro.stop_loss_pct : (summary.stop_loss_pct != null ? summary.stop_loss_pct : "—")],
-        ["止盈", repro.stop_profit_pct != null ? repro.stop_profit_pct : (summary.stop_profit_pct != null ? summary.stop_profit_pct : "—")],
+        ["止盈", repro.take_profit_pct != null ? repro.take_profit_pct : (summary.take_profit_pct != null ? summary.take_profit_pct : (repro.stop_profit_pct != null ? repro.stop_profit_pct : "—"))],
       ];
+      if (mode === "tn") {
+        rows.splice(6, 0, ["entry_lag / hold", (lag != null ? lag : "—") + " / " + (hold != null ? hold : "—")]);
+      }
       box.innerHTML = rows.map(([k, v]) => "<div class='k'>" + k + "</div><div class='v'>" + (v == null || v === "" ? "—" : v) + "</div>").join("");
     }
 
@@ -3351,11 +3382,7 @@ XG:CROSS(MA5,MA10);</textarea>
         const mode = (detail.metrics && detail.metrics.account_mode) || repro.account_mode || detail.account_mode;
         if (mode) {
           const per = String(mode).toLowerCase().indexOf("per") >= 0 || String(mode).toLowerCase() === "tdx";
-          try {
-          const gf = repro.gua_filter || detail.gua_filter;
-          if (typeof GuaUI !== "undefined" && gf) GuaUI.setFromConfig(gf);
-        } catch (e) {}
-        const radios = document.querySelectorAll('input[name="accountMode"]');
+          const radios = document.querySelectorAll('input[name="accountMode"]');
           radios.forEach((r) => { r.checked = per ? r.value === "per_symbol" : r.value === "portfolio"; });
         }
         const inds = detail.indicator_ids || repro.indicator_ids || [];
@@ -3365,13 +3392,33 @@ XG:CROSS(MA5,MA10);</textarea>
           if (typeof renderRules === "function") renderRules();
           if (typeof updateSelectedLabel === "function") updateSelectedLabel();
         }
-        const swd = repro.signal_weekdays || detail.signal_weekdays;
+        const swd = repro.signal_weekdays != null ? repro.signal_weekdays : detail.signal_weekdays;
         if (typeof setSignalWeekdays === "function") setSignalWeekdays(swd || []);
         if (typeof setBuyOn === "function") setBuyOn(repro.buy_on || detail.buy_on || "open");
-        if (typeof setBuyWeekday === "function" && (repro.buy_weekday != null || detail.buy_weekday != null)) setBuyWeekday(repro.buy_weekday != null ? repro.buy_weekday : detail.buy_weekday);
-        if (typeof setExitWeekday === "function" && (repro.exit_weekday != null || detail.exit_weekday != null)) setExitWeekday(repro.exit_weekday != null ? repro.exit_weekday : detail.exit_weekday);
         if (typeof setSellOn === "function") setSellOn(repro.sell_on || detail.sell_on || "open");
+        const bw = repro.buy_weekday != null ? repro.buy_weekday : detail.buy_weekday;
+        const ew = repro.exit_weekday != null ? repro.exit_weekday : detail.exit_weekday;
+        const buyEl = document.getElementById("buyWeekday");
+        const exitEl = document.getElementById("exitWeekday");
+        if (bw != null && bw !== "" && typeof setBuyWeekday === "function") {
+          setBuyWeekday(bw);
+        } else if (buyEl) {
+          buyEl.value = "";
+        }
+        if (ew != null && ew !== "" && typeof setExitWeekday === "function") {
+          setExitWeekday(ew);
+        } else if (exitEl) {
+          exitEl.value = "";
+        }
+        try {
+          const gf = repro.gua_filter || detail.gua_filter;
+          if (typeof GuaUI !== "undefined" && GuaUI && typeof GuaUI.setFromConfig === "function") {
+            if (gf) GuaUI.setFromConfig(gf);
+          }
+        } catch (e) { console.warn("GuaUI.setFromConfig", e); }
         if (typeof updateTimeline === "function") updateTimeline();
+        if (typeof updateBtSummary === "function") updateBtSummary();
+        if (typeof updateSwdStatus === "function") updateSwdStatus();
         switchBtPage("new");
         alert("已复制参数到「新建回测」（请核对股票池与日期）");
       } catch (e) {
@@ -3537,6 +3584,33 @@ XG:CROSS(MA5,MA10);</textarea>
     });
     document.getElementById("buyWeekday")?.addEventListener("change", updateTimeline);
     document.getElementById("exitWeekday")?.addEventListener("change", updateTimeline);
+
+    document.getElementById("btnPresetWeekday")?.addEventListener("click", () => {
+      // Research default: Fri buy / Mon exit is a common template; keep open/open
+      const buyEl = document.getElementById("buyWeekday");
+      const exitEl = document.getElementById("exitWeekday");
+      if (buyEl) buyEl.value = "5";
+      if (exitEl) exitEl.value = "1";
+      if (document.getElementById("entryLag")) document.getElementById("entryLag").value = "1";
+      if (document.getElementById("hold")) document.getElementById("hold").value = "1";
+      setBuyOn("open");
+      setSellOn("open");
+      updateTimeline();
+      updateBtSummary();
+    });
+    document.getElementById("btnPresetTn12")?.addEventListener("click", () => {
+      // Classic: clear weekdays → entry_lag=1 open buy, hold=1 close sell (T+1 open / T+2 close)
+      const buyEl = document.getElementById("buyWeekday");
+      const exitEl = document.getElementById("exitWeekday");
+      if (buyEl) buyEl.value = "";
+      if (exitEl) exitEl.value = "";
+      if (document.getElementById("entryLag")) document.getElementById("entryLag").value = "1";
+      if (document.getElementById("hold")) document.getElementById("hold").value = "1";
+      setBuyOn("open");
+      setSellOn("close");
+      updateTimeline();
+      updateBtSummary();
+    });
 
     document.querySelectorAll("#signalWeekdays input.swd").forEach((el) => {
       el.addEventListener("change", updateTimeline);

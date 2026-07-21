@@ -69,3 +69,66 @@ def test_buy_monday_exit_friday():
     assert abs(buys[0].price - 12.0) < 1e-9
     assert len(sells) == 1 and sells[0].date == 20240112
     assert abs(sells[0].price - 14.0) < 1e-9
+    assert res.config.get("buy_weekday") == 1
+    assert res.config.get("exit_weekday") == 5
+    assert res.config.get("schedule_mode") == "weekday"
+    # Weekday path: notes must describe weekday anchors, not pure entry_lag as the main rule
+    note_blob = "\n".join(res.notes or [])
+    assert "weekday" in note_blob.lower() or "周一" in note_blob
+    assert "overrides entry_lag" in note_blob or "覆盖" in note_blob or "overrides" in note_blob
+    # Must not present entry_lag-only buy line as the sole buy schedule when weekday is set
+    assert not any(
+        n.startswith("Buy schedule (T+N):") for n in (res.notes or [])
+    )
+
+
+def test_weekday_notes_prefer_anchor_over_entry_lag_hold():
+    code = "SSE.STK.600000"
+    dates = [20240103, 20240104, 20240105, 20240108, 20240109, 20240110, 20240111, 20240112]
+    bars = {code: [DayBar(d, 10, 11, 9, 10.5, 1, 1000) for d in dates]}
+    bt = PortfolioBacktester(_cfg(), TradeCalendar(dates), bars)
+    res = bt.run(
+        [SignalEvent(code, 20240103, "DAY", "t")],
+        hold=99,
+        entry_lag=99,
+        period="DAY",
+        formal_ok=True,
+        _skip_zero_replay=True,
+        buy_weekday=1,
+        exit_weekday=5,
+        buy_on="open",
+        sell_on="open",
+    )
+    assert res.config.get("schedule_mode") == "weekday"
+    notes = "\n".join(res.notes or [])
+    assert "Buy schedule (weekday anchor)" in notes
+    assert "Exit schedule (weekday anchor)" in notes
+    assert "Buy schedule (T+N):" not in notes
+    assert "Exit schedule (hold N):" not in notes
+
+
+def test_tn_path_notes_without_weekday():
+    code = "SSE.STK.600000"
+    dates = [20240102, 20240103, 20240104, 20240105]
+    bars = {
+        code: [
+            DayBar(20240102, 10, 11, 9, 10, 1, 1),
+            DayBar(20240103, 10, 11, 9, 10.5, 1, 1),
+            DayBar(20240104, 11, 12, 10, 11, 1, 1),
+            DayBar(20240105, 12, 13, 11, 12, 1, 1),
+        ]
+    }
+    bt = PortfolioBacktester(_cfg(), TradeCalendar(dates), bars)
+    res = bt.run(
+        [SignalEvent(code, 20240103, "DAY", "t")],
+        hold=1,
+        entry_lag=1,
+        period="DAY",
+        formal_ok=True,
+        _skip_zero_replay=True,
+    )
+    assert res.config.get("schedule_mode") == "tn"
+    assert res.config.get("buy_weekday") is None
+    notes = "\n".join(res.notes or [])
+    assert "Buy schedule (T+N):" in notes
+    assert "entry_lag=1" in notes
