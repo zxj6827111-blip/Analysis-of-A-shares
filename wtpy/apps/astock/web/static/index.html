@@ -659,6 +659,28 @@
     .exp-split {
       display: grid; grid-template-columns: 1fr; gap: 0.75rem;
     }
+    .exp-rule-picker {
+      max-height: 42vh;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #0e141c;
+      padding: 0.35rem;
+    }
+    .exp-rule-picker .exp-rule-item {
+      display: flex; gap: 0.5rem; align-items: flex-start;
+      padding: 0.45rem 0.55rem; border-radius: 8px;
+      border: 1px solid transparent; cursor: pointer; margin-bottom: 0.3rem;
+    }
+    .exp-rule-picker .exp-rule-item:hover { background: rgba(61,139,253,0.08); }
+    .exp-rule-picker .exp-rule-item.on {
+      border-color: rgba(61,139,253,0.65);
+      background: rgba(61,139,253,0.12);
+    }
+    .exp-rule-picker .exp-rule-item input { width: auto; margin-top: 0.2rem; flex-shrink: 0; }
+    .exp-rule-picker .exp-rule-item .nm { font-weight: 600; font-size: 0.88rem; }
+    .exp-rule-picker .exp-rule-item .sub { font-size: 0.72rem; color: var(--muted); }
+
     @media (min-width: 960px) {
       .exp-split { grid-template-columns: 1.05fr 0.95fr; align-items: start; }
     }
@@ -1824,12 +1846,14 @@ XG:CROSS(MA5,MA10);</textarea>
           <div>
             <div class="exp-card">
               <h3><span class="n">1</span> 用哪条规则做实验？</h3>
-              <p class="hint">规则在<strong>左侧列表</strong>勾选（与「新建回测」共用）。实验会对你勾选的每条规则各跑一轮网格。</p>
-              <div class="exp-rule-box" id="expRuleBox">尚未选择规则 — 请到左侧勾选一条可回测指标</div>
-              <div class="actions" style="margin-top:0.5rem">
-                <button type="button" class="secondary" id="btnExpGoNew">去选规则</button>
-                <button type="button" class="secondary" id="btnExpRefreshRules">刷新已选</button>
+              <p class="hint">在本页勾选即可（与左侧规则库、新建回测<strong>共用同一选择</strong>）。勾选的每条可回测规则会各跑一轮网格；「八卦OHLC」仅为标注，请勾选选股规则。</p>
+              <div class="exp-rule-box" id="expRuleBox">尚未选择规则</div>
+              <div class="actions" style="margin-top:0.45rem;margin-bottom:0.45rem;flex-wrap:wrap">
+                <button type="button" class="secondary" id="btnExpRefreshRules">刷新规则列表</button>
+                <button type="button" class="secondary" id="btnExpClearRules">清空已选</button>
+                <button type="button" class="secondary" id="btnExpGoNew" title="需要新建自定义公式时再用">新建自定义规则…</button>
               </div>
+              <div id="expRulePicker" class="exp-rule-picker" aria-label="实验规则多选"></div>
             </div>
 
             <div class="exp-card">
@@ -2457,14 +2481,20 @@ XG:CROSS(MA5,MA10);</textarea>
         }
         box.appendChild(div);
       });
+      try {
+        if (typeof renderExpRulePicker === "function" && document.getElementById("pageExperiment")?.classList.contains("active")) {
+          renderExpRulePicker();
+        }
+      } catch (e) {}
     }
 
     function updateSelectedLabel() {
       try { if (typeof expSyncRuleBox === 'function') { expSyncRuleBox(); } } catch (e) {}
+      try { if (typeof renderExpRulePicker === 'function' && document.getElementById('pageExperiment')?.classList.contains('active')) renderExpRulePicker(); } catch (e) {}
       try { if (typeof expEstimate === 'function' && document.getElementById('pageExperiment')?.classList.contains('active')) expEstimate(); } catch (e) {}
 
-      document.getElementById("selectedLabel").textContent =
-        selected.size ? Array.from(selected).join(", ") : "无";
+      const lab = document.getElementById("selectedLabel");
+      if (lab) lab.textContent = selected.size ? Array.from(selected).join(", ") : "无";
     }
 
     async function loadRules() {
@@ -4214,7 +4244,7 @@ XG:CROSS(MA5,MA10);</textarea>
       });
       const main = document.getElementById("viewBacktest");
       if (main) {
-        if (name === "history" || name === "detail" || name === "experiment") main.classList.add("fullwidth");
+        if (name === "history" || name === "detail") main.classList.add("fullwidth");
         else main.classList.remove("fullwidth");
       }
       const tabDetail = document.getElementById("tabDetail");
@@ -4234,6 +4264,14 @@ XG:CROSS(MA5,MA10);</textarea>
       if (name === "experiment") {
         try { expSyncRuleBox(); expEstimate(); expRenderList(); } catch (e) {}
       }
+      
+      if (name === "experiment") {
+        try { if (typeof renderExpRulePicker === "function") renderExpRulePicker(); } catch (e) {}
+        try { if (typeof expSyncRuleBox === "function") expSyncRuleBox(); } catch (e) {}
+        try { if (typeof expEstimate === "function") expEstimate(); } catch (e) {}
+        try { if (typeof expRefreshResearchHub === "function") expRefreshResearchHub(); } catch (e) {}
+      }
+
       if (name === "history") {
         refreshHistory().catch(() => {});
         if (window.__historyScrollY != null) {
@@ -5057,13 +5095,71 @@ XG:CROSS(MA5,MA10);</textarea>
         lab.classList.toggle("on", !!(inp && inp.checked));
       });
     }
+    
+    function renderExpRulePicker() {
+      const box = document.getElementById("expRulePicker");
+      if (!box) return;
+      const rules = (typeof rulesCache !== "undefined" && rulesCache) ? rulesCache : [];
+      if (!rules.length) {
+        box.innerHTML = "<div class='exp-empty'>规则列表为空，请点「刷新规则列表」或先在系统中导入/创建规则。</div>";
+        return;
+      }
+      box.innerHTML = "";
+      rules.forEach((r) => {
+        if (r.hidden || r.archived) return;
+        // skip pure bagua marker if desired — still show but badge
+        const div = document.createElement("div");
+        const on = typeof selected !== "undefined" && selected && selected.has(r.id);
+        div.className = "exp-rule-item" + (on ? " on" : "");
+        const bt = r.backtestable ? '<span class="badge ok">可回测</span>' : '<span class="badge warn">不可回测</span>';
+        const isBagua = (r.id === "bagua_ohlc") || (String(r.id || "").indexOf("bagua") >= 0);
+        div.innerHTML =
+          '<input type="checkbox" ' + (on ? "checked" : "") + ' data-exp-rule-id="' + String(r.id).replace(/"/g, "") + '" />' +
+          '<div style="min-width:0;flex:1">' +
+          '<div class="nm">' + String(r.name || r.id).replace(/</g, "&lt;") + " " + bt +
+          (isBagua ? ' <span class="badge">标注</span>' : "") + "</div>" +
+          '<div class="sub">' + String(r.id || "").replace(/</g, "&lt;") +
+          (r.compile_status ? " · " + r.compile_status : "") + "</div></div>";
+        const toggle = () => {
+          if (typeof selected === "undefined" || !selected) return;
+          const id = r.id;
+          if (selected.has(id)) selected.delete(id);
+          else selected.add(id);
+          if (typeof renderRules === "function") renderRules();
+          renderExpRulePicker();
+          if (typeof updateSelectedLabel === "function") updateSelectedLabel();
+          else {
+            try { expSyncRuleBox(); expEstimate(); } catch (e) {}
+          }
+        };
+        div.addEventListener("click", (ev) => {
+          if (ev.target && ev.target.tagName === "INPUT") return;
+          toggle();
+        });
+        const cb = div.querySelector("input");
+        if (cb) {
+          cb.addEventListener("change", (ev) => {
+            ev.stopPropagation();
+            if (typeof selected === "undefined" || !selected) return;
+            if (cb.checked) selected.add(r.id);
+            else selected.delete(r.id);
+            if (typeof renderRules === "function") renderRules();
+            renderExpRulePicker();
+            if (typeof updateSelectedLabel === "function") updateSelectedLabel();
+          });
+          cb.addEventListener("click", (ev) => ev.stopPropagation());
+        }
+        box.appendChild(div);
+      });
+    }
+
     function expSyncRuleBox() {
       const box = document.getElementById("expRuleBox");
       if (!box) return;
       const labels = _expRuleLabels();
       if (!labels.length) {
         box.className = "exp-rule-box warn";
-        box.innerHTML = "尚未选择规则 — 请点击下方「去选规则」，在<strong>左侧列表</strong>勾选一条可回测指标（不要只勾八卦OHLC）。";
+        box.innerHTML = "尚未选择规则 — 请在下方规则列表中勾选<strong>可回测选股指标</strong>（不要只勾八卦OHLC）。";
         return;
       }
       box.className = "exp-rule-box";
@@ -5071,7 +5167,7 @@ XG:CROSS(MA5,MA10);</textarea>
         // escape minimal
         return String(x).replace(/</g, "&lt;");
       }).join("、") + "</strong>" +
-        "<div class='sub' style='margin-top:0.25rem'>实验会对以上规则分别做「卦象 × 日程」组合。</div>";
+        "<div class='sub' style='margin-top:0.25rem'>已选 " + labels.length + " 条 · 实验会对以上规则分别做「卦象 × 日程/参数轴」组合。</div>";
     }
     let __expMode = "template"; // template | free_axes
 
@@ -5945,9 +6041,24 @@ XG:CROSS(MA5,MA10);</textarea>
       });
       try { expRefreshResearchHub(); } catch (e) {}
       document.getElementById("btnExpGoNew")?.addEventListener("click", () => switchBtPage("new"));
-      document.getElementById("btnExpRefreshRules")?.addEventListener("click", () => {
+      document.getElementById("btnExpRefreshRules")?.addEventListener("click", async () => {
+        try { if (typeof loadRules === "function") await loadRules(); } catch (e) {}
+        renderExpRulePicker();
         expSyncRuleBox();
         expEstimate();
+      });
+      document.getElementById("btnExpClearRules")?.addEventListener("click", () => {
+        if (typeof selected !== "undefined" && selected) selected.clear();
+        if (typeof renderRules === "function") renderRules();
+        renderExpRulePicker();
+        expSyncRuleBox();
+        expEstimate();
+      });
+      document.getElementById("btnExpGoNew")?.addEventListener("click", () => {
+        // open create rule panel on 新建回测 without losing selection
+        switchBtPage("new");
+        const cp = document.getElementById("createPanel");
+        if (cp) cp.style.display = "";
       });
       document.querySelectorAll(".exp-gua, .exp-wd, .exp-sig-wd, .exp-buy, .exp-sell, .exp-sl, .exp-tp").forEach((el) => {
         el.addEventListener("change", () => {
