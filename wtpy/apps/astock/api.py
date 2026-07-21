@@ -14,7 +14,14 @@ from .config import AStockConfig, get_default_config
 from .service.backtest import BacktestRequest, BacktestService
 from .service.jobs import JobStore
 from .service.rules import RuleService
-from .service.runs import list_runs, load_run_summary, read_artifact, delete_run
+from .service.runs import (
+    compare_runs,
+    list_runs,
+    load_equity_curve,
+    load_run_summary,
+    read_artifact,
+    delete_run,
+)
 from .forecast.service import ForecastService
 
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
@@ -305,6 +312,28 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             return load_run_summary(cfg, run_id)
         except FileNotFoundError:
             raise HTTPException(404, "run not found") from None
+
+    @app.get("/api/v1/backtests/{run_id}/equity")
+    def api_run_equity(
+        run_id: str, max_points: int = Query(4000, ge=50, le=20000)
+    ) -> dict:
+        try:
+            points = load_equity_curve(cfg, run_id, max_points=max_points)
+        except FileNotFoundError:
+            raise HTTPException(404, "run not found") from None
+        return {"run_id": run_id, "points": points, "n": len(points)}
+
+    @app.post("/api/v1/runs/compare")
+    def api_compare_runs(payload: Dict[str, Any] = Body(...)) -> dict:
+        raw = payload.get("run_ids") if isinstance(payload, dict) else None
+        if not isinstance(raw, list):
+            raise HTTPException(400, "run_ids list required")
+        try:
+            return compare_runs(cfg, [str(x) for x in raw])
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(404, str(e)) from e
 
     @app.get("/api/v1/backtests/{run_id}/artifacts/{name}")
     def api_artifact(run_id: str, name: str):

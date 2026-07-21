@@ -510,6 +510,30 @@
     }
     #equityChart { display: none; width: 100%; max-width: 100%; }
     #equityChart.visible { display: block; }
+    #ddChart { display: none; width: 100%; max-width: 100%; margin-top: 0.75rem; }
+    #ddChart.visible { display: block; }
+    .compare-panel {
+      margin-top: 1rem; padding: 0.85rem 1rem;
+      background: var(--card, #121820);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .compare-panel h3 { margin: 0 0 0.55rem; font-size: 1rem; }
+    .compare-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .compare-table th, .compare-table td {
+      border: 1px solid var(--border); padding: 0.35rem 0.45rem; text-align: left; vertical-align: top;
+    }
+    .compare-table th { background: rgba(61,139,253,0.12); color: var(--text); position: sticky; top: 0; }
+    .compare-table td.diff { background: rgba(255, 193, 7, 0.12); }
+    .compare-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .compare-wrap { overflow: auto; max-height: 70vh; }
+    .compare-hint { color: var(--muted); font-size: 0.8rem; margin: 0.35rem 0 0.6rem; }
+    #btnCompareSelected:disabled { opacity: 0.45; cursor: not-allowed; }
+    .equity-stats {
+      display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem;
+      font-size: 0.82rem; color: var(--muted); margin-bottom: 0.45rem;
+    }
+    .equity-stats b { color: var(--text); }
     #resultJsonWrap { display: none; margin-top: 0.75rem; }
     #resultJsonWrap.open { display: block; }
     .history-table tr { cursor: pointer; }
@@ -1586,12 +1610,21 @@ XG:CROSS(MA5,MA10);</textarea>
             <button type="button" class="secondary" id="btnLoadRuns">刷新</button>
             <button type="button" class="secondary" id="btnHistSelectAll">全选</button>
             <button type="button" class="secondary" id="btnHistSelectNone">取消全选</button>
+            <button type="button" class="secondary" id="btnCompareSelected" disabled title="勾选 2～10 条历史任务后对比">对比所选 (2～10)</button>
             <button type="button" class="secondary btn-del-batch" id="btnDeleteSelected">删除所选</button>
             <button type="button" class="secondary" id="btnClearHistory" title="删除当前列表全部记录及结果文件">全部删除</button>
             <span class="sel-info" id="histSelInfo">已选 0 条</span>
             <span class="hist-count" id="histCount">共 0 条</span>
           </div>
           <div id="history" class="history-empty">点击「历史任务」页签加载</div>
+          <div class="compare-panel" id="comparePanel" style="display:none">
+            <h3>多任务对比 <span class="sub" id="compareCount"></span></h3>
+            <p class="compare-hint">并列表格对比参数差异与核心指标。参数行高亮表示各 run 取值不同（含信号星期、买卖星期、session、卦象）。</p>
+            <div class="compare-wrap" id="compareBody"></div>
+            <div class="actions" style="margin-top:0.55rem">
+              <button type="button" class="secondary" id="btnCloseCompare">关闭对比</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1627,6 +1660,7 @@ XG:CROSS(MA5,MA10);</textarea>
             <button type="button" class="detail-tab" data-pane="equity">净值与回撤</button>
             <button type="button" class="detail-tab" data-pane="trades">交易统计</button>
             <button type="button" class="detail-tab" data-pane="settings">回测设置</button>
+            <button type="button" class="detail-tab" data-pane="gua">卦象条件</button>
             <button type="button" class="detail-tab" data-pane="advanced">高级信息</button>
           </div>
           <div class="detail-pane active" id="pane-overview">
@@ -1634,7 +1668,9 @@ XG:CROSS(MA5,MA10);</textarea>
             <div class="detail-kv" id="resultKv" style="margin-top:0.75rem"></div>
           </div>
           <div class="detail-pane" id="pane-equity">
+            <div class="equity-stats" id="equityStats"></div>
             <canvas id="equityChart" height="220"></canvas>
+            <canvas id="ddChart" height="160"></canvas>
             <p class="sub" id="equityNote" style="margin-top:0.5rem"></p>
           </div>
           <div class="detail-pane" id="pane-trades">
@@ -1642,6 +1678,9 @@ XG:CROSS(MA5,MA10);</textarea>
           </div>
           <div class="detail-pane" id="pane-settings">
             <div class="detail-kv" id="settingsKv"></div>
+          </div>
+          <div class="detail-pane" id="pane-gua">
+            <div id="guaDetailBlock" class="gua-detail-block">—</div>
           </div>
           <div class="detail-pane" id="pane-advanced">
             <div class="detail-kv" id="advancedKv"></div>
@@ -1655,7 +1694,6 @@ XG:CROSS(MA5,MA10);</textarea>
         </div>
       </div>
 </section>
-  <div class="card" id="guaDetailCard" style="display:none;margin:1rem 1.5rem"><h2>卦象条件</h2><div id="guaDetailBlock">—</div></div>
 </main>
 
   <main id="viewForecast" style="display:none;grid-template-columns:320px 1fr">
@@ -2103,25 +2141,70 @@ XG:CROSS(MA5,MA10);</textarea>
       syncPoolUI();
     }
 
-    function drawEquity(points) {
-      const canvas = document.getElementById("equityChart");
+    function _seriesToDrawdown(points) {
+      const out = [];
+      let peak = null;
+      (points || []).forEach((p) => {
+        const eq = Number(p.equity);
+        if (!Number.isFinite(eq)) return;
+        if (peak == null || eq > peak) peak = eq;
+        const dd = peak > 0 ? (eq / peak - 1) : 0;
+        out.push({ date: p.date, equity: eq, drawdown: dd });
+      });
+      return out;
+    }
+    function _drawLineSeries(canvasId, series, yKey, color, opts) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
       const ctx = canvas.getContext("2d");
-      const w = canvas.width = canvas.clientWidth * devicePixelRatio;
-      const h = canvas.height = 200 * devicePixelRatio;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.width = Math.max(320, canvas.clientWidth || 640) * dpr;
+      const h = canvas.height = ((opts && opts.height) || 200) * dpr;
       ctx.clearRect(0, 0, w, h);
-      if (!points || points.length < 2) return;
-      const ys = points.map(p => p.equity);
-      const min = Math.min(...ys), max = Math.max(...ys);
-      const pad = 10 * devicePixelRatio;
-      ctx.strokeStyle = "#3d8bfd";
-      ctx.lineWidth = 2 * devicePixelRatio;
+      if (!series || series.length < 2) return;
+      const ys = series.map((p) => Number(p[yKey]));
+      let min = Math.min.apply(null, ys), max = Math.max.apply(null, ys);
+      if (min === max) { min -= 1; max += 1; }
+      const pad = 12 * dpr;
+      if (opts && opts.zeroLine) {
+        const zy = h - pad - ((0 - min) / (max - min || 1)) * (h - 2 * pad);
+        ctx.strokeStyle = "rgba(255,255,255,0.15)";
+        ctx.lineWidth = 1 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(pad, zy);
+        ctx.lineTo(w - pad, zy);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = color || "#3d8bfd";
+      ctx.lineWidth = 2 * dpr;
       ctx.beginPath();
-      points.forEach((p, i) => {
-        const x = pad + (i / (points.length - 1)) * (w - 2 * pad);
-        const y = h - pad - ((p.equity - min) / (max - min || 1)) * (h - 2 * pad);
+      series.forEach((p, i) => {
+        const x = pad + (i / (series.length - 1)) * (w - 2 * pad);
+        const y = h - pad - ((Number(p[yKey]) - min) / (max - min || 1)) * (h - 2 * pad);
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
       ctx.stroke();
+    }
+    function drawEquity(points) {
+      const series = _seriesToDrawdown(points);
+      _drawLineSeries("equityChart", series, "equity", "#3d8bfd", { height: 200 });
+      _drawLineSeries("ddChart", series, "drawdown", "#f31260", { height: 150, zeroLine: true });
+      const stats = document.getElementById("equityStats");
+      if (stats && series.length) {
+        const first = series[0].equity, last = series[series.length - 1].equity;
+        const peak = Math.max.apply(null, series.map((p) => p.equity));
+        const mdd = Math.min.apply(null, series.map((p) => p.drawdown));
+        const ret = first ? (last / first - 1) : null;
+        stats.innerHTML =
+          "<span>起点权益 <b>" + formatNumber(first, 2) + "</b></span>" +
+          "<span>终点权益 <b>" + formatNumber(last, 2) + "</b></span>" +
+          "<span>峰值 <b>" + formatNumber(peak, 2) + "</b></span>" +
+          "<span>曲线收益 <b>" + (ret != null ? formatPercent(ret) : "—") + "</b></span>" +
+          "<span>曲线最大回撤 <b>" + (Number.isFinite(mdd) ? formatPercent(Math.abs(mdd)) : "—") + "</b></span>" +
+          "<span>点数 <b>" + series.length + "</b></span>";
+      } else if (stats) {
+        stats.innerHTML = "";
+      }
     }
 
     
@@ -2187,6 +2270,17 @@ XG:CROSS(MA5,MA10);</textarea>
           summary = { ...summary, ...detail, run_id: runId, metrics };
         } catch (e) {
           console.warn("加载回测详情失败", e);
+        }
+      }
+      // Prefer equity.csv via dedicated API (run_meta no longer embeds full curve)
+      if (runId && (!equity || !equity.length)) {
+        try {
+          const eqRes = await api("/api/v1/backtests/" + encodeURIComponent(runId) + "/equity?max_points=4000");
+          if (eqRes && Array.isArray(eqRes.points) && eqRes.points.length) {
+            equity = eqRes.points;
+          }
+        } catch (e) {
+          console.warn("加载权益曲线失败", e);
         }
       }
 
@@ -2255,39 +2349,52 @@ XG:CROSS(MA5,MA10);</textarea>
       renderTradeStats(metrics);
       renderSettingsKv(summary, repro, metrics, runId);
       renderAdvancedKv(summary, detail, artifacts, runId, metrics);
+      try { renderGuaDetailSection(summary, repro); } catch (e) { console.warn(e); }
 
       const kv = document.getElementById("resultKv");
       if (kv) {
         const inds = summary.indicator_names || repro.indicator_ids || summary.indicator_ids || [];
         const indText = Array.isArray(inds) ? inds.join("、") : String(inds || "—");
+        const sch0 = resolveTradeSchedule(summary, metrics, summary, repro);
+        const swd0 = summary.signal_weekdays || repro.signal_weekdays || [];
+        const swdLab0 = (Array.isArray(swd0) && swd0.length)
+          ? swd0.map((d) => wdName(Number(d))).join("、")
+          : "不限制";
         const rows = [
           ["策略名称", title],
           ["状态", statusLabel(summary.status || detail.status)],
           ["规则", indText],
           ["周期", period],
-          ["持有周期", hold],
-          ["买入延迟", lag],
-          ["买入时点", resolveTradeSchedule(summary, metrics, summary, repro).buyLabel],
-          ["卖出时点", resolveTradeSchedule(summary, metrics, summary, repro).sellLabel + "（到期）"],
+          ["信号星期", swdLab0],
+          ["买入时点", sch0.buyLabel],
+          ["卖出时点", sch0.sellLabel + "（到期）"],
           ["资金模式", modeText],
           ["区间", range],
         ];
+        if (sch0.buyWeekday == null && sch0.exitWeekday == null) {
+          rows.splice(5, 0, ["entry_lag / hold", (lag != null ? lag : "—") + " / " + (hold != null ? hold : "—")]);
+        }
         kv.innerHTML = rows.map(([k, v]) => "<div class='k'>" + k + "</div><div class='v'>" + (v == null || v === "" ? "—" : v) + "</div>").join("");
       }
 
       const chart = document.getElementById("equityChart");
       const note = document.getElementById("equityNote");
+      const dd = document.getElementById("ddChart");
       if (equity && equity.length) {
         if (chart) chart.classList.add("visible");
+        if (dd) dd.classList.add("visible");
         drawEquity(equity);
         if (note) {
           note.textContent = per
-            ? "净值曲线来自虚拟账户合计权益（非正式等权标准化合成）。"
-            : "组合账户权益曲线。";
+            ? "净值与回撤：基于虚拟账户合计权益（非正式等权标准化合成）。上图权益、下图回撤。"
+            : "净值与回撤：组合账户权益曲线。上图权益、下图从峰值回撤。";
         }
-      } else if (chart) {
-        chart.classList.remove("visible");
-        if (note) note.textContent = "无权益曲线数据";
+      } else {
+        if (chart) chart.classList.remove("visible");
+        if (dd) dd.classList.remove("visible");
+        const stats = document.getElementById("equityStats");
+        if (stats) stats.innerHTML = "";
+        if (note) note.textContent = "无权益曲线数据（缺少 equity.csv 或点数不足）";
       }
 
       const pre = document.getElementById("resultJson");
@@ -2936,11 +3043,179 @@ XG:CROSS(MA5,MA10);</textarea>
 
     function updateHistSelInfo() {
       const el = document.getElementById("histSelInfo");
-      if (el) el.textContent = "已选 " + selectedRuns.size + " 条";
+      const n = selectedRuns.size;
+      if (el) el.textContent = "已选 " + n + " 条";
+      const btn = document.getElementById("btnCompareSelected");
+      if (btn) {
+        const ok = n >= 2 && n <= 10;
+        btn.disabled = !ok;
+        btn.title = ok
+          ? ("对比已选 " + n + " 条任务")
+          : "请勾选 2～10 条历史任务后再对比";
+      }
     }
 
     function getCheckedRunIds() {
       return Array.from(selectedRuns);
+    }
+
+    function _fmtCompareVal(v, key) {
+      if (v == null || v === "") return "—";
+      if (Array.isArray(v)) {
+        if (!v.length) return "—";
+        if (key === "signal_weekdays" || key === "buy_weekday" || key === "exit_weekday") {
+          const map = {1:"一",2:"二",3:"三",4:"四",5:"五",6:"六",7:"日"};
+          if (key !== "signal_weekdays") return "周" + (map[Number(v)] || v);
+          return v.map((d) => "周" + (map[Number(d)] || d)).join("、");
+        }
+        return v.join(", ");
+      }
+      if (key === "buy_weekday" || key === "exit_weekday") {
+        const map = {1:"一",2:"二",3:"三",4:"四",5:"五",6:"六",7:"日"};
+        return "周" + (map[Number(v)] || v);
+      }
+      if (typeof v === "object") return JSON.stringify(v);
+      return String(v);
+    }
+
+    function _fmtCompareMetric(key, v) {
+      if (v == null || v === "") return "—";
+      const pctKeys = {
+        total_return:1, mean_symbol_return:1, annual_return:1, max_drawdown:1, win_rate:1, cost_impact:1
+      };
+      if (pctKeys[key]) {
+        try { return formatPercent(Number(v)); } catch (e) { return String(v); }
+      }
+      if (key === "n_round_trips" || key === "n_buys" || key === "n_sells") {
+        return formatTradeCount({ n_round_trips: v }) === "—" ? String(v) : String(v);
+      }
+      try { return formatNumber(Number(v), key === "final_equity" || key === "cost_total" ? 2 : 4); }
+      catch (e) { return String(v); }
+    }
+
+    function renderCompareResult(data) {
+      const panel = document.getElementById("comparePanel");
+      const body = document.getElementById("compareBody");
+      const countEl = document.getElementById("compareCount");
+      if (!panel || !body) return;
+      const runs = (data && data.runs) || [];
+      if (countEl) countEl.textContent = "（" + runs.length + " 条）";
+      if (!runs.length) {
+        body.innerHTML = "<div class='sub'>无对比数据</div>";
+        panel.style.display = "block";
+        return;
+      }
+      const titles = runs.map((r) => {
+        const t = (r.title || r.run_id || "").toString();
+        return t.length > 28 ? t.slice(0, 26) + "…" : t;
+      });
+      const PARAM_LABELS = {
+        indicator_ids: "策略/指标",
+        period: "周期",
+        account_mode: "资金模式",
+        schedule_mode: "日程模式",
+        signal_weekdays: "信号星期",
+        buy_weekday: "买入星期",
+        exit_weekday: "平仓星期",
+        buy_on: "买入时点",
+        sell_on: "卖出时点",
+        entry_lag: "entry_lag",
+        hold: "hold",
+        start: "开始",
+        end: "结束",
+        gua_short: "卦象",
+        stop_loss: "止损",
+        take_profit: "止盈",
+      };
+      const METRIC_LABELS = {
+        total_return: "组合总收益",
+        mean_symbol_return: "单票平均收益",
+        annual_return: "年化收益",
+        max_drawdown: "最大回撤",
+        sharpe: "夏普",
+        win_rate: "胜率",
+        payoff_ratio: "盈亏比",
+        profit_factor: "盈利因子",
+        n_round_trips: "已平仓交易",
+        cost_total: "总费用",
+        final_equity: "期末权益",
+      };
+      let html = "";
+      // metrics table
+      html += "<h4 style='margin:0.4rem 0;font-size:0.9rem'>核心指标</h4>";
+      html += "<table class='compare-table'><thead><tr><th>指标</th>";
+      titles.forEach((tt, i) => {
+        html += "<th title='" + escAttr(runs[i].run_id || "") + "'>" + escAttr(tt) + "</th>";
+      });
+      html += "</tr></thead><tbody>";
+      (data.metrics_table || []).forEach((row) => {
+        const lab = METRIC_LABELS[row.key] || row.key;
+        html += "<tr><td>" + escAttr(lab) + "</td>";
+        (row.values || []).forEach((v) => {
+          html += "<td class='num'>" + escAttr(_fmtCompareMetric(row.key, v)) + "</td>";
+        });
+        html += "</tr>";
+      });
+      html += "</tbody></table>";
+      // param diffs
+      html += "<h4 style='margin:0.85rem 0 0.4rem;font-size:0.9rem'>参数差异（仅展示不一致项）</h4>";
+      const diffs = data.param_diffs || [];
+      if (!diffs.length) {
+        html += "<div class='sub'>所选任务在关键参数字段上完全一致。</div>";
+      } else {
+        html += "<table class='compare-table'><thead><tr><th>参数</th>";
+        titles.forEach((tt) => { html += "<th>" + escAttr(tt) + "</th>"; });
+        html += "</tr></thead><tbody>";
+        diffs.forEach((row) => {
+          const lab = PARAM_LABELS[row.key] || row.key;
+          html += "<tr><td>" + escAttr(lab) + "</td>";
+          (row.values || []).forEach((v) => {
+            html += "<td class='diff'>" + escAttr(_fmtCompareVal(v, row.key)) + "</td>";
+          });
+          html += "</tr>";
+        });
+        html += "</tbody></table>";
+      }
+      // full param snapshot always available collapsed
+      html += "<details style='margin-top:0.75rem'><summary style='cursor:pointer;color:var(--muted);font-size:0.82rem'>全部参数快照</summary>";
+      html += "<table class='compare-table' style='margin-top:0.4rem'><thead><tr><th>参数</th>";
+      titles.forEach((tt) => { html += "<th>" + escAttr(tt) + "</th>"; });
+      html += "</tr></thead><tbody>";
+      Object.keys(PARAM_LABELS).forEach((key) => {
+        const vals = runs.map((r) => (r.params || {})[key]);
+        const same = vals.every((x) => JSON.stringify(x) === JSON.stringify(vals[0]));
+        html += "<tr><td>" + escAttr(PARAM_LABELS[key]) + "</td>";
+        vals.forEach((v) => {
+          html += "<td class='" + (same ? "" : "diff") + "'>" + escAttr(_fmtCompareVal(v, key)) + "</td>";
+        });
+        html += "</tr>";
+      });
+      html += "</tbody></table></details>";
+      body.innerHTML = html;
+      panel.style.display = "block";
+      try { panel.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (e) {}
+    }
+
+    async function compareSelectedRuns() {
+      const ids = getCheckedRunIds();
+      if (ids.length < 2 || ids.length > 10) {
+        alert("请勾选 2～10 条历史任务再对比（当前 " + ids.length + " 条）");
+        return;
+      }
+      const body = document.getElementById("compareBody");
+      const panel = document.getElementById("comparePanel");
+      if (panel) panel.style.display = "block";
+      if (body) body.innerHTML = "<div class='sub'>加载对比中…</div>";
+      try {
+        const data = await api("/api/v1/runs/compare", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ run_ids: ids }),
+        });
+        renderCompareResult(data);
+      } catch (e) {
+        if (body) body.innerHTML = "<div class='sub' style='color:var(--warn)'>对比失败：" + escAttr(e.message || String(e)) + "</div>";
+      }
     }
 
     async function deleteRunsByIds(ids) {
@@ -4042,6 +4317,14 @@ XG:CROSS(MA5,MA10);</textarea>
     }
     bindBacktestNav();
 
+    document.getElementById("btnCompareSelected")?.addEventListener("click", () => {
+      compareSelectedRuns();
+    });
+    document.getElementById("btnCloseCompare")?.addEventListener("click", () => {
+      const panel = document.getElementById("comparePanel");
+      if (panel) panel.style.display = "none";
+    });
+    try { updateHistSelInfo(); } catch (e) {}
 
     // 默认停留在新建回测
     switchBtPage("new");
