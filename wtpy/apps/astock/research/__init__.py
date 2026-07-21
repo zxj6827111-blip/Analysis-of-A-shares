@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Research / experiment center building blocks (phase-1+)."""
 
 from .constraints import filter_variants, summarize_rejections, validate_variant
@@ -34,6 +34,16 @@ from .filter_cache import filter_cache_key, get_or_compute_filtered
 from .fast_engine import run_fast_backtest
 from .executor import cached_signal_pipeline, run_engine
 from .artifacts import apply_artifact_policy, normalize_artifact_level
+from .db_backend import (
+    DatabaseBackend,
+    PostgresDatabaseBackend,
+    SqliteDatabaseBackend,
+    get_database_backend,
+)
+from .queue_backend import MemoryQueueBackend, QueueBackend, SqliteQueueBackend
+from .trial_store import TrialStore
+from .worker import ResearchWorker
+from .platform import ResearchPlatform, default_platform_db_path
 
 __all__ = [
     # fingerprint
@@ -76,5 +86,16 @@ __all__ = [
     "run_engine",
     "normalize_artifact_level",
     "apply_artifact_policy",
+    # phase-4 task / trial platform
+    "DatabaseBackend",
+    "SqliteDatabaseBackend",
+    "PostgresDatabaseBackend",
+    "get_database_backend",
+    "QueueBackend",
+    "MemoryQueueBackend",
+    "SqliteQueueBackend",
+    "TrialStore",
+    "ResearchWorker",
+    "ResearchPlatform",
+    "default_platform_db_path",
 ]
-

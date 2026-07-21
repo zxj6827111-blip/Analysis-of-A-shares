@@ -549,6 +549,123 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             filename=path.name,
         )
 
+
+    # ----- Phase 4: research platform (queue / trials / workers) -----
+    def _research_platform():
+        from .research.platform import ResearchPlatform
+        root = Path(cfg.storage_root)
+        return ResearchPlatform(root)
+
+    @app.get("/api/v1/research/queue")
+    def api_research_queue_stats() -> dict:
+        plat = _research_platform()
+        try:
+            return {"ok": True, "stats": plat.queue_stats(), "workers": plat.worker_snapshot()}
+        finally:
+            plat.close()
+
+    @app.post("/api/v1/research/tasks")
+    def api_research_enqueue(payload: dict = Body(...)) -> dict:
+        plat = _research_platform()
+        try:
+            qname = str(payload.get("queue") or "research")
+            idem = payload.get("idempotency_key")
+            experiment_id = str(payload.get("experiment_id") or "adhoc")
+            params = payload.get("params")
+            if not isinstance(params, dict):
+                params = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+            if not params:
+                params = {
+                    k: v
+                    for k, v in (payload or {}).items()
+                    if k
+                    not in (
+                        "queue",
+                        "idempotency_key",
+                        "experiment_id",
+                        "max_attempts",
+                        "priority",
+                        "params",
+                        "payload",
+                    )
+                }
+            max_attempts = int(payload.get("max_attempts") or 3)
+            priority = int(payload.get("priority") or 0)
+            out = plat.enqueue_trial(
+                experiment_id=experiment_id,
+                params=params,
+                queue=qname,
+                idempotency_key=idem,
+                max_attempts=max_attempts,
+                priority=priority,
+            )
+            return {"ok": True, **out}
+        except Exception as e:
+            raise HTTPException(400, str(e)) from e
+        finally:
+            plat.close()
+
+    @app.get("/api/v1/research/tasks/{task_id}")
+    def api_research_task_get(task_id: str) -> dict:
+        plat = _research_platform()
+        try:
+            tsk = plat.queue.get(task_id)
+            if not tsk:
+                raise HTTPException(404, "task not found")
+            return {"ok": True, "task": tsk}
+        finally:
+            plat.close()
+
+    @app.post("/api/v1/research/tasks/{task_id}/cancel")
+    def api_research_task_cancel(task_id: str) -> dict:
+        plat = _research_platform()
+        try:
+            ok = plat.cancel_trial(task_id)
+            tsk = plat.queue.get(task_id)
+            return {"ok": bool(ok), "task": tsk}
+        finally:
+            plat.close()
+
+    @app.post("/api/v1/research/tasks/{task_id}/pause")
+    def api_research_task_pause(task_id: str) -> dict:
+        plat = _research_platform()
+        try:
+            ok = plat.pause(task_id)
+            return {"ok": bool(ok), "task": plat.queue.get(task_id)}
+        finally:
+            plat.close()
+
+    @app.post("/api/v1/research/tasks/{task_id}/resume")
+    def api_research_task_resume(task_id: str) -> dict:
+        plat = _research_platform()
+        try:
+            ok = plat.resume(task_id)
+            return {"ok": bool(ok), "task": plat.queue.get(task_id)}
+        finally:
+            plat.close()
+
+    @app.post("/api/v1/research/workers/reclaim")
+    def api_research_reclaim(payload: dict = Body(...)) -> dict:
+        plat = _research_platform()
+        try:
+            timeout = int((payload or {}).get("timeout_sec") or 60)
+            n = plat.reclaim_stale(timeout)
+            return {"ok": True, "reclaimed": n, "stats": plat.queue_stats()}
+        finally:
+            plat.close()
+
+    @app.get("/api/v1/research/trials/{trial_id}")
+    def api_research_trial_get(trial_id: str) -> dict:
+        plat = _research_platform()
+        try:
+            tr = plat.trial_store.get(trial_id)
+            if not tr:
+                raise HTTPException(404, "trial not found")
+            return {"ok": True, "trial": tr}
+        finally:
+            plat.close()
+
+
     # ----- Forecast module (isolated) -----
 
 
