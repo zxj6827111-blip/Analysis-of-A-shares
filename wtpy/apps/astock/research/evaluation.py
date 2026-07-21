@@ -118,7 +118,25 @@ def evaluate_trials(
                     ym[str(row["year"])] = row
             yearly_out[str(tid)] = ym
 
-    return {
+    # board/industry cross-section when per-symbol metrics provided
+    cross_section_out: Dict[str, Any] = {}
+    for r in normed:
+        tid = r.get("id") or r.get("trial_id") or r.get("param_hash") or "trial"
+        sm = r.get("symbol_metrics")
+        if isinstance(sm, list) and sm:
+            try:
+                from .cross_section import cross_section_summary
+
+                cross_section_out[str(tid)] = cross_section_summary(sm)
+            except Exception as e:  # noqa: BLE001
+                cross_section_out[str(tid)] = {"error": str(e)[:200]}
+    cross_section_agg = None
+    if len(cross_section_out) == 1:
+        cross_section_agg = next(iter(cross_section_out.values()))
+    elif cross_section_out:
+        cross_section_agg = {"by_trial": cross_section_out}
+
+    result: Dict[str, Any] = {
         "n_trials": len(normed),
         "ranking": ranking,
         "pareto": front,
@@ -132,6 +150,10 @@ def evaluate_trials(
         "regimes": regimes_out,
         "yearly": yearly_out,
     }
-
-
+    if cross_section_out:
+        result["cross_section"] = (
+            cross_section_agg if cross_section_agg is not None else cross_section_out
+        )
+        result["cross_section_by_trial"] = cross_section_out
+    return result
 __all__ = ["evaluate_trials"]

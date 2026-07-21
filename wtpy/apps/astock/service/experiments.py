@@ -1143,8 +1143,68 @@ def get_runner(cfg: Optional[AStockConfig] = None) -> ExperimentRunner:
         return _RUNNER
 
 
+def build_experiment_matrix_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalize experiment result rows for ``build_result_matrix``.
+
+    Extracts ``exit_weekday``, ``sell_on``, ``gua_key`` from params/_meta and
+    flattens metrics (``total_return``, ``max_drawdown``, ...) onto each row.
+    Rows missing required axes are skipped.
+    """
+    out: List[Dict[str, Any]] = []
+    for row in rows or []:
+        p = dict(row.get("params") or {})
+        meta = dict(p.get("_meta") or {})
+        m = dict(row.get("metrics") or {})
+
+        exit_wd = p.get("exit_weekday")
+        if exit_wd is None:
+            exit_wd = meta.get("exit_weekday")
+        sell_on = p.get("sell_on")
+        if sell_on is None:
+            sell_on = meta.get("sell_on")
+        gua_key = meta.get("gua_key")
+        if gua_key is None:
+            gua_key = p.get("gua_key")
+        if gua_key is None:
+            gua_key = "none"
+
+        if exit_wd is None or sell_on is None:
+            continue
+        try:
+            exit_wd_i = int(exit_wd)
+        except (TypeError, ValueError):
+            continue
+
+        flat: Dict[str, Any] = {
+            "exit_weekday": exit_wd_i,
+            "sell_on": str(sell_on),
+            "gua_key": str(gua_key),
+            "variant_id": row.get("variant_id"),
+            "status": row.get("status"),
+            "run_id": row.get("run_id"),
+            "param_hash": row.get("param_hash"),
+            "id": row.get("variant_id") or row.get("param_hash"),
+        }
+        for k, v in m.items():
+            flat[k] = v
+        # also expose nested metrics for evaluate_trials
+        flat["metrics"] = m
+        out.append(flat)
+    return out
+
+
+def _append_matrix_sheet(wb, sheet_title: str, matrix: Dict[str, Any]) -> None:
+    """Write one matrix table sheet: exit_weekday, sell_on, then gua columns."""
+    ws = wb.create_sheet(sheet_title)
+    cols = list(matrix.get("columns") or [])
+    headers = ["exit_weekday", "sell_on"] + cols
+    ws.append(headers)
+    for entry in matrix.get("table") or []:
+        ws.append([entry.get(h) for h in headers])
+
+
 def write_experiment_excel(cfg: AStockConfig, experiment_id: str, path=None):
-    """Write a simple results workbook for the experiment."""
+    """Write a results workbook for the experiment (summary + optional matrix/evaluate)."""
     from pathlib import Path
 
     try:
@@ -1152,7 +1212,10 @@ def write_experiment_excel(cfg: AStockConfig, experiment_id: str, path=None):
     except ImportError as e:
         raise RuntimeError("openpyxl required for experiment excel") from e
 
+    from ..research.matrix import build_result_matrix
+
     table = exp_db.experiment_results_table(cfg, experiment_id)
+    raw_rows = list(table.get("rows") or [])
     out = Path(path) if path else Path(cfg.output_root) / experiment_id / "experiment_summary.xlsx"
     out.parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
@@ -1176,7 +1239,7 @@ def write_experiment_excel(cfg: AStockConfig, experiment_id: str, path=None):
         "error",
     ]
     ws.append(headers)
-    for row in table.get("rows") or []:
+    for row in raw_rows:
         p = row.get("params") or {}
         meta = p.get("_meta") or {}
         m = row.get("metrics") or {}
@@ -1199,5 +1262,81 @@ def write_experiment_excel(cfg: AStockConfig, experiment_id: str, path=None):
                 row.get("error"),
             ]
         )
+
+    # Matrix sheet(s) when rows carry exit_weekday + sell_on + gua
+    matrix_rows = build_experiment_matrix_rows(raw_rows)
+    if matrix_rows:
+        m_ret = build_result_matrix(matrix_rows, metric_key="total_return")
+        if m_ret.get("table"):
+            _append_matrix_sheet(wb, "matrix", m_ret)
+        # Second sheet when max_drawdown is present on any row
+        if any(r.get("max_drawdown") is not None for r in matrix_rows):
+            m_dd = build_result_matrix(matrix_rows, metric_key="max_drawdown")
+            if m_dd.get("table"):
+                _append_matrix_sheet(wb, "matrix_max_drawdown", m_dd)
+
+    # Optional evaluate sheet from succeeded trials
+    succeeded = [r for r in matrix_rows if r.get("total_return") is not None]
+    status_ok = [
+        r
+        for r in matrix_rows
+        if str(r.get("status") or "").lower()
+        in ("succeeded", "success", "done", "ok", "completed")
+    ]
+    if len(status_ok) >= 2:
+        trial_src = status_ok
+    elif len(succeeded) >= 2:
+        trial_src = succeeded
+    else:
+        trial_src = []
+
+    if trial_src:
+        try:
+            from ..research.evaluation import evaluate_trials
+
+            ev = evaluate_trials(trial_src)
+            ranking = list(ev.get("ranking") or [])
+            if ranking:
+                ws_ev = wb.create_sheet("evaluate")
+                rank_headers = [
+                    "rank",
+                    "id",
+                    "composite",
+                    "total_return",
+                    "max_drawdown",
+                    "win_rate",
+                    "n_round_trips",
+                    "exit_weekday",
+                    "sell_on",
+                    "gua_key",
+                    "hard_ok",
+                ]
+                ws_ev.append(rank_headers)
+                for i, r in enumerate(ranking[:50], 1):
+                    tid = (
+                        r.get("id")
+                        or r.get("variant_id")
+                        or r.get("trial_id")
+                        or r.get("param_hash")
+                    )
+                    ws_ev.append(
+                        [
+                            i,
+                            tid,
+                            r.get("_composite") or r.get("composite"),
+                            r.get("total_return"),
+                            r.get("max_drawdown"),
+                            r.get("win_rate"),
+                            r.get("n_round_trips") or r.get("n_trades"),
+                            r.get("exit_weekday"),
+                            r.get("sell_on"),
+                            r.get("gua_key"),
+                            r.get("_hard_ok"),
+                        ]
+                    )
+        except Exception:
+            # evaluate is best-effort; summary/matrix still useful
+            pass
+
     wb.save(out)
     return out

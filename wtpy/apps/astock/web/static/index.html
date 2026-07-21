@@ -1791,7 +1791,18 @@ XG:CROSS(MA5,MA10);</textarea>
           </div>
         </div>
 
-        <div class="exp-split">
+        
+        <div class="exp-card" id="expResearchHub" style="margin-bottom:0.75rem">
+          <h3>研究平台</h3>
+          <p class="hint">队列与计划任务快照（GET /api/v1/research/queue · schedules）。</p>
+          <div class="exp-actions" style="margin-bottom:0.4rem;flex-wrap:wrap">
+            <button type="button" class="secondary" id="btnExpQueueRefresh">刷新队列</button>
+            <button type="button" class="secondary" id="btnExpReclaim">回收超时任务</button>
+          </div>
+          <div id="expQueueStats" class="sub" style="margin-bottom:0.35rem">队列：—</div>
+          <div id="expSchedulesBox" class="sub" style="max-height:8rem;overflow:auto">计划：—</div>
+        </div>
+<div class="exp-split">
           <div>
             <div class="exp-card">
               <h3><span class="n">1</span> 用哪条规则做实验？</h3>
@@ -1813,6 +1824,37 @@ XG:CROSS(MA5,MA10);</textarea>
                   <span><div class="t">最佳 3 爻</div><div class="d">只保留研究确认的 3 条爻</div></span></label>
                 <label class="exp-chip"><input type="checkbox" class="exp-gua" value="bull" />
                   <span><div class="t">偏多信号</div><div class="d">操作信号 = 新开仓 或 加仓</div></span></label>
+              </div>
+            </div>
+
+            <div class="exp-card" id="expRiskCard">
+              <h3><span class="n">2b</span> 止损 / 止盈轴（可多选）</h3>
+              <p class="hint">与卦象、日程一起做笛卡尔积。默认「无」= 不启用风控退出。</p>
+              <div style="margin-bottom:0.45rem">
+                <div class="sub" style="margin-bottom:0.25rem">止损 stop_loss_list</div>
+                <div class="exp-chips" id="expSlChips">
+                  <label class="exp-chip on"><input type="checkbox" class="exp-sl" value="null" checked />
+                    <span><div class="t">无</div><div class="d">不设止损</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sl" value="0.02" />
+                    <span><div class="t">2%</div><div class="d">0.02</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sl" value="0.03" />
+                    <span><div class="t">3%</div><div class="d">0.03</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sl" value="0.05" />
+                    <span><div class="t">5%</div><div class="d">0.05</div></span></label>
+                </div>
+              </div>
+              <div>
+                <div class="sub" style="margin-bottom:0.25rem">止盈 take_profit_list</div>
+                <div class="exp-chips" id="expTpChips">
+                  <label class="exp-chip on"><input type="checkbox" class="exp-tp" value="null" checked />
+                    <span><div class="t">无</div><div class="d">不设止盈</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-tp" value="0.05" />
+                    <span><div class="t">5%</div><div class="d">0.05</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-tp" value="0.08" />
+                    <span><div class="t">8%</div><div class="d">0.08</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-tp" value="0.10" />
+                    <span><div class="t">10%</div><div class="d">0.10</div></span></label>
+                </div>
               </div>
             </div>
 
@@ -1914,10 +1956,28 @@ XG:CROSS(MA5,MA10);</textarea>
               <p class="hint">进度与并列表。完成后可导出 Excel，也可点 run 编号去历史里打开详情。</p>
               <div class="exp-actions" style="margin-bottom:0.45rem">
                 <button type="button" class="secondary" id="btnExpRefresh">刷新列表</button>
+                <button type="button" class="secondary" id="btnExpEvaluate">评价分析</button>
                 <a class="secondary" id="btnExpExcel" href="#" style="display:none;padding:0.35rem 0.7rem;border-radius:6px;border:1px solid var(--border);text-decoration:none;color:inherit">下载当前实验 Excel</a>
               </div>
               <div id="expList"><div class="exp-empty">还没有实验。左侧配置好后点「开始实验」。</div></div>
               <div id="expResults" style="margin-top:0.65rem;overflow:auto;max-height:55vh"></div>
+              <div id="expEvalPanel" style="margin-top:0.75rem;display:none">
+                <h4 style="margin:0 0 0.4rem;font-size:0.95rem">评价中心（六视图）</h4>
+                <div class="detail-tabs" id="expEvalTabs" style="margin-bottom:0.45rem">
+                  <button type="button" class="detail-tab active" data-eval-pane="overview">总览</button>
+                  <button type="button" class="detail-tab" data-eval-pane="rank">参数排名</button>
+                  <button type="button" class="detail-tab" data-eval-pane="heat">热力图</button>
+                  <button type="button" class="detail-tab" data-eval-pane="gua">卦象增益</button>
+                  <button type="button" class="detail-tab" data-eval-pane="yearly">年度/阶段</button>
+                  <button type="button" class="detail-tab" data-eval-pane="stab">稳定区</button>
+                </div>
+                <div id="expEvalPane-overview" class="exp-eval-pane"></div>
+                <div id="expEvalPane-rank" class="exp-eval-pane" style="display:none;overflow:auto;max-height:40vh"></div>
+                <div id="expEvalPane-heat" class="exp-eval-pane" style="display:none;overflow:auto;max-height:40vh"></div>
+                <div id="expEvalPane-gua" class="exp-eval-pane" style="display:none;overflow:auto;max-height:40vh"></div>
+                <div id="expEvalPane-yearly" class="exp-eval-pane" style="display:none;overflow:auto;max-height:40vh"></div>
+                <div id="expEvalPane-stab" class="exp-eval-pane" style="display:none;overflow:auto;max-height:40vh"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -4958,6 +5018,18 @@ XG:CROSS(MA5,MA10);</textarea>
       });
       return labels;
     }
+        function _expPctList(sel) {
+      const raw = _expChecked(sel);
+      const out = [];
+      raw.forEach((v) => {
+        if (v === "null" || v === "" || v == null) out.push(null);
+        else {
+          const n = parseFloat(v);
+          if (!isNaN(n)) out.push(n);
+        }
+      });
+      return out.length ? out : [null];
+    }
     function _expChecked(sel) {
       return Array.from(document.querySelectorAll(sel)).filter((el) => el.checked).map((el) => el.value);
     }
@@ -5089,6 +5161,8 @@ XG:CROSS(MA5,MA10);</textarea>
         holiday_policy: "next_trading_day",
         name: ((document.getElementById("expName") || {}).value || "").trim() || undefined,
         preview_only: true,
+        stop_loss_list: _expPctList("#expSlChips .exp-sl, .exp-sl"),
+        take_profit_list: _expPctList("#expTpChips .exp-tp, .exp-tp"),
       };
       if (__expMode === "free_axes") {
         const axes = _expCollectFreeAxes();
@@ -5104,6 +5178,9 @@ XG:CROSS(MA5,MA10);</textarea>
     function _expLocalFormula(body) {
       const nR = (body.rule_ids || []).length;
       const nG = (body.gua_keys || []).length;
+      const nSl = Math.max(1, (body.stop_loss_list || [null]).length);
+      const nTp = Math.max(1, (body.take_profit_list || [null]).length);
+      const riskNote = " × 止损 " + nSl + " × 止盈 " + nTp;
       const guaNames = { none: "不加卦象", best3: "最佳3爻", bull: "偏多信号" };
       const gLab = (body.gua_keys || []).map((k) => guaNames[k] || k).join("、") || "—";
       const rLab = _expRuleLabels().join("、") || "（未选规则）";
@@ -5111,17 +5188,17 @@ XG:CROSS(MA5,MA10);</textarea>
         const nSig = (body.signal_weekdays_options || []).length || 1;
         const nBuy = (body.buy_options || []).length || 0;
         const nSell = (body.sell_options || []).length || 0;
-        const total = nR * nG * nSig * nBuy * nSell;
+        const total = nR * nG * nSig * nBuy * nSell * nSl * nTp;
         return {
           total,
           text:
             "【独立参数轴】规则 " + nR + "（" + rLab + "）× 卦象 " + nG + "（" + gLab + "）× 信号轴 " + nSig +
-            " × 买入 " + nBuy + " × 卖出 " + nSell + " ≈ <b>" + total + "</b> 组（服务端过滤后为准）" +
+            " × 买入 " + nBuy + " × 卖出 " + nSell + " ≈ <b>" + total + "</b>" + riskNote + " 组（服务端过滤后为准）" +
             "<div class='sub' style='margin-top:0.25rem'>演示池 2 只 · 日期用新建回测区间 · holiday_policy=next_trading_day</div>",
         };
       }
       const nW = (body.weekday_keys || []).length;
-      const total = nR * nG * nW;
+      const total = nR * nG * nW * nSl * nTp;
       const wdNames = {
         fri_signal_mon_buy_thu_exit: "研究常用日程",
         all_signal_tn12: "经典T+1/T+2",
@@ -5131,7 +5208,7 @@ XG:CROSS(MA5,MA10);</textarea>
       return {
         total,
         text:
-          "【模板】规则 " + nR + "（" + rLab + "）× 卦象 " + nG + "（" + gLab + "）× 日程 " + nW + "（" + wLab + "）= <b>" + total + "</b> 组" +
+          "【模板】规则 " + nR + "（" + rLab + "）× 卦象 " + nG + "（" + gLab + "）× 日程 " + nW + "（" + wLab + "）= <b>" + total + "</b>" + riskNote + " 组" +
           "<div class='sub' style='margin-top:0.25rem'>演示池 2 只 · 日期用新建回测区间</div>",
       };
     }
@@ -5479,6 +5556,261 @@ XG:CROSS(MA5,MA10);</textarea>
         } catch (e) {}
       }, 2500);
     }
+
+    function _expShowEvalPane(name) {
+      document.querySelectorAll("#expEvalTabs .detail-tab").forEach((b) => {
+        b.classList.toggle("active", b.getAttribute("data-eval-pane") === name);
+      });
+      document.querySelectorAll(".exp-eval-pane").forEach((el) => {
+        el.style.display = "none";
+      });
+      const pane = document.getElementById("expEvalPane-" + name);
+      if (pane) pane.style.display = "";
+    }
+    function _expRenderHeatmapTable(hm) {
+      if (!hm || !hm.matrix) return "<div class='exp-empty sub'>无热力图数据</div>";
+      const xs = hm.x_labels || [];
+      const ys = hm.y_labels || [];
+      const mat = hm.matrix || [];
+      let html = "<table class='exp-table'><thead><tr><th>" + escAttr(hm.y_key || "y") + "\\" + escAttr(hm.x_key || "x") + "</th>";
+      xs.forEach((x) => { html += "<th>" + escAttr(String(x)) + "</th>"; });
+      html += "</tr></thead><tbody>";
+      ys.forEach((y, yi) => {
+        html += "<tr><th>" + escAttr(String(y)) + "</th>";
+        const row = mat[yi] || [];
+        xs.forEach((_, xi) => {
+          const v = row[xi];
+          html += "<td class='num'>" + (v == null ? "—" : (typeof formatPercent === "function" && Math.abs(Number(v)) < 5 ? formatPercent(v) : escAttr(String(v)))) + "</td>";
+        });
+        html += "</tr>";
+      });
+      html += "</tbody></table>";
+      return html;
+    }
+    async function expRunEvaluate(experimentId) {
+      const panel = document.getElementById("expEvalPanel");
+      const st = document.getElementById("expStatus");
+      if (!experimentId) {
+        if (st) st.textContent = "请先选择/运行一个实验再评价分析。";
+        return;
+      }
+      try {
+        if (st) st.textContent = "评价分析中…";
+        const d = await api("/api/v1/experiments/" + encodeURIComponent(experimentId) + "/results");
+        const rows = d.rows || [];
+        let nOk = 0, nFail = 0, nSkip = 0;
+        const trials = [];
+        rows.forEach((row) => {
+          const status = row.status || "";
+          if (status === "succeeded" || status === "completed" || status === "done") nOk++;
+          else if (status === "failed") nFail++;
+          else if (status === "skipped") nSkip++;
+          if (!(status === "succeeded" || status === "completed" || status === "done")) return;
+          const p = row.params || {};
+          const meta = p._meta || {};
+          const m = row.metrics || {};
+          const trial = {
+            id: row.variant_id || row.run_id || meta.variant_id || ("v" + trials.length),
+            params: p,
+            metrics: m,
+            exit_weekday: p.exit_weekday != null ? p.exit_weekday : meta.exit_weekday,
+            sell_on: p.sell_on || meta.sell_on,
+            hold: p.hold,
+            gua_key: meta.gua_key || (p.with_bagua ? "best3" : "none"),
+            total_return: m.total_return,
+            max_drawdown: m.max_drawdown,
+            win_rate: m.win_rate,
+            n_trades: m.n_round_trips != null ? m.n_round_trips : m.n_trades,
+            trade_count: m.n_round_trips != null ? m.n_round_trips : m.n_trades,
+          };
+          if (m.yearly_metrics) trial.yearly_metrics = m.yearly_metrics;
+          trials.push(trial);
+        });
+        const ev = await api("/api/v1/research/evaluate", {
+          method: "POST",
+          body: JSON.stringify({ trials: trials, rank_mode: "composite" }),
+        });
+        if (panel) panel.style.display = "";
+        const ranking = ev.ranking || [];
+        const best = ranking[0] || null;
+        const bestComp = best && (best._composite != null ? best._composite : best.composite);
+        const bestRet = best && (best.total_return != null ? best.total_return : (best.metrics || {}).total_return);
+
+        const ov = document.getElementById("expEvalPane-overview");
+        if (ov) {
+          ov.innerHTML =
+            "<div class='exp-summary' style='margin:0'>" +
+            "<div><div class='sub'>试验数</div><div class='big'>" + rows.length + "</div></div>" +
+            "<div><div class='sub'>成功</div><div class='big'>" + nOk + "</div></div>" +
+            "<div><div class='sub'>失败</div><div class='big'>" + nFail + "</div></div>" +
+            "<div><div class='sub'>跳过</div><div class='big'>" + nSkip + "</div></div>" +
+            "</div>" +
+            "<div class='sub' style='margin-top:0.45rem'>评价 trials=" + (ev.n_trials != null ? ev.n_trials : trials.length) +
+            " · 最优 composite=" + (bestComp != null ? Number(bestComp).toFixed(4) : "—") +
+            " · total_return=" + (bestRet != null ? (typeof formatPercent === "function" ? formatPercent(bestRet) : bestRet) : "—") +
+            (best && best.id ? " · id=" + escAttr(String(best.id)) : "") +
+            "</div>";
+        }
+
+        const rk = document.getElementById("expEvalPane-rank");
+        if (rk) {
+          if (!ranking.length) {
+            rk.innerHTML = "<div class='exp-empty sub'>无排名（需成功结果行）</div>";
+          } else {
+            let html = "<table class='exp-table'><thead><tr><th>#</th><th>id</th><th>composite</th><th>总收益</th><th>最大回撤</th><th>胜率</th><th>卦象</th><th>exit</th><th>sell_on</th><th>硬过滤</th></tr></thead><tbody>";
+            ranking.slice(0, 100).forEach((r, i) => {
+              const ret = r.total_return != null ? r.total_return : (r.metrics || {}).total_return;
+              const mdd = r.max_drawdown != null ? r.max_drawdown : (r.metrics || {}).max_drawdown;
+              const wr = r.win_rate != null ? r.win_rate : (r.metrics || {}).win_rate;
+              const comp = r._composite != null ? r._composite : r.composite;
+              html +=
+                "<tr><td class='num'>" + (i + 1) + "</td>" +
+                "<td class='sub'>" + escAttr(String(r.id || "—")) + "</td>" +
+                "<td class='num'>" + (comp != null ? Number(comp).toFixed(4) : "—") + "</td>" +
+                "<td class='num'>" + (ret != null && typeof formatPercent === "function" ? formatPercent(ret) : "—") + "</td>" +
+                "<td class='num'>" + (mdd != null && typeof formatPercent === "function" ? formatPercent(Math.abs(Number(mdd))) : "—") + "</td>" +
+                "<td class='num'>" + (wr != null && typeof formatPercent === "function" ? formatPercent(wr) : "—") + "</td>" +
+                "<td>" + escAttr(String(r.gua_key != null ? r.gua_key : "—")) + "</td>" +
+                "<td>" + escAttr(String(r.exit_weekday != null ? r.exit_weekday : "—")) + "</td>" +
+                "<td>" + escAttr(String(r.sell_on != null ? r.sell_on : "—")) + "</td>" +
+                "<td>" + (r._hard_ok === false ? "<span class='warn'>否</span>" : "是") + "</td></tr>";
+            });
+            html += "</tbody></table>";
+            rk.innerHTML = html;
+          }
+        }
+
+        const ht = document.getElementById("expEvalPane-heat");
+        if (ht) {
+          const primary = (ev.heatmaps || {}).primary;
+          ht.innerHTML = primary
+            ? _expRenderHeatmapTable(primary)
+            : "<div class='exp-empty sub'>无 primary 热力图（需 exit_weekday × sell_on）</div>";
+        }
+
+        const gg = document.getElementById("expEvalPane-gua");
+        if (gg) {
+          const gains = ev.gua_gains || [];
+          if (!gains.length) {
+            gg.innerHTML = "<div class='exp-empty sub'>无卦象增益配对</div>";
+          } else {
+            let html = "<table class='exp-table'><thead><tr><th>#</th><th>tech</th><th>Δ收益</th><th>Δ回撤</th><th>Δ胜率</th><th>基线</th><th>对比</th></tr></thead><tbody>";
+            gains.slice(0, 80).forEach((g, i) => {
+              const dRet = g.delta_total_return != null ? g.delta_total_return : g.delta_return;
+              const dDd = g.delta_max_drawdown != null ? g.delta_max_drawdown : g.delta_drawdown;
+              const dWr = g.delta_win_rate;
+              html +=
+                "<tr><td class='num'>" + (i + 1) + "</td>" +
+                "<td class='sub'>" + escAttr(JSON.stringify(g.tech_key || g.tech || g.key || "").slice(0, 80)) + "</td>" +
+                "<td class='num'>" + (dRet != null && typeof formatPercent === "function" ? formatPercent(dRet) : escAttr(String(dRet != null ? dRet : "—"))) + "</td>" +
+                "<td class='num'>" + (dDd != null && typeof formatPercent === "function" ? formatPercent(dDd) : escAttr(String(dDd != null ? dDd : "—"))) + "</td>" +
+                "<td class='num'>" + (dWr != null && typeof formatPercent === "function" ? formatPercent(dWr) : escAttr(String(dWr != null ? dWr : "—"))) + "</td>" +
+                "<td class='sub'>" + escAttr(String(g.baseline_id || g.none_id || "—")) + "</td>" +
+                "<td class='sub'>" + escAttr(String(g.contrast_id || g.best3_id || "—")) + "</td></tr>";
+            });
+            html += "</tbody></table>";
+            gg.innerHTML = html;
+          }
+        }
+
+        const yy = document.getElementById("expEvalPane-yearly");
+        if (yy) {
+          const yearly = ev.yearly || {};
+          const regimes = ev.regimes || {};
+          const yKeys = Object.keys(yearly);
+          const rKeys = Object.keys(regimes);
+          if (!yKeys.length && !rKeys.length) {
+            yy.innerHTML = "<div class='exp-empty sub'>需 full 复测带 yearly_metrics</div>";
+          } else {
+            let html = "";
+            if (yKeys.length) {
+              html += "<div class='sub' style='margin-bottom:0.25rem'>yearly</div>";
+              html += "<pre class='sub' style='white-space:pre-wrap;max-height:16rem;overflow:auto'>" + escAttr(JSON.stringify(yearly, null, 2).slice(0, 8000)) + "</pre>";
+            }
+            if (rKeys.length) {
+              html += "<div class='sub' style='margin:0.45rem 0 0.25rem'>regimes 摘要</div>";
+              const summary = {};
+              rKeys.slice(0, 20).forEach((k) => {
+                const v = regimes[k];
+                summary[k] = v && v.by_regime ? v.by_regime : (v && v.error ? { error: v.error } : "…");
+              });
+              html += "<pre class='sub' style='white-space:pre-wrap;max-height:16rem;overflow:auto'>" + escAttr(JSON.stringify(summary, null, 2).slice(0, 8000)) + "</pre>";
+            }
+            yy.innerHTML = html;
+          }
+        }
+
+        const sb = document.getElementById("expEvalPane-stab");
+        if (sb) {
+          const stab = ev.stability || {};
+          const spike = ev.spike || {};
+          const flags = ev.flags || [];
+          sb.innerHTML =
+            "<div class='sub'>flags: " + escAttr((flags.length ? flags : ["—"]).join(", ")) + "</div>" +
+            "<div class='sub' style='margin-top:0.35rem'>stability.is_spike=" + escAttr(String(stab.is_spike)) +
+            " · mean_neighbor=" + escAttr(String(stab.mean_neighbor_metric != null ? stab.mean_neighbor_metric : stab.mean_neighbor || "—")) +
+            " · spike_risk=" + escAttr(String(spike.spike_risk)) + "</div>" +
+            "<pre class='sub' style='white-space:pre-wrap;max-height:14rem;overflow:auto;margin-top:0.35rem'>" +
+            escAttr(JSON.stringify({ stability: stab, spike: spike }, null, 2).slice(0, 6000)) + "</pre>";
+        }
+
+        _expShowEvalPane("overview");
+        if (st) st.textContent = "评价完成：trials=" + trials.length + " · flags=" + ((ev.flags || []).join(",") || "无");
+      } catch (e) {
+        if (st) st.textContent = "评价分析失败：" + (e.message || e);
+        if (panel) {
+          panel.style.display = "";
+          const ov = document.getElementById("expEvalPane-overview");
+          if (ov) ov.innerHTML = "<div class='exp-empty'>" + escAttr(e.message || String(e)) + "</div>";
+        }
+      }
+    }
+    async function expRefreshResearchHub() {
+      const statsEl = document.getElementById("expQueueStats");
+      const schedEl = document.getElementById("expSchedulesBox");
+      try {
+        const q = await api("/api/v1/research/queue");
+        const s = q.stats || q || {};
+        const w = q.workers || [];
+        if (statsEl) {
+          statsEl.innerHTML =
+            "队列：pending=" + escAttr(String(s.pending != null ? s.pending : s.queued != null ? s.queued : "—")) +
+            " · running=" + escAttr(String(s.running != null ? s.running : "—")) +
+            " · done=" + escAttr(String(s.done != null ? s.done : s.completed != null ? s.completed : "—")) +
+            " · failed=" + escAttr(String(s.failed != null ? s.failed : "—")) +
+            " · workers=" + (Array.isArray(w) ? w.length : escAttr(String(w)));
+        }
+      } catch (e) {
+        if (statsEl) statsEl.textContent = "队列：加载失败 " + (e.message || e);
+      }
+      try {
+        const sc = await api("/api/v1/research/schedules");
+        const items = sc.schedules || [];
+        if (schedEl) {
+          if (!items.length) {
+            schedEl.textContent = "计划：无";
+          } else {
+            schedEl.innerHTML = "计划：" + items.map((it) => escAttr(it.name || it.id || JSON.stringify(it).slice(0, 40))).join(" · ");
+          }
+        }
+      } catch (e) {
+        if (schedEl) schedEl.textContent = "计划：加载失败 " + (e.message || e);
+      }
+    }
+    async function expReclaimStale() {
+      const st = document.getElementById("expStatus");
+      try {
+        const d = await api("/api/v1/research/workers/reclaim", {
+          method: "POST",
+          body: JSON.stringify({ timeout: 600 }),
+        });
+        if (st) st.textContent = "回收超时任务：" + (d.reclaimed != null ? d.reclaimed : 0) + " 个";
+        await expRefreshResearchHub();
+      } catch (e) {
+        if (st) st.textContent = "回收失败：" + (e.message || e);
+      }
+    }
+
     function _bindExpUi() {
       document.getElementById("btnExpEstimate")?.addEventListener("click", () => expEstimate());
       document.getElementById("btnExpCreate")?.addEventListener("click", () => expCreateAndStart());
@@ -5495,12 +5827,26 @@ XG:CROSS(MA5,MA10);</textarea>
         expRenderList();
         if (__activeExperimentId) expShowResults(__activeExperimentId);
       });
+      document.getElementById("btnExpEvaluate")?.addEventListener("click", () => {
+        if (__activeExperimentId) expRunEvaluate(__activeExperimentId);
+        else {
+          const st = document.getElementById("expStatus");
+          if (st) st.textContent = "请先选择/运行一个实验再评价分析。";
+        }
+      });
+      document.getElementById("btnExpQueueRefresh")?.addEventListener("click", () => expRefreshResearchHub());
+      document.getElementById("btnExpReclaim")?.addEventListener("click", () => expReclaimStale());
+      document.getElementById("expEvalTabs")?.addEventListener("click", (ev) => {
+        const btn = ev.target && ev.target.closest ? ev.target.closest("[data-eval-pane]") : null;
+        if (btn) _expShowEvalPane(btn.getAttribute("data-eval-pane"));
+      });
+      try { expRefreshResearchHub(); } catch (e) {}
       document.getElementById("btnExpGoNew")?.addEventListener("click", () => switchBtPage("new"));
       document.getElementById("btnExpRefreshRules")?.addEventListener("click", () => {
         expSyncRuleBox();
         expEstimate();
       });
-      document.querySelectorAll(".exp-gua, .exp-wd, .exp-sig-wd, .exp-buy, .exp-sell").forEach((el) => {
+      document.querySelectorAll(".exp-gua, .exp-wd, .exp-sig-wd, .exp-buy, .exp-sell, .exp-sl, .exp-tp").forEach((el) => {
         el.addEventListener("change", () => {
           _expChipSync();
           expEstimate();

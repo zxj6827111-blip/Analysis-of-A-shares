@@ -64,6 +64,9 @@ from .schedules import list_schedules, get_schedule, next_fire_times, ScheduleRu
 from .drift import detect_drift, DEFAULT_THRESHOLDS
 from .reports_auto import build_research_summary, mark_paper_candidates
 from .continuous import run_budgeted_search, run_scheduled_research
+from .schedule_runner import ScheduleBeatStore, due_schedules, fire_schedule, beat_once, FIRE_MAX_TRIALS_CAP
+from .data_update_trigger import on_market_data_updated, monitor_drift_and_alert
+from .cross_section import board_of_symbol, slice_metrics_by_board, cross_section_summary
 
 __all__ = [
     # fingerprint

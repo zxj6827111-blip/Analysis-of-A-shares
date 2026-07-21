@@ -724,6 +724,88 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         items = list_schedules()
         return {"ok": True, "schedules": items, "names": [s["name"] for s in items]}
 
+    @app.get("/api/v1/research/schedules/due")
+    def api_research_schedules_due(now: Optional[str] = Query(None)) -> dict:
+        from datetime import datetime
+
+        from .research.schedule_runner import ScheduleBeatStore, due_schedules
+
+        when = None
+        if now:
+            try:
+                when = datetime.fromisoformat(str(now).replace("Z", ""))
+            except ValueError as e:
+                raise HTTPException(400, f"invalid now: {e}") from e
+        store_path = Path(cfg.storage_root) / "schedule_beat.json"
+        store = ScheduleBeatStore(store_path)
+        due = due_schedules(when, store)
+        return {
+            "ok": True,
+            "now": (when.isoformat() if when else datetime.utcnow().isoformat()),
+            "due": due,
+            "last_fire": store.all_last_fires(),
+            "store": str(store_path),
+        }
+
+    @app.post("/api/v1/research/schedules/{name}/fire")
+    def api_research_schedule_fire(name: str, payload: Optional[dict] = Body(None)) -> dict:
+        from datetime import datetime
+
+        from .research.schedule_runner import ScheduleBeatStore, fire_schedule
+
+        body = payload if isinstance(payload, dict) else {}
+        dry_run = bool(body.get("dry_run") or body.get("dryRun"))
+        store_path = Path(cfg.storage_root) / "schedule_beat.json"
+        store = ScheduleBeatStore(store_path)
+        plat = _research_platform()
+        try:
+            result = fire_schedule(
+                name,
+                plat,
+                dry_run=dry_run,
+                store=None if dry_run else store,
+                now=datetime.utcnow(),
+            )
+        except KeyError as e:
+            raise HTTPException(404, str(e)) from e
+        finally:
+            plat.close()
+        return {"ok": True, **result}
+
+    @app.post("/api/v1/research/drift/monitor")
+    def api_research_drift_monitor(payload: dict = Body(...)) -> dict:
+        from .research.data_update_trigger import monitor_drift_and_alert
+
+        if not isinstance(payload, dict):
+            payload = {}
+        recent = payload.get("recent") or payload.get("recent_metrics") or {}
+        baseline = payload.get("baseline") or payload.get("baseline_metrics") or {}
+        if not isinstance(recent, dict) or not isinstance(baseline, dict):
+            raise HTTPException(400, "recent and baseline must be metric dicts")
+        thresholds = payload.get("thresholds")
+        if thresholds is not None and not isinstance(thresholds, dict):
+            thresholds = None
+        result = monitor_drift_and_alert(
+            recent, baseline, thresholds=thresholds, source=str(payload.get("source") or "api")
+        )
+        return result
+
+    @app.post("/api/v1/research/cross_section")
+    def api_research_cross_section(payload: dict = Body(...)) -> dict:
+        from .research.cross_section import cross_section_summary, slice_metrics_by_board
+
+        if not isinstance(payload, dict):
+            payload = {}
+        symbol_metrics = payload.get("symbol_metrics")
+        if not isinstance(symbol_metrics, list):
+            raise HTTPException(400, "body.symbol_metrics must be a list")
+        summary = cross_section_summary(symbol_metrics)
+        return {
+            "ok": True,
+            **summary,
+            "board_slices": slice_metrics_by_board(symbol_metrics),
+        }
+
     @app.post("/api/v1/research/drift")
     def api_research_drift(payload: dict = Body(...)) -> dict:
         from .research.drift import detect_drift
