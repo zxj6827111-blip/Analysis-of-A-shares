@@ -71,6 +71,38 @@ def test_timeline_weekday_or_session_labels(html: str):
     assert "buyWeekday" in html or "buy_weekday" in html or "买入日" in html
     assert "T 日收盘确认信号" in html or "T日收盘" in html or "收盘确认信号" in html
     assert "resolveTradeSchedule" in html
+    assert "交易日序列" in html
+    assert "节假日" in html
+    assert "引擎" in html
+
+
+def test_no_weekend_buy_exit_options(html: str):
+    """Buy/exit weekday selects must not offer Saturday/Sunday."""
+    # Signal filter and trade schedule use Mon–Fri only
+    assert 'value="6"' not in html.split('id="buyWeekday"')[1].split("</select>")[0]
+    assert 'value="7"' not in html.split('id="buyWeekday"')[1].split("</select>")[0]
+    assert 'value="6"' not in html.split('id="exitWeekday"')[1].split("</select>")[0]
+    assert 'value="7"' not in html.split('id="exitWeekday"')[1].split("</select>")[0]
+    assert "周六" not in html.split('id="buyWeekday"')[1].split("</select>")[0]
+    assert "周日" not in html.split('id="exitWeekday"')[1].split("</select>")[0]
+
+
+def test_copy_params_refreshes_timeline_summary_gua(html: str):
+    assert "function copyRunParams" in html
+    assert "updateTimeline" in html
+    assert "updateBtSummary" in html
+    assert "GuaUI.setFromConfig" in html
+    assert "btnPresetTn12" in html
+    assert "经典 T+1" in html
+
+
+def test_step_nav_and_gua_scheme_buttons(html: str):
+    assert 'href="#step-swd"' in html or "step-swd" in html
+    assert 'href="#step-trade"' in html or "step-trade" in html
+    assert "信号星期" in html
+    assert "交易日程" in html
+    # Gua scheme buttons from prior delivery
+    assert "最佳" in html or "GuaUI" in html
 
 
 def test_detail_core_metrics_and_advanced_hidden_debug(html: str):
@@ -100,3 +132,42 @@ def test_single_primary_scroll_overrides(html: str):
     assert "section.workspace { padding: 1rem 1.25rem; overflow: visible; max-height: none; }" in html or (
         "overflow: visible" in html and "max-height: none" in html
     )
+
+
+def test_stage_b_detail_tabs_and_compare(html: str):
+    """Stage B: detail panes + multi-run compare UI hooks."""
+    for pane in ("overview", "equity", "trades", "settings", "gua", "advanced"):
+        assert f'data-pane="{pane}"' in html or f'id="pane-{pane}"' in html
+    assert 'id="pane-gua"' in html
+    assert 'id="guaDetailBlock"' in html
+    assert 'id="ddChart"' in html
+    assert "drawEquity" in html
+    assert "_seriesToDrawdown" in html
+    assert 'id="btnCompareSelected"' in html
+    assert 'id="comparePanel"' in html
+    assert "/api/v1/runs/compare" in html
+    assert "/api/v1/backtests/" in html and "/equity" in html
+    assert "function compareSelectedRuns" in html
+    assert "function renderCompareResult" in html
+    assert "renderGuaDetailSection" in html
+    # core metrics still capped visually (8 cards in renderCoreMetrics)
+    assert "function renderCoreMetrics" in html
+    # no weekend buy/exit
+    assert 'value="6"' not in html.split('id="buyWeekday"')[1].split("</select>")[0]
+
+
+def test_copy_params_still_refreshes_summary(html: str):
+    assert "function copyRunParams" in html
+    assert "updateTimeline" in html
+    assert "updateBtSummary" in html
+    assert "GuaUI.setFromConfig" in html
+
+
+def test_submit_body_includes_gua_filter(html: str):
+    """Regression: history titles need gua_filter on backtest POST body."""
+    assert "gua_filter:" in html
+    assert "GuaUI.getPayload" in html
+    # must not only rely on bagua_ohlc checkbox
+    assert "with_bagua:" in html
+    assert "guaTitleFragment" in html
+    assert "卦象·最佳3爻" in html or "history_summary" in html

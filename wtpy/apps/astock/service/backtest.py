@@ -424,10 +424,15 @@ def run_backtest(
             "hold": hold,
             "entry_lag": entry_lag,
             "signal_weekdays": signal_weekdays,
-        "buy_on": buy_on,
-        "sell_on": sell_on,
-        "buy_weekday": buy_weekday,
-        "exit_weekday": exit_weekday,
+            "buy_on": buy_on,
+            "sell_on": sell_on,
+            "buy_weekday": buy_weekday,
+            "exit_weekday": exit_weekday,
+            "schedule_mode": (
+                "weekday"
+                if (buy_weekday is not None or exit_weekday is not None)
+                else "tn"
+            ),
             "period": period,
             "start": start,
             "end": end,
@@ -456,6 +461,12 @@ def run_backtest(
                     "indicator_ids": [s.id for s in trade_specs],
                     "hold": hold,
                     "entry_lag": entry_lag,
+                    "buy_weekday": buy_weekday,
+                    "exit_weekday": exit_weekday,
+                    "buy_on": buy_on,
+                    "sell_on": sell_on,
+                    "signal_weekdays": signal_weekdays,
+                    "schedule_mode": meta["schedule_mode"],
                     "period": period,
                     "metrics": None,
                     "error": adj_msg[:500],
@@ -550,6 +561,11 @@ def run_backtest(
         attach_bagua(events, period_raw_map, calc)
         bagua_n_before = len(events)
         if gf.is_active():
+            try:
+                from ..bagua.filter_rules import compute_bagua_metrics
+                bagua_metrics_pre = compute_bagua_metrics(events, gf)
+            except Exception:
+                bagua_metrics_pre = None
             events = filter_events_by_gua_filter(events, gf)
             bagua_n_after = len(events)
             bagua_filter_mode = f"gua_filter:{gf.selection_mode}"
@@ -570,6 +586,8 @@ def run_backtest(
                     (bagua_n_after / bagua_n_before) if bagua_n_before else 0.0
                 ),
             }
+            if bagua_metrics_pre is not None:
+                gua_filter_meta["bagua_metrics"] = bagua_metrics_pre
             msg = (
                 f"卦象过滤·{gf.selection_mode}："
                 f"{bagua_n_before} → {bagua_n_after} 条信号"
@@ -685,6 +703,14 @@ def run_backtest(
         "risk_trigger_policy": "daily_high_low",
         "risk_execution_policy": "next_trading_day_open",
         "entry_lag": entry_lag,
+        "signal_weekdays": signal_weekdays,
+        "buy_on": buy_on,
+        "sell_on": sell_on,
+        "buy_weekday": buy_weekday,
+        "exit_weekday": exit_weekday,
+        "schedule_mode": (
+            "weekday" if (buy_weekday is not None or exit_weekday is not None) else "tn"
+        ),
         "account_mode": (getattr(req, "account_mode", None) or "portfolio"),
         "stop_loss_pct": req.stop_loss,
         "take_profit_pct": req.take_profit,
@@ -773,7 +799,18 @@ def run_backtest(
     title = "、".join(rule_names) if rule_names else "回测"
     if gua_filter_meta:
         hs = (gua_filter_meta.get("history_summary") or {}).get("short") or "卦象过滤"
-        # Prefer compact but explicit: 卦象3项 / 卦象信号：新开仓、加仓
+        # Fingerprint classic best-3 preset for human-readable history titles
+        try:
+            _sids = sorted(str(x) for x in (gua_filter_meta.get("selected_state_ids") or []))
+            if _sids == ["11-1", "24-1", "46-1"]:
+                hs = "卦象·最佳3爻"
+            elif gua_filter_meta.get("selection_mode") == "action_signal":
+                acts = list(gua_filter_meta.get("selected_action_signals") or [])
+                if set(acts) == {"新开仓", "加仓"} or set(acts) == {"加仓", "新开仓"}:
+                    hs = "卦象·偏多信号"
+        except Exception:
+            pass
+        # Prefer compact but explicit: 卦象·最佳3爻 / 卦象信号：…
         title = f"{title} + {hs}"
     elif bagua_enabled and bagua_filter_mode:
         title = f"{title} + {bagua_mode_label(bagua_filter_mode)}"
@@ -786,7 +823,12 @@ def run_backtest(
         title = f"{title} · 通达信对照(单票独立资金)"
     else:
         title = f"{title} · 组合账户"
-    title = f"{title} · {period_label} · 持有{hold}"
+    schedule_mode = (
+        "weekday" if (buy_weekday is not None or exit_weekday is not None) else "tn"
+    )
+    title = f"{title} · {period_label}"
+    if schedule_mode == "tn":
+        title = f"{title} · 持有{hold}"
     if signal_weekdays:
         title = f"{title} · 仅{format_signal_weekdays(signal_weekdays)}信号"
     title = f"{title} · {session_label_cn(buy_on)}买/{session_label_cn(sell_on)}卖"
@@ -798,6 +840,7 @@ def run_backtest(
         title += f" · {start or ''}~{end or ''}"
 
     repro["title"] = title
+    repro["schedule_mode"] = schedule_mode
     repro["indicator_names"] = rule_names
     if gua_filter_meta is not None:
         repro["gua_filter"] = gua_filter_meta
@@ -827,6 +870,7 @@ def run_backtest(
                 "buy_on": buy_on,
                 "sell_on": sell_on,
                 "signal_weekdays": signal_weekdays,
+                "schedule_mode": schedule_mode,
                 "account_mode": (getattr(req, "account_mode", None) or "portfolio"),
                 "gua_filter": gua_filter_meta,
                 "with_bagua": bagua_enabled,
@@ -877,12 +921,13 @@ def run_backtest(
         "errors_sample": errors[:20],
         "notes": result.notes,
         "entry_lag": entry_lag,
-            "signal_weekdays": signal_weekdays,
+        "signal_weekdays": signal_weekdays,
         "buy_on": buy_on,
         "sell_on": sell_on,
         "buy_weekday": buy_weekday,
         "exit_weekday": exit_weekday,
-            "hold": hold,
+        "schedule_mode": schedule_mode,
+        "hold": hold,
         "account_mode": (getattr(req, "account_mode", None) or "portfolio"),
         "period": period,
         "repro": {
@@ -895,13 +940,9 @@ def run_backtest(
             "sell_on": sell_on,
             "buy_weekday": buy_weekday,
             "exit_weekday": exit_weekday,
+            "schedule_mode": schedule_mode,
             "indicator_ids": repro["indicator_ids"],
             "astock_code_sha": repro.get("astock_code_sha"),
         },
-        "buy_weekday": buy_weekday,
-        "exit_weekday": exit_weekday,
-        "buy_on": buy_on,
-        "sell_on": sell_on,
-        "signal_weekdays": signal_weekdays,
     }
     return summary

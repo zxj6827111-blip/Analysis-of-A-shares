@@ -32,7 +32,8 @@ REQUIRED = [
     'fastapi',
     'uvicorn',
     'deap',
-    'websockets>=10.4'
+    'websockets>=10.4',
+    'openpyxl'
 ]
 
 # What packages are optional?

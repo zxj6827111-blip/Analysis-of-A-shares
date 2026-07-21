@@ -510,6 +510,142 @@
     }
     #equityChart { display: none; width: 100%; max-width: 100%; }
     #equityChart.visible { display: block; }
+    #ddChart { display: none; width: 100%; max-width: 100%; margin-top: 0.75rem; }
+    #ddChart.visible { display: block; }
+    .compare-panel {
+      margin-top: 1rem; padding: 0.85rem 1rem;
+      background: var(--card, #121820);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .compare-panel h3 { margin: 0 0 0.55rem; font-size: 1rem; }
+    .compare-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .compare-table th, .compare-table td {
+      border: 1px solid var(--border); padding: 0.35rem 0.45rem; text-align: left; vertical-align: top;
+    }
+    .compare-table th { background: rgba(61,139,253,0.12); color: var(--text); position: sticky; top: 0; }
+    .compare-table td.diff { background: rgba(255, 193, 7, 0.12); }
+    .compare-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .compare-wrap { overflow: auto; max-height: 70vh; }
+    .compare-hint { color: var(--muted); font-size: 0.8rem; margin: 0.35rem 0 0.6rem; }
+    #btnCompareSelected:disabled { opacity: 0.45; cursor: not-allowed; }
+    /* Experiment center (UX rewrite) */
+    #pageExperiment { max-width: 1100px; }
+    .exp-hero {
+      padding: 1rem 1.15rem; border-radius: 12px;
+      background: linear-gradient(135deg, rgba(61,139,253,0.16), rgba(20,28,40,0.6));
+      border: 1px solid rgba(61,139,253,0.35);
+      margin-bottom: 0.85rem;
+    }
+    .exp-hero h2 { margin: 0 0 0.35rem; font-size: 1.15rem; }
+    .exp-hero p { margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.5; }
+    .exp-steps {
+      display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.75rem 0 0;
+      list-style: none; padding: 0;
+    }
+    .exp-steps li {
+      display: flex; align-items: center; gap: 0.35rem;
+      padding: 0.28rem 0.65rem; border-radius: 999px;
+      background: rgba(0,0,0,0.25); border: 1px solid var(--border);
+      font-size: 0.78rem; color: var(--muted);
+    }
+    .exp-steps li b {
+      width: 1.15rem; height: 1.15rem; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--accent, #3d8bfd); color: #fff; font-size: 0.7rem;
+    }
+    .exp-card {
+      background: var(--card, #121820); border: 1px solid var(--border);
+      border-radius: 12px; padding: 0.9rem 1rem; margin-bottom: 0.75rem;
+    }
+    .exp-card h3 {
+      margin: 0 0 0.55rem; font-size: 0.95rem;
+      display: flex; align-items: center; gap: 0.45rem;
+    }
+    .exp-card h3 .n {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 1.35rem; height: 1.35rem; border-radius: 50%;
+      background: rgba(61,139,253,0.25); color: #9ec5ff; font-size: 0.78rem;
+    }
+    .exp-card .hint { color: var(--muted); font-size: 0.8rem; margin: -0.25rem 0 0.55rem; line-height: 1.45; }
+    .exp-rule-box {
+      padding: 0.65rem 0.75rem; border-radius: 8px;
+      background: rgba(255,255,255,0.03); border: 1px dashed var(--border);
+      font-size: 0.9rem;
+    }
+    .exp-rule-box strong { color: #9ec5ff; }
+    .exp-rule-box.warn { border-color: var(--warn); color: #f0d9a0; }
+    .exp-chips { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+    .exp-chip {
+      display: inline-flex; align-items: flex-start; gap: 0.45rem;
+      padding: 0.55rem 0.7rem; border-radius: 10px; cursor: pointer;
+      border: 1px solid var(--border); background: rgba(0,0,0,0.2);
+      min-width: 9.5rem; max-width: 100%; flex: 1 1 10rem;
+      transition: border-color .15s, background .15s;
+    }
+    .exp-chip:hover { border-color: rgba(61,139,253,0.55); }
+    .exp-chip input { margin-top: 0.15rem; width: auto; flex-shrink: 0; }
+    .exp-chip.on {
+      border-color: rgba(61,139,253,0.75);
+      background: rgba(61,139,253,0.12);
+    }
+    .exp-chip .t { font-size: 0.86rem; font-weight: 600; color: var(--text); }
+    .exp-chip .d { font-size: 0.75rem; color: var(--muted); margin-top: 0.15rem; line-height: 1.35; }
+    .exp-summary {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 0.65rem 1rem;
+      padding: 0.75rem 0.9rem; border-radius: 10px;
+      background: rgba(61,139,253,0.1); border: 1px solid rgba(61,139,253,0.3);
+      margin: 0.5rem 0 0.75rem;
+    }
+    .exp-summary .big { font-size: 1.35rem; font-weight: 700; color: #9ec5ff; }
+    .exp-summary .formula { font-size: 0.85rem; color: var(--text); line-height: 1.45; }
+    .exp-summary .warn { color: var(--warn); font-size: 0.8rem; }
+    .exp-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+    .exp-actions .primary-xl {
+      padding: 0.55rem 1.1rem; font-size: 0.95rem; font-weight: 600;
+    }
+    .exp-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 0.45rem; }
+    .exp-table th, .exp-table td { border: 1px solid var(--border); padding: 0.35rem 0.45rem; text-align: left; }
+    .exp-table th { background: rgba(61,139,253,0.12); position: sticky; top: 0; }
+    .exp-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .exp-status { font-size: 0.82rem; color: var(--muted); margin-top: 0.4rem; min-height: 1.2em; }
+
+    .task-queue-bar {
+      margin: 0.55rem 0 0.75rem; padding: 0.55rem 0.75rem;
+      border: 1px solid var(--border); border-radius: 10px;
+      background: rgba(61,139,253,0.08);
+      font-size: 0.82rem;
+    }
+    .task-queue-bar h4 { margin: 0 0 0.35rem; font-size: 0.88rem; }
+    .task-queue-bar .tq-row {
+      display: flex; flex-wrap: wrap; gap: 0.35rem 0.75rem; align-items: center;
+      padding: 0.28rem 0; border-top: 1px solid rgba(255,255,255,0.06);
+    }
+    .task-queue-bar .tq-row:first-of-type { border-top: none; }
+    .task-queue-bar .pill {
+      display: inline-block; padding: 0.05rem 0.4rem; border-radius: 999px;
+      font-size: 0.72rem; border: 1px solid var(--border);
+    }
+    .task-queue-bar .pill.run { background: rgba(61,139,253,0.25); color: #9ec5ff; }
+    .task-queue-bar .pill.wait { background: rgba(255,193,7,0.15); color: #f0d9a0; }
+    .task-queue-bar .pill.ok { background: rgba(40,167,69,0.2); color: #8fd19e; }
+    .task-queue-bar .pill.bad { background: rgba(243,18,96,0.15); color: #f5a0b8; }
+    .task-queue-bar .sub { color: var(--muted); }
+    .exp-empty { color: var(--muted); font-size: 0.85rem; padding: 0.75rem 0.25rem; text-align: center; }
+    .exp-split {
+      display: grid; grid-template-columns: 1fr; gap: 0.75rem;
+    }
+    @media (min-width: 960px) {
+      .exp-split { grid-template-columns: 1.05fr 0.95fr; align-items: start; }
+    }
+    .exp-advanced summary {
+      cursor: pointer; color: var(--muted); font-size: 0.8rem; margin-top: 0.35rem;
+    }
+    .equity-stats {
+      display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem;
+      font-size: 0.82rem; color: var(--muted); margin-bottom: 0.45rem;
+    }
+    .equity-stats b { color: var(--text); }
     #resultJsonWrap { display: none; margin-top: 0.75rem; }
     #resultJsonWrap.open { display: block; }
     .history-table tr { cursor: pointer; }
@@ -1170,6 +1306,7 @@
       <div class="bt-subtabs" id="btSubtabs">
         <button type="button" class="bt-subtab active" data-bt-page="new">新建回测</button>
         <button type="button" class="bt-subtab" data-bt-page="history">历史任务</button>
+        <button type="button" class="bt-subtab" data-bt-page="experiment" id="tabExperiment" title="多条件批量对比">实验中心</button>
         <button type="button" class="bt-subtab" data-bt-page="detail" id="tabDetail" disabled title="请先从历史任务打开详情">回测详情</button>
       </div>
       <div class="bt-page active" id="pageNew">
@@ -1276,7 +1413,7 @@ XG:CROSS(MA5,MA10);</textarea>
             <div class="bt-step-num">3</div>
             <div>
               <h3>信号星期过滤 <span class="bt-step-opt">可选</span></h3>
-              <p class="bt-step-desc">限制「哪几天允许出现指标信号」。与下方「买入/平仓星期」不同：这里管信号日，下面管成交日。</p>
+              <p class="bt-step-desc">限制「哪几天允许出现指标信号」。与下方「买入/平仓星期」不同：这里管信号日，下面管成交日。系统在<strong>交易日序列</strong>上计算；遇节假日自动落到之后第一个可交易日。</p>
             </div>
           </div>
           <div class="bt-step-bd">
@@ -1301,33 +1438,35 @@ XG:CROSS(MA5,MA10);</textarea>
             <div class="bt-step-num">4</div>
             <div>
               <h3>交易日程</h3>
-              <p class="bt-step-desc">信号之后何时买入、何时平仓，以及按开盘价还是收盘价成交。</p>
+              <p class="bt-step-desc">信号之后何时买入、何时平仓，以及按开盘价还是收盘价成交。前台按「星期几」配置；后台在交易日日历上求解（T+N 体系）。遇节假日自动顺延到之后第一个可交易日。</p>
             </div>
           </div>
           <div class="bt-step-bd">
             <div class="param-pair">
               <div class="field">
-                <label>买入日（星期几）<br/><span style="font-weight:400;opacity:.85">信号后第一个该星期的交易日买入</span></label>
+                <label>买入日（星期几）<br/><span style="font-weight:400;opacity:.85">信号后第一个该星期的交易日买入；留空则用 T+N（entry_lag）</span></label>
                 <select id="buyWeekday">
+                  <option value="">— T+N（不用星期）—</option>
                   <option value="1">周一</option>
                   <option value="2">周二</option>
                   <option value="3">周三</option>
                   <option value="4">周四</option>
                   <option value="5" selected>周五</option>
                 </select>
-                <div class="hint">例：周五信号 → 选周一买 = 下周一。</div>
+                <div class="hint">例：周五信号 → 选周一买 = 下周一（节假日顺延）。</div>
                 <input type="hidden" id="entryLag" value="1" />
               </div>
               <div class="field">
-                <label>强制平仓日（星期几）<br/><span style="font-weight:400;opacity:.85">买入后第一个该星期的交易日强平</span></label>
+                <label>强制平仓日（星期几）<br/><span style="font-weight:400;opacity:.85">买入后第一个该星期的交易日强平；留空则用 hold</span></label>
                 <select id="exitWeekday">
+                  <option value="">— hold（不用星期）—</option>
                   <option value="1" selected>周一</option>
                   <option value="2">周二</option>
                   <option value="3">周三</option>
                   <option value="4">周四</option>
                   <option value="5">周五</option>
                 </select>
-                <div class="hint">例：周五买入 → 选周一平 = 下周一。</div>
+                <div class="hint">例：周五买入 → 选周一平 = 下周一（节假日顺延）。</div>
                 <input type="hidden" id="hold" value="1" />
               </div>
             </div>
@@ -1348,6 +1487,11 @@ XG:CROSS(MA5,MA10);</textarea>
               </div>
             </div>
             <div class="timeline" id="timeline" style="margin-top:0.55rem"></div>
+            <div class="row" style="margin-top:0.45rem;gap:0.45rem;flex-wrap:wrap">
+              <button type="button" class="secondary" id="btnPresetWeekday" style="padding:0.25rem 0.65rem;font-size:0.8rem" title="研究默认：按星期锚定买卖日">研究模板·星期日程</button>
+              <button type="button" class="secondary" id="btnPresetTn12" style="padding:0.25rem 0.65rem;font-size:0.8rem" title="清空买卖星期，改用 entry_lag=1 / hold=1，开盘买 / 收盘卖">经典 T+1 开买 · T+2 收卖</button>
+            </div>
+            <p class="sub" style="margin:0.35rem 0 0;font-size:0.78rem;opacity:.9" id="scheduleEngineHint">引擎说明：星期锚定 → 交易日序列上的 T+N 求解（非自然日硬编码）。</p>
             <details class="sub" style="margin-top:0.55rem">
               <summary style="cursor:pointer;color:var(--muted);font-size:0.82rem">风险控制（可选）：止损 / 止盈</summary>
               <div class="row" style="margin-top:0.45rem">
@@ -1538,6 +1682,13 @@ XG:CROSS(MA5,MA10);</textarea>
             <div class="progress-bar" id="progressBar"><i id="progressFill"></i></div>
             <div class="progress-detail" id="progressDetail">—</div>
           </div>
+          <div class="task-queue-bar" id="taskQueueBar">
+            <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:0.4rem">
+              <h4 style="margin:0">任务队列 <span class="sub" id="taskQueueMeta">（同一时间只跑 1 个；提交后自动排队）</span></h4>
+              <button type="button" class="secondary" id="btnRefreshTaskQueue" style="padding:0.2rem 0.55rem;font-size:0.78rem">刷新队列</button>
+            </div>
+            <div id="taskQueueBody" class="sub" style="margin-top:0.4rem">暂无进行中任务。点「开始回测」后会出现在这里。</div>
+          </div>
         </div>
       </div>
 
@@ -1579,12 +1730,113 @@ XG:CROSS(MA5,MA10);</textarea>
             <button type="button" class="secondary" id="btnLoadRuns">刷新</button>
             <button type="button" class="secondary" id="btnHistSelectAll">全选</button>
             <button type="button" class="secondary" id="btnHistSelectNone">取消全选</button>
+            <button type="button" class="secondary" id="btnCompareSelected" disabled title="勾选 2～10 条历史任务后对比">对比所选 (2～10)</button>
             <button type="button" class="secondary btn-del-batch" id="btnDeleteSelected">删除所选</button>
             <button type="button" class="secondary" id="btnClearHistory" title="删除当前列表全部记录及结果文件">全部删除</button>
             <span class="sel-info" id="histSelInfo">已选 0 条</span>
             <span class="hist-count" id="histCount">共 0 条</span>
           </div>
           <div id="history" class="history-empty">点击「历史任务」页签加载</div>
+          <div class="compare-panel" id="comparePanel" style="display:none">
+            <h3>多任务对比 <span class="sub" id="compareCount"></span></h3>
+            <p class="compare-hint">并列表格对比参数差异与核心指标。参数行高亮表示各 run 取值不同（含信号星期、买卖星期、session、卦象）。</p>
+            <div class="compare-wrap" id="compareBody"></div>
+            <div class="actions" style="margin-top:0.55rem">
+              <button type="button" class="secondary" id="btnCloseCompare">关闭对比</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+
+      <div class="bt-page" id="pageExperiment">
+        <div class="exp-hero">
+          <h2>实验中心</h2>
+          <p>
+            用<strong>同一条选股规则</strong>，自动跑多组「卦象 × 买卖日程」组合，再并排看谁更好。
+            适合回答：<em>「加最佳3爻有没有用？换一种星期买卖差多少？」</em>
+          </p>
+          <ol class="exp-steps">
+            <li><b>1</b> 选规则</li>
+            <li><b>2</b> 勾要对比的条件</li>
+            <li><b>3</b> 确认会跑几组</li>
+            <li><b>4</b> 开始实验</li>
+            <li><b>5</b> 看结果表</li>
+          </ol>
+        </div>
+
+        <div class="exp-split">
+          <div>
+            <div class="exp-card">
+              <h3><span class="n">1</span> 用哪条规则做实验？</h3>
+              <p class="hint">规则在<strong>左侧列表</strong>勾选（与「新建回测」共用）。实验会对你勾选的每条规则各跑一轮网格。</p>
+              <div class="exp-rule-box" id="expRuleBox">尚未选择规则 — 请到左侧勾选一条可回测指标</div>
+              <div class="actions" style="margin-top:0.5rem">
+                <button type="button" class="secondary" id="btnExpGoNew">去选规则</button>
+                <button type="button" class="secondary" id="btnExpRefreshRules">刷新已选</button>
+              </div>
+            </div>
+
+            <div class="exp-card">
+              <h3><span class="n">2</span> 要比哪几种卦象？</h3>
+              <p class="hint">可多选。系统会把你勾的每一种都跑一遍，再对比。</p>
+              <div class="exp-chips" id="expGuaChips">
+                <label class="exp-chip on"><input type="checkbox" class="exp-gua" value="none" checked />
+                  <span><div class="t">不加卦象</div><div class="d">纯技术信号，作对照基准</div></span></label>
+                <label class="exp-chip on"><input type="checkbox" class="exp-gua" value="best3" checked />
+                  <span><div class="t">最佳 3 爻</div><div class="d">只保留研究确认的 3 条爻</div></span></label>
+                <label class="exp-chip"><input type="checkbox" class="exp-gua" value="bull" />
+                  <span><div class="t">偏多信号</div><div class="d">操作信号 = 新开仓 或 加仓</div></span></label>
+              </div>
+            </div>
+
+            <div class="exp-card">
+              <h3><span class="n">3</span> 要比哪几种买卖日程？</h3>
+              <p class="hint">可多选。每一种 = 信号在哪天有效 + 哪天买/平 + 开盘还是收盘。</p>
+              <div class="exp-chips" id="expWdChips">
+                <label class="exp-chip on"><input type="checkbox" class="exp-wd" value="fri_signal_mon_buy_thu_exit" checked />
+                  <span><div class="t">研究常用日程</div><div class="d">仅周五信号 → 周一开盘买 → 周四开盘平</div></span></label>
+                <label class="exp-chip"><input type="checkbox" class="exp-wd" value="all_signal_tn12" />
+                  <span><div class="t">经典 T+1 / T+2</div><div class="d">不限信号日 → 次日开盘买 → 再下一日收盘卖</div></span></label>
+                <label class="exp-chip"><input type="checkbox" class="exp-wd" value="fri_signal_fri_buy_mon_exit" />
+                  <span><div class="t">周五买、下周一平</div><div class="d">仅周五信号 → 周五开盘买 → 下周一开盘平</div></span></label>
+              </div>
+            </div>
+
+            <div class="exp-card">
+              <h3><span class="n">4</span> 确认并开始</h3>
+              <p class="hint">默认用<strong>演示池 2 只股票</strong>试跑，速度快。日期跟「新建回测」里选的区间一致。</p>
+              <div class="exp-summary" id="expSummary">
+                <div><div class="sub">将运行</div><div class="big" id="expComboCount">—</div><div class="sub">组回测</div></div>
+                <div class="formula" id="expFormula">请先完成第 1～3 步</div>
+              </div>
+              <div class="exp-actions">
+                <button type="button" class="primary-xl" id="btnExpCreate">开始实验</button>
+                <button type="button" class="secondary" id="btnExpEstimate">重新计算组数</button>
+                <input id="expName" placeholder="给实验起个名（可选）" style="min-width:11rem;flex:1" />
+              </div>
+              <details class="exp-advanced">
+                <summary>高级：组合上限（默认 50，防止一次跑太多）</summary>
+                <div class="row" style="margin-top:0.4rem">
+                  <label style="font-weight:400">最多允许 <input id="expMax" type="number" min="1" max="200" value="50" style="width:4.5rem;display:inline-block" /> 组</label>
+                </div>
+              </details>
+              <div class="exp-status" id="expStatus">准备就绪后点「开始实验」。</div>
+            </div>
+          </div>
+
+          <div>
+            <div class="exp-card">
+              <h3><span class="n">5</span> 实验结果</h3>
+              <p class="hint">进度与并列表。完成后可导出 Excel，也可点 run 编号去历史里打开详情。</p>
+              <div class="exp-actions" style="margin-bottom:0.45rem">
+                <button type="button" class="secondary" id="btnExpRefresh">刷新列表</button>
+                <a class="secondary" id="btnExpExcel" href="#" style="display:none;padding:0.35rem 0.7rem;border-radius:6px;border:1px solid var(--border);text-decoration:none;color:inherit">下载当前实验 Excel</a>
+              </div>
+              <div id="expList"><div class="exp-empty">还没有实验。左侧配置好后点「开始实验」。</div></div>
+              <div id="expResults" style="margin-top:0.65rem;overflow:auto;max-height:55vh"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1620,6 +1872,7 @@ XG:CROSS(MA5,MA10);</textarea>
             <button type="button" class="detail-tab" data-pane="equity">净值与回撤</button>
             <button type="button" class="detail-tab" data-pane="trades">交易统计</button>
             <button type="button" class="detail-tab" data-pane="settings">回测设置</button>
+            <button type="button" class="detail-tab" data-pane="gua">卦象条件</button>
             <button type="button" class="detail-tab" data-pane="advanced">高级信息</button>
           </div>
           <div class="detail-pane active" id="pane-overview">
@@ -1627,7 +1880,9 @@ XG:CROSS(MA5,MA10);</textarea>
             <div class="detail-kv" id="resultKv" style="margin-top:0.75rem"></div>
           </div>
           <div class="detail-pane" id="pane-equity">
+            <div class="equity-stats" id="equityStats"></div>
             <canvas id="equityChart" height="220"></canvas>
+            <canvas id="ddChart" height="160"></canvas>
             <p class="sub" id="equityNote" style="margin-top:0.5rem"></p>
           </div>
           <div class="detail-pane" id="pane-trades">
@@ -1635,6 +1890,9 @@ XG:CROSS(MA5,MA10);</textarea>
           </div>
           <div class="detail-pane" id="pane-settings">
             <div class="detail-kv" id="settingsKv"></div>
+          </div>
+          <div class="detail-pane" id="pane-gua">
+            <div id="guaDetailBlock" class="gua-detail-block">—</div>
           </div>
           <div class="detail-pane" id="pane-advanced">
             <div class="detail-kv" id="advancedKv"></div>
@@ -1648,7 +1906,6 @@ XG:CROSS(MA5,MA10);</textarea>
         </div>
       </div>
 </section>
-  <div class="card" id="guaDetailCard" style="display:none;margin:1rem 1.5rem"><h2>卦象条件</h2><div id="guaDetailBlock">—</div></div>
 </main>
 
   <main id="viewForecast" style="display:none;grid-template-columns:320px 1fr">
@@ -1955,13 +2212,16 @@ XG:CROSS(MA5,MA10);</textarea>
       const sellSess = getSellOn() === "close" ? "收盘" : "开盘";
       let line1 = "时间轴：T 日收盘确认信号";
       if (buyWd) line1 += " → 之后第一个" + wdName(buyWd) + " " + buySess + "买入";
-      else line1 += " → entry_lag 个交易日后 " + buySess + "买入";
+      else line1 += " → 第 entry_lag 个交易日后 " + buySess + "买入";
       if (exitWd) line1 += " → 买入后第一个" + wdName(exitWd) + " " + sellSess + "强制平仓";
-      else line1 += " → hold N 期后 " + sellSess + "强制平仓";
+      else line1 += " → hold N 个交易日/期后 " + sellSess + "强制平仓";
       line1 += "（涨跌停会 defer）。";
-      let line2 = "例：信号周五 → 选周一买 / 下周一平 → 周一" + buySess + "买、再下周一" + sellSess + "卖。";
+      let line2 = "系统在交易日序列上计算；遇节假日自动落到之后第一个可交易日。";
       if (buyWd && exitWd) {
-        line2 = "例：信号任意日 → 买入日=" + wdName(buyWd) + " " + buySess + "，平仓日=" + wdName(exitWd) + " " + sellSess + "（均取信号/买入之后第一个该星期的交易日）。";
+        line2 = "例：信号任意日 → 买入日=" + wdName(buyWd) + " " + buySess + "，平仓日=" + wdName(exitWd) + " " + sellSess +
+          "（均取信号/买入之后第一个该星期的交易日；节假日顺延）。";
+      } else if (!buyWd && !exitWd) {
+        line2 = "经典 T+N 路径：无买卖星期时用 entry_lag / hold；仍按交易日日历步进。";
       }
       const el = document.getElementById("timeline");
       if (el) {
@@ -1971,7 +2231,16 @@ XG:CROSS(MA5,MA10);</textarea>
           const label = swd.map((d) => wdName(d)).join("、");
           text += "\n信号过滤：仅 " + label + " 出现的信号可交易。";
         }
+        text += "\n引擎：星期锚定 → T+N 交易日体系（非自然日硬编码）。";
         el.textContent = text;
+      }
+      const hint = document.getElementById("scheduleEngineHint");
+      if (hint) {
+        if (buyWd || exitWd) {
+          hint.textContent = "引擎说明：已设买卖星期 → 后台用 next_weekday_trading_day 覆盖 entry_lag/hold 步进；仍属交易日 T+N 体系。";
+        } else {
+          hint.textContent = "引擎说明：未设买卖星期 → 后台用 entry_lag / hold 在交易日序列上 T+N 步进。";
+        }
       }
     }
 
@@ -2030,6 +2299,9 @@ XG:CROSS(MA5,MA10);</textarea>
     }
 
     function updateSelectedLabel() {
+      try { if (typeof expSyncRuleBox === 'function') { expSyncRuleBox(); } } catch (e) {}
+      try { if (typeof expEstimate === 'function' && document.getElementById('pageExperiment')?.classList.contains('active')) expEstimate(); } catch (e) {}
+
       document.getElementById("selectedLabel").textContent =
         selected.size ? Array.from(selected).join(", ") : "无";
     }
@@ -2084,33 +2356,82 @@ XG:CROSS(MA5,MA10);</textarea>
       syncPoolUI();
     }
 
-    function drawEquity(points) {
-      const canvas = document.getElementById("equityChart");
+    function _seriesToDrawdown(points) {
+      const out = [];
+      let peak = null;
+      (points || []).forEach((p) => {
+        const eq = Number(p.equity);
+        if (!Number.isFinite(eq)) return;
+        if (peak == null || eq > peak) peak = eq;
+        const dd = peak > 0 ? (eq / peak - 1) : 0;
+        out.push({ date: p.date, equity: eq, drawdown: dd });
+      });
+      return out;
+    }
+    function _drawLineSeries(canvasId, series, yKey, color, opts) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
       const ctx = canvas.getContext("2d");
-      const w = canvas.width = canvas.clientWidth * devicePixelRatio;
-      const h = canvas.height = 200 * devicePixelRatio;
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.width = Math.max(320, canvas.clientWidth || 640) * dpr;
+      const h = canvas.height = ((opts && opts.height) || 200) * dpr;
       ctx.clearRect(0, 0, w, h);
-      if (!points || points.length < 2) return;
-      const ys = points.map(p => p.equity);
-      const min = Math.min(...ys), max = Math.max(...ys);
-      const pad = 10 * devicePixelRatio;
-      ctx.strokeStyle = "#3d8bfd";
-      ctx.lineWidth = 2 * devicePixelRatio;
+      if (!series || series.length < 2) return;
+      const ys = series.map((p) => Number(p[yKey]));
+      let min = Math.min.apply(null, ys), max = Math.max.apply(null, ys);
+      if (min === max) { min -= 1; max += 1; }
+      const pad = 12 * dpr;
+      if (opts && opts.zeroLine) {
+        const zy = h - pad - ((0 - min) / (max - min || 1)) * (h - 2 * pad);
+        ctx.strokeStyle = "rgba(255,255,255,0.15)";
+        ctx.lineWidth = 1 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(pad, zy);
+        ctx.lineTo(w - pad, zy);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = color || "#3d8bfd";
+      ctx.lineWidth = 2 * dpr;
       ctx.beginPath();
-      points.forEach((p, i) => {
-        const x = pad + (i / (points.length - 1)) * (w - 2 * pad);
-        const y = h - pad - ((p.equity - min) / (max - min || 1)) * (h - 2 * pad);
+      series.forEach((p, i) => {
+        const x = pad + (i / (series.length - 1)) * (w - 2 * pad);
+        const y = h - pad - ((Number(p[yKey]) - min) / (max - min || 1)) * (h - 2 * pad);
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
       ctx.stroke();
     }
+    function drawEquity(points) {
+      const series = _seriesToDrawdown(points);
+      _drawLineSeries("equityChart", series, "equity", "#3d8bfd", { height: 200 });
+      _drawLineSeries("ddChart", series, "drawdown", "#f31260", { height: 150, zeroLine: true });
+      const stats = document.getElementById("equityStats");
+      if (stats && series.length) {
+        const first = series[0].equity, last = series[series.length - 1].equity;
+        const peak = Math.max.apply(null, series.map((p) => p.equity));
+        const mdd = Math.min.apply(null, series.map((p) => p.drawdown));
+        const ret = first ? (last / first - 1) : null;
+        stats.innerHTML =
+          "<span>起点权益 <b>" + formatNumber(first, 2) + "</b></span>" +
+          "<span>终点权益 <b>" + formatNumber(last, 2) + "</b></span>" +
+          "<span>峰值 <b>" + formatNumber(peak, 2) + "</b></span>" +
+          "<span>曲线收益 <b>" + (ret != null ? formatPercent(ret) : "—") + "</b></span>" +
+          "<span>曲线最大回撤 <b>" + (Number.isFinite(mdd) ? formatPercent(Math.abs(mdd)) : "—") + "</b></span>" +
+          "<span>点数 <b>" + series.length + "</b></span>";
+      } else if (stats) {
+        stats.innerHTML = "";
+      }
+    }
 
     
-    function hideResultPanel() {
+    function hideResultPanel(force) {
+      // Background job progress must not clear a history detail the user is reading.
+      if (!force && window.__userBrowsingDetail) return;
       const card = document.getElementById("resultCard");
       if (card) card.classList.remove("visible");
       const chart = document.getElementById("equityChart");
       if (chart) chart.classList.remove("visible");
+      const dd = document.getElementById("ddChart");
+      if (dd) dd.classList.remove("visible");
       const jw = document.getElementById("resultJsonWrap");
       if (jw) jw.classList.remove("open");
     }
@@ -2154,6 +2475,10 @@ XG:CROSS(MA5,MA10);</textarea>
       const card = document.getElementById("resultCard");
       if (card) card.classList.add("visible");
       const runId = summary.run_id || (summary.meta && summary.meta.run_id) || null;
+      if (fromHistory && runId) {
+        window.__pinnedDetailRunId = runId;
+        window.__userBrowsingDetail = true;
+      }
       let detail = summary;
       let artifacts = summary.artifacts || [];
       let equity = (summary.meta && summary.meta.equity_curve) || summary.equity_curve || [];
@@ -2168,6 +2493,17 @@ XG:CROSS(MA5,MA10);</textarea>
           summary = { ...summary, ...detail, run_id: runId, metrics };
         } catch (e) {
           console.warn("加载回测详情失败", e);
+        }
+      }
+      // Prefer equity.csv via dedicated API (run_meta no longer embeds full curve)
+      if (runId && (!equity || !equity.length)) {
+        try {
+          const eqRes = await api("/api/v1/backtests/" + encodeURIComponent(runId) + "/equity?max_points=4000");
+          if (eqRes && Array.isArray(eqRes.points) && eqRes.points.length) {
+            equity = eqRes.points;
+          }
+        } catch (e) {
+          console.warn("加载权益曲线失败", e);
         }
       }
 
@@ -2236,39 +2572,52 @@ XG:CROSS(MA5,MA10);</textarea>
       renderTradeStats(metrics);
       renderSettingsKv(summary, repro, metrics, runId);
       renderAdvancedKv(summary, detail, artifacts, runId, metrics);
+      try { renderGuaDetailSection(summary, repro); } catch (e) { console.warn(e); }
 
       const kv = document.getElementById("resultKv");
       if (kv) {
         const inds = summary.indicator_names || repro.indicator_ids || summary.indicator_ids || [];
         const indText = Array.isArray(inds) ? inds.join("、") : String(inds || "—");
+        const sch0 = resolveTradeSchedule(summary, metrics, summary, repro);
+        const swd0 = summary.signal_weekdays || repro.signal_weekdays || [];
+        const swdLab0 = (Array.isArray(swd0) && swd0.length)
+          ? swd0.map((d) => wdName(Number(d))).join("、")
+          : "不限制";
         const rows = [
           ["策略名称", title],
           ["状态", statusLabel(summary.status || detail.status)],
           ["规则", indText],
           ["周期", period],
-          ["持有周期", hold],
-          ["买入延迟", lag],
-          ["买入时点", resolveTradeSchedule(summary, metrics, summary, repro).buyLabel],
-          ["卖出时点", resolveTradeSchedule(summary, metrics, summary, repro).sellLabel + "（到期）"],
+          ["信号星期", swdLab0],
+          ["买入时点", sch0.buyLabel],
+          ["卖出时点", sch0.sellLabel + "（到期）"],
           ["资金模式", modeText],
           ["区间", range],
         ];
+        if (sch0.buyWeekday == null && sch0.exitWeekday == null) {
+          rows.splice(5, 0, ["entry_lag / hold", (lag != null ? lag : "—") + " / " + (hold != null ? hold : "—")]);
+        }
         kv.innerHTML = rows.map(([k, v]) => "<div class='k'>" + k + "</div><div class='v'>" + (v == null || v === "" ? "—" : v) + "</div>").join("");
       }
 
       const chart = document.getElementById("equityChart");
       const note = document.getElementById("equityNote");
+      const dd = document.getElementById("ddChart");
       if (equity && equity.length) {
         if (chart) chart.classList.add("visible");
+        if (dd) dd.classList.add("visible");
         drawEquity(equity);
         if (note) {
           note.textContent = per
-            ? "净值曲线来自虚拟账户合计权益（非正式等权标准化合成）。"
-            : "组合账户权益曲线。";
+            ? "净值与回撤：基于虚拟账户合计权益（非正式等权标准化合成）。上图权益、下图回撤。"
+            : "净值与回撤：组合账户权益曲线。上图权益、下图从峰值回撤。";
         }
-      } else if (chart) {
-        chart.classList.remove("visible");
-        if (note) note.textContent = "无权益曲线数据";
+      } else {
+        if (chart) chart.classList.remove("visible");
+        if (dd) dd.classList.remove("visible");
+        const stats = document.getElementById("equityStats");
+        if (stats) stats.innerHTML = "";
+        if (note) note.textContent = "无权益曲线数据（缺少 equity.csv 或点数不足）";
       }
 
       const pre = document.getElementById("resultJson");
@@ -2380,21 +2729,33 @@ XG:CROSS(MA5,MA10);</textarea>
       const lag = summary.entry_lag != null ? summary.entry_lag : repro.entry_lag;
       const hold = summary.hold != null ? summary.hold : repro.hold;
       const per = isPerSymbolMode(metrics, summary);
+      const sch = resolveTradeSchedule(summary, metrics, summary, repro);
+      const bw = summary.buy_weekday != null ? summary.buy_weekday : repro.buy_weekday;
+      const ew = summary.exit_weekday != null ? summary.exit_weekday : repro.exit_weekday;
+      const swd = summary.signal_weekdays || repro.signal_weekdays || [];
+      const mode = summary.schedule_mode || repro.schedule_mode ||
+        ((bw != null && bw !== "") || (ew != null && ew !== "") ? "weekday" : "tn");
+      const swdLab = (Array.isArray(swd) && swd.length)
+        ? swd.map((d) => wdName(Number(d))).join("、")
+        : "不限制";
       const rows = [
         ["K线周期", periodLabel(summary.period || repro.period)],
-        ["持有周期 hold", hold],
-        ["买入日（星期）", (function(){ const b=summary.buy_weekday||repro.buy_weekday; return b!=null&&b!=="" ? wdName(Number(b)) : ("entry_lag="+lag); })()],
-        ["平仓日（星期）", (function(){ const e=summary.exit_weekday||repro.exit_weekday; return e!=null&&e!=="" ? wdName(Number(e)) : ("hold="+hold); })()],
-        ["买入延迟 entry_lag", lag],
-        ["交易时点", (function(){
-          const sch = resolveTradeSchedule(summary, metrics, summary, repro);
-          return "T日收盘信号 → " + sch.buyLabel + " → " + sch.sellLabel + "（到期）";
-        })()],
+        ["信号星期", swdLab],
+        ["买入日（星期）", (bw != null && bw !== "") ? wdName(Number(bw)) : "—（T+N / entry_lag）"],
+        ["平仓日（星期）", (ew != null && ew !== "") ? wdName(Number(ew)) : "—（hold）"],
+        ["成交时点", (sch.boCn || "开盘") + "买 / " + (sch.soCn || "开盘") + "卖"],
+        ["交易时点示意", "T日收盘信号 → " + sch.buyLabel + " → " + sch.sellLabel],
+        ["引擎说明", mode === "weekday"
+          ? "星期锚定 → 交易日序列上 next_weekday_trading_day（覆盖 entry_lag/hold 步进）；节假日顺延"
+          : "无买卖星期 → entry_lag + hold 在交易日序列上 T+N 步进"],
         ["资金模式", per ? "单票独立资金" : "共享资金池"],
         ["回测区间", fmtYmd(summary.start || repro.start) + " ~ " + fmtYmd(summary.end || repro.end)],
         ["止损", repro.stop_loss_pct != null ? repro.stop_loss_pct : (summary.stop_loss_pct != null ? summary.stop_loss_pct : "—")],
-        ["止盈", repro.stop_profit_pct != null ? repro.stop_profit_pct : (summary.stop_profit_pct != null ? summary.stop_profit_pct : "—")],
+        ["止盈", repro.take_profit_pct != null ? repro.take_profit_pct : (summary.take_profit_pct != null ? summary.take_profit_pct : (repro.stop_profit_pct != null ? repro.stop_profit_pct : "—"))],
       ];
+      if (mode === "tn") {
+        rows.splice(6, 0, ["entry_lag / hold", (lag != null ? lag : "—") + " / " + (hold != null ? hold : "—")]);
+      }
       box.innerHTML = rows.map(([k, v]) => "<div class='k'>" + k + "</div><div class='v'>" + (v == null || v === "" ? "—" : v) + "</div>").join("");
     }
 
@@ -2573,6 +2934,16 @@ XG:CROSS(MA5,MA10);</textarea>
         else if (job.status === "queued") pct = 0;
         else pct = Math.min(95, 5 + elapsed * 0.15);
       }
+      if (job.status === "queued") {
+        const pos = job.queue_position || prog.queue_position;
+        const nq = prog.n_queued;
+        return (
+          "排队中" + (pos ? ("第 " + pos + " 位") : "") +
+          (nq != null ? (" / 共" + nq + "个等待") : "") +
+          " · 已等待 " + fmtElapsed(elapsed) +
+          " · " + (job.job_id || "")
+        );
+      }
       const phaseMap = {
         queued: "排队中", starting: "启动中", prepare: "准备",
         signals: "计算信号", factors: "校验复权", portfolio: "组合回测",
@@ -2586,12 +2957,172 @@ XG:CROSS(MA5,MA10);</textarea>
       const detail = [phase, total ? (cur + "/" + total) : "", msg, code,
         "已运行 " + fmtElapsed(elapsed), job.job_id || ""].filter(Boolean).join(" · ");
       setProgressUI(pct, phase + (total ? (" " + cur + "/" + total) : ""), detail, { active: true });
-      // keep result panel hidden while running
-      hideResultPanel();
+      // Do NOT hideResultPanel here — user may be viewing history detail while a job runs.
       return "异步任务 " + job.status + " · " + Number(pct).toFixed(1) + "% · 已运行 " + fmtElapsed(elapsed);
     }
 
+
+    // ---- Task queue (FIFO, multi-submit) ----
+    const __activeJobPolls = new Map(); // jobId -> { timer, msg }
+    let __queueRefreshTimer = null;
+
+    function jobStatusPill(st) {
+      const map = {
+        queued: ["wait", "排队中"],
+        running: ["run", "运行中"],
+        succeeded: ["ok", "已完成"],
+        failed: ["bad", "失败"],
+        cancelled: ["bad", "已取消"],
+      };
+      const m = map[st] || ["wait", st || "—"];
+      return '<span class="pill ' + m[0] + '">' + m[1] + "</span>";
+    }
+
+    async function refreshTaskQueueBar() {
+      const bar = document.getElementById("taskQueueBar");
+      const body = document.getElementById("taskQueueBody");
+      const meta = document.getElementById("taskQueueMeta");
+      if (!bar || !body) return;
+      try {
+        const snap = await api("/api/v1/backtests/jobs/queue");
+        const nq = snap.n_queued || 0;
+        const nr = snap.n_running || 0;
+        // Always keep the task list visible so users can find it
+        bar.style.display = "block";
+        if (meta) {
+          meta.textContent =
+            "（并发 " + (snap.max_workers || 1) +
+            " · 运行中 " + nr +
+            " · 排队 " + nq +
+            " · 可继续点「开始回测」追加任务）";
+        }
+        const rows = [];
+        (snap.running || []).forEach((j) => {
+          const pct = (j.progress && j.progress.pct != null) ? Number(j.progress.pct).toFixed(0) + "%" : "…";
+          const msg = (j.progress && j.progress.message) || "";
+          rows.push(
+            '<div class="tq-row">' + jobStatusPill("running") +
+            " <strong>" + escAttr(j.title_hint || j.job_id) + "</strong>" +
+            " <span class='sub'>" + pct + " · " + escAttr(msg) + "</span>" +
+            " <span class='sub'>" + escAttr(j.job_id) + "</span></div>"
+          );
+        });
+        (snap.queued || []).forEach((j) => {
+          const pos = j.queue_position || (j.progress && j.progress.queue_position) || "?";
+          rows.push(
+            '<div class="tq-row">' + jobStatusPill("queued") +
+            " <strong>第 " + pos + " 位</strong> · " +
+            escAttr(j.title_hint || j.job_id) +
+            " <span class='sub'>等待前序任务结束自动开始</span></div>"
+          );
+        });
+        // recent finished (max 3)
+        const done = (snap.recent || []).filter((j) => j.status === "succeeded" || j.status === "failed").slice(0, 3);
+        done.forEach((j) => {
+          rows.push(
+            '<div class="tq-row">' + jobStatusPill(j.status) +
+            " " + escAttr(j.title_hint || j.run_id || j.job_id) +
+            (j.run_id ? " <span class='sub'>" + escAttr(j.run_id) + "</span>" : "") +
+            (j.error ? " <span class='sub'>" + escAttr(String(j.error).slice(0, 80)) + "</span>" : "") +
+            "</div>"
+          );
+        });
+        if (!rows.length) {
+          const recentDone = (snap.recent || []).slice(0, 8);
+          if (recentDone.length) {
+            recentDone.forEach((j) => {
+              rows.push(
+                '<div class="tq-row">' + jobStatusPill(j.status) +
+                " " + escAttr(j.title_hint || j.run_id || j.job_id) +
+                (j.run_id ? " <span class='sub'>" + escAttr(j.run_id) + "</span>" : "") +
+                (j.error ? " <span class='sub'>" + escAttr(String(j.error).slice(0, 100)) + "</span>" : "") +
+                "</div>"
+              );
+            });
+            body.innerHTML = "<div class='sub' style='margin-bottom:0.25rem'>当前无排队；最近任务：</div>" + rows.join("");
+          } else {
+            body.innerHTML = "<div class='sub'>暂无进行中任务。点「开始回测」后会出现在这里（可连续提交多个，自动排队）。</div>";
+          }
+        } else {
+          body.innerHTML = rows.join("");
+        }
+      } catch (e) {
+        body.innerHTML = "<div class='sub' style='color:var(--warn)'>队列接口失败：" +
+          escAttr(e.message || e) +
+          "（请重启服务；若仍失败请检查 /api/v1/backtests/jobs/queue）</div>";
+      }
+    }
+
+    function ensureQueueRefresh() {
+      if (__queueRefreshTimer) return;
+      __queueRefreshTimer = setInterval(() => {
+        refreshTaskQueueBar();
+        if (__activeJobPolls.size === 0) {
+          // one last refresh then stop when idle for a bit
+        }
+      }, 1500);
+      refreshTaskQueueBar();
+    }
+
+    function trackJobInBackground(jobId, onDone) {
+      if (__activeJobPolls.has(jobId)) return;
+      ensureQueueRefresh();
+      const startedAt = Date.now() / 1000;
+      let netFail = 0;
+      const tick = async () => {
+        try {
+          const j = await api("/api/v1/backtests/jobs/" + encodeURIComponent(jobId));
+          netFail = 0;
+          refreshTaskQueueBar();
+          // update main progress if this is the running one
+          if (j.status === "running" || (j.status === "queued" && __activeJobPolls.size === 1)) {
+            const prog = j.progress || {};
+            const pct = prog.pct != null ? prog.pct : (j.status === "queued" ? 0 : 5);
+            const label = j.status === "queued"
+              ? ("排队中第 " + (j.queue_position || prog.queue_position || "?") + " 位")
+              : (prog.message || "运行中");
+            setProgressUI(pct, label, showJobProgress(j, j.created_at || startedAt), { active: true });
+            const msg = document.getElementById("runMsg");
+            if (msg) msg.textContent = showJobProgress(j, j.created_at || startedAt);
+          }
+          if (j.status === "succeeded") {
+            __activeJobPolls.delete(jobId);
+            refreshTaskQueueBar();
+            if (typeof onDone === "function") onDone(null, j);
+            if (__activeJobPolls.size === 0) {
+              setProgressUI(100, "完成", "run_id=" + (j.run_id || ""), { active: true });
+              hideProgressSoon();
+            }
+            return;
+          }
+          if (j.status === "failed" || j.status === "cancelled") {
+            __activeJobPolls.delete(jobId);
+            refreshTaskQueueBar();
+            if (typeof onDone === "function") onDone(new Error(j.error || "job failed"), j);
+            return;
+          }
+          // still queued/running
+          const handle = setTimeout(tick, 1000);
+          __activeJobPolls.set(jobId, handle);
+        } catch (e) {
+          const em = String(e.message || e);
+          const isNet = em.indexOf("网络") >= 0 || em.indexOf("fetch") >= 0 || em.indexOf("Network") >= 0;
+          if (isNet && netFail < 20) {
+            netFail += 1;
+            const handle = setTimeout(tick, 1500);
+            __activeJobPolls.set(jobId, handle);
+            return;
+          }
+          __activeJobPolls.delete(jobId);
+          if (typeof onDone === "function") onDone(e, null);
+        }
+      };
+      __activeJobPolls.set(jobId, true);
+      tick();
+    }
+
     async function pollJob(jobId, msg) {
+
       const startedAt = Date.now() / 1000;
       setProgressUI(0, "排队/启动", "job " + jobId, { active: true });
       try {
@@ -2776,16 +3307,24 @@ XG:CROSS(MA5,MA10);</textarea>
         const rp = repro || src.repro || (src.meta && src.meta.repro) || {};
         const gf = src.gua_filter || rp.gua_filter || (src.meta && src.meta.gua_filter) || null;
         if (!gf || !gf.enabled) {
-          // legacy bagua best3
+          // legacy bagua best3 path (with_bagua without structured gua_filter)
           if (src.with_bagua || rp.with_bagua || src.bagua_filter_label || rp.bagua_filter_label) {
             const lab = src.bagua_filter_label || rp.bagua_filter_label || "八卦";
             if (lab && lab !== "否") return String(lab);
           }
           return "";
         }
-        if (typeof GuaUI !== "undefined" && GuaUI.historyShort) {
+        // Prefer server-built history_summary (works even if GuaUI not ready)
+        if (gf.history_summary && gf.history_summary.short) {
+          const s0 = String(gf.history_summary.short);
+          if (s0 && s0.indexOf("未启用") < 0) return s0;
+        }
+        // best3 preset fingerprint (exact three classic lines)
+        const sids = (gf.selected_state_ids || []).map(String).slice().sort().join(",");
+        if (sids === "11-1,24-1,46-1" || sids === "24-1,46-1,11-1") return "卦象·最佳3爻";
+        if (typeof GuaUI !== "undefined" && GuaUI && GuaUI.historyShort) {
           const hs = GuaUI.historyShort(gf);
-          if (hs && hs.short && hs.short.indexOf("未启用") < 0) return hs.short;
+          if (hs && hs.short && String(hs.short).indexOf("未启用") < 0) return hs.short;
         }
         if (gf.selection_mode === "action_signal" && (gf.selected_action_signals || []).length) {
           return "卦象信号：" + (gf.selected_action_signals || []).slice(0, 3).join("、");
@@ -2836,12 +3375,11 @@ XG:CROSS(MA5,MA10);</textarea>
       if (r.entry_lag != null && r.entry_lag !== "") tags.push("延迟" + r.entry_lag);
       tags.push(accountModeShort(m, r));
       try {
-        const gf = r.gua_filter || (r.repro && r.repro.gua_filter) || null;
-        if (typeof GuaUI !== "undefined" && gf) {
-          const hs = GuaUI.historyShort(gf);
-          tags.push(hs.short);
-        } else if (gf && gf.enabled) {
-          tags.push("卦象过滤");
+        const gBit = guaTitleFragment(r);
+        if (gBit) tags.push(gBit);
+        else {
+          const gf = r.gua_filter || (r.repro && r.repro.gua_filter) || null;
+          if (gf && gf.enabled) tags.push("卦象过滤");
         }
       } catch (e) {}
 
@@ -2905,11 +3443,179 @@ XG:CROSS(MA5,MA10);</textarea>
 
     function updateHistSelInfo() {
       const el = document.getElementById("histSelInfo");
-      if (el) el.textContent = "已选 " + selectedRuns.size + " 条";
+      const n = selectedRuns.size;
+      if (el) el.textContent = "已选 " + n + " 条";
+      const btn = document.getElementById("btnCompareSelected");
+      if (btn) {
+        const ok = n >= 2 && n <= 10;
+        btn.disabled = !ok;
+        btn.title = ok
+          ? ("对比已选 " + n + " 条任务")
+          : "请勾选 2～10 条历史任务后再对比";
+      }
     }
 
     function getCheckedRunIds() {
       return Array.from(selectedRuns);
+    }
+
+    function _fmtCompareVal(v, key) {
+      if (v == null || v === "") return "—";
+      if (Array.isArray(v)) {
+        if (!v.length) return "—";
+        if (key === "signal_weekdays" || key === "buy_weekday" || key === "exit_weekday") {
+          const map = {1:"一",2:"二",3:"三",4:"四",5:"五",6:"六",7:"日"};
+          if (key !== "signal_weekdays") return "周" + (map[Number(v)] || v);
+          return v.map((d) => "周" + (map[Number(d)] || d)).join("、");
+        }
+        return v.join(", ");
+      }
+      if (key === "buy_weekday" || key === "exit_weekday") {
+        const map = {1:"一",2:"二",3:"三",4:"四",5:"五",6:"六",7:"日"};
+        return "周" + (map[Number(v)] || v);
+      }
+      if (typeof v === "object") return JSON.stringify(v);
+      return String(v);
+    }
+
+    function _fmtCompareMetric(key, v) {
+      if (v == null || v === "") return "—";
+      const pctKeys = {
+        total_return:1, mean_symbol_return:1, annual_return:1, max_drawdown:1, win_rate:1, cost_impact:1
+      };
+      if (pctKeys[key]) {
+        try { return formatPercent(Number(v)); } catch (e) { return String(v); }
+      }
+      if (key === "n_round_trips" || key === "n_buys" || key === "n_sells") {
+        return formatTradeCount({ n_round_trips: v }) === "—" ? String(v) : String(v);
+      }
+      try { return formatNumber(Number(v), key === "final_equity" || key === "cost_total" ? 2 : 4); }
+      catch (e) { return String(v); }
+    }
+
+    function renderCompareResult(data) {
+      const panel = document.getElementById("comparePanel");
+      const body = document.getElementById("compareBody");
+      const countEl = document.getElementById("compareCount");
+      if (!panel || !body) return;
+      const runs = (data && data.runs) || [];
+      if (countEl) countEl.textContent = "（" + runs.length + " 条）";
+      if (!runs.length) {
+        body.innerHTML = "<div class='sub'>无对比数据</div>";
+        panel.style.display = "block";
+        return;
+      }
+      const titles = runs.map((r) => {
+        const t = (r.title || r.run_id || "").toString();
+        return t.length > 28 ? t.slice(0, 26) + "…" : t;
+      });
+      const PARAM_LABELS = {
+        indicator_ids: "策略/指标",
+        period: "周期",
+        account_mode: "资金模式",
+        schedule_mode: "日程模式",
+        signal_weekdays: "信号星期",
+        buy_weekday: "买入星期",
+        exit_weekday: "平仓星期",
+        buy_on: "买入时点",
+        sell_on: "卖出时点",
+        entry_lag: "entry_lag",
+        hold: "hold",
+        start: "开始",
+        end: "结束",
+        gua_short: "卦象",
+        stop_loss: "止损",
+        take_profit: "止盈",
+      };
+      const METRIC_LABELS = {
+        total_return: "组合总收益",
+        mean_symbol_return: "单票平均收益",
+        annual_return: "年化收益",
+        max_drawdown: "最大回撤",
+        sharpe: "夏普",
+        win_rate: "胜率",
+        payoff_ratio: "盈亏比",
+        profit_factor: "盈利因子",
+        n_round_trips: "已平仓交易",
+        cost_total: "总费用",
+        final_equity: "期末权益",
+      };
+      let html = "";
+      // metrics table
+      html += "<h4 style='margin:0.4rem 0;font-size:0.9rem'>核心指标</h4>";
+      html += "<table class='compare-table'><thead><tr><th>指标</th>";
+      titles.forEach((tt, i) => {
+        html += "<th title='" + escAttr(runs[i].run_id || "") + "'>" + escAttr(tt) + "</th>";
+      });
+      html += "</tr></thead><tbody>";
+      (data.metrics_table || []).forEach((row) => {
+        const lab = METRIC_LABELS[row.key] || row.key;
+        html += "<tr><td>" + escAttr(lab) + "</td>";
+        (row.values || []).forEach((v) => {
+          html += "<td class='num'>" + escAttr(_fmtCompareMetric(row.key, v)) + "</td>";
+        });
+        html += "</tr>";
+      });
+      html += "</tbody></table>";
+      // param diffs
+      html += "<h4 style='margin:0.85rem 0 0.4rem;font-size:0.9rem'>参数差异（仅展示不一致项）</h4>";
+      const diffs = data.param_diffs || [];
+      if (!diffs.length) {
+        html += "<div class='sub'>所选任务在关键参数字段上完全一致。</div>";
+      } else {
+        html += "<table class='compare-table'><thead><tr><th>参数</th>";
+        titles.forEach((tt) => { html += "<th>" + escAttr(tt) + "</th>"; });
+        html += "</tr></thead><tbody>";
+        diffs.forEach((row) => {
+          const lab = PARAM_LABELS[row.key] || row.key;
+          html += "<tr><td>" + escAttr(lab) + "</td>";
+          (row.values || []).forEach((v) => {
+            html += "<td class='diff'>" + escAttr(_fmtCompareVal(v, row.key)) + "</td>";
+          });
+          html += "</tr>";
+        });
+        html += "</tbody></table>";
+      }
+      // full param snapshot always available collapsed
+      html += "<details style='margin-top:0.75rem'><summary style='cursor:pointer;color:var(--muted);font-size:0.82rem'>全部参数快照</summary>";
+      html += "<table class='compare-table' style='margin-top:0.4rem'><thead><tr><th>参数</th>";
+      titles.forEach((tt) => { html += "<th>" + escAttr(tt) + "</th>"; });
+      html += "</tr></thead><tbody>";
+      Object.keys(PARAM_LABELS).forEach((key) => {
+        const vals = runs.map((r) => (r.params || {})[key]);
+        const same = vals.every((x) => JSON.stringify(x) === JSON.stringify(vals[0]));
+        html += "<tr><td>" + escAttr(PARAM_LABELS[key]) + "</td>";
+        vals.forEach((v) => {
+          html += "<td class='" + (same ? "" : "diff") + "'>" + escAttr(_fmtCompareVal(v, key)) + "</td>";
+        });
+        html += "</tr>";
+      });
+      html += "</tbody></table></details>";
+      body.innerHTML = html;
+      panel.style.display = "block";
+      try { panel.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (e) {}
+    }
+
+    async function compareSelectedRuns() {
+      const ids = getCheckedRunIds();
+      if (ids.length < 2 || ids.length > 10) {
+        alert("请勾选 2～10 条历史任务再对比（当前 " + ids.length + " 条）");
+        return;
+      }
+      const body = document.getElementById("compareBody");
+      const panel = document.getElementById("comparePanel");
+      if (panel) panel.style.display = "block";
+      if (body) body.innerHTML = "<div class='sub'>加载对比中…</div>";
+      try {
+        const data = await api("/api/v1/runs/compare", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ run_ids: ids }),
+        });
+        renderCompareResult(data);
+      } catch (e) {
+        if (body) body.innerHTML = "<div class='sub' style='color:var(--warn)'>对比失败：" + escAttr(e.message || String(e)) + "</div>";
+      }
     }
 
     async function deleteRunsByIds(ids) {
@@ -3173,6 +3879,10 @@ XG:CROSS(MA5,MA10);</textarea>
 
       const openRun = async (rid) => {
         if (!rid) return;
+        // Pin detail view so background job polls do not steal/clear the panel
+        window.__pinnedDetailRunId = rid;
+        window.__userBrowsingDetail = true;
+
         box.querySelectorAll("tr.hist-row").forEach((x) => x.classList.remove("active"));
         const tr = box.querySelector("tr.hist-row[data-run='" + rid + "']");
         if (tr) tr.classList.add("active");
@@ -3237,6 +3947,14 @@ XG:CROSS(MA5,MA10);</textarea>
         seen.add(tg);
         out.push(tg);
       });
+      // 卦象：历史行必须显示「规则 + 卦象」
+      try {
+        const gBit = guaTitleFragment(r);
+        if (gBit && !seen.has(gBit)) {
+          seen.add(gBit);
+          out.unshift(gBit);
+        }
+      } catch (e) {}
       // signal weekday filter tags
       const swd = r.signal_weekdays || (r.repro && r.repro.signal_weekdays) || (m && m.signal_weekdays);
       if (Array.isArray(swd) && swd.length) {
@@ -3303,7 +4021,7 @@ XG:CROSS(MA5,MA10);</textarea>
     }
 
     function switchBtPage(name) {
-      const pages = ["new", "history", "detail"];
+      const pages = ["new", "history", "experiment", "detail"];
       pages.forEach((p) => {
         const el = document.getElementById("page" + p.charAt(0).toUpperCase() + p.slice(1));
         if (el) el.classList.toggle("active", p === name);
@@ -3313,7 +4031,7 @@ XG:CROSS(MA5,MA10);</textarea>
       });
       const main = document.getElementById("viewBacktest");
       if (main) {
-        if (name === "history" || name === "detail") main.classList.add("fullwidth");
+        if (name === "history" || name === "detail" || name === "experiment") main.classList.add("fullwidth");
         else main.classList.remove("fullwidth");
       }
       const tabDetail = document.getElementById("tabDetail");
@@ -3325,8 +4043,13 @@ XG:CROSS(MA5,MA10);</textarea>
         else tabDetail.removeAttribute("disabled");
       }
       if (name === "detail" && tabDetail) {
+        window.__userBrowsingDetail = true;
+
         tabDetail.disabled = false;
         tabDetail.removeAttribute("disabled");
+      }
+      if (name === "experiment") {
+        try { expSyncRuleBox(); expEstimate(); expRenderList(); } catch (e) {}
       }
       if (name === "history") {
         refreshHistory().catch(() => {});
@@ -3334,7 +4057,7 @@ XG:CROSS(MA5,MA10);</textarea>
           requestAnimationFrame(() => window.scrollTo(0, window.__historyScrollY || 0));
         }
       }
-      if (name === "new") window.scrollTo(0, 0);
+      if (name === "new") { window.__userBrowsingDetail = false; window.scrollTo(0, 0); try { refreshTaskQueueBar(); } catch (e) {} }
     }
 
     async function copyRunParams(runId) {
@@ -3351,11 +4074,7 @@ XG:CROSS(MA5,MA10);</textarea>
         const mode = (detail.metrics && detail.metrics.account_mode) || repro.account_mode || detail.account_mode;
         if (mode) {
           const per = String(mode).toLowerCase().indexOf("per") >= 0 || String(mode).toLowerCase() === "tdx";
-          try {
-          const gf = repro.gua_filter || detail.gua_filter;
-          if (typeof GuaUI !== "undefined" && gf) GuaUI.setFromConfig(gf);
-        } catch (e) {}
-        const radios = document.querySelectorAll('input[name="accountMode"]');
+          const radios = document.querySelectorAll('input[name="accountMode"]');
           radios.forEach((r) => { r.checked = per ? r.value === "per_symbol" : r.value === "portfolio"; });
         }
         const inds = detail.indicator_ids || repro.indicator_ids || [];
@@ -3365,13 +4084,33 @@ XG:CROSS(MA5,MA10);</textarea>
           if (typeof renderRules === "function") renderRules();
           if (typeof updateSelectedLabel === "function") updateSelectedLabel();
         }
-        const swd = repro.signal_weekdays || detail.signal_weekdays;
+        const swd = repro.signal_weekdays != null ? repro.signal_weekdays : detail.signal_weekdays;
         if (typeof setSignalWeekdays === "function") setSignalWeekdays(swd || []);
         if (typeof setBuyOn === "function") setBuyOn(repro.buy_on || detail.buy_on || "open");
-        if (typeof setBuyWeekday === "function" && (repro.buy_weekday != null || detail.buy_weekday != null)) setBuyWeekday(repro.buy_weekday != null ? repro.buy_weekday : detail.buy_weekday);
-        if (typeof setExitWeekday === "function" && (repro.exit_weekday != null || detail.exit_weekday != null)) setExitWeekday(repro.exit_weekday != null ? repro.exit_weekday : detail.exit_weekday);
         if (typeof setSellOn === "function") setSellOn(repro.sell_on || detail.sell_on || "open");
+        const bw = repro.buy_weekday != null ? repro.buy_weekday : detail.buy_weekday;
+        const ew = repro.exit_weekday != null ? repro.exit_weekday : detail.exit_weekday;
+        const buyEl = document.getElementById("buyWeekday");
+        const exitEl = document.getElementById("exitWeekday");
+        if (bw != null && bw !== "" && typeof setBuyWeekday === "function") {
+          setBuyWeekday(bw);
+        } else if (buyEl) {
+          buyEl.value = "";
+        }
+        if (ew != null && ew !== "" && typeof setExitWeekday === "function") {
+          setExitWeekday(ew);
+        } else if (exitEl) {
+          exitEl.value = "";
+        }
+        try {
+          const gf = repro.gua_filter || detail.gua_filter;
+          if (typeof GuaUI !== "undefined" && GuaUI && typeof GuaUI.setFromConfig === "function") {
+            if (gf) GuaUI.setFromConfig(gf);
+          }
+        } catch (e) { console.warn("GuaUI.setFromConfig", e); }
         if (typeof updateTimeline === "function") updateTimeline();
+        if (typeof updateBtSummary === "function") updateBtSummary();
+        if (typeof updateSwdStatus === "function") updateSwdStatus();
         switchBtPage("new");
         alert("已复制参数到「新建回测」（请核对股票池与日期）");
       } catch (e) {
@@ -3538,6 +4277,33 @@ XG:CROSS(MA5,MA10);</textarea>
     document.getElementById("buyWeekday")?.addEventListener("change", updateTimeline);
     document.getElementById("exitWeekday")?.addEventListener("change", updateTimeline);
 
+    document.getElementById("btnPresetWeekday")?.addEventListener("click", () => {
+      // Research default: Fri buy / Mon exit is a common template; keep open/open
+      const buyEl = document.getElementById("buyWeekday");
+      const exitEl = document.getElementById("exitWeekday");
+      if (buyEl) buyEl.value = "5";
+      if (exitEl) exitEl.value = "1";
+      if (document.getElementById("entryLag")) document.getElementById("entryLag").value = "1";
+      if (document.getElementById("hold")) document.getElementById("hold").value = "1";
+      setBuyOn("open");
+      setSellOn("open");
+      updateTimeline();
+      updateBtSummary();
+    });
+    document.getElementById("btnPresetTn12")?.addEventListener("click", () => {
+      // Classic: clear weekdays → entry_lag=1 open buy, hold=1 close sell (T+1 open / T+2 close)
+      const buyEl = document.getElementById("buyWeekday");
+      const exitEl = document.getElementById("exitWeekday");
+      if (buyEl) buyEl.value = "";
+      if (exitEl) exitEl.value = "";
+      if (document.getElementById("entryLag")) document.getElementById("entryLag").value = "1";
+      if (document.getElementById("hold")) document.getElementById("hold").value = "1";
+      setBuyOn("open");
+      setSellOn("close");
+      updateTimeline();
+      updateBtSummary();
+    });
+
     document.querySelectorAll("#signalWeekdays input.swd").forEach((el) => {
       el.addEventListener("change", updateTimeline);
     });
@@ -3600,6 +4366,19 @@ XG:CROSS(MA5,MA10);</textarea>
           return;
         }
 
+        // Surface obvious gua misconfig: switch on but no selection
+        try {
+          if (typeof GuaUI !== "undefined" && GuaUI && typeof GuaUI.getPayload === "function") {
+            const gchk = GuaUI.getPayload();
+            const sw = document.getElementById("guaEnabled");
+            if (sw && sw.checked && gchk && !gchk.enabled) {
+              if (!confirm("卦象开关已打开，但尚未选择有效过滤条件（方案/操作信号/爻象）。\n将按「不启用卦象过滤」提交。\n\n确定继续？")) {
+                return;
+              }
+            }
+          }
+        } catch (e) {}
+
         const body = {
           rule_ids: tradeIds,
           period: document.getElementById("period").value,
@@ -3616,30 +4395,111 @@ XG:CROSS(MA5,MA10);</textarea>
           use_full_market,
           start,
           end,
-          with_bagua: hasBagua,
+          // Gua filter from Step 6 (must be sent; with_bagua alone only tracks bagua_ohlc checkbox)
+          gua_filter: (function(){
+            try {
+              if (typeof GuaUI !== "undefined" && GuaUI && typeof GuaUI.getPayload === "function") {
+                return GuaUI.getPayload();
+              }
+            } catch (e) { console.warn("GuaUI.getPayload", e); }
+            return null;
+          })(),
+          with_bagua: (function(){
+            let gfOn = false;
+            try {
+              if (typeof GuaUI !== "undefined" && GuaUI && typeof GuaUI.getPayload === "function") {
+                const g = GuaUI.getPayload();
+                gfOn = !!(g && g.enabled);
+              }
+            } catch (e) {}
+            return !!(hasBagua || gfOn);
+          })(),
           bagua_filter_mode: hasBagua ? "best3" : null,
           research_unadjusted: document.getElementById("researchUnadj").checked,
           research_unconfirmed_formula: document.getElementById("researchUnconf").checked,
           stop_loss: document.getElementById("sl").value ? parseFloat(document.getElementById("sl").value) : null,
           take_profit: document.getElementById("tp").value ? parseFloat(document.getElementById("tp").value) : null,
-          async_mode: use_full_market,
+          async_mode: true,  // always queue: next submit waits until previous finishes
         };
 
-        hideResultPanel();
+        window.__userBrowsingDetail = false;
+        window.__pinnedDetailRunId = "";
+        hideResultPanel(true);
         document.getElementById("metrics").innerHTML = "";
         msg.textContent = "正在提交回测任务…";
         setProgressUI(0, "提交中", "正在创建任务…", { active: true, indeterminate: true });
 
+        // Always enqueue: returns immediately; jobs run FIFO (1 at a time).
         let r = await api("/api/v1/backtests", { method: "POST", body: JSON.stringify(body) });
         if (r.mode === "async" && r.job_id) {
-          msg.textContent = "任务已提交 " + r.job_id + "，开始轮询进度…";
-          r = await pollJob(r.job_id, msg);
-          r = { mode: "async", ...r };
-        } else {
-          msg.textContent = "同步回测计算中…";
+          const jobId = r.job_id;
+          const qpos = (r.progress && r.progress.queue_position) || r.queue_position;
+          const nq = (r.progress && r.progress.n_queued) || "";
+          msg.innerHTML =
+            '<span class="okmsg">任务已加入队列：' + jobId +
+            (qpos ? (" · 排队第 " + qpos + " 位") : "") +
+            "。可继续改参数再点「开始回测」追加任务；前一个跑完会自动开始下一个。</span>";
+          setProgressUI(
+            0,
+            qpos && qpos > 1 ? ("排队第 " + qpos + " 位") : "已入队",
+            "job " + jobId + " · 可继续提交",
+            { active: true }
+          );
+          ensureQueueRefresh();
+          refreshTaskQueueBar();
+          trackJobInBackground(jobId, async (err, job) => {
+            try {
+              refreshTaskQueueBar();
+              if (err) {
+                const em = document.getElementById("runMsg");
+                if (em) {
+                  em.innerHTML =
+                    '<span class="err">任务失败 ' + jobId + "：" +
+                    escAttr(err.message || String(err)).slice(0, 200) + "</span>";
+                }
+                return;
+              }
+              const result = (job && (job.result || job)) || {};
+              const em = document.getElementById("runMsg");
+              if (em) {
+                em.innerHTML =
+                  '<span class="okmsg">回测完成：' +
+                  escAttr(result.title || result.run_id || jobId) +
+                  " · " + statusLabel(result.status || job.status) +
+                  "</span>";
+              }
+              setProgressUI(100, "完成", "run_id=" + (result.run_id || job.run_id || ""), { active: true });
+              hideProgressSoon();
+              const finishedId = result.run_id || job.run_id || "";
+              const pinned = window.__pinnedDetailRunId || "";
+              const browsing = !!window.__userBrowsingDetail;
+              // If user is viewing another history run, do not yank them to the new result
+              if (!browsing || !pinned || pinned === finishedId) {
+                window.__pinnedDetailRunId = finishedId || pinned;
+                window.__userBrowsingDetail = false;
+                await showRunResult(result, { fromHistory: false });
+              } else {
+                const em2 = document.getElementById("runMsg");
+                if (em2) {
+                  em2.innerHTML =
+                    '<span class="okmsg">后台任务已完成：' +
+                    escAttr(result.title || finishedId) +
+                    "（你正在查看其他详情，未自动切换；可在历史中打开）</span>";
+                }
+              }
+              try {
+                const rows = await api("/api/v1/runs?limit=200");
+                renderHistory(rows, browsing && pinned ? pinned : finishedId);
+              } catch (_) {}
+            } catch (e2) {
+              console.warn(e2);
+            }
+          });
+          return; // free the UI — do not await the whole backtest
         }
 
-        // failed async may throw; success:
+        // Fallback sync path (should be rare)
+        msg.textContent = "同步回测计算中…";
         msg.innerHTML = '<span class="okmsg">回测完成：' + (r.title || r.run_id || "") + " · " + statusLabel(r.status) + "</span>";
         setProgressUI(100, "完成", "run_id=" + (r.run_id || ""), { active: true });
         hideProgressSoon();
@@ -3667,7 +4527,7 @@ XG:CROSS(MA5,MA10);</textarea>
     loadHealth().catch(e => { const el=document.getElementById("health"); if(el) el.textContent="API 失败: "+e.message; });
     loadRules().catch(e => { document.getElementById("ruleList").textContent = e.message; });
     loadUniverseAndCalendar();
-    hideResultPanel();
+    hideResultPanel(true);
     // auto-load history so recent runs are visible
     api("/api/v1/runs?limit=200").then(renderHistory).catch(() => {});
 
@@ -3966,8 +4826,347 @@ XG:CROSS(MA5,MA10);</textarea>
         if (rid) copyRunParams(rid.trim());
       });
     }
-    bindBacktestNav();
 
+    // ---- Stage E: experiment center (UX) ----
+    let __activeExperimentId = null;
+    let __expPollTimer = null;
+
+    function _expSelectedRules() {
+      if (typeof selected === "undefined" || !selected || !selected.size) return [];
+      return Array.from(selected).filter((id) => id && id !== "bagua_ohlc");
+    }
+    function _expRuleLabels() {
+      const ids = _expSelectedRules();
+      if (!ids.length) return [];
+      // map id -> display name from rulesCache if available
+      const labels = [];
+      ids.forEach((id) => {
+        let name = id;
+        try {
+          if (typeof rulesCache !== "undefined" && Array.isArray(rulesCache)) {
+            const hit = rulesCache.find((r) => r.id === id);
+            if (hit && hit.name) name = hit.name;
+          }
+        } catch (e) {}
+        name = String(name).replace(/^tn6_/, "").replace(/^txt_/, "").replace(/^user_/, "");
+        labels.push(name);
+      });
+      return labels;
+    }
+    function _expChecked(sel) {
+      return Array.from(document.querySelectorAll(sel)).filter((el) => el.checked).map((el) => el.value);
+    }
+    function _expChipSync() {
+      document.querySelectorAll(".exp-chip").forEach((lab) => {
+        const inp = lab.querySelector("input[type=checkbox]");
+        lab.classList.toggle("on", !!(inp && inp.checked));
+      });
+    }
+    function expSyncRuleBox() {
+      const box = document.getElementById("expRuleBox");
+      if (!box) return;
+      const labels = _expRuleLabels();
+      if (!labels.length) {
+        box.className = "exp-rule-box warn";
+        box.innerHTML = "尚未选择规则 — 请点击下方「去选规则」，在<strong>左侧列表</strong>勾选一条可回测指标（不要只勾八卦OHLC）。";
+        return;
+      }
+      box.className = "exp-rule-box";
+      box.innerHTML = "已选规则：<strong>" + labels.map((x) => {
+        // escape minimal
+        return String(x).replace(/</g, "&lt;");
+      }).join("、") + "</strong>" +
+        "<div class='sub' style='margin-top:0.25rem'>实验会对以上规则分别做「卦象 × 日程」组合。</div>";
+    }
+    function _expBodyBase() {
+      const start = (typeof ymdFromParts === "function")
+        ? ymdFromParts(document.getElementById("startYear"), document.getElementById("startMonth"), document.getElementById("startDay"))
+        : null;
+      const end = (typeof ymdFromParts === "function")
+        ? ymdFromParts(document.getElementById("endYear"), document.getElementById("endMonth"), document.getElementById("endDay"))
+        : null;
+      return {
+        rule_ids: _expSelectedRules(),
+        gua_keys: _expChecked("#expGuaChips .exp-gua, .exp-gua"),
+        weekday_keys: _expChecked("#expWdChips .exp-wd, .exp-wd"),
+        period: (document.getElementById("period") || {}).value || "DAY",
+        codes: ["sh600000", "sz000001"],
+        start: start || 20240101,
+        end: end || 20241231,
+        account_mode: (document.querySelector('input[name="accountMode"]:checked') || {}).value || "portfolio",
+        research_unadjusted: !!(document.getElementById("researchUnadj") || {}).checked,
+        max_variants: parseInt((document.getElementById("expMax") || {}).value, 10) || 50,
+        concurrency: 1,
+        name: ((document.getElementById("expName") || {}).value || "").trim() || undefined,
+      };
+    }
+    function _expLocalFormula(body) {
+      const nR = (body.rule_ids || []).length;
+      const nG = (body.gua_keys || []).length;
+      const nW = (body.weekday_keys || []).length;
+      const total = nR * nG * nW;
+      const guaNames = { none: "不加卦象", best3: "最佳3爻", bull: "偏多信号" };
+      const wdNames = {
+        fri_signal_mon_buy_thu_exit: "研究常用日程",
+        all_signal_tn12: "经典T+1/T+2",
+        fri_signal_fri_buy_mon_exit: "周五买下周一平",
+      };
+      const gLab = (body.gua_keys || []).map((k) => guaNames[k] || k).join("、") || "—";
+      const wLab = (body.weekday_keys || []).map((k) => wdNames[k] || k).join("、") || "—";
+      const rLab = _expRuleLabels().join("、") || "（未选规则）";
+      return {
+        total,
+        nR, nG, nW,
+        text:
+          "规则 " + nR + " 条（" + rLab + "） × 卦象 " + nG + " 种（" + gLab + "） × 日程 " + nW + " 种（" + wLab + "） = <b>" + total + "</b> 组" +
+          "<div class='sub' style='margin-top:0.25rem'>默认演示池 2 只股票 · 日期用新建回测里的区间</div>",
+      };
+    }
+    async function expEstimate() {
+      const st = document.getElementById("expStatus");
+      const countEl = document.getElementById("expComboCount");
+      const formulaEl = document.getElementById("expFormula");
+      _expChipSync();
+      expSyncRuleBox();
+      try {
+        const body = _expBodyBase();
+        const local = _expLocalFormula(body);
+        if (countEl) countEl.textContent = body.rule_ids.length ? String(local.total) : "—";
+        if (formulaEl) formulaEl.innerHTML = local.text;
+        if (!body.rule_ids.length) {
+          if (st) st.textContent = "还差第 1 步：去左侧选一条规则。";
+          return;
+        }
+        if (!body.gua_keys.length || !body.weekday_keys.length) {
+          if (st) st.textContent = "请至少勾选 1 种卦象方案和 1 种买卖日程。";
+          return;
+        }
+        // server estimate for soft-cap warning
+        const d = await api("/api/v1/experiments/estimate", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        if (countEl) countEl.textContent = String(d.estimated_variants);
+        let extra = "";
+        if (d.exceeds_soft_cap) {
+          extra = "<div class='warn'>超过上限 " + d.max_variants + " 组，请少勾几种条件，或到高级里调高上限。</div>";
+        } else if (d.warning) {
+          extra = "<div class='warn'>" + d.warning + "</div>";
+        } else {
+          extra = "<div class='sub' style='margin-top:0.2rem;color:#8fd19e'>组数合适，可以开始。</div>";
+        }
+        if (formulaEl) formulaEl.innerHTML = local.text + extra;
+        if (st) st.textContent = d.exceeds_soft_cap
+          ? "请先缩小组合数，再点开始。"
+          : "准备就绪：将排队运行 " + d.estimated_variants + " 组回测（可随时在结果区查看进度）。";
+      } catch (e) {
+        if (st) st.textContent = "计算组数失败：" + (e.message || e);
+      }
+    }
+    async function expCreateAndStart() {
+      const st = document.getElementById("expStatus");
+      try {
+        const body = _expBodyBase();
+        if (!body.rule_ids.length) {
+          alert("请先选择规则：点「去选规则」，在左侧勾选一条可回测指标。");
+          switchBtPage("new");
+          return;
+        }
+        if (!body.gua_keys.length || !body.weekday_keys.length) {
+          alert("请至少勾选 1 种卦象和 1 种买卖日程。");
+          return;
+        }
+        // preflight estimate
+        const est = await api("/api/v1/experiments/estimate", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        if (est.exceeds_soft_cap) {
+          alert("组合数 " + est.estimated_variants + " 超过上限 " + est.max_variants + "。\\n请少勾几种条件，或在「高级」里提高上限。");
+          return;
+        }
+        const ok = confirm(
+          "即将开始实验：共 " + est.estimated_variants + " 组回测。\\n" +
+          "使用演示池试跑，可能需要几分钟。\\n\\n确定开始？"
+        );
+        if (!ok) return;
+        if (st) st.textContent = "正在创建实验…";
+        const exp = await api("/api/v1/experiments", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        __activeExperimentId = exp.experiment_id;
+        if (st) st.textContent = "实验已创建，正在排队运行…";
+        await api("/api/v1/experiments/" + encodeURIComponent(exp.experiment_id) + "/start", {
+          method: "POST",
+          body: "{}",
+        });
+        const xl = document.getElementById("btnExpExcel");
+        if (xl) {
+          xl.style.display = "";
+          xl.href = "/api/v1/experiments/" + encodeURIComponent(exp.experiment_id) + "/export.xlsx";
+        }
+        expRenderList();
+        expPoll(exp.experiment_id);
+      } catch (e) {
+        if (st) st.textContent = "启动失败：" + (e.message || e);
+        alert("启动失败：" + (e.message || e));
+      }
+    }
+    async function expRenderList() {
+      const box = document.getElementById("expList");
+      if (!box) return;
+      try {
+        const rows = await api("/api/v1/experiments?limit=20");
+        if (!rows || !rows.length) {
+          box.innerHTML = "<div class='exp-empty'>还没有实验记录。配好左侧 1～4 步后点「开始实验」。</div>";
+          return;
+        }
+        let html = "<table class='exp-table'><thead><tr><th>实验</th><th>状态</th><th>进度</th><th></th></tr></thead><tbody>";
+        rows.forEach((r) => {
+          const done = (r.completed_variants || 0) + (r.failed_variants || 0) + (r.skipped_variants || 0);
+          const tot = r.estimated_variants || 0;
+          const pct = tot ? Math.min(100, Math.round((done / tot) * 100)) : 0;
+          const stMap = { draft: "草稿", running: "运行中", completed: "已完成", cancelled: "已取消", failed: "失败" };
+          html +=
+            "<tr><td><div style='font-weight:600'>" + escAttr(r.name || r.experiment_id) + "</div>" +
+            "<div class='sub'>" + escAttr(r.experiment_id) + "</div></td>" +
+            "<td>" + escAttr(stMap[r.status] || r.status) + "</td>" +
+            "<td>" + pct + "%（成" + (r.completed_variants || 0) +
+            " / 败" + (r.failed_variants || 0) +
+            " / 跳过" + (r.skipped_variants || 0) + " / 共" + tot + "）</td>" +
+            "<td><button type='button' class='btn-op' data-exp-view='" + escAttr(r.experiment_id) +
+            "'>查看结果</button></td></tr>";
+        });
+        html += "</tbody></table>";
+        box.innerHTML = html;
+        box.querySelectorAll("[data-exp-view]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const id = btn.getAttribute("data-exp-view");
+            __activeExperimentId = id;
+            const xl = document.getElementById("btnExpExcel");
+            if (xl) {
+              xl.style.display = "";
+              xl.href = "/api/v1/experiments/" + encodeURIComponent(id) + "/export.xlsx";
+            }
+            expShowResults(id);
+            expPoll(id);
+          });
+        });
+      } catch (e) {
+        box.innerHTML = "<div class='exp-empty'>加载失败：" + escAttr(e.message || e) + "</div>";
+      }
+    }
+    async function expShowResults(experimentId) {
+      const box = document.getElementById("expResults");
+      const st = document.getElementById("expStatus");
+      if (!box) return;
+      try {
+        const d = await api("/api/v1/experiments/" + encodeURIComponent(experimentId) + "/results");
+        const exp = await api("/api/v1/experiments/" + encodeURIComponent(experimentId));
+        const stMap = { draft: "草稿", running: "运行中", completed: "已完成", cancelled: "已取消", failed: "失败" };
+        if (st) {
+          st.textContent =
+            (exp.name || experimentId) + " · " + (stMap[exp.status] || exp.status) +
+            " · 已完成 " + (exp.completed_variants || 0) + " / " + (exp.estimated_variants || 0) + " 组";
+        }
+        if (!(d.rows || []).length) {
+          box.innerHTML = "<div class='exp-empty'>暂无结果行（可能仍在排队）。</div>";
+          return;
+        }
+        let html = "<table class='exp-table'><thead><tr>" +
+          "<th>规则</th><th>卦象</th><th>买卖日程</th><th>状态</th><th>总收益</th><th>最大回撤</th><th>胜率</th><th>成交回合</th><th>任务</th>" +
+          "</tr></thead><tbody>";
+        (d.rows || []).forEach((row) => {
+          const p = row.params || {};
+          const meta = p._meta || {};
+          const m = row.metrics || {};
+          const ret = m.total_return != null ? formatPercent(m.total_return) : "—";
+          const mdd = m.max_drawdown != null ? formatPercent(Math.abs(Number(m.max_drawdown))) : "—";
+          const wr = m.win_rate != null ? formatPercent(m.win_rate) : "—";
+          const stLab = { succeeded: "完成", failed: "失败", skipped: "跳过(重复)", pending: "等待", running: "运行中", cancelled: "取消" };
+          html +=
+            "<tr><td>" + escAttr(meta.rule_id || ((p.rule_ids || [])[0] || "—")) + "</td>" +
+            "<td>" + escAttr(meta.gua_label || meta.gua_key || "—") + "</td>" +
+            "<td>" + escAttr(meta.weekday_label || meta.weekday_key || "—") + "</td>" +
+            "<td>" + escAttr(stLab[row.status] || row.status || "—") + "</td>" +
+            "<td class='num'>" + ret + "</td>" +
+            "<td class='num'>" + mdd + "</td>" +
+            "<td class='num'>" + wr + "</td>" +
+            "<td class='num'>" + (m.n_round_trips != null ? m.n_round_trips : "—") + "</td>" +
+            "<td class='sub'>" + (row.run_id
+              ? ("<button type='button' class='btn-op' data-exp-open-run='" + escAttr(row.run_id) + "'>打开</button>")
+              : "—") + "</td></tr>";
+        });
+        html += "</tbody></table>";
+        box.innerHTML = html;
+        box.querySelectorAll("[data-exp-open-run]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const rid = btn.getAttribute("data-exp-open-run");
+            if (rid && typeof showRunResult === "function") {
+              showRunResult({ run_id: rid }, { fromHistory: true }).catch(() => {});
+            }
+          });
+        });
+      } catch (e) {
+        box.innerHTML = "<div class='exp-empty'>加载结果失败：" + escAttr(e.message || e) + "</div>";
+      }
+    }
+    function expPoll(experimentId) {
+      if (__expPollTimer) clearInterval(__expPollTimer);
+      if (!experimentId) return;
+      __expPollTimer = setInterval(async () => {
+        try {
+          const exp = await api("/api/v1/experiments/" + encodeURIComponent(experimentId));
+          expRenderList();
+          expShowResults(experimentId);
+          if (exp.status === "completed" || exp.status === "cancelled" || exp.status === "failed") {
+            clearInterval(__expPollTimer);
+            __expPollTimer = null;
+            const st = document.getElementById("expStatus");
+            if (st && exp.status === "completed") st.textContent = "实验已完成，可下载 Excel 或打开单条任务详情。";
+          }
+        } catch (e) {}
+      }, 2500);
+    }
+    function _bindExpUi() {
+      document.getElementById("btnExpEstimate")?.addEventListener("click", () => expEstimate());
+      document.getElementById("btnExpCreate")?.addEventListener("click", () => expCreateAndStart());
+      document.getElementById("btnExpRefresh")?.addEventListener("click", () => {
+        expRenderList();
+        if (__activeExperimentId) expShowResults(__activeExperimentId);
+      });
+      document.getElementById("btnExpGoNew")?.addEventListener("click", () => switchBtPage("new"));
+      document.getElementById("btnExpRefreshRules")?.addEventListener("click", () => {
+        expSyncRuleBox();
+        expEstimate();
+      });
+      document.querySelectorAll(".exp-gua, .exp-wd").forEach((el) => {
+        el.addEventListener("change", () => {
+          _expChipSync();
+          expEstimate();
+        });
+      });
+      document.getElementById("expMax")?.addEventListener("change", () => expEstimate());
+      _expChipSync();
+      expSyncRuleBox();
+    }
+    _bindExpUi();
+
+
+    bindBacktestNav();
+    document.getElementById("btnRefreshTaskQueue")?.addEventListener("click", () => refreshTaskQueueBar());
+    try { refreshTaskQueueBar(); ensureQueueRefresh(); } catch (e) {}
+
+
+    document.getElementById("btnCompareSelected")?.addEventListener("click", () => {
+      compareSelectedRuns();
+    });
+    document.getElementById("btnCloseCompare")?.addEventListener("click", () => {
+      const panel = document.getElementById("comparePanel");
+      if (panel) panel.style.display = "none";
+    });
+    try { updateHistSelInfo(); } catch (e) {}
 
     // 默认停留在新建回测
     switchBtPage("new");
@@ -4060,14 +5259,14 @@ XG:CROSS(MA5,MA10);</textarea>
       const box = document.getElementById("guaDetailBlock");
       if (!box) return;
       if (!gf || !gf.enabled) {
-        box.innerHTML = "<div class='sub'>卦象过滤：未启用</div>";
+        box.innerHTML = "<div class='sub'>卦象过滤：未启用。技术信号未按卦象筛选。</div>";
         return;
       }
       const before = summary.n_signals_before_bagua != null ? summary.n_signals_before_bagua : (gf.n_signals_before != null ? gf.n_signals_before : "—");
       const after = summary.n_signals_after_bagua != null ? summary.n_signals_after_bagua : (gf.n_signals_after != null ? gf.n_signals_after : "—");
       let rate = "—";
       if (typeof before === "number" && before > 0 && typeof after === "number") rate = ((after/before)*100).toFixed(2) + "%";
-      else if (gf.retention_rate != null) rate = (gf.retention_rate*100).toFixed(2) + "%";
+      else if (gf.retention_rate != null) rate = (Number(gf.retention_rate)*100).toFixed(2) + "%";
       const nl = gf.natural_language || (summary.bagua_filter_label) || "—";
       let tags = "";
       const sids = gf.selected_state_ids || [];
@@ -4080,12 +5279,57 @@ XG:CROSS(MA5,MA10);</textarea>
       const max = 8;
       tags = items.slice(0,max).map(t => "<span class='gua-tag'>"+t+"</span>").join(" ");
       if (items.length > max) tags += " <span class='gua-tag'>+另外"+(items.length-max)+"项</span>";
+      let metricsHtml = "<div class='sub' id='guaMetricsStatus'>正在加载卦象分析…</div>";
       box.innerHTML = "<div style='display:grid;grid-template-columns:1fr 1fr;gap:0.35rem 1rem;font-size:0.85rem'>"
         + "<div>启用：<b>是</b></div><div>模式：<b>"+(gf.selection_mode||"—")+"</b></div>"
         + "<div>规则版本：<b>"+(gf.rule_version||"—")+"</b></div><div>保留率：<b>"+rate+"</b></div>"
         + "<div>原始信号：<b>"+before+"</b></div><div>过滤后：<b>"+after+"</b></div>"
         + "</div><div class='gua-rule' style='margin-top:0.45rem'>"+nl+"</div>"
-        + "<div class='gua-tags' style='margin-top:0.45rem'>"+tags+"</div>";
+        + "<div class='gua-tags' style='margin-top:0.45rem'>"+tags+"</div>"
+        + "<div style='margin-top:0.75rem' id='guaAnalysisBlock'>"+metricsHtml+"</div>";
+
+      // Async load bagua metrics for this run
+      const rid = (summary && summary.run_id) || (document.getElementById("resultRunId")||{}).textContent || "";
+      const bm = (gf.bagua_metrics) || (summary.bagua_metrics) || null;
+      const fillMetrics = (m) => {
+        const host = document.getElementById("guaAnalysisBlock");
+        if (!host) return;
+        if (!m) {
+          host.innerHTML = "<div class='sub'>暂无卦象分布明细（可查看 signals.csv）。</div>";
+          return;
+        }
+        const warn = (m.warnings || []).map((w) => "<div class='sub' style='color:var(--warn)'>"+w+"</div>").join("");
+        const fmtList = (arr, title) => {
+          if (!arr || !arr.length) return "";
+          return "<div style='margin-top:0.45rem'><div class='sub' style='margin-bottom:0.2rem'>"+title+"</div>"
+            + arr.slice(0,12).map((x) => "<span class='gua-tag'>"+x.key+" ×"+x.count+"</span> ").join("")
+            + "</div>";
+        };
+        const after = m.after || {};
+        const beforeM = m.before || {};
+        host.innerHTML =
+          "<div style='font-size:0.85rem;margin-top:0.25rem'>"
+          + "<b>卦象分析</b>"
+          + (m.source ? " <span class='sub'>来源："+m.source+"</span>" : "")
+          + (m.sample_sufficient === false ? " <span class='sub' style='color:var(--warn)'>· 样本不足</span>" : "")
+          + "</div>"
+          + warn
+          + fmtList(after.by_action_signal || beforeM.by_action_signal, "操作信号分布（过滤后优先）")
+          + fmtList(after.by_main_hexagram || beforeM.by_main_hexagram, "主卦分布 Top")
+          + fmtList(after.by_state_id || beforeM.by_state_id, "精确爻 state_id Top");
+      };
+      if (bm) {
+        fillMetrics(bm);
+      } else if (rid) {
+        api("/api/v1/backtests/" + encodeURIComponent(rid.trim()) + "/bagua-metrics")
+          .then((m) => fillMetrics(m))
+          .catch(() => {
+            const host = document.getElementById("guaAnalysisBlock");
+            if (host) host.innerHTML = "<div class='sub'>卦象分析加载失败；过滤前后数量见上方。</div>";
+          });
+      } else {
+        fillMetrics(null);
+      }
     }
 
     const GuaUI = (function(){
@@ -4915,22 +6159,60 @@ XG:CROSS(MA5,MA10);</textarea>
         }
         const cfg = getPayload();
         try {
+          const ruleIds = (typeof selected !== "undefined" && selected && selected.size)
+            ? Array.from(selected).filter((id) => id && id !== "bagua_ohlc")
+            : [];
+          const periodEl = document.getElementById("period");
+          const startEl = document.getElementById("start");
+          const endEl = document.getElementById("end");
+          const body = {
+            gua_filter: cfg,
+            signal_preview: ruleIds.length > 0,
+            rule_ids: ruleIds.length ? ruleIds : null,
+            codes: ["SSE.STK.600000", "SZSE.STK.000001"],
+            period: (periodEl && periodEl.value) || "DAY",
+            start: startEl && startEl.value ? parseInt(startEl.value, 10) : null,
+            end: endEl && endEl.value ? parseInt(endEl.value, 10) : null,
+            max_codes: 8,
+            min_sample: 30,
+          };
           const r = await fetch("/api/v1/gua/preview", {
             method: "POST",
             headers: {"Content-Type":"application/json"},
-            body: JSON.stringify({ gua_filter: cfg }),
+            body: JSON.stringify(body),
           });
           const d = await r.json();
           const lines = [];
           lines.push("选中主卦：" + (d.selected_main_hexagram_count||0) + " · 精确爻象：" + (d.selected_exact_line_count||0) + " · 操作信号：" + (d.selected_action_signal_count||0));
-          lines.push("匹配爻象状态：" + (d.matched_state_count||0) + " / " + (d.total_state_count||384) + "（覆盖 " + ((d.state_coverage_ratio||0)*100).toFixed(2) + "%）");
+          lines.push("规则表匹配爻象：" + (d.matched_state_count||0) + " / " + (d.total_state_count||384) + "（覆盖 " + ((d.state_coverage_ratio||0)*100).toFixed(2) + "%）");
           if (d.natural_language) lines.push(d.natural_language);
+          const sp = d.signal_preview;
+          if (sp && sp.ok) {
+            const m = sp.metrics || {};
+            lines.push(
+              "真实信号抽样（" + (sp.n_codes||0) + "只 · " + (sp.period||"DAY") + "）：" +
+              (m.n_signals_before != null ? m.n_signals_before : sp.n_signals) +
+              " → 过滤后 " + (m.n_signals_after != null ? m.n_signals_after : "—") +
+              (m.retention_rate != null ? "（保留 " + (m.retention_rate*100).toFixed(1) + "%）" : "")
+            );
+            if (m.sample_sufficient === false) {
+              lines.push("样本提示：过滤后信号偏少，统计可能不稳健。");
+            }
+            const acts = (m.after && m.after.by_action_signal) || [];
+            if (acts.length) {
+              lines.push("过滤后操作信号分布：" + acts.slice(0,5).map((x) => x.key + "×" + x.count).join("、"));
+            }
+          } else if (sp && sp.error) {
+            lines.push("真实信号预览未完成：" + sp.error);
+          } else if (!ruleIds.length) {
+            lines.push("提示：勾选可回测指标后，预览将附带演示池真实信号计数。");
+          }
           if (d.warnings && d.warnings.length) lines.push(d.warnings.join(" "));
           if (d.note) lines.push(d.note);
           box.textContent = lines.join("\n");
           box.className = "gua-preview";
           if (d.matched_state_count === 0) box.classList.add("bad");
-          else if (d.matched_state_count < 12) box.classList.add("warn");
+          else if (d.matched_state_count < 12 || (sp && sp.ok && sp.metrics && sp.metrics.sample_sufficient === false)) box.classList.add("warn");
         } catch (e){
           box.className = "gua-preview warn";
           box.textContent = "预览失败，可稍后重试。";

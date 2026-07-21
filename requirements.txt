@@ -3,6 +3,7 @@ pandas==1.3.5
 chardet
 pyyaml
 xlsxwriter
+openpyxl
 pyquery
 psutil
 fastapi

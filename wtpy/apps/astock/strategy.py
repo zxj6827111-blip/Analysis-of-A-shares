@@ -1,16 +1,19 @@
 """Portfolio backtest engine for A-share multi-period signals.
 
 Business rules (locked):
-- Signal confirmed on period close; buy at open of the N-th trading day after signal (entry_lag, default 1).
-- Optional signal_weekdays: only signals whose calendar weekday is in the allow-list (1=Mon … 7=Sun) are tradable; empty = all weekdays.
-- DAY hold=N: hold N trading days; DAY hold=1 exits on next session (T+1, cannot sell entry day).
-- WEEK/MONTH hold=N: after N completed periods, exit on next tradable day.
-- DWM hold=N: N trading days (same as day holds).
-- Time-stop (hold expiry, no SL/TP trigger): sell at that day's **open** *(1-slippage), reason hold_expired.
-- Risk exits (stop_loss / take_profit): still trigger on high/low, execute next tradable day **open** *(1-slippage).
+- Dual schedule model (v2): UI configures weekdays; engine always solves on the trading-day calendar (T+N family).
+- Signal confirmed on period close.
+- Without buy_weekday: buy on the N-th trading day after signal (entry_lag, default 1).
+- With buy_weekday: buy on the first trading day on/after that ISO weekday after signal (overrides entry_lag).
+- Without exit_weekday: DAY hold=N holds N trading days (hold=1 exits next session; cannot sell entry day).
+  WEEK/MONTH hold=N: after N completed periods, exit on next tradable day; DWM hold=N same as day holds.
+- With exit_weekday: exit on first trading day on/after that weekday after entry (overrides hold stepping).
+- Holidays: next_weekday / nth_trading_day_after always land on a tradable session.
+- Optional signal_weekdays: only signals whose calendar weekday is in the allow-list (1=Mon … 7=Sun); empty = all.
+- Time-stop (hold expiry / weekday exit, no SL/TP): sell at that day's open|close *(1-slippage) per sell_on, reason hold_expired.
+- Risk exits (stop_loss / take_profit): trigger on high/low, execute next tradable day open *(1-slippage).
 - Repeat signals do not reset remaining hold.
 - Buy px = open|close *(1+slippage) per buy_on (default open).
-- Sell px (hold_expired / deferred risk): open|close *(1-slippage) per sell_on (default open).
 - account_mode=portfolio: shared cash + max_weight.
 - account_mode=per_symbol: each stock independent virtual capital (通达信对照).
 - Suspended days: mark with last valid close.
@@ -373,40 +376,60 @@ class PortfolioBacktester:
                 "account_mode must be portfolio or per_symbol, got %s" % account_mode
             )
         period = period.upper()
+        schedule_mode = (
+            "weekday" if (buy_weekday is not None or exit_weekday is not None) else "tn"
+        )
         notes = [
             "Example costs only; not user real trading costs.",
             "Survivor bias possible: local TDX may lack delisted stocks.",
             DefaultAShareLimitRule.BOUNDARY_NOTE,
-            "Buy at %s of the N-th trading day after signal close (entry_lag=%d)." % (buy_on, entry_lag),
+            "Schedule engine: all entry/exit dates are solved on the A-share trading-day calendar "
+            "(T+N family); holidays roll forward to the next tradable session.",
             "Sell at %s on exit day for time-stop/deferred risk (sell_on=%s)." % (sell_on, sell_on),
-            (
-                "Buy weekday: first trading day after signal on %s (overrides entry_lag)."
-                % format_single_weekday(buy_weekday)
-                if buy_weekday
-                else "Buy schedule: entry_lag trading days after signal."
-            ),
-            (
-                "Exit weekday: first trading day after entry on %s (overrides hold N)."
-                % format_single_weekday(exit_weekday)
-                if exit_weekday
-                else "Exit schedule: hold N periods/sessions."
-            ),
-            (
+        ]
+        if buy_weekday is not None:
+            notes.append(
+                "Buy schedule (weekday anchor): first trading day after signal on %s at %s "
+                "(overrides entry_lag stepping; entry_lag=%d kept for repro only)."
+                % (format_single_weekday(buy_weekday), buy_on, entry_lag)
+            )
+        else:
+            notes.append(
+                "Buy schedule (T+N): buy at %s of the N-th trading day after signal close "
+                "(entry_lag=%d)." % (buy_on, entry_lag)
+            )
+        if exit_weekday is not None:
+            notes.append(
+                "Exit schedule (weekday anchor): first trading day after entry on %s at %s "
+                "(overrides hold N stepping; hold=%d kept for repro only)."
+                % (format_single_weekday(exit_weekday), sell_on, hold)
+            )
+        else:
+            notes.append(
+                "Exit schedule (hold N): after hold=%d period(s)/session(s), force flat at %s."
+                % (hold, sell_on)
+            )
+        if signal_weekdays:
+            notes.append(
                 "Signal weekday filter: only signals on %s are tradable."
                 % format_signal_weekdays(signal_weekdays)
-                if signal_weekdays
-                else "Signal weekday filter: all weekdays."
-            ),
-            (
-                "Account mode: per_symbol (通达信对照) — each stock has its own virtual capital; "
-                "no cross-stock cash competition; metrics include equal-weight mean stock return."
-                if account_mode == "per_symbol"
-                else "Account mode: portfolio — single shared cash account with max_weight cap."
-            ),
-            "Time-stop: after hold periods, force flat at that day open (hold_expired), regardless of P&L.",
-            "Risk: trigger_on_daily_high_low (incl. entry day); execute_next_trading_day_open (T+1).",
-            "Risk conflict policy: stop_first when same bar hits both SL and TP.",
-        ]
+            )
+        else:
+            notes.append("Signal weekday filter: all weekdays (no UI restriction).")
+        notes.extend(
+            [
+                (
+                    "Account mode: per_symbol (通达信对照) — each stock has its own virtual capital; "
+                    "no cross-stock cash competition; metrics include equal-weight mean stock return."
+                    if account_mode == "per_symbol"
+                    else "Account mode: portfolio — single shared cash account with max_weight cap."
+                ),
+                "Time-stop / weekday exit: force flat at configured session (hold_expired), regardless of P&L.",
+                "Risk: trigger_on_daily_high_low (incl. entry day); execute_next_trading_day_open (T+1).",
+                "Risk conflict policy: stop_first when same bar hits both SL and TP.",
+                "schedule_mode=%s (weekday | tn)." % schedule_mode,
+            ]
+        )
         status = "ok"
         if research_unadjusted:
             status = "research_unadjusted"
@@ -840,6 +863,7 @@ class PortfolioBacktester:
                 "sell_on": sell_on,
                 "buy_weekday": buy_weekday,
                 "exit_weekday": exit_weekday,
+                "schedule_mode": schedule_mode,
                 "account_mode": account_mode,
                 "costs": asdict(self.cfg.costs),
                 "start": start,

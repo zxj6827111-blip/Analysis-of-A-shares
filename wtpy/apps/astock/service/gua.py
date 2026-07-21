@@ -204,19 +204,226 @@ def list_states(
     }
 
 
+def reimport_excel(
+    xlsx_path: Path | str,
+    cfg: Optional[AStockConfig] = None,
+    *,
+    rule_version: Optional[str] = None,
+    archive_previous: bool = True,
+) -> dict:
+    """Rebuild knowledge from Excel; archive previous active JSON by rule_version."""
+    import json
+    import shutil
+    from datetime import datetime
+
+    from ..bagua.rebuild_from_excel import (
+        DEFAULT_RULE_VERSION as _DEF_VER,
+        rebuild_knowledge_from_excel,
+        validate_knowledge,
+    )
+
+    cfg = cfg or get_default_config()
+    out = _kb_path(cfg)
+    archived_as = None
+    previous_version = None
+    if archive_previous and out.exists():
+        try:
+            prev = json.loads(out.read_text(encoding="utf-8"))
+            previous_version = str(prev.get("rule_version") or "unknown")
+        except Exception:
+            previous_version = "unknown"
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_ver = "".join(
+            ch if ch.isalnum() or ch in ("-", "_") else "_"
+            for ch in (previous_version or "unknown")
+        )
+        archive_path = out.with_name(f"{out.stem}.{safe_ver}.{stamp}{out.suffix}")
+        shutil.copy2(out, archive_path)
+        archived_as = str(archive_path)
+
+    ver = rule_version or _DEF_VER
+    if rule_version is None and previous_version and previous_version == ver:
+        ver = f"{ver}_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    kb = rebuild_knowledge_from_excel(xlsx_path, out, rule_version=ver)
+    report = validate_knowledge(kb)
+    report["archived_previous"] = archived_as
+    report["previous_rule_version"] = previous_version
+    report["active_path"] = str(out)
+    report["rule_version"] = kb.get("rule_version")
+    invalidate_kb_cache()
+    return report
+
+
+def collect_indicator_signals_with_bagua(
+    cfg: AStockConfig,
+    *,
+    rule_ids: Sequence[str],
+    codes: Optional[Sequence[str]] = None,
+    period: str = "DAY",
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+    max_codes: int = 30,
+    research_unadjusted: bool = True,
+    progress_cb=None,
+) -> dict:
+    """Generate technical signals on a limited pool and attach bagua labels."""
+    from ..bagua.calculator import BaguaCalculator
+    from ..data.adjustments import build_factor_series
+    from ..data.data_store import DataStore
+    from ..data.tdx_reader import TdxDayReader
+    from ..study import (
+        SignalEvent,
+        attach_bagua,
+        bars_dict_from_day,
+        bars_dict_from_period,
+        build_period_bars,
+        compute_indicator_signal,
+        day_bars_to_adj,
+    )
+    from .backtest import DEMO_CODES, select_universe
+    from .rules import RuleService
+
+    def _progress(payload: dict) -> None:
+        if progress_cb is None:
+            return
+        try:
+            progress_cb(payload)
+        except Exception:
+            pass
+
+    period = (period or "DAY").upper()
+    if period not in ("DAY", "WEEK", "MONTH"):
+        period = "DAY"
+
+    if codes is None or (isinstance(codes, (list, tuple)) and len(codes) == 0):
+        code_list = list(DEMO_CODES)
+    else:
+        code_list = select_universe(cfg, codes)
+    if max_codes and len(code_list) > int(max_codes):
+        code_list = code_list[: int(max_codes)]
+
+    reg = RuleService(cfg).load_full_registry()
+    try:
+        specs = [reg.get(i) for i in rule_ids]
+    except KeyError as e:
+        raise ValueError(f"unknown rule: {e}") from e
+    trade_specs = [
+        s for s in specs if s.id != "bagua_ohlc" and s.output_type == "signal"
+    ]
+    if not trade_specs:
+        raise ValueError("No tradeable signal indicators selected.")
+
+    store = DataStore(cfg.storage_root)
+    events: List[SignalEvent] = []
+    period_raw_map: Dict[str, Any] = {}
+    errors: List[dict] = []
+    n_codes = len(code_list)
+
+    for idx, code in enumerate(code_list):
+        _progress(
+            {"phase": "signals", "current": idx + 1, "total": n_codes, "code": code}
+        )
+        try:
+            day_raw = store.load_symbol(code)
+        except FileNotFoundError:
+            try:
+                reader = TdxDayReader(cfg.tdx_root)
+                raw = ("sh" if code.startswith("SSE") else "sz") + code.split(".")[-1]
+                day_raw, _ = reader.read(raw)
+            except Exception as e:
+                errors.append({"code": code, "error": str(e)})
+                continue
+        if not day_raw:
+            errors.append({"code": code, "error": "empty bars"})
+            continue
+        dates = [b.date for b in day_raw]
+        if research_unadjusted:
+            day_for_ind = day_raw
+        else:
+            try:
+                series = build_factor_series(
+                    code, dates, adj_root=cfg.adj_root, prefer_baostock=True
+                )
+                import numpy as np
+
+                fac = np.array(series.factors, dtype=float)
+                day_for_ind = day_bars_to_adj(day_raw, fac)
+            except Exception:
+                day_for_ind = day_raw
+        asof = day_raw[-1].date if day_raw else None
+        try:
+            if period == "DAY":
+                p_bars_raw = day_raw
+                bars = bars_dict_from_day(day_for_ind)
+            else:
+                p_bars_raw = build_period_bars(day_raw, period, asof=asof)
+                p_bars_ind = build_period_bars(day_for_ind, period, asof=asof)
+                bars = bars_dict_from_period(p_bars_ind)
+            period_raw_map[code] = p_bars_raw
+        except Exception as e:
+            errors.append({"code": code, "error": f"period bars: {e}"})
+            continue
+
+        for spec in trade_specs:
+            sig, err = compute_indicator_signal(spec, bars)
+            if err:
+                errors.append({"code": code, "indicator": spec.id, "error": err})
+                continue
+            date_arr = bars["date"]
+            for i, d in enumerate(date_arr):
+                try:
+                    on = int(sig[i]) != 0
+                except Exception:
+                    on = bool(sig[i])
+                if not on:
+                    continue
+                d_out = int(d)
+                if start and d_out < int(start):
+                    continue
+                if end and d_out > int(end):
+                    continue
+                events.append(SignalEvent(code, d_out, period, spec.id))
+
+    calc = BaguaCalculator.from_json(cfg.bagua_json)
+    attach_bagua(events, period_raw_map, calc)
+    n_with_bagua = sum(1 for e in events if getattr(e, "bagua", None))
+    return {
+        "events": events,
+        "n_codes": n_codes,
+        "codes": code_list,
+        "period": period,
+        "start": start,
+        "end": end,
+        "rule_ids": [s.id for s in trade_specs],
+        "n_signals": len(events),
+        "n_with_bagua": n_with_bagua,
+        "errors_sample": errors[:20],
+        "n_errors": len(errors),
+        "research_unadjusted": research_unadjusted,
+    }
+
+
 def preview_filter(
     gua_filter: dict,
     *,
     cfg: Optional[AStockConfig] = None,
+    signal_preview: bool = False,
+    rule_ids: Optional[Sequence[str]] = None,
+    codes: Optional[Sequence[str]] = None,
+    period: str = "DAY",
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+    max_codes: int = 20,
+    min_sample: int = 30,
 ) -> dict:
-    """Lightweight hit preview against the 384 knowledge rows (not full market signals).
+    """Preview filter vs 384 knowledge rows; optionally count real signals on a sample pool."""
+    from ..bagua.filter_rules import compute_bagua_metrics
 
-    Reports how many of the 384 states match the filter, plus empty-biangua warnings.
-    Full historical signal counts require a backtest run; this stays O(384).
-    """
+    cfg = cfg or get_default_config()
     kb = load_kb(cfg)
     gf = GuaFilter.from_dict(gua_filter)
-    # synthetic events as simple objects
+
     class _Ev:
         def __init__(self, bagua):
             self.bagua = bagua
@@ -224,7 +431,6 @@ def preview_filter(
     matched = []
     for e in kb.get("entries") or []:
         pub = _entry_public(e)
-        # bagua-shaped dict for matcher
         bg = {
             "state_id": pub["state_id"],
             "gua_order": pub["gua_order"],
@@ -241,24 +447,26 @@ def preview_filter(
 
     n_states = len(kb.get("entries") or [])
     n_match = len(matched) if gf.is_active() else n_states
-    empty_bg_matched = sum(1 for m in matched if not (m.get("biangua") or m.get("changed_hexagram_name")))
+    empty_bg_matched = sum(
+        1 for m in matched if not (m.get("biangua") or m.get("changed_hexagram_name"))
+    )
     names = hexagram_name_map(cfg)
     warnings: List[str] = []
     if gf.is_active() and n_match == 0:
-        warnings.append("当前指标条件与卦象条件组合后没有历史信号，请减少筛选条件。")
+        warnings.append("当前条件在 384 爻规则表上无命中状态。")
     elif gf.is_active() and n_match < 12:
-        warnings.append(f"当前条件仅命中{n_match}条爻象状态，样本数量较少，回测结果可能缺乏统计意义。")
+        warnings.append(f"规则表仅命中 {n_match} 条爻象状态，历史信号样本可能偏少。")
     if empty_bg_matched:
-        warnings.append("部分卦象记录缺少变卦信息，但仍可按主卦和爻位匹配。")
+        warnings.append("部分命中状态缺少变卦信息（空变卦仍可按主卦/爻位匹配）。")
 
     mains = set(int(m["main_hexagram_id"]) for m in matched)
-    acts = {}
+    acts: Dict[str, int] = {}
     for m in matched:
         a = m.get("action_signal") or ""
         if a:
             acts[a] = acts.get(a, 0) + 1
 
-    return {
+    out: Dict[str, Any] = {
         "enabled": gf.is_active(),
         "selection_mode": gf.selection_mode,
         "rule_version": gf.rule_version or rule_version(cfg),
@@ -273,17 +481,170 @@ def preview_filter(
         "state_coverage_ratio": (n_match / n_states) if n_states else 0.0,
         "natural_language": gua_filter_natural_language(gf, hexagram_names=names),
         "warnings": warnings,
-        "note": "预览基于 384 爻象规则表匹配，完整「历史信号命中」以回测结果中的原始/过滤后信号数为准。",
+        "note": "规则表预览：匹配 384 爻知识库状态（非历史信号）。",
         "matched_state_ids_sample": [m["state_id"] for m in matched[:20]],
+        "signal_preview": None,
     }
 
+    if signal_preview:
+        if not rule_ids:
+            out["signal_preview"] = {
+                "ok": False,
+                "error": "signal_preview requires rule_ids",
+            }
+            out["warnings"] = list(out["warnings"]) + [
+                "未提供指标 rule_ids，跳过真实信号预览。"
+            ]
+        else:
+            try:
+                sig = collect_indicator_signals_with_bagua(
+                    cfg,
+                    rule_ids=list(rule_ids),
+                    codes=codes,
+                    period=period,
+                    start=start,
+                    end=end,
+                    max_codes=max_codes,
+                    research_unadjusted=True,
+                )
+                metrics = compute_bagua_metrics(
+                    sig["events"], gf, min_sample=min_sample
+                )
+                out["signal_preview"] = {
+                    "ok": True,
+                    "n_codes": sig["n_codes"],
+                    "codes": sig["codes"],
+                    "period": sig["period"],
+                    "start": sig["start"],
+                    "end": sig["end"],
+                    "rule_ids": sig["rule_ids"],
+                    "n_signals": sig["n_signals"],
+                    "n_with_bagua": sig["n_with_bagua"],
+                    "n_errors": sig["n_errors"],
+                    "errors_sample": sig["errors_sample"],
+                    "metrics": metrics,
+                }
+                for w in metrics.get("warnings") or []:
+                    if w not in out["warnings"]:
+                        out["warnings"].append(w)
+                out["note"] = (
+                    "规则表预览 + 真实信号抽样："
+                    f"{sig['n_codes']} 只股票 · {sig['n_signals']} 条技术信号 · "
+                    f"过滤后 {metrics.get('n_signals_after')} 条。"
+                )
+            except Exception as e:
+                out["signal_preview"] = {"ok": False, "error": str(e)}
+                out["warnings"].append(f"真实信号预览失败：{e}")
 
-def reimport_excel(xlsx_path: Path | str, cfg: Optional[AStockConfig] = None) -> dict:
-    from ..bagua.rebuild_from_excel import rebuild_knowledge_from_excel, validate_knowledge
+    return out
 
-    cfg = cfg or get_default_config()
-    out = _kb_path(cfg)
-    kb = rebuild_knowledge_from_excel(xlsx_path, out)
-    report = validate_knowledge(kb)
-    invalidate_kb_cache()
-    return report
+
+def run_bagua_metrics_for_run(cfg: AStockConfig, run_id: str) -> dict:
+    """Compute bagua metrics for a finished run from signals.csv or meta."""
+    import csv
+    import json
+    from types import SimpleNamespace
+
+    from ..bagua.filter_rules import compute_bagua_metrics
+
+    out_dir = Path(cfg.output_root) / run_id
+    if not out_dir.exists():
+        raise FileNotFoundError(run_id)
+
+    meta: dict = {}
+    for name in ("run_meta.json", "meta.json"):
+        p = out_dir / name
+        if p.exists():
+            meta = json.loads(p.read_text(encoding="utf-8"))
+            break
+    repro = meta.get("repro") if isinstance(meta.get("repro"), dict) else {}
+    gf_raw = meta.get("gua_filter")
+    if gf_raw is None:
+        gf_raw = repro.get("gua_filter")
+    gf = GuaFilter.from_dict(gf_raw if isinstance(gf_raw, dict) else None)
+
+    events = []
+    signals_path = out_dir / "signals.csv"
+    if signals_path.exists():
+        with open(signals_path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                bg: Dict[str, Any] = {}
+                mapping = {
+                    "bagua_state_id": "state_id",
+                    "bagua_action_signal": "action_signal",
+                    "bagua_gua_order": "gua_order",
+                    "bagua_full_name": "full_name",
+                    "bagua_yao_name": "yao_name",
+                    "bagua_biangua": "biangua",
+                    "bagua_judgement": "market_judgement",
+                    "bagua_core_gang": "core_gang",
+                }
+                for src, dst in mapping.items():
+                    if row.get(src) not in (None, ""):
+                        bg[dst] = row.get(src)
+                for key in (
+                    "state_id",
+                    "gua_order",
+                    "main_hexagram_id",
+                    "yao_order",
+                    "yao_name",
+                    "action_signal",
+                    "full_name",
+                    "gua_name",
+                    "biangua",
+                ):
+                    if row.get(key) not in (None, ""):
+                        bg[key] = row.get(key)
+                if bg.get("gua_order") not in (None, ""):
+                    try:
+                        bg["gua_order"] = int(float(bg["gua_order"]))
+                        bg.setdefault("main_hexagram_id", bg["gua_order"])
+                    except (TypeError, ValueError):
+                        pass
+                if bg.get("full_name") and not bg.get("gua_name"):
+                    bg["gua_name"] = bg["full_name"]
+                events.append(
+                    SimpleNamespace(
+                        std_code=row.get("std_code") or row.get("code"),
+                        date=row.get("date"),
+                        bagua=bg or None,
+                    )
+                )
+
+    if events:
+        metrics = compute_bagua_metrics(events, gf if gf.is_active() else None)
+        metrics["source"] = "signals.csv"
+    else:
+        before = meta.get("n_signals_before_bagua")
+        if before is None and isinstance(gf_raw, dict):
+            before = gf_raw.get("n_signals_before")
+        after = meta.get("n_signals_after_bagua")
+        if after is None and isinstance(gf_raw, dict):
+            after = gf_raw.get("n_signals_after")
+        metrics = {
+            "n_signals_before": before,
+            "n_signals_after": after,
+            "retention_rate": (
+                (float(after) / float(before))
+                if before not in (None, 0, "0") and after is not None
+                else None
+            ),
+            "filter_active": gf.is_active(),
+            "selection_mode": gf.selection_mode,
+            "sample_sufficient": isinstance(after, (int, float)) and int(after) >= 30,
+            "before": None,
+            "after": None,
+            "warnings": [
+                "未找到带卦象明细的 signals.csv，仅返回回测 meta 中的过滤前后数量。"
+            ],
+            "source": "meta_only",
+        }
+
+    metrics["run_id"] = run_id
+    metrics["gua_filter"] = gf.to_dict() if gf else None
+    metrics["natural_language"] = gua_filter_natural_language(
+        gf, hexagram_names=hexagram_name_map(cfg)
+    )
+    return metrics
+

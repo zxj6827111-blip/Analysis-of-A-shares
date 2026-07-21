@@ -33,6 +33,15 @@ def append_run_index(cfg: AStockConfig, row: Dict[str, Any]) -> None:
     rows.insert(0, row)
     rows = rows[:200]
     path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Stage D: dual-write SQLite (best-effort; never break JSON index path)
+    try:
+        from .db import upsert_run_from_index_row
+
+        rid = row.get("run_id")
+        out_dir = Path(cfg.output_root) / rid if rid else None
+        upsert_run_from_index_row(cfg, row, out_dir=out_dir)
+    except Exception:
+        pass
 
 
 def _metrics_brief(metrics: Optional[dict]) -> Optional[dict]:
@@ -123,6 +132,9 @@ def _enrich_row(row: dict, out_dir: Optional[Path] = None) -> dict:
                     "buy_on",
                     "sell_on",
                     "signal_weekdays",
+                    "schedule_mode",
+                    "gua_filter",
+                    "with_bagua",
                 ):
                     if r.get(_k) in (None, "", []):
                         val = meta.get(_k)
@@ -205,6 +217,30 @@ def _enrich_row(row: dict, out_dir: Optional[Path] = None) -> dict:
 
 def list_runs(cfg: Optional[AStockConfig] = None, *, limit: int = 50) -> List[Dict[str, Any]]:
     cfg = cfg or get_default_config()
+    # Stage D: prefer SQLite when populated (after dual-write / migrate)
+    try:
+        from .db import count_runs_db, list_runs_db, migrate_runs_index_to_sqlite
+
+        n_db = count_runs_db(cfg)
+        if n_db == 0:
+            # lazy one-shot migration from legacy JSON index
+            migrate_runs_index_to_sqlite(cfg)
+            n_db = count_runs_db(cfg)
+        if n_db > 0:
+            db_rows = list_runs_db(cfg, limit=limit)
+            # still enrich from filesystem for status_label etc.
+            out_root = Path(cfg.output_root)
+            enriched_db: List[dict] = []
+            for row in db_rows:
+                rid = row.get("run_id")
+                out_dir = (out_root / rid) if rid and out_root.exists() else None
+                if out_dir is not None and not out_dir.is_dir():
+                    out_dir = None
+                enriched_db.append(_enrich_row(row, out_dir))
+            return enriched_db[:limit]
+    except Exception:
+        pass
+
     path = _index_path(cfg)
     rows: List[dict] = []
     if path.exists():
@@ -299,6 +335,7 @@ def load_run_summary(cfg: AStockConfig, run_id: str) -> Dict[str, Any]:
         "buy_on": meta.get("buy_on") or repro.get("buy_on"),
         "sell_on": meta.get("sell_on") or repro.get("sell_on"),
         "signal_weekdays": meta.get("signal_weekdays") if meta.get("signal_weekdays") is not None else repro.get("signal_weekdays"),
+        "schedule_mode": meta.get("schedule_mode") or repro.get("schedule_mode"),
         "account_mode": meta.get("account_mode") or repro.get("account_mode"),
         "repro": repro,
     }
@@ -331,6 +368,282 @@ def read_artifact(cfg: AStockConfig, run_id: str, name: str) -> Path:
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(safe)
     return path
+
+
+def load_equity_curve(
+    cfg: AStockConfig, run_id: str, *, max_points: int = 4000
+) -> List[Dict[str, Any]]:
+    """Load equity.csv (or thin meta sample) for charts. Downsample if very long."""
+    import csv
+
+    out_dir = Path(cfg.output_root) / run_id
+    eq_path = out_dir / "equity.csv"
+    points: List[Dict[str, Any]] = []
+    if eq_path.exists():
+        with open(eq_path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    d = int(float(row.get("date") or 0))
+                except (TypeError, ValueError):
+                    continue
+                if d <= 0:
+                    continue
+                try:
+                    eq = float(row.get("equity") or 0.0)
+                except (TypeError, ValueError):
+                    eq = 0.0
+                try:
+                    cash = float(row.get("cash") or 0.0)
+                except (TypeError, ValueError):
+                    cash = 0.0
+                try:
+                    mv = float(row.get("market_value") or 0.0)
+                except (TypeError, ValueError):
+                    mv = 0.0
+                points.append(
+                    {
+                        "date": d,
+                        "cash": cash,
+                        "market_value": mv,
+                        "equity": eq,
+                    }
+                )
+    if not points:
+        # optional thin sample from meta (legacy)
+        try:
+            summary = load_run_summary(cfg, run_id)
+            meta = summary.get("meta") or {}
+            sample = meta.get("equity_curve") or meta.get("equity_sample") or []
+            if isinstance(sample, list):
+                for e in sample:
+                    if not isinstance(e, dict):
+                        continue
+                    points.append(
+                        {
+                            "date": int(e.get("date") or 0),
+                            "cash": float(e.get("cash") or 0.0),
+                            "market_value": float(e.get("market_value") or 0.0),
+                            "equity": float(e.get("equity") or 0.0),
+                        }
+                    )
+        except Exception:
+            pass
+    if max_points > 0 and len(points) > max_points:
+        # keep first/last and evenly sample middle
+        step = max(1, (len(points) - 1) // (max_points - 1))
+        sampled = points[::step]
+        if sampled[-1] is not points[-1]:
+            sampled.append(points[-1])
+        points = sampled[:max_points]
+    return points
+
+
+def _gua_short(gf: Any) -> str:
+    if not gf or not isinstance(gf, dict):
+        return "卦象未启用"
+    if not gf.get("enabled"):
+        return "卦象未启用"
+    hs = gf.get("history_summary") if isinstance(gf.get("history_summary"), dict) else {}
+    short = hs.get("short") if hs else None
+    if short:
+        return str(short)
+    nl = gf.get("natural_language") or gf.get("selection_mode") or "卦象已启用"
+    return str(nl)
+
+
+def _param_snapshot(summary: Dict[str, Any]) -> Dict[str, Any]:
+    """User-facing parameter fields for multi-run diff (weekday + gua + session)."""
+    repro = summary.get("repro") if isinstance(summary.get("repro"), dict) else {}
+    meta = summary.get("meta") if isinstance(summary.get("meta"), dict) else {}
+    gf = summary.get("gua_filter")
+    if gf is None:
+        gf = repro.get("gua_filter")
+    if gf is None and isinstance(meta, dict):
+        gf = meta.get("gua_filter")
+
+    def pick(key: str, default=None):
+        if summary.get(key) is not None and summary.get(key) != "":
+            return summary.get(key)
+        if repro.get(key) is not None and repro.get(key) != "":
+            return repro.get(key)
+        if meta.get(key) is not None and meta.get(key) != "":
+            return meta.get(key)
+        return default
+
+    buy_wd = pick("buy_weekday")
+    exit_wd = pick("exit_weekday")
+    schedule_mode = pick("schedule_mode")
+    if not schedule_mode:
+        schedule_mode = (
+            "weekday" if (buy_wd is not None or exit_wd is not None) else "tn"
+        )
+    inds = pick("indicator_ids") or pick("indicator_names") or []
+    if isinstance(inds, str):
+        inds = [inds]
+    return {
+        "title": summary.get("title") or repro.get("title") or pick("run_id"),
+        "indicator_ids": list(inds) if isinstance(inds, list) else inds,
+        "period": pick("period"),
+        "account_mode": pick("account_mode") or "portfolio",
+        "schedule_mode": schedule_mode,
+        "signal_weekdays": pick("signal_weekdays") or [],
+        "buy_weekday": buy_wd,
+        "exit_weekday": exit_wd,
+        "buy_on": pick("buy_on") or "open",
+        "sell_on": pick("sell_on") or "open",
+        "entry_lag": pick("entry_lag"),
+        "hold": pick("hold"),
+        "start": pick("start"),
+        "end": pick("end"),
+        "gua_filter": gf,
+        "gua_short": _gua_short(gf),
+        "with_bagua": pick("with_bagua"),
+        "stop_loss": pick("stop_loss") or pick("stop_loss_pct"),
+        "take_profit": pick("take_profit") or pick("take_profit_pct"),
+    }
+
+
+def _metric_pick(metrics: Dict[str, Any], *keys: str) -> Any:
+    for k in keys:
+        if k in metrics and metrics[k] is not None:
+            return metrics[k]
+    return None
+
+
+def compare_runs(cfg: AStockConfig, run_ids: List[str]) -> Dict[str, Any]:
+    """Compare 2–10 completed runs: parameter diff + side-by-side metrics.
+
+    Does not re-run engines; loads shipped artifacts via load_run_summary.
+    """
+    ids: List[str] = []
+    for x in run_ids or []:
+        s = str(x or "").strip()
+        if not s:
+            continue
+        if s not in ids:
+            ids.append(s)
+    if len(ids) < 2:
+        raise ValueError("compare requires at least 2 run_ids")
+    if len(ids) > 10:
+        raise ValueError("compare supports at most 10 run_ids")
+
+    runs_out: List[Dict[str, Any]] = []
+    missing: List[str] = []
+    for rid in ids:
+        try:
+            summary = load_run_summary(cfg, rid)
+        except FileNotFoundError:
+            missing.append(rid)
+            continue
+        metrics = summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {}
+        params = _param_snapshot(summary)
+        runs_out.append(
+            {
+                "run_id": rid,
+                "title": summary.get("title") or rid,
+                "status": summary.get("status"),
+                "params": params,
+                "metrics": {
+                    "total_return": _metric_pick(metrics, "total_return"),
+                    "mean_symbol_return": _metric_pick(metrics, "mean_symbol_return"),
+                    "annual_return": _metric_pick(metrics, "annual_return"),
+                    "max_drawdown": _metric_pick(metrics, "max_drawdown"),
+                    "sharpe": _metric_pick(metrics, "sharpe"),
+                    "win_rate": _metric_pick(metrics, "win_rate"),
+                    "payoff_ratio": _metric_pick(
+                        metrics, "payoff_ratio", "profit_loss_ratio"
+                    ),
+                    "profit_factor": _metric_pick(metrics, "profit_factor"),
+                    "n_round_trips": _metric_pick(metrics, "n_round_trips"),
+                    "n_buys": _metric_pick(metrics, "n_buys"),
+                    "n_sells": _metric_pick(metrics, "n_sells"),
+                    "cost_total": _metric_pick(metrics, "cost_total"),
+                    "cost_impact": _metric_pick(metrics, "cost_impact"),
+                    "final_equity": _metric_pick(metrics, "final_equity"),
+                    "account_mode": _metric_pick(metrics, "account_mode")
+                    or params.get("account_mode"),
+                },
+            }
+        )
+    if missing:
+        raise FileNotFoundError("runs not found: " + ", ".join(missing))
+    if len(runs_out) < 2:
+        raise ValueError("compare requires at least 2 valid runs")
+
+    # parameter keys that matter for research feedback
+    param_keys = [
+        "indicator_ids",
+        "period",
+        "account_mode",
+        "schedule_mode",
+        "signal_weekdays",
+        "buy_weekday",
+        "exit_weekday",
+        "buy_on",
+        "sell_on",
+        "entry_lag",
+        "hold",
+        "start",
+        "end",
+        "gua_short",
+        "stop_loss",
+        "take_profit",
+    ]
+    diffs: List[Dict[str, Any]] = []
+    for key in param_keys:
+        values = []
+        for r in runs_out:
+            v = (r.get("params") or {}).get(key)
+            # normalize lists for stable compare
+            if isinstance(v, list):
+                try:
+                    v_norm = tuple(v)
+                except TypeError:
+                    v_norm = str(v)
+            else:
+                v_norm = v
+            values.append(v_norm)
+        # mark differing when not all equal
+        same = all(values[0] == x for x in values[1:])
+        if not same:
+            diffs.append(
+                {
+                    "key": key,
+                    "values": [(r.get("params") or {}).get(key) for r in runs_out],
+                }
+            )
+
+    metric_keys = [
+        "total_return",
+        "mean_symbol_return",
+        "annual_return",
+        "max_drawdown",
+        "sharpe",
+        "win_rate",
+        "payoff_ratio",
+        "profit_factor",
+        "n_round_trips",
+        "cost_total",
+        "final_equity",
+    ]
+    metrics_table = []
+    for mk in metric_keys:
+        metrics_table.append(
+            {
+                "key": mk,
+                "values": [(r.get("metrics") or {}).get(mk) for r in runs_out],
+            }
+        )
+
+    return {
+        "run_ids": [r["run_id"] for r in runs_out],
+        "runs": runs_out,
+        "param_diffs": diffs,
+        "metrics_table": metrics_table,
+        "n_runs": len(runs_out),
+    }
+
 
 def delete_run(
     cfg: AStockConfig, run_id: str, *, remove_files: bool = True
@@ -369,6 +682,13 @@ def delete_run(
         path.write_text(
             json.dumps(new_rows, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+
+    try:
+        from .db import delete_run_db
+
+        delete_run_db(cfg, run_id)
+    except Exception:
+        pass
 
     return {
         "run_id": run_id,
