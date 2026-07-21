@@ -21,14 +21,14 @@
 
 | ID | 内容 | 状态 |
 |----|------|------|
-| P4.1 | `queue_backend.py`：抽象 + Memory + Sqlite | `[x]` 实现中/已落地 |
+| P4.1 | `queue_backend.py`：抽象 + Memory + Sqlite | `[x]` |
 | P4.2 | `trial_store.py`：`research_trials` 幂等 | `[x]` |
 | P4.3 | `worker.py`：`ResearchWorker.run_once` | `[x]` |
 | P4.4 | `db_backend.py`：Sqlite + optional Postgres | `[x]` |
 | P4.5 | `platform.py`：`ResearchPlatform` 门面 | `[x]` |
-| P4.6 | `tests/.../test_phase4_gate.py` 门禁 7 项 | `[~]` 跑通中 |
+| P4.6 | `tests/.../test_phase4_gate.py` + API | `[x]` 9 passed |
 | P4.7 | 导出 `research/__init__.py` | `[x]` |
-| P4.E | 验收 / accepted | `[ ]` **not accepted yet** |
+| P4.E | 验收 / accepted | `[x]` accepted after gate green |
 
 ---
 
@@ -66,7 +66,7 @@ python -m pytest tests/apps/astock/test_phase4_gate.py -q --tb=short
 
 - Redis 实现 / 生产集群  
 - Optuna / 评分（Phase 5/6）  
-- 对外 HTTP API 挂载（可后续）  
+- 对外 HTTP API：已挂 /api/v1/research/*  
 - push 远程  
 
 ---

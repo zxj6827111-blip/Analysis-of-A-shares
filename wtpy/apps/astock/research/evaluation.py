@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 
 from .gua_gain import pair_gua_gain
+from .regimes import assign_regime, slice_metrics_by_regime
 from .heatmap import build_heatmap
 from .scoring import (
     composite_score,
@@ -91,6 +92,32 @@ def evaluate_trials(
                 }
             )
 
+    # regime / yearly slices when equity or yearly_metrics provided
+    regimes_out: Dict[str, Any] = {}
+    yearly_out: Dict[str, Any] = {}
+    for r in normed:
+        tid = r.get("id") or r.get("trial_id") or r.get("param_hash") or "trial"
+        if r.get("equity_curve") and r.get("dates"):
+            try:
+                reg_series = assign_regime(r["dates"], r["equity_curve"], method="simple")
+                trade_rows = r.get("regime_rows") or [
+                    {"date": x["date"], "ret": x.get("rolling_return", 0.0)} for x in reg_series
+                ]
+                regimes_out[str(tid)] = {
+                    "series": reg_series,
+                    "by_regime": slice_metrics_by_regime(trade_rows, reg_series),
+                }
+            except Exception as e:  # noqa: BLE001
+                regimes_out[str(tid)] = {"error": str(e)[:200]}
+        if isinstance(r.get("yearly_metrics"), dict):
+            yearly_out[str(tid)] = r["yearly_metrics"]
+        elif isinstance(r.get("yearly_metrics"), list):
+            ym: Dict[str, Any] = {}
+            for row in r["yearly_metrics"]:
+                if isinstance(row, dict) and row.get("year") is not None:
+                    ym[str(row["year"])] = row
+            yearly_out[str(tid)] = ym
+
     return {
         "n_trials": len(normed),
         "ranking": ranking,
@@ -102,6 +129,8 @@ def evaluate_trials(
         "flags": sorted(set(flags)),
         "io_scores": io_scores,
         "hard_rules": default_rules,
+        "regimes": regimes_out,
+        "yearly": yearly_out,
     }
 
 

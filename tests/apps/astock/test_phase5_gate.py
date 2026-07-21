@@ -322,3 +322,78 @@ def test_api_evaluate_returns_ranking(tmp_path: Path):
     assert body.get("ok") is True
     assert isinstance(body.get("ranking"), list)
     assert len(body["ranking"]) == 2
+
+
+def test_assign_regime_bull_bear_sideways():
+    from wtpy.apps.astock.research.regimes import assign_regime, slice_metrics_by_regime
+
+    dates = list(range(1, 61))
+    equity = []
+    for i in range(60):
+        if i < 20:
+            equity.append(1.0 + i * 0.02)
+        elif i < 40:
+            equity.append(equity[-1] * 0.97)
+        else:
+            equity.append(equity[-1] * 1.0)
+    series = assign_regime(
+        dates, equity, method="simple", window=5, bull_threshold=0.03, bear_threshold=-0.03
+    )
+    assert len(series) == 60
+    labels = {x["regime"] for x in series}
+    assert "bull" in labels
+    assert "bear" in labels
+    rows = [{"date": x["date"], "ret": x["rolling_return"]} for x in series]
+    by = slice_metrics_by_regime(rows, series, metric_keys=["ret"])
+    assert by
+    assert any(k in by for k in ("bull", "bear", "sideways"))
+    for _reg, agg in by.items():
+        assert agg["count"] >= 1
+        assert "ret_mean" in agg
+
+
+def test_evaluate_trials_includes_regimes_and_yearly():
+    from wtpy.apps.astock.research.evaluation import evaluate_trials
+
+    dates = list(range(1, 31))
+    equity = [1.0 + i * 0.01 for i in range(30)]
+    trials = [
+        {
+            "id": "t_reg",
+            "total_return": 0.2,
+            "max_drawdown": 0.1,
+            "win_rate": 0.55,
+            "n_trades": 20,
+            "sharpe": 1.0,
+            "stability": 0.5,
+            "dates": dates,
+            "equity_curve": equity,
+            "yearly_metrics": [
+                {"year": 2020, "total_return": 0.1},
+                {"year": 2021, "total_return": 0.05},
+            ],
+            "exit_weekday": 3,
+            "sell_on": "open",
+            "gua_key": "none",
+        },
+        {
+            "id": "t2",
+            "total_return": 0.15,
+            "max_drawdown": 0.08,
+            "win_rate": 0.5,
+            "n_trades": 18,
+            "sharpe": 0.9,
+            "stability": 0.6,
+            "exit_weekday": 4,
+            "sell_on": "close",
+            "gua_key": "best3",
+        },
+    ]
+    out = evaluate_trials(trials)
+    assert "regimes" in out
+    assert "t_reg" in out["regimes"]
+    assert "series" in out["regimes"]["t_reg"]
+    assert "by_regime" in out["regimes"]["t_reg"]
+    assert out["yearly"]["t_reg"]["2020"]["total_return"] == 0.1
+    assert out["ranking"]
+
