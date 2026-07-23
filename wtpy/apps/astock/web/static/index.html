@@ -1867,6 +1867,7 @@ XG:CROSS(MA5,MA10);</textarea>
                 <label class="exp-chip"><input type="checkbox" class="exp-gua" value="bull" />
                   <span><div class="t">偏多信号</div><div class="d">操作信号 = 新开仓 或 加仓</div></span></label>
               </div>
+              <div id="expGuaSummary" class="sub" style="margin-top:0.45rem"></div>
             </div>
 
             <div class="exp-card" id="expRiskCard">
@@ -1963,11 +1964,71 @@ XG:CROSS(MA5,MA10);</textarea>
                     <span><div class="t">持有 1 日开盘</div></span></label>
                   <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:1:close" />
                     <span><div class="t">持有 1 日收盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:3:open" />
+                    <span><div class="t">持有 3 日开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:3:close" />
+                    <span><div class="t">持有 3 日收盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:5:open" />
+                    <span><div class="t">持有 5 日开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:5:close" />
+                    <span><div class="t">持有 5 日收盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:7:open" />
+                    <span><div class="t">持有 7 日开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:7:close" />
+                    <span><div class="t">持有 7 日收盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:10:open" />
+                    <span><div class="t">持有 10 日开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:10:close" />
+                    <span><div class="t">持有 10 日收盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:20:open" />
+                    <span><div class="t">持有 20 日开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:20:close" />
+                    <span><div class="t">持有 20 日收盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:40:open" />
+                    <span><div class="t">持有 40 日开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:40:close" />
+                    <span><div class="t">持有 40 日收盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:60:open" />
+                    <span><div class="t">持有 60 日开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:60:close" />
+                    <span><div class="t">持有 60 日收盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:120:open" />
+                    <span><div class="t">持有 120 日开盘</div></span></label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-sell" value="hold:120:close" />
+                    <span><div class="t">持有 120 日收盘</div></span></label>
                 </div>
               </div>
             </div>
 
-            <div class="exp-card">
+            
+            <div class="exp-card" id="expCardUniverseYao">
+              <h3><span class="n">3d</span> 股票池 · 周期 · 爻辞规则</h3>
+              <p class="hint">股票池默认<strong>演示 2 只</strong>；正式研究请选全 A。周期可多选（日/周）。爻辞规则按 manifest 的 <code>state_id</code> 过滤（可与上方 none/best3/bull 叠加）。</p>
+              <div style="display:flex;flex-wrap:wrap;gap:1rem;margin:0.5rem 0">
+                <div>
+                  <div class="sub" style="margin-bottom:0.25rem">股票池</div>
+                  <label class="exp-chip on"><input type="radio" name="expUniverse" value="demo" checked /> 演示 2 只</label>
+                  <label class="exp-chip"><input type="radio" name="expUniverse" value="full" /> 全 A</label>
+                  <label class="exp-chip"><input type="radio" name="expUniverse" value="custom" /> 自定义</label>
+                  <input id="expCustomCodes" placeholder="自定义代码，逗号分隔" style="display:none;margin-top:0.35rem;min-width:16rem" />
+                </div>
+                <div>
+                  <div class="sub" style="margin-bottom:0.25rem">信号周期（可多选）</div>
+                  <label class="exp-chip on"><input type="checkbox" class="exp-period" value="DAY" checked /> 日线</label>
+                  <label class="exp-chip"><input type="checkbox" class="exp-period" value="WEEK" /> 周线</label>
+                </div>
+              </div>
+              <div class="sub" style="margin-bottom:0.25rem">爻辞规则（confirmed，可多选；与上方卦象预设 <em>同时</em> 进入组合）</div>
+              <div id="expYaoRuleChips" class="exp-chips" style="max-height:10rem;overflow:auto"></div>
+              <div id="expYaoSummary" class="sub" style="margin-top:0.35rem">加载规则清单中…</div>
+              <div style="margin-top:0.4rem">
+                <button type="button" class="secondary" id="btnExpYaoConfirmed">全选已确认</button>
+                <button type="button" class="secondary" id="btnExpYaoClear">清空爻辞</button>
+                <button type="button" class="secondary" id="btnExpHoldGrid">勾选 T3–T120 收盘卖</button>
+              </div>
+            </div>
+
+<div class="exp-card">
               <h3><span class="n">4</span> 预览并开始</h3>
               <p class="hint">默认用<strong>演示池 2 只股票</strong>试跑。若结果成交为 0 或收益为 —，请检查区间是否有信号，或在「新建回测」拉长日期后再开实验。评价六视图在结果区下方，点「评价分析」或实验完成后自动打开。点「重新计算 / 预览」会请求服务端 estimate（含过滤后组数与前若干组参数）。</p>
               <div class="exp-summary" id="expSummary">
@@ -2431,6 +2492,7 @@ XG:CROSS(MA5,MA10);</textarea>
 
     function renderRules() {
       const box = document.getElementById("ruleList");
+      if (!box) return;
       box.innerHTML = "";
       rulesCache.forEach(r => {
         const div = document.createElement("div");
@@ -2500,6 +2562,13 @@ XG:CROSS(MA5,MA10);</textarea>
     async function loadRules() {
       rulesCache = await api("/api/v1/rules");
       renderRules();
+      try {
+        const pe = document.getElementById("pageExperiment");
+        if (pe && pe.classList.contains("active") && typeof renderExpRulePicker === "function") {
+          renderExpRulePicker();
+          if (typeof expSyncRuleBox === "function") expSyncRuleBox();
+        }
+      } catch (e) {}
     }
 
     async function loadHealth() {
@@ -4262,13 +4331,12 @@ XG:CROSS(MA5,MA10);</textarea>
         tabDetail.removeAttribute("disabled");
       }
       if (name === "experiment") {
-        try { expSyncRuleBox(); expEstimate(); expRenderList(); } catch (e) {}
-      }
-      
-      if (name === "experiment") {
+        try { if (typeof _expEnsureYaoUi === "function") _expEnsureYaoUi(); } catch (e) {}
         try { if (typeof renderExpRulePicker === "function") renderExpRulePicker(); } catch (e) {}
         try { if (typeof expSyncRuleBox === "function") expSyncRuleBox(); } catch (e) {}
+        try { if (typeof _expChipSync === "function") _expChipSync(); } catch (e) {}
         try { if (typeof expEstimate === "function") expEstimate(); } catch (e) {}
+        try { if (typeof expRenderList === "function") expRenderList(); } catch (e) {}
         try { if (typeof expRefreshResearchHub === "function") expRefreshResearchHub(); } catch (e) {}
       }
 
@@ -5089,11 +5157,149 @@ XG:CROSS(MA5,MA10);</textarea>
     function _expChecked(sel) {
       return Array.from(document.querySelectorAll(sel)).filter((el) => el.checked).map((el) => el.value);
     }
+    let __yaoRulesCache = [];
+    function _expCollectYaoFilters() {
+      const out = [];
+      document.querySelectorAll("#expYaoRuleChips input.exp-yao:checked").forEach((el) => {
+        const sid = el.getAttribute("data-state-id") || el.value;
+        if (!sid) return;
+        const label = el.getAttribute("data-label") || sid;
+        const rid = el.getAttribute("data-rule-id") || "";
+        out.push({
+          enabled: true,
+          selection_mode: "exact_line",
+          selected_main_hexagram_ids: [],
+          selected_state_ids: [sid],
+          selected_action_signals: [],
+          label: label,
+          rule_id: rid,
+          manifest_name: label,
+        });
+      });
+      return out;
+    }
+    async function _expLoadYaoRules() {
+      const box = document.getElementById("expYaoRuleChips");
+      const sum = document.getElementById("expYaoSummary");
+      if (!box) return;
+      try {
+        const d = await api("/api/v1/yao/rules?status=confirmed");
+        const rules = (d && d.rules) || [];
+        __yaoRulesCache = rules;
+        box.innerHTML = "";
+        if (!rules.length) {
+          box.innerHTML = "<div class='exp-empty'>无已确认爻辞规则（manifest 为空或未确认）。</div>";
+          if (sum) sum.textContent = "爻辞规则：0";
+          return;
+        }
+        rules.forEach((r) => {
+          const sid = r.state_id || "";
+          if (!sid) return;
+          const lab = document.createElement("label");
+          lab.className = "exp-chip";
+          const name = r.name || r.rule_id || sid;
+          lab.innerHTML =
+            '<input type="checkbox" class="exp-yao" value="' +
+            String(sid).replace(/"/g, "") +
+            '" data-state-id="' +
+            String(sid).replace(/"/g, "") +
+            '" data-label="' +
+            String(name).replace(/"/g, "&quot;") +
+            '" data-rule-id="' +
+            String(r.rule_id || "").replace(/"/g, "") +
+            '" />' +
+            "<span><div class='t'>" +
+            String(name).replace(/</g, "&lt;") +
+            "</div><div class='d'>" +
+            String(sid) +
+            (r.group ? " · " + r.group : "") +
+            "</div></span>";
+          box.appendChild(lab);
+        });
+        if (sum) sum.textContent = "已加载 confirmed 规则 " + rules.length + " 条（勾选后参与组合）";
+        _expChipSync();
+      } catch (e) {
+        if (sum) sum.textContent = "加载爻辞规则失败: " + (e && e.message ? e.message : e);
+      }
+    }
+    function _expBindUniverseYaoUi() {
+      document.querySelectorAll('input[name="expUniverse"]').forEach((el) => {
+        el.addEventListener("change", () => {
+          const v = (document.querySelector('input[name="expUniverse"]:checked') || {}).value;
+          const inp = document.getElementById("expCustomCodes");
+          if (inp) inp.style.display = v === "custom" ? "" : "none";
+          try { expEstimate(); } catch (e) {}
+        });
+      });
+      const bAll = document.getElementById("btnExpYaoConfirmed");
+      if (bAll) {
+        bAll.addEventListener("click", () => {
+          document.querySelectorAll("#expYaoRuleChips input.exp-yao").forEach((el) => {
+            el.checked = true;
+          });
+          _expChipSync();
+          try { expEstimate(); } catch (e) {}
+        });
+      }
+      const bClr = document.getElementById("btnExpYaoClear");
+      if (bClr) {
+        bClr.addEventListener("click", () => {
+          document.querySelectorAll("#expYaoRuleChips input.exp-yao").forEach((el) => {
+            el.checked = false;
+          });
+          _expChipSync();
+          try { expEstimate(); } catch (e) {}
+        });
+      }
+      const bHold = document.getElementById("btnExpHoldGrid");
+      if (bHold) {
+        bHold.addEventListener("click", () => {
+          _expSetMode("free_axes");
+          const need = new Set([3, 5, 7, 10, 20, 40, 60, 120].map((n) => "hold:" + n + ":close"));
+          document.querySelectorAll(".exp-sell").forEach((el) => {
+            if (need.has(el.value)) el.checked = true;
+          });
+          // default buy T+1 open
+          document.querySelectorAll(".exp-buy").forEach((el) => {
+            el.checked = el.value === "lag:1:open";
+          });
+          document.querySelectorAll(".exp-sig-wd").forEach((el) => {
+            if (el.value === "all") el.checked = true;
+            else el.checked = false;
+          });
+          _expChipSync();
+          try { expEstimate(); } catch (e) {}
+        });
+      }
+      document.querySelectorAll(".exp-period").forEach((el) => {
+        el.addEventListener("change", () => {
+          try { expEstimate(); } catch (e) {}
+        });
+      });
+      _expLoadYaoRules();
+    }
+    function _expUpdateGuaSummary() {
+      const box = document.getElementById("expGuaSummary");
+      if (!box) return;
+      const keys = _expChecked("#expGuaChips .exp-gua, .exp-gua");
+      const names = { none: "不加卦象", best3: "最佳 3 爻", bull: "偏多信号（新开仓/加仓）" };
+      if (!keys.length) {
+        box.innerHTML = "<b>已选卦象方案：</b><span style='color:var(--warn)'>未勾选任何方案（请至少选一种）</span>";
+        return;
+      }
+      const labs = keys.map((k) => names[k] || k);
+      let html = "<b>已选卦象方案（" + labs.length + "）：</b>" + labs.join("、");
+      const yaoN = document.querySelectorAll("#expYaoRuleChips input.exp-yao:checked").length;
+      if (yaoN) html += " · 另选爻辞规则 <b>" + yaoN + "</b> 条";
+      box.innerHTML = html;
+    }
     function _expChipSync() {
+      try { _expEnsureYaoUi(); } catch (e0) {}
       document.querySelectorAll(".exp-chip").forEach((lab) => {
-        const inp = lab.querySelector("input[type=checkbox]");
+        const inp = lab.querySelector("input[type=checkbox], input[type=radio]");
         lab.classList.toggle("on", !!(inp && inp.checked));
       });
+      try { _expUpdateGuaSummary(); } catch (e) {}
     }
     
     function renderExpRulePicker() {
@@ -5120,34 +5326,46 @@ XG:CROSS(MA5,MA10);</textarea>
           (isBagua ? ' <span class="badge">标注</span>' : "") + "</div>" +
           '<div class="sub">' + String(r.id || "").replace(/</g, "&lt;") +
           (r.compile_status ? " · " + r.compile_status : "") + "</div></div>";
-        const toggle = () => {
-          if (typeof selected === "undefined" || !selected) return;
-          const id = r.id;
-          if (selected.has(id)) selected.delete(id);
-          else selected.add(id);
-          if (typeof renderRules === "function") renderRules();
-          renderExpRulePicker();
-          if (typeof updateSelectedLabel === "function") updateSelectedLabel();
-          else {
-            try { expSyncRuleBox(); expEstimate(); } catch (e) {}
+        const toggle = (forceOn) => {
+          try {
+            if (typeof selected === "undefined" || !selected) {
+              console.warn("selected Set missing");
+              return;
+            }
+            const id = r.id;
+            if (forceOn === true) selected.add(id);
+            else if (forceOn === false) selected.delete(id);
+            else {
+              if (selected.has(id)) selected.delete(id);
+              else selected.add(id);
+            }
+            if (typeof renderRules === "function") renderRules();
+            renderExpRulePicker();
+            try { expSyncRuleBox(); } catch (e1) {}
+            if (typeof updateSelectedLabel === "function") updateSelectedLabel();
+            else {
+              try { expEstimate(); } catch (e) {}
+            }
+          } catch (err) {
+            console.error("exp rule toggle failed", err);
           }
         };
         div.addEventListener("click", (ev) => {
-          if (ev.target && ev.target.tagName === "INPUT") return;
+          const t0 = ev.target;
+          if (t0 && (t0.tagName === "INPUT" || t0.tagName === "BUTTON")) return;
+          if (t0 && t0.closest && t0.closest("input,button")) return;
+          ev.preventDefault();
           toggle();
         });
         const cb = div.querySelector("input");
         if (cb) {
+          cb.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+          });
           cb.addEventListener("change", (ev) => {
             ev.stopPropagation();
-            if (typeof selected === "undefined" || !selected) return;
-            if (cb.checked) selected.add(r.id);
-            else selected.delete(r.id);
-            if (typeof renderRules === "function") renderRules();
-            renderExpRulePicker();
-            if (typeof updateSelectedLabel === "function") updateSelectedLabel();
+            toggle(!!cb.checked);
           });
-          cb.addEventListener("click", (ev) => ev.stopPropagation());
         }
         box.appendChild(div);
       });
@@ -5170,6 +5388,13 @@ XG:CROSS(MA5,MA10);</textarea>
         "<div class='sub' style='margin-top:0.25rem'>已选 " + labels.length + " 条 · 实验会对以上规则分别做「卦象 × 日程/参数轴」组合。</div>";
     }
     let __expMode = "template"; // template | free_axes
+    let __expYaoUiBound = false;
+    function _expEnsureYaoUi() {
+      if (__expYaoUiBound) return;
+      __expYaoUiBound = true;
+      try { _expBindUniverseYaoUi(); } catch (e) { console.warn(e); }
+    }
+
 
     function _expWdLabel(n) {
       const m = { 1: "周一", 2: "周二", 3: "周三", 4: "周四", 5: "周五" };
@@ -5284,11 +5509,27 @@ XG:CROSS(MA5,MA10);</textarea>
       const end = (typeof ymdFromParts === "function")
         ? ymdFromParts(document.getElementById("endYear"), document.getElementById("endMonth"), document.getElementById("endDay"))
         : null;
+      const uniEl = document.querySelector('input[name="expUniverse"]:checked');
+      const universe = (uniEl && uniEl.value) || "demo";
+      let codes = ["sh600000", "sz000001"];
+      if (universe === "full") {
+        codes = null;
+      } else if (universe === "custom") {
+        const raw = ((document.getElementById("expCustomCodes") || {}).value || "").trim();
+        codes = raw ? raw.split(/[,，\s]+/).filter(Boolean) : ["sh600000", "sz000001"];
+      }
+      const periodChecks = _expChecked(".exp-period");
+      const periods = periodChecks.length ? periodChecks : ["DAY"];
+      const yaoFilters = _expCollectYaoFilters();
+      const gua_keys = _expChecked("#expGuaChips .exp-gua, .exp-gua");
       const body = {
         rule_ids: _expSelectedRules(),
-        gua_keys: _expChecked("#expGuaChips .exp-gua, .exp-gua"),
-        period: (document.getElementById("period") || {}).value || "DAY",
-        codes: ["sh600000", "sz000001"],
+        gua_keys: gua_keys,
+        gua_filters: yaoFilters.length ? yaoFilters : undefined,
+        period: periods[0] || "DAY",
+        periods: periods,
+        universe: universe,
+        codes: codes,
         start: start || 20200101,
         end: end || 20241231,
         account_mode: (document.querySelector('input[name="accountMode"]:checked') || {}).value || "portfolio",
@@ -5326,7 +5567,10 @@ XG:CROSS(MA5,MA10);</textarea>
         const nSig = (body.signal_weekdays_options || []).length || 1;
         const nBuy = (body.buy_options || []).length || 0;
         const nSell = (body.sell_options || []).length || 0;
-        const total = nR * nG * nSig * nBuy * nSell * nSl * nTp;
+        const nYao = (body.gua_filters || []).length || 0;
+        const nGuaAll = nG + nYao;
+        const nPer = (body.periods && body.periods.length) ? body.periods.length : 1;
+        const total = nR * nGuaAll * nSig * nBuy * nSell * nSl * nTp * nPer;
         return {
           total,
           text:

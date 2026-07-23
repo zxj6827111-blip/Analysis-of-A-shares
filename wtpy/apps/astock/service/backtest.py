@@ -851,14 +851,23 @@ def run_backtest(
             for a in formula_audits.values()
         )
     )
+    # dual_price_v1:
+    # - signal: causal_qfq (adj_map) unless research_unadjusted → raw
+    # - execution + valuation: ALWAYS raw_map (true tape / cash ledger)
+    # - adj_map is audit/reference only for fills — never trade_map for PnL
+    signal_price_mode = "raw" if research_unadj else "causal_qfq"
+    execution_price_mode = "raw"
+    valuation_price_mode = "raw"
+    corporate_action_policy = "fail_closed"
+    engine_result_version = "dual_price_v1"
+    # Legacy sole price_mode: do not mean "fills are adjusted" anymore.
+    price_mode = "dual_price_v1"
+    execution_bars = raw_map
+    signal_bars_ref = raw_map if research_unadj else adj_map
     if research_unadj:
-        price_mode = "raw"
-        trade_map = raw_map
         use_research = True
         use_formal_ok = True
     else:
-        price_mode = "adjusted"
-        trade_map = adj_map
         use_research = False
         use_formal_ok = formal_ok
 
@@ -894,7 +903,7 @@ def run_backtest(
 
         fast_res = run_fast_backtest(
             events,
-            trade_map,
+            execution_bars,
             cal,
             hold=hold,
             entry_lag=entry_lag,
@@ -906,6 +915,7 @@ def run_backtest(
             signal_weekdays=signal_weekdays,
             start=start,
             end=end,
+            adj_bars_by_code=adj_map if not research_unadj else None,
         )
         # Adapt to BacktestResult-like surface for writers / history
         from ..strategy import BacktestResult as _BTR
@@ -931,7 +941,28 @@ def run_backtest(
         result.config["holiday_policy"] = holiday_policy
         result.config["artifact_level"] = artifact_level
     else:
-        bt = PortfolioBacktester(cfg, cal, raw_map, adj_bars_by_code=trade_map)
+        # factor maps for corporate-action fail-closed (entry factor vs later factor)
+        factor_by_code = {}
+        try:
+            for _fs in factor_series or []:
+                code_k = getattr(_fs, "std_code", None) or getattr(_fs, "code", None)
+                if not code_k:
+                    continue
+                dates_f = list(getattr(_fs, "dates", None) or [])
+                facs_f = list(getattr(_fs, "factors", None) or [])
+                if dates_f and facs_f and len(dates_f) == len(facs_f):
+                    factor_by_code[str(code_k)] = {
+                        int(d): float(f) for d, f in zip(dates_f, facs_f)
+                    }
+        except Exception:
+            factor_by_code = {}
+        bt = PortfolioBacktester(
+            cfg,
+            cal,
+            execution_bars,
+            adj_bars_by_code=adj_map if not research_unadj else None,
+            factor_by_code=factor_by_code or None,
+        )
         result = bt.run(
             events,
             hold=hold,
@@ -977,6 +1008,11 @@ def run_backtest(
 
         _ex_payload = {
             "engine": "fast" if engine in ("fast", "quick", "research_fast") else "full",
+            "engine_result_version": engine_result_version,
+            "signal_price_mode": signal_price_mode,
+            "execution_price_mode": execution_price_mode,
+            "valuation_price_mode": valuation_price_mode,
+            "corporate_action_policy": corporate_action_policy,
             "artifact_level": artifact_level,
             "rule_ids": [s.id for s in trade_specs],
             "period": period,
@@ -994,7 +1030,8 @@ def run_backtest(
             "start": start,
             "end": end,
             "universe": selected_universe_sha(codes),
-            "adjust": "research_unadjusted" if research_unadj else "adjusted",
+            # legacy key kept but dual modes are authoritative for cache isolation
+            "adjust": "research_unadjusted" if research_unadj else "signal_causal_qfq_exec_raw",
             "gua": (gf.to_dict() if gf else None),
             "with_bagua": bagua_enabled,
             "bagua_filter_mode": bagua_filter_mode,
@@ -1048,6 +1085,16 @@ def run_backtest(
         break
     repro = {
         "price_mode": price_mode,
+        "signal_price_mode": signal_price_mode,
+        "execution_price_mode": execution_price_mode,
+        "valuation_price_mode": valuation_price_mode,
+        "corporate_action_policy": corporate_action_policy,
+        "engine_result_version": engine_result_version,
+        "price_mode_note": (
+            "dual_price_v1: signals use causal_qfq (or raw if research_unadjusted); "
+            "fills/equity use unadjusted market prices. "
+            "Legacy price_mode=adjusted meant fills on adj bars — obsolete."
+        ),
         "risk_conflict_policy": "stop_first",
         "risk_trigger_policy": "daily_high_low",
         "risk_execution_policy": "next_trading_day_open",

@@ -217,6 +217,15 @@ def pair_round_trips(
             else:
                 open_buys[code][0] = (b, left)
 
+        sell_raw = getattr(f, "raw_price", None)
+        sell_raw = float(sell_raw) if sell_raw not in (None, "") else ""
+        sell_adj_ref = getattr(f, "adjusted_reference_price", None)
+        sell_adj_ref = float(sell_adj_ref) if sell_adj_ref not in (None, "") else ""
+        sell_fac = getattr(f, "adjustment_factor", None)
+        sell_fac = float(sell_fac) if sell_fac not in (None, "") else ""
+        sell_scale = getattr(f, "adjustment_scale", None)
+        sell_scale = float(sell_scale) if sell_scale not in (None, "") else ""
+
         if not parts:
             seq += 1
             trips.append(
@@ -228,8 +237,14 @@ def pair_round_trips(
                     "指标": "",
                     "买入日期": "",
                     "买入价": "",
+                    "买入价_复权参考": "",
+                    "买入复权因子": "",
+                    "买入复权比例": "",
                     "卖出日期": sell_date,
                     "卖出价": sell_price,
+                    "卖出价_复权参考": sell_adj_ref,
+                    "卖出复权因子": sell_fac,
+                    "卖出复权比例": sell_scale,
                     "数量": int(f.shares or 0),
                     "买入金额": "",
                     "卖出金额": float(f.amount or 0.0),
@@ -250,6 +265,12 @@ def pair_round_trips(
             seq += 1
             buy_date = int(b.date)
             buy_price = float(b.price or 0.0)
+            buy_adj_ref = getattr(b, "adjusted_reference_price", None)
+            buy_adj_ref = float(buy_adj_ref) if buy_adj_ref not in (None, "") else ""
+            buy_fac = getattr(b, "adjustment_factor", None)
+            buy_fac = float(buy_fac) if buy_fac not in (None, "") else ""
+            buy_scale = getattr(b, "adjustment_scale", None)
+            buy_scale = float(buy_scale) if buy_scale not in (None, "") else ""
             b_sh = max(int(b.shares or 0), 1)
             ratio = take / float(b_sh)
             buy_amount = float(b.amount or 0.0) * ratio
@@ -280,8 +301,14 @@ def pair_round_trips(
                     "卦象简判": judge,
                     "买入日期": buy_date,
                     "买入价": buy_price,
+                    "买入价_复权参考": buy_adj_ref,
+                    "买入复权因子": buy_fac,
+                    "买入复权比例": buy_scale,
                     "卖出日期": sell_date,
                     "卖出价": sell_price,
+                    "卖出价_复权参考": sell_adj_ref,
+                    "卖出复权因子": sell_fac,
+                    "卖出复权比例": sell_scale,
                     "数量": take,
                     "买入金额": buy_amount,
                     "卖出金额": sell_amount,
@@ -307,6 +334,12 @@ def pair_round_trips(
             seq += 1
             buy_date = int(b.date)
             buy_price = float(b.price or 0.0)
+            buy_adj_ref = getattr(b, "adjusted_reference_price", None)
+            buy_adj_ref = float(buy_adj_ref) if buy_adj_ref not in (None, "") else ""
+            buy_fac = getattr(b, "adjustment_factor", None)
+            buy_fac = float(buy_fac) if buy_fac not in (None, "") else ""
+            buy_scale = getattr(b, "adjustment_scale", None)
+            buy_scale = float(buy_scale) if buy_scale not in (None, "") else ""
             b_sh = max(int(b.shares or 0), 1)
             ratio = left / float(b_sh)
             buy_amount = float(b.amount or 0.0) * ratio or (buy_price * left)
@@ -329,8 +362,14 @@ def pair_round_trips(
                     "卦象简判": judge,
                     "买入日期": buy_date,
                     "买入价": buy_price,
+                    "买入价_复权参考": buy_adj_ref,
+                    "买入复权因子": buy_fac,
+                    "买入复权比例": buy_scale,
                     "卖出日期": "",
                     "卖出价": "",
+                    "卖出价_复权参考": "",
+                    "卖出复权因子": "",
+                    "卖出复权比例": "",
                     "数量": left,
                     "买入金额": buy_amount,
                     "卖出金额": "",
@@ -379,6 +418,12 @@ def write_backtest_csv(
             "std_code",
             "side",
             "price",
+            "raw_price",
+            "adjusted_reference_price",
+            "adjustment_factor",
+            "adjustment_scale",
+            "price_session",
+            "price_source",
             "shares",
             "amount",
             "commission",
@@ -394,6 +439,12 @@ def write_backtest_csv(
                     "std_code": x.std_code,
                     "side": x.side,
                     "price": x.price,
+                    "raw_price": getattr(x, "raw_price", None),
+                    "adjusted_reference_price": getattr(x, "adjusted_reference_price", None),
+                    "adjustment_factor": getattr(x, "adjustment_factor", None),
+                    "adjustment_scale": getattr(x, "adjustment_scale", None),
+                    "price_session": getattr(x, "price_session", None),
+                    "price_source": getattr(x, "price_source", None),
                     "shares": x.shares,
                     "amount": x.amount,
                     "commission": x.commission,
@@ -432,8 +483,14 @@ def write_backtest_csv(
         "卦象简判",
         "买入日期",
         "买入价",
+        "买入价_复权参考",
+        "买入复权因子",
+        "买入复权比例",
         "卖出日期",
         "卖出价",
+        "卖出价_复权参考",
+        "卖出复权因子",
+        "卖出复权比例",
         "数量",
         "买入金额",
         "卖出金额",
@@ -657,6 +714,26 @@ def write_excel_summary(
         ("回测区间", f"{repro.get('start') or ''} ~ {repro.get('end') or ''}"),
         ("股票池数量", repro.get("selected_codes_count") or ""),
         ("价格模式", repro.get("price_mode") or ""),
+        ("信号价格模式", repro.get("signal_price_mode") or ""),
+        ("成交价格模式", repro.get("execution_price_mode") or "raw"),
+        ("估值价格模式", repro.get("valuation_price_mode") or "raw"),
+        ("公司行为策略", repro.get("corporate_action_policy") or ""),
+        ("引擎结果版本", repro.get("engine_result_version") or ""),
+        (
+            "价格说明",
+            (
+                "买入价/卖出价=正式回测成交价（因果前复权+滑点）；"
+                "买入价_复权参考/卖出价_复权参考=当日未复权开/收盘，便于对照行情软件；"
+                "金额与收益率按成交价计算。"
+                if str(repro.get("price_mode") or "") == "adjusted"
+                else (
+                    "研究未复权：信号亦用未复权K线；成交/估值仍为未复权真实价格。"
+                    if repro.get("research_unadjusted")
+                    or str(repro.get("price_mode") or "") == "raw"
+                    else ""
+                )
+            ),
+        ),
         ("止损", repro.get("stop_loss_pct") if repro.get("stop_loss_pct") is not None else ""),
         ("止盈", repro.get("take_profit_pct") if repro.get("take_profit_pct") is not None else ""),
         ("", ""),
@@ -750,8 +827,14 @@ def write_excel_summary(
         "卦象简判",
         "买入日期",
         "买入价",
+        "买入价_复权参考",
+        "买入复权因子",
+        "买入复权比例",
         "卖出日期",
         "卖出价",
+        "卖出价_复权参考",
+        "卖出复权因子",
+        "卖出复权比例",
         "数量",
         "买入金额",
         "卖出金额",
@@ -792,9 +875,10 @@ def write_excel_summary(
         [
             f"run_id={result.run_id} | 区间 {repro.get('start') or ''}~{repro.get('end') or ''} | "
             f"period={repro.get('period')} | {_sched_txt} | "
+            f"price_mode={repro.get('price_mode') or ''} | "
             f"{repro.get('bagua_filter_label') or '无八卦过滤'} | "
             f"已平{len(closed)} 盈{win_n} 亏{loss_n} 未平{open_n} | 合计净利润≈{_fmt_num(net_sum, 2)} | "
-            f"明细行{len(trips)}"
+            f"明细行{len(trips)} | 买入价/卖出价=未复权成交；*_复权参考=审计"
             + (f"（Excel仅预览前{excel_cap}行，完整见 trades.csv）" if excel_truncated else "")
         ]
     )
@@ -831,8 +915,14 @@ def write_excel_summary(
             t.get("卦象简判"),
             _fmt_date(t.get("买入日期")),
             _fmt_num(t.get("买入价"), 4),
+            _fmt_num(t.get("买入价_复权参考"), 4) if t.get("买入价_复权参考") != "" else "",
+            _fmt_num(t.get("买入复权因子"), 6) if t.get("买入复权因子") != "" else "",
+            _fmt_num(t.get("买入复权比例"), 6) if t.get("买入复权比例") != "" else "",
             _fmt_date(t.get("卖出日期")),
             _fmt_num(t.get("卖出价"), 4) if t.get("卖出价") != "" else "",
+            _fmt_num(t.get("卖出价_复权参考"), 4) if t.get("卖出价_复权参考") != "" else "",
+            _fmt_num(t.get("卖出复权因子"), 6) if t.get("卖出复权因子") != "" else "",
+            _fmt_num(t.get("卖出复权比例"), 6) if t.get("卖出复权比例") != "" else "",
             t.get("数量"),
             _fmt_num(t.get("买入金额"), 2),
             _fmt_num(t.get("卖出金额"), 2) if t.get("卖出金额") != "" else "",
@@ -861,7 +951,10 @@ def write_excel_summary(
             if fill:
                 cell.fill = fill
 
-    widths = [6, 16, 10, 12, 18, 14, 10, 36, 12, 10, 12, 10, 8, 12, 12, 12, 14, 10, 10, 10, 10, 8, 16, 10]
+    widths = [
+        6, 16, 10, 12, 18, 14, 10, 8, 10, 10, 10, 28,
+        12, 10, 12, 12, 10, 12, 8, 12, 12, 12, 14, 10, 10, 10, 10, 8, 16, 10,
+    ]
     for i, w in enumerate(widths, 1):
         ws2.column_dimensions[get_column_letter(i)].width = w
     ws2.auto_filter.ref = f"A2:{get_column_letter(len(headers))}{ws2.max_row}"
@@ -873,11 +966,14 @@ def write_excel_summary(
         "本工作簿为单次回测的一份总表，研究用途，非投资建议。",
         "「汇总」：组合层收益/回撤/买卖次数等。",
         "「交易明细」：按 FIFO 将买入与卖出配对；信号日期取不晚于买入日的最近信号。",
+        "【价格口径】dual_price_v1：信号=因果前复权；成交/估值=未复权真实价格。买入价/卖出价为真实成交价（含滑点）；",
+        "买入价_复权参考/卖出价_复权参考为同日因果前复权参考价（审计用，不参与股数/费用/权益）。",
+        "无公司行为区间内，复权参考收益率应与真实成交收益率接近；持仓跨越复权因子变化时正式模式 fail_closed。",
         "【交易日程 · 双层模型】前台用「信号星期 / 买入日星期 / 平仓日星期 / 开盘·收盘」配置；",
         "后台一律在 A 股交易日日历上求解（T+N 体系）：有 buy_weekday 时用 next_weekday_trading_day（覆盖 entry_lag 步进），",
         "有 exit_weekday 时同理覆盖 hold；未设星期时仍用 entry_lag + hold。节假日自动顺延到之后第一个可交易日。",
         "「按星期」不是另一套经济逻辑，而是 T+N 在星期锚定约束下的日历求解。",
-        "启用八卦时默认可按「最佳3爻」等方案过滤；明细列「卦名/爻位/卦象简判」来自信号日 OHLC 标注。",
+        "启用八卦时默认可按「最佳3爻」等方案过滤；明细列「卦名/爻位/卦象简判」来自信号日 OHLC 标注（八卦用未复权价）。",
         "交易明细超过 3000 行时，Excel 仅预览前 3000 行；完整明细见同目录 trades.csv。",
         "毛利润 = 卖出金额 - 买入金额；净利润 = 毛利润 - 买入手续费 - 卖出手续费及印花税。",
         "收益率分母为买入金额。卖出原因含 time_exit / weekday_exit / stop_loss / take_profit 等（旧版 hold_expired 映射为 time_exit）。",

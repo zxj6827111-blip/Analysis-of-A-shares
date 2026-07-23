@@ -12,14 +12,20 @@ Business rules (locked):
   (default next_trading_day). Legacy next_weekday_trading_day may skip to next week.
 - Optional signal_weekdays: only signals whose calendar weekday is in the allow-list (1=Mon … 7=Sun); empty = all.
 - Time-stop (hold expiry): reason time_exit; weekday exit: weekday_exit (legacy alias hold_expired still mapped).
-- Risk exits (stop_loss / take_profit): trigger on high/low, execute next tradable day open *(1-slippage).
+- Risk exits (stop_loss / take_profit): trigger on RAW high/low vs RAW entry_price;
+  execute next tradable day RAW open *(1±slippage).
 - Repeat signals do not reset remaining hold.
-- Buy px = open|close *(1+slippage) per buy_on (default open).
+- Buy/sell execution px = RAW open|close *(1±slippage) per buy_on/sell_on.
+- Valuation (equity MTM) uses RAW close only.
+- Limit rules (prev_close/open/high/low) use RAW bars only.
+- Optional adj_bars_by_code is audit/reference only (fill adjusted_reference_price); never the trading index.
+- Signal bars may be causal-qfq outside this engine; research_unadjusted affects signals outside only.
 - account_mode=portfolio: shared cash + max_weight.
 - account_mode=per_symbol: each stock independent virtual capital (通达信对照).
 - Suspended days: mark with last valid close.
 - Limit-down untradeable sells are deferred.
 - Fills record planned/actual dates and holiday_policy when schedule shifts apply.
+- Optional factor_by_code: corporate-action fail-closed during open holds.
 """
 
 from __future__ import annotations
@@ -66,13 +72,13 @@ class Position:
     std_code: str
     shares: int
     entry_date: int
-    entry_price: float
+    entry_price: float  # RAW execution entry (with slippage)
     # For DAY/DWM: remaining trading sessions after entry before exit is allowed
     hold_left_sessions: int
     # For WEEK/MONTH: number of full periods still required after entry period
     hold_left_periods: int
     period_mode: str  # DAY | WEEK | MONTH | DWM
-    cost: float
+    cost: float  # true cash cost (amount + commission at RAW execution)
     entry_period_key: Optional[Tuple] = None
     # Optional risk exits (fraction, e.g. 0.03 = 3%).
     # trigger_on_daily_high_low including entry day; execute_next_trading_day_open (T+1).
@@ -89,6 +95,9 @@ class Position:
     exit_shift_days: int = 0
     holiday_policy: Optional[str] = None
     time_exit_kind: str = "time_exit"  # time_exit | weekday_exit
+    # Dual-price audit: optional adjusted reference at entry (not used for PnL).
+    entry_adjusted_reference_price: Optional[float] = None
+    entry_factor: Optional[float] = None  # factor snapshot at entry for CA fail-closed
 
 
 @dataclass
@@ -96,7 +105,7 @@ class Fill:
     date: int
     std_code: str
     side: str
-    price: float
+    price: float  # execution price (RAW session * slippage)
     shares: int
     amount: float
     commission: float
@@ -106,6 +115,15 @@ class Fill:
     actual_date: Optional[int] = None
     shift_days: int = 0
     holiday_policy: Optional[str] = None
+    # RAW session open/close before slippage (market tape); equals execution basis.
+    raw_price: Optional[float] = None
+    # Optional causal-qfq (or other adj) session price same date for audit only.
+    adjusted_reference_price: Optional[float] = None
+    adjustment_factor: Optional[float] = None
+    adjustment_base: Optional[float] = None
+    adjustment_scale: Optional[float] = None
+    price_session: Optional[str] = None  # open | close
+    price_source: Optional[str] = None  # "raw" | "adjusted_reference"
 
 
 @dataclass
@@ -124,7 +142,7 @@ class BacktestResult:
     equity_curve: List[EquityPoint] = field(default_factory=list)
     metrics: dict = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)
-    status: str = "ok"  # ok | research_unadjusted | no_go
+    status: str = "ok"  # ok | research_unadjusted | no_go | unsupported_corporate_action
 
     def to_dict(self) -> dict:
         return {
@@ -349,31 +367,40 @@ class PortfolioBacktester:
         *,
         limit_rules: Optional[LimitRuleProvider] = None,
         adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
+        factor_by_code: Optional[Dict[str, Dict[int, float]]] = None,
     ):
         self.cfg = cfg
         self.calendar = calendar
-        # valuation / trading uses adj bars when provided else raw
-        trade_bars = adj_bars_by_code if adj_bars_by_code is not None else bars_by_code
+        # dual_price_v1: execution+valuation ALWAYS on bars_by_code (RAW formal);
+        # adj_bars_by_code is fill audit only — never trading index.
+        trade_bars = bars_by_code or {}
         self.bars_by_code = trade_bars
-        self.raw_bars_by_code = bars_by_code
+        self.raw_bars_by_code = trade_bars
+        self.adj_bars_by_code = adj_bars_by_code
+        self.factor_by_code: Dict[str, Dict[int, float]] = factor_by_code or {}
         self.limit_rules = limit_rules or DefaultAShareLimitRule()
         self._index: Dict[str, Dict[int, DayBar]] = {}
+        self._raw_index: Dict[str, Dict[int, DayBar]] = {}
+        self._adj_index: Dict[str, Dict[int, DayBar]] = {}
         self._sorted_dates: Dict[str, List[int]] = {}
         self._last_close: Dict[str, Dict[int, float]] = {}
         for code, bars in trade_bars.items():
             idx = {b.date: b for b in bars}
             self._index[code] = idx
+            self._raw_index[code] = idx
             dates = [b.date for b in bars]
             self._sorted_dates[code] = dates
             last = None
             lc: Dict[int, float] = {}
-            # map every calendar trading day? only bar dates; valuation uses walk
             for b in bars:
                 last = b.close
                 lc[b.date] = last
             self._last_close[code] = lc
 
-        # prev close map for limit rules
+        for code, bars in (adj_bars_by_code or {}).items():
+            self._adj_index[code] = {b.date: b for b in bars}
+
+        # prev close map for limit rules (RAW execution bars only)
         self._prev_close: Dict[str, Dict[int, float]] = {}
         for code, bars in trade_bars.items():
             pc: Dict[int, float] = {}
@@ -437,6 +464,8 @@ class PortfolioBacktester:
             "Example costs only; not user real trading costs.",
             "Survivor bias possible: local TDX may lack delisted stocks.",
             DefaultAShareLimitRule.BOUNDARY_NOTE,
+            "Price dual-mode: signal may use causal qfq outside; execution/valuation ALWAYS on "
+            "bars_by_code (RAW in formal). adj_bars_by_code is fill audit only.",
             "Schedule engine: all entry/exit dates are solved on the A-share trading-day calendar "
             "(T+N family); weekday anchors use planned civil date + holiday_policy=%s."
             % holiday_policy,
@@ -490,7 +519,10 @@ class PortfolioBacktester:
         status = "ok"
         if research_unadjusted:
             status = "research_unadjusted"
-            notes.append("RESEARCH_UNADJUSTED: results use raw prices; not formal.")
+            notes.append(
+                "RESEARCH_UNADJUSTED: signal path may use raw; engine still executes on "
+                "bars_by_code (execution/valuation raw). Not formal signal study."
+            )
         if not formal_ok and not research_unadjusted:
             return BacktestResult(
                 run_id=run_id,
@@ -571,12 +603,34 @@ class PortfolioBacktester:
         equity_curve: List[EquityPoint] = []
         # deferred_sells[code] = {"trigger": optional risk reason, "defer": last defer reason}
         deferred_sells: Dict[str, dict] = {}
+        ca_unsupported_notes: List[str] = []
+        ca_fail = False
 
         # precompute period end sets for week/month completion tracking
         week_ends = self._period_end_dates("WEEK")
         month_ends = self._period_end_dates("MONTH")
 
         for d in sim_dates:
+            # Corporate-action fail-closed while any position is open
+            if self.factor_by_code and positions:
+                for code, pos in list(positions.items()):
+                    if pos.entry_factor is None:
+                        continue
+                    fac_now = self._factor_on(code, d)
+                    if fac_now is None:
+                        continue
+                    try:
+                        if abs(float(fac_now) - float(pos.entry_factor)) > 1e-9:
+                            ca_fail = True
+                            msg = (
+                                "unsupported_corporate_action: factor changed while open "
+                                "%s entry_date=%s entry_factor=%s day=%s factor=%s"
+                                % (code, pos.entry_date, pos.entry_factor, d, fac_now)
+                            )
+                            if msg not in ca_unsupported_notes:
+                                ca_unsupported_notes.append(msg)
+                    except (TypeError, ValueError):
+                        pass
             # 1) process deferred + matured sells at open (never same-day as BUY)
             sell_codes = set(deferred_sells.keys())
             for code, pos in list(positions.items()):
@@ -671,6 +725,7 @@ class PortfolioBacktester:
                         actual_date=d,
                         shift_days=int(pos.exit_shift_days or 0),
                         holiday_policy=pos.holiday_policy,
+                        **self._fill_price_audit(code, d, sell_on, session_raw=raw_px),
                     )
                 )
 
@@ -828,6 +883,8 @@ class PortfolioBacktester:
                     exit_shift_days=int(exit_shift or 0),
                     holiday_policy=order_hp,
                     time_exit_kind=time_exit_kind,
+                    entry_adjusted_reference_price=self._adj_session_price(code, d, buy_on),
+                    entry_factor=self._factor_on(code, d),
                 )
                 fills.append(
                     Fill(
@@ -844,6 +901,7 @@ class PortfolioBacktester:
                         actual_date=d,
                         shift_days=entry_shift,
                         holiday_policy=order_hp,
+                        **self._fill_price_audit(code, d, buy_on, session_raw=raw_buy),
                     )
                 )
 
@@ -961,7 +1019,8 @@ class PortfolioBacktester:
                     zero_cfg,
                     self.calendar,
                     self.raw_bars_by_code,
-                    adj_bars_by_code=self.bars_by_code,
+                    adj_bars_by_code=self.adj_bars_by_code,
+                    factor_by_code=self.factor_by_code,
                     limit_rules=self.limit_rules,
                 )
                 z_res = z_bt.run(
@@ -998,6 +1057,14 @@ class PortfolioBacktester:
                 metrics["control_method"] = "full_replay_failed"
                 metrics["zero_cost_error"] = str(e)
                 notes.append(f"zero-cost full replay failed: {e}")
+
+        if ca_fail:
+            status = "unsupported_corporate_action"
+            notes.extend(ca_unsupported_notes)
+            notes.append(
+                "Formal metrics not claimed: corporate action during open hold "
+                "(raw execution has no share/cash restatement)."
+            )
 
         return BacktestResult(
             run_id=run_id,
@@ -1082,6 +1149,88 @@ class PortfolioBacktester:
                 px = self._last_px_on_or_before(code, date) or p.entry_price
             total += p.shares * px
         return total
+
+    def _unadj_session_price(
+        self, code: str, date: int, session: str
+    ) -> Optional[float]:
+        """RAW session open/close on date (no slippage). Same as execution basis."""
+        bar = (self._raw_index.get(code) or {}).get(date)
+        if bar is None:
+            bar = (self._index.get(code) or {}).get(date)
+        if not bar:
+            return None
+        try:
+            px = bar_session_price(bar, session)
+            return float(px) if px and float(px) > 0 else None
+        except Exception:
+            return None
+
+    def _adj_session_price(
+        self, code: str, date: int, session: str
+    ) -> Optional[float]:
+        """Adjusted-reference session price (audit only; not used for PnL)."""
+        bar = (self._adj_index.get(code) or {}).get(date)
+        if not bar:
+            return None
+        try:
+            px = bar_session_price(bar, session)
+            return float(px) if px and float(px) > 0 else None
+        except Exception:
+            return None
+
+    def _factor_on(self, code: str, date: int) -> Optional[float]:
+        fmap = self.factor_by_code.get(code) or {}
+        if not fmap:
+            return None
+        if date in fmap:
+            try:
+                return float(fmap[date])
+            except (TypeError, ValueError):
+                return None
+        # last factor on or before date
+        best = None
+        for k in fmap:
+            if k <= date and (best is None or k > best):
+                best = k
+        if best is None:
+            return None
+        try:
+            return float(fmap[best])
+        except (TypeError, ValueError):
+            return None
+
+    def _fill_price_audit(
+        self,
+        code: str,
+        date: int,
+        session: str,
+        *,
+        session_raw: Optional[float] = None,
+    ) -> dict:
+        """Build Fill dual-price audit fields (execution remains RAW)."""
+        raw_px = session_raw
+        if raw_px is None:
+            raw_px = self._unadj_session_price(code, date, session)
+        adj_px = self._adj_session_price(code, date, session)
+        fac = self._factor_on(code, date)
+        scale = None
+        base = None
+        if adj_px is not None and raw_px is not None and float(raw_px) > 0:
+            try:
+                scale = float(adj_px) / float(raw_px)
+                base = float(raw_px)
+            except (TypeError, ValueError, ZeroDivisionError):
+                scale = None
+                base = None
+        return {
+            "raw_price": float(raw_px) if raw_px is not None else None,
+            "adjusted_reference_price": float(adj_px) if adj_px is not None else None,
+            "adjustment_factor": fac,
+            "adjustment_base": base,
+            "adjustment_scale": scale,
+            "price_session": parse_price_session(session),
+            "price_source": "raw",
+        }
 
     def _last_px_on_or_before(self, code: str, date: int) -> Optional[float]:
         dates = self._sorted_dates.get(code) or []

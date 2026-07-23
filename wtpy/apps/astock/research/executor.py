@@ -112,6 +112,7 @@ def run_engine(
     signal_weekdays: Optional[Sequence[int]] = None,
     start: Optional[int] = None,
     end: Optional[int] = None,
+    adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
 ) -> Dict[str, Any]:
     """Dispatch to fast or full engine."""
     eng = (engine or "full").strip().lower()
@@ -132,6 +133,7 @@ def run_engine(
             signal_weekdays=signal_weekdays,
             start=start,
             end=end,
+            adj_bars_by_code=adj_bars_by_code,
         )
         return {
             "engine": "fast",

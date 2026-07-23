@@ -420,7 +420,15 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
     @app.get("/api/v1/experiments/presets")
     def api_experiment_presets() -> dict:
         from .service.experiments import GUA_PRESETS, WEEKDAY_TEMPLATES
+        from .service.yao_rules import (
+            HOLD_TEMPLATE_DAYS,
+            DEMO_CODES,
+            load_yao_manifest,
+            manifest_rules,
+        )
 
+        man = load_yao_manifest()
+        confirmed = manifest_rules(status=["confirmed"])
         return {
             "gua_presets": [
                 {"key": k, "label": v.get("label")} for k, v in GUA_PRESETS.items()
@@ -428,8 +436,39 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             "weekday_templates": [
                 {"key": k, "label": v.get("label")} for k, v in WEEKDAY_TEMPLATES.items()
             ],
+            "hold_templates": list(HOLD_TEMPLATE_DAYS),
+            "demo_codes": list(DEMO_CODES),
+            "yao_manifest": {
+                "version": man.get("version"),
+                "exists": man.get("exists"),
+                "path": man.get("path"),
+                "n_rules": len(man.get("rules") or []),
+                "n_confirmed": len(confirmed),
+                "rules": man.get("rules") or [],
+            },
             "default_max_variants": 50,
             "hard_max_variants": 500,
+        }
+
+    @app.get("/api/v1/yao/rules")
+    def api_yao_rules(
+        status: Optional[str] = Query(None),
+        group: Optional[str] = Query(None),
+    ) -> dict:
+        """List 爻辞规则 manifest for experiment center."""
+        from .service.yao_rules import load_yao_manifest, manifest_rules
+
+        st = [s.strip() for s in (status or "").split(",") if s.strip()] or None
+        gr = [s.strip() for s in (group or "").split(",") if s.strip()] or None
+        man = load_yao_manifest()
+        rules = manifest_rules(status=st, groups=gr)
+        return {
+            "ok": True,
+            "version": man.get("version"),
+            "exists": bool(man.get("exists")),
+            "path": man.get("path"),
+            "rules": rules,
+            "count": len(rules),
         }
 
     @app.post("/api/v1/experiments/estimate")
@@ -459,7 +498,10 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
                 weekday_keys=payload.get("weekday_keys"),
                 stop_loss_list=payload.get("stop_loss_list"),
                 period=payload.get("period") or "DAY",
+                periods=payload.get("periods"),
                 codes=payload.get("codes"),
+                universe=payload.get("universe"),
+                gua_filters=payload.get("gua_filters"),
                 start=payload.get("start"),
                 end=payload.get("end"),
                 account_mode=payload.get("account_mode") or "portfolio",
@@ -1080,12 +1122,49 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+    # HTML entry pages: no-cache so root cutover and rollbacks take effect immediately.
+    _HTML_NO_CACHE_HEADERS = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
+    def _html_page(filename: str, missing_title: str) -> HTMLResponse:
+        index_path = STATIC_DIR / filename
+        if index_path.exists():
+            return HTMLResponse(
+                index_path.read_text(encoding="utf-8"),
+                headers=dict(_HTML_NO_CACHE_HEADERS),
+            )
+        return HTMLResponse(
+            f"<h1>{missing_title}</h1><p>static/{filename} missing</p>",
+            headers=dict(_HTML_NO_CACHE_HEADERS),
+        )
+
     @app.get("/", response_class=HTMLResponse)
     def index() -> HTMLResponse:
-        index_path = STATIC_DIR / "index.html"
-        if index_path.exists():
-            return HTMLResponse(index_path.read_text(encoding="utf-8"))
-        return HTMLResponse("<h1>AStock</h1><p>static/index.html missing</p>")
+        """Official main UI: V3 (index_v3.html). Rollback: serve index.html instead."""
+        return _html_page("index_v3.html", "AStock")
+
+    @app.get("/legacy", response_class=HTMLResponse)
+    def index_legacy() -> HTMLResponse:
+        """Original V1 UI (index.html); kept for quick rollback and bookmarks."""
+        return _html_page("index.html", "AStock legacy")
+
+    @app.get("/v2", response_class=HTMLResponse)
+    def index_v2() -> HTMLResponse:
+        """V2 transition UI (index_v2.html)."""
+        return _html_page("index_v2.html", "AStock v2")
+
+    @app.get("/v3", response_class=HTMLResponse)
+    def index_v3() -> HTMLResponse:
+        """V3 formal UI (same shell as /)."""
+        return _html_page("index_v3.html", "AStock v3")
+
+    @app.get("/v3/task-detail", response_class=HTMLResponse)
+    def index_v3_task_detail() -> HTMLResponse:
+        """Independent task detail page; same SPA shell as V3 main."""
+        return _html_page("index_v3.html", "AStock v3")
 
     return app
 

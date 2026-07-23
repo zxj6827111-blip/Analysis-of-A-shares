@@ -621,10 +621,10 @@ th.task-col-payoff{
 .exp-tab-panel{display:none}
 .exp-tab-panel.active{display:block}
 .rule-pick-modal{
-  position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.55);
+  position:fixed;inset:0;z-index:5000;background:rgba(0,0,0,.55);
   display:none;align-items:center;justify-content:center;padding:24px;
 }
-.rule-pick-modal.show{display:flex}
+.rule-pick-modal.show{display:flex !important;align-items:center;justify-content:center;z-index:5000 !important}
 .rule-pick-dialog{
   width:min(720px,96vw);max-height:80vh;overflow:auto;
   background:var(--panel);border:1px solid var(--line);border-radius:14px;
@@ -1137,6 +1137,7 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
   <nav class="main-nav" id="mainNav">
     <button type="button" class="nav-btn" data-view="backtest"><span class="nav-icon">⌂</span>回测</button>
     <button type="button" class="nav-btn" data-view="forecast"><span class="nav-icon">⌁</span>预测</button>
+    <button type="button" class="nav-btn" data-view="bagua-query"><span class="nav-icon">☰</span>查询卦象</button>
     <button type="button" class="nav-btn" data-view="rules"><span class="nav-icon">▣</span>规则中心</button>
     <button type="button" class="nav-btn" data-view="experiment"><span class="nav-icon">⚗</span>实验中心</button>
     <button type="button" class="nav-btn" data-view="tasks"><span class="nav-icon">▤</span>任务中心</button>
@@ -1477,6 +1478,56 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
 </section>
 
 
+
+
+<!-- 查询卦象 -->
+<section class="view" id="view-bagua-query">
+  <div class="page-title-row">
+    <div>
+      <h1 class="page-title">查询卦象</h1>
+      <p class="page-sub">按股票代码与日期，用未复权 OHLC 数字位求和算法查询当日 / 当周 / 当月卦象（开盘→上卦、收盘→下卦、高低→动爻）。</p>
+    </div>
+  </div>
+  <div class="forecast-layout">
+    <aside class="side-stack">
+      <div class="card side-card">
+        <div class="side-title">算法说明</div>
+        <div class="muted" style="font-size:12px;line-height:1.65">
+          <p style="margin:0 0 8px"><b>价格</b>：未复权，保留两位小数。</p>
+          <p style="margin:0 0 8px"><b>上卦</b>：开盘价各位数字之和 mod 8（0 记为 8）。</p>
+          <p style="margin:0 0 8px"><b>下卦</b>：收盘价各位数字之和 mod 8（0 记为 8）。</p>
+          <p style="margin:0 0 8px"><b>动爻</b>：最高价与最低价数字和相加后 mod 6（0 记为 6）。</p>
+          <p style="margin:0">与回测「八卦 OHLC / 卦象过滤」使用同一套计算器。</p>
+        </div>
+      </div>
+      <div class="helper">提示：非交易日自动取不晚于该日的最近交易日；周/月未收官时卦象可能随后续行情变化。</div>
+    </aside>
+    <main>
+      <div class="card query-card">
+        <h3 class="section-title">单股卦象查询</h3>
+        <p class="section-desc">代码支持 600000、sh600000、000001；日期支持 YYYY-MM-DD 或 YYYYMMDD。</p>
+        <div class="query-row" style="flex-wrap:wrap;gap:10px;align-items:center">
+          <input class="input" id="bqCode" placeholder="代码：600000 / sh600000 / 000001" style="min-width:220px;flex:1" />
+          <input class="input" id="bqDate" type="date" style="min-width:160px" />
+          <select class="select" id="bqPeriod" style="min-width:120px">
+            <option value="DAY" selected>按日</option>
+            <option value="WEEK">按周</option>
+            <option value="MONTH">按月</option>
+          </select>
+          <button type="button" class="btn btn-primary" id="bqSearchBtn">查询卦象</button>
+        </div>
+        <div class="muted" style="font-size:11px;margin-top:8px" id="bqHint">填写代码与日期后点击查询。</div>
+      </div>
+      <div class="card section-pad" id="bqResultCard" style="display:none">
+        <div class="result-head">
+          <h3 class="section-title" id="bqResultTitle">卦象结果</h3>
+        </div>
+        <div id="bqResult"></div>
+      </div>
+    </main>
+  </div>
+</section>
+
 <!-- 规则中心（完整原型结构 + 动态数据） -->
 <section class="view" id="view-rules">
   <div class="page-title-row">
@@ -1581,7 +1632,7 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
           <div class="field-grid cols-3" style="margin-top:13px">
             <div class="field"><label>止损比例（%）</label><input class="input" id="expStopLoss" value="1, 2, 3" /></div>
             <div class="field"><label>止盈比例（%）</label><input class="input" id="expTakeProfit" value="5, 8, 10" /></div>
-            <div class="field"><label>持仓周期（天）</label><input class="input" id="expHoldDays" value="5, 10, 20" disabled title="当前 API 以止盈止损网格为主，持仓周期展示用" /></div>
+            <div class="field"><label>持仓周期（天）</label><input class="input" id="expHoldDays" value="3, 5, 7, 10, 20, 60" title="固定持有交易日，写入 sell_options hold" /></div>
           </div>
           <div class="field-grid cols-3" style="margin-top:13px">
             <div class="field"><label>周期</label>
@@ -1591,12 +1642,7 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
                 <option value="MONTH">月线</option>
               </select>
             </div>
-            <div class="field"><label>卦象方案</label>
-              <select class="select" id="expGua">
-                <option value="none">不启用卦象</option>
-                <option value="bagua_filter">八卦过滤</option>
-              </select>
-            </div>
+            <div class="field"><label>卦象方案</label><div class="muted" style="font-size:12px;padding:8px 0">请在下方 3b「卦象过滤」中配置（默认关闭）</div></div>
             <div class="field"><label>引擎</label>
               <select class="select" id="expEngine">
                 <option value="fast">fast</option>
@@ -1611,13 +1657,112 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
           <div class="muted" id="expEstimateStatus" style="margin-top:8px;font-size:12px"></div>
         </div>
 
-        <div class="card form-section">
+        
+        <div class="card form-section" id="expYaoCard">
+          <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:200px">
+              <h3 class="section-title" style="margin:0"><span class="number-dot">3b</span>卦象过滤 · 信号周期 · 成交节奏</h3>
+              <p class="section-desc">卦象过滤与「新建回测」相同：默认关闭；开启后按操作信号 / 现成方案 / 指定爻象筛选。信号周期与买卖节奏独立配置。</p>
+            </div>
+            <label class="gua-switch" style="margin-left:auto;flex-shrink:0">
+              <input type="checkbox" id="expGuaEnabled" /> 启用卦象过滤
+            </label>
+          </div>
+
+          <div class="helper" id="expGuaOffHint" style="margin-top:12px">
+            <b>当前未启用卦象过滤。</b>实验仅按技术规则与买卖节奏运行，不套用默认卦象（none/best3 等预设下拉已移除）。
+          </div>
+
+          <div id="expGuaFilterBody" style="opacity:0.55;pointer-events:none;margin-top:10px">
+            <div class="muted" style="font-size:12px;margin:8px 0 4px">用法（三选一，与回测一致）</div>
+            <div class="gua-usage-grid" id="expGuaUsageGrid">
+              <button type="button" class="gua-usage-card active" data-exp-usage="action" id="expGuaUsageAction">
+                <b>① 按操作信号</b>
+                <span>勾选 新开仓 / 加仓 / 持有 等，无需记卦名。</span>
+              </button>
+              <button type="button" class="gua-usage-card" data-exp-usage="preset" id="expGuaUsagePreset">
+                <b>② 用现成方案</b>
+                <span>一键「最佳 3 爻」或「偏多信号」研究模板。</span>
+              </button>
+              <button type="button" class="gua-usage-card" data-exp-usage="advanced" id="expGuaUsageAdvanced">
+                <b>③ 自己指定爻象</b>
+                <span>打开完整目录勾选具体 state_id / 主卦（进阶）。</span>
+              </button>
+            </div>
+
+            <div id="expGuaPanelAction" class="gua-panel is-on">
+              <div class="muted" style="font-size:12px;margin-bottom:6px">操作信号（可多选，同类为「或」）</div>
+              <div class="gua-preset-row">
+                <button type="button" class="btn" id="btnExpGuaActBull">一键偏多（新开仓+加仓）</button>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px 14px;font-size:13px" id="expGuaActionChecks">
+                <label><input type="checkbox" value="新开仓" /> 新开仓</label>
+                <label><input type="checkbox" value="加仓" /> 加仓</label>
+                <label><input type="checkbox" value="持有" /> 持有</label>
+                <label><input type="checkbox" value="减仓" /> 减仓</label>
+                <label><input type="checkbox" value="清仓" /> 清仓</label>
+              </div>
+            </div>
+
+            <div id="expGuaPanelPreset" class="gua-panel" hidden>
+              <div class="muted" style="font-size:12px;margin-bottom:6px">点击方案写入选择；请先打开右上角「启用卦象过滤」。</div>
+              <div class="gua-preset-row">
+                <button type="button" class="btn" id="btnExpGuaBest3" title="复初九/升初六/泰初九">★ 最佳 3 爻</button>
+                <button type="button" class="btn" id="btnExpGuaBull">★ 偏多操作信号</button>
+              </div>
+            </div>
+
+            <div id="expGuaPanelAdvanced" class="gua-panel" hidden>
+              <div class="muted" style="font-size:12px;margin-bottom:6px">打开完整卦象目录勾选；确定后写入本实验配置（与回测共用目录组件）。</div>
+              <button type="button" class="btn" id="btnExpGuaOpenDrawer">打开完整目录…</button>
+              <div class="muted" id="expGuaAdvancedSummary" style="margin-top:8px;font-size:12px">尚未从目录选择爻象</div>
+            </div>
+
+            <div class="gua-rule" id="expGuaRuleText" style="margin-top:12px">卦象过滤：未启用</div>
+          </div>
+
+          <div class="divider" style="margin:16px 0;border-top:1px solid var(--line)"></div>
+
+          <div class="field-grid cols-3" style="margin-top:4px">
+            <div class="field"><label>卖出会话</label>
+              <select class="select" id="expSellOn">
+                <option value="close">收盘卖出</option>
+                <option value="open">开盘卖出</option>
+              </select>
+            </div>
+            <div class="field"><label>买入节奏</label>
+              <select class="select" id="expBuyMode">
+                <option value="lag1open">信号后 T+1 开盘买</option>
+                <option value="lag1close">信号后 T+1 收盘买</option>
+              </select>
+            </div>
+            <div class="field"><label>允许 force（&gt;50 组）</label>
+              <select class="select" id="expForce">
+                <option value="0">否</option>
+                <option value="1">是 force=true</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-top:12px">
+            <label style="font-size:12px;color:var(--muted)">信号周期（可多选）</label>
+            <div class="chip-row" id="expPeriodChips" style="margin-top:8px">
+              <label class="chip" style="cursor:pointer"><input type="checkbox" class="exp-period" value="DAY" checked style="margin-right:6px" />日线</label>
+              <label class="chip" style="cursor:pointer"><input type="checkbox" class="exp-period" value="WEEK" style="margin-right:6px" />周线</label>
+            </div>
+          </div>
+          <div style="margin-top:10px">
+            <button type="button" class="btn" id="btnExpHoldPreset" style="padding:4px 10px;font-size:12px">持有填 T3–T120</button>
+            <span class="muted" style="font-size:12px;margin-left:8px">持有天数见上方「持仓周期」输入框</span>
+          </div>
+        </div>
+
+<div class="card form-section">
           <h3 class="section-title"><span class="number-dot">4</span>固定条件（回测环境）</h3>
           <div class="field-grid cols-3" style="margin-top:13px">
             <div class="field"><label>股票范围</label>
               <select class="select" id="expUniverse">
                 <option value="demo">演示池（2 只）</option>
-                <option value="ALL">全部 A 股</option>
+                <option value="full">全部 A 股</option>
               </select>
             </div>
             <div class="field"><label>回测区间</label>
@@ -1921,7 +2066,7 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
 
 
 
-<!-- 规则选择弹层 -->
+<!-- 卦象抽屉 + 规则选择/新建弹层（顶层 sibling，勿嵌套） -->
 <div class="gua-drawer-mask" id="guaDrawerMask"></div>
         <div class="gua-drawer" id="guaDrawer" role="dialog" aria-modal="true" aria-label="选择卦象">
           <div class="gua-drawer-hd">
@@ -1949,7 +2094,7 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
             <button type="button" class="secondary" id="btnGuaCancel2">取消</button>
             <button type="button" id="btnGuaOk2">确定</button>
           </div>
-        
+        </div>
 
 <div class="rule-pick-modal" id="rulePickModal" role="dialog">
   <div class="rule-pick-dialog">
@@ -1965,8 +2110,6 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
     </div>
   </div>
 </div>
-
-<!-- 新建规则简易弹层 -->
 <div class="rule-pick-modal" id="ruleCreateModal">
   <div class="rule-pick-dialog">
     <div style="font-size:16px;font-weight:800;margin-bottom:12px">新建规则</div>
@@ -1983,6 +2126,7 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
     </div>
   </div>
 </div>
+
 
 <div class="card diag-panel" id="diagPanel"></div>
 <div class="toast-live" id="liveToast"></div>
@@ -2002,7 +2146,7 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
   }
   function getCurrentModule() {
     const module = new URLSearchParams(location.search).get("module");
-    const allowed = ["backtest", "forecast", "rules", "experiment", "tasks"];
+    const allowed = ["backtest", "forecast", "bagua-query", "rules", "experiment", "tasks"];
     return allowed.includes(module) ? module : "backtest";
   }
 
@@ -2194,6 +2338,9 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
     }
     if (name === "forecast") {
       renderForecastPage();
+    }
+    if (name === "bagua-query") {
+      initBaguaQueryPage();
     }
     if (name === "tasks") {
       bindTaskUi();
@@ -2855,49 +3002,239 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
   }
 
   /* ---------- experiment ---------- */
-  function localComboCount() {
-    const sl = parseNumList($("expStopLoss").value);
-    const tp = parseNumList($("expTakeProfit").value);
-    const nSl = Math.max(1, sl.length);
+    function localComboCount() {
+    const sl = parseNumList($("expStopLoss") ? $("expStopLoss").value : "");
+    const tp = parseNumList($("expTakeProfit") ? $("expTakeProfit").value : "");
+    const hold = parseNumList($("expHoldDays") ? $("expHoldDays").value : "5");
+    const nSl = Math.max(1, sl.length || 1);
     const nTp = Math.max(1, tp.length || 1);
-    // hold days visual only
-    const hold = parseNumList($("expHoldDays").value);
-    const nHold = Math.max(1, hold.length);
-    const rules = AppState.expRuleIds.length || 0;
-    const paramCombos = nSl * (tp.length ? nTp : 1);
-    // API also multiplies gua etc.; local display uses stop*take and rules
-    return { nSl, nTp, nHold, paramCombos, rules, tasks: paramCombos * Math.max(1, rules) * nHold };
+    const nHold = Math.max(1, hold.length || 1);
+    const rules = (AppState.expRuleIds && AppState.expRuleIds.length) || 0;
+    const nGua = 1; // single preset select
+    const _eg = (typeof buildExpGuaPayload === "function") ? buildExpGuaPayload() : null;
+    const nYao = (_eg && _eg.enabled) ? 1 : 0;
+    const nGuaAll = 1; // single filter axis (none or one active filter via gua_filters)
+    const nPer = document.querySelectorAll("#expPeriodChips input.exp-period:checked").length || 1;
+    const paramCombos = nSl * nTp * nHold * nGuaAll * nPer;
+    return {
+      nSl, nTp, nHold, nYao, nPer, nGuaAll,
+      paramCombos,
+      rules,
+      tasks: paramCombos * Math.max(1, rules),
+    };
+  }
+
+    // Experiment gua filter (parallel to backtest GuaUI; default OFF, no preset dropdown)
+  AppState.expGuaUsage = AppState.expGuaUsage || "action";
+  AppState.expGuaAdvanced = AppState.expGuaAdvanced || {
+    selected_state_ids: [],
+    selected_main_hexagram_ids: [],
+    selection_mode: "none",
+  };
+
+  function expGuaReadActions() {
+    const box = $("expGuaActionChecks");
+    if (!box) return [];
+    return Array.from(box.querySelectorAll("input[type=checkbox]:checked")).map((el) => el.value).filter(Boolean);
+  }
+
+  function expGuaSetUsage(u) {
+    AppState.expGuaUsage = u || "action";
+    document.querySelectorAll("#expGuaUsageGrid .gua-usage-card").forEach((c) => {
+      c.classList.toggle("active", c.getAttribute("data-exp-usage") === AppState.expGuaUsage);
+    });
+    const pa = $("expGuaPanelAction");
+    const pp = $("expGuaPanelPreset");
+    const pad = $("expGuaPanelAdvanced");
+    if (pa) {
+      pa.classList.toggle("is-on", AppState.expGuaUsage === "action");
+      if (AppState.expGuaUsage === "action") pa.removeAttribute("hidden");
+      else pa.setAttribute("hidden", "hidden");
+    }
+    if (pp) {
+      pp.classList.toggle("is-on", AppState.expGuaUsage === "preset");
+      if (AppState.expGuaUsage === "preset") pp.removeAttribute("hidden");
+      else pp.setAttribute("hidden", "hidden");
+    }
+    if (pad) {
+      pad.classList.toggle("is-on", AppState.expGuaUsage === "advanced");
+      if (AppState.expGuaUsage === "advanced") pad.removeAttribute("hidden");
+      else pad.setAttribute("hidden", "hidden");
+    }
+    expGuaRefreshSummary();
+  }
+
+  function expGuaSyncEnabledUi() {
+    const on = !!( $("expGuaEnabled") && $("expGuaEnabled").checked );
+    const body = $("expGuaFilterBody");
+    const hint = $("expGuaOffHint");
+    if (body) {
+      body.style.opacity = on ? "1" : "0.55";
+      body.style.pointerEvents = on ? "auto" : "none";
+    }
+    if (hint) hint.style.display = on ? "none" : "block";
+    expGuaRefreshSummary();
+  }
+
+  function expGuaRefreshSummary() {
+    const el = $("expGuaRuleText");
+    if (!el) return;
+    const cfg = buildExpGuaPayload();
+    if (!cfg || !cfg.enabled) {
+      el.textContent = "卦象过滤：未启用（默认不筛选）";
+      return;
+    }
+    const mode = cfg.selection_mode || "none";
+    if (mode === "action_signal") {
+      el.textContent = "卦象过滤：操作信号 = " + (cfg.selected_action_signals || []).join(" / ");
+    } else if (mode === "exact_line") {
+      const n = (cfg.selected_state_ids || []).length;
+      el.textContent = "卦象过滤：精确爻象 " + n + " 项" + (n ? "（" + (cfg.selected_state_ids || []).slice(0, 6).join(", ") + (n > 6 ? "…" : "") + "）" : "");
+    } else if (mode === "main_hexagram") {
+      el.textContent = "卦象过滤：主卦 " + (cfg.selected_main_hexagram_ids || []).length + " 项";
+    } else {
+      el.textContent = "卦象过滤：已启用但未形成有效选择（提交时不会过滤）";
+    }
+    const adv = $("expGuaAdvancedSummary");
+    if (adv) {
+      const n = (AppState.expGuaAdvanced.selected_state_ids || []).length;
+      const m = (AppState.expGuaAdvanced.selected_main_hexagram_ids || []).length;
+      adv.textContent = n || m ? ("目录已选 state " + n + " / 主卦 " + m) : "尚未从目录选择爻象";
+    }
+  }
+
+  /** Same shape as backtest GuaUI.getPayload(); default disabled / none. */
+  function buildExpGuaPayload() {
+    const switchOn = !!( $("expGuaEnabled") && $("expGuaEnabled").checked );
+    let selection_mode = "none";
+    let selected_main_hexagram_ids = [];
+    let selected_state_ids = [];
+    let selected_action_signals = [];
+    const usage = AppState.expGuaUsage || "action";
+    if (switchOn) {
+      if (usage === "action") {
+        selected_action_signals = expGuaReadActions();
+        selection_mode = selected_action_signals.length ? "action_signal" : "none";
+      } else if (usage === "preset") {
+        // preset applied into advanced/action via buttons; prefer advanced snapshot then actions
+        if ((AppState.expGuaAdvanced.selected_state_ids || []).length) {
+          selection_mode = "exact_line";
+          selected_state_ids = (AppState.expGuaAdvanced.selected_state_ids || []).slice();
+          selected_main_hexagram_ids = (AppState.expGuaAdvanced.selected_main_hexagram_ids || []).slice();
+        } else {
+          selected_action_signals = expGuaReadActions();
+          selection_mode = selected_action_signals.length ? "action_signal" : "none";
+        }
+      } else {
+        // advanced
+        selected_state_ids = (AppState.expGuaAdvanced.selected_state_ids || []).slice();
+        selected_main_hexagram_ids = (AppState.expGuaAdvanced.selected_main_hexagram_ids || []).slice();
+        if (selected_state_ids.length) selection_mode = "exact_line";
+        else if (selected_main_hexagram_ids.length) selection_mode = "main_hexagram";
+        else selection_mode = "none";
+      }
+    }
+    const has =
+      (selected_action_signals && selected_action_signals.length) ||
+      (selected_state_ids && selected_state_ids.length) ||
+      (selected_main_hexagram_ids && selected_main_hexagram_ids.length);
+    return {
+      enabled: !!(switchOn && has),
+      selection_mode: switchOn && has ? selection_mode : "none",
+      match_mode: "any",
+      selected_main_hexagram_ids: switchOn && has ? selected_main_hexagram_ids : [],
+      selected_state_ids: switchOn && has ? selected_state_ids : [],
+      selected_action_signals: switchOn && has ? selected_action_signals : [],
+      rule_version: (typeof window !== "undefined" && window.GuaUI && false) || "gua_rules_v20260721",
+      switch_on: switchOn,
+      has_selection: !!has,
+      label: "experiment_gua_filter",
+    };
+  }
+
+  function collectYaoFilters() {
+    // legacy name: now returns [gua_filter] when experiment gua enabled
+    const cfg = buildExpGuaPayload();
+    if (cfg && cfg.enabled) return [cfg];
+    return [];
+  }
+
+function collectPeriods() {
+    const ps = [];
+    document.querySelectorAll("#expPeriodChips input.exp-period:checked").forEach((el) => {
+      if (el.value) ps.push(el.value);
+    });
+    if (!ps.length) {
+      const single = $("expPeriod") ? $("expPeriod").value : "DAY";
+      return [single || "DAY"];
+    }
+    return ps;
   }
 
   function expBodyBase() {
     const range = parseRange($("expRange").value);
-    const sl = parseNumList($("expStopLoss").value).map((x) => x / 100);
-    const tp = parseNumList($("expTakeProfit").value).map((x) => x / 100);
-    const univ = $("expUniverse").value;
-    const codes = univ === "ALL" ? null : ["SSE.STK.600000", "SZSE.STK.000001"];
+    const slRaw = parseNumList($("expStopLoss") ? $("expStopLoss").value : "");
+    const tpRaw = parseNumList($("expTakeProfit") ? $("expTakeProfit").value : "");
+    // empty stop/take -> [null] (no risk exit)
+    const sl = slRaw.length ? slRaw.map((x) => x / 100) : [null];
+    const tp = tpRaw.length ? tpRaw.map((x) => x / 100) : [null];
+    const holds = parseNumList($("expHoldDays") ? $("expHoldDays").value : "5");
+    const holdList = holds.length ? holds : [5];
+    const sellOn = ($("expSellOn") && $("expSellOn").value) || "close";
+    const buyMode = ($("expBuyMode") && $("expBuyMode").value) || "lag1open";
+    const buy_options =
+      buyMode === "lag1close"
+        ? [{ entry_lag: 1, buy_on: "close", buy_weekday: null }]
+        : [{ entry_lag: 1, buy_on: "open", buy_weekday: null }];
+    const sell_options = holdList.map((h) => ({
+      hold: Number(h),
+      sell_on: sellOn,
+      exit_weekday: null,
+    }));
+    const univ = ($("expUniverse") && $("expUniverse").value) || "demo";
+    const universe = univ === "full" || univ === "ALL" ? "full" : "demo";
+    const codes = universe === "full" ? null : ["SSE.STK.600000", "SZSE.STK.000001"];
+    const periods = collectPeriods();
+    const yaoFilters = collectYaoFilters();
+    // No default gua presets (none/best3 dropdown removed). Off => gua_keys none only.
+    const gua_keys = yaoFilters.length ? ["none"] : ["none"];
+    // When filter active, pass inline gua_filters; backend resolves dict options.
+    // Use empty gua_keys product companion: still need one axis entry — "none" means
+    // no *preset*, while gua_filters carries the real filter.
+    const force = ($("expForce") && $("expForce").value === "1") || false;
     return {
-      name: ($("expName").value || "").trim() || (AppState.expType + " " + new Date().toISOString().slice(0, 16)),
+      name:
+        ($("expName").value || "").trim() ||
+        (AppState.expType + " " + new Date().toISOString().slice(0, 16)),
       rule_ids: AppState.expRuleIds.slice(),
-      gua_keys: [$("expGua").value || "none"],
-      stop_loss_list: sl.length ? sl : [0.02],
-      take_profit_list: tp.length ? tp : null,
-      period: $("expPeriod").value || "DAY",
+      gua_keys: ["none"],
+      gua_filters: yaoFilters.length ? yaoFilters : undefined,
+      stop_loss_list: sl,
+      take_profit_list: tp,
+      period: periods[0] || "DAY",
+      periods: periods,
+      universe: universe,
       codes: codes,
       start: range.start,
       end: range.end,
-      account_mode: $("expAccount").value || "portfolio",
+      account_mode: ($("expAccount") && $("expAccount").value) || "portfolio",
       max_variants: Number($("expMaxVariants").value) || 50,
       concurrency: 1,
-      force: false,
-      note: ($("expNote").value || "") + " | type=" + AppState.expType,
-      engine: $("expEngine").value || "fast",
+      force: !!force,
+      note: (($("expNote") && $("expNote").value) || "") + " | type=" + AppState.expType,
+      engine: ($("expEngine") && $("expEngine").value) || "fast",
       artifact_level: "summary",
       use_signal_cache: true,
       preview_only: true,
+      // free axes — multi-day hold templates
+      signal_weekdays_options: [null],
+      buy_options: buy_options,
+      sell_options: sell_options,
+      holiday_policy: "next_trading_day",
     };
   }
 
-  function renderExpRuleChips() {
+function renderExpRuleChips() {
     const box = $("expRuleChips");
     if (!box) return;
     if (!AppState.expRuleIds.length) {
@@ -3006,7 +3343,13 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
     }
   }
 
-  async function expCreateAndStart() {
+  
+    async function loadYaoRulesForExp() {
+    // Deprecated: experiment uses buildExpGuaPayload (backtest-like filter), no default chips.
+    return;
+  }
+
+async function expCreateAndStart() {
     if (VISUAL_TEST) {
       toast("视觉模式不创建真实实验");
       return;
@@ -3239,35 +3582,85 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
 
   /* rule picker */
   let _pickTemp = new Set();
-  function openRulePicker() {
-    _pickTemp = new Set(AppState.expRuleIds);
-    $("rulePickModal").classList.add("show");
-    renderPickList();
+    async function openRulePicker() {
+    try {
+      if (!AppState.rules || !AppState.rules.length) {
+        try {
+          await loadRules();
+        } catch (e) {
+          console.warn("loadRules in openRulePicker", e);
+          toast("规则列表加载失败: " + (e && e.message ? e.message : e));
+        }
+      }
+      _pickTemp = new Set(AppState.expRuleIds || []);
+      const modal = $("rulePickModal");
+      if (!modal) {
+        toast("规则选择弹层缺失 (rulePickModal)");
+        console.error("rulePickModal not in DOM");
+        return;
+      }
+      modal.classList.add("show");
+      renderPickList();
+      try {
+        const search = $("rulePickSearch");
+        if (search) search.focus();
+      } catch (e) {}
+    } catch (err) {
+      console.error("openRulePicker failed", err);
+      toast("打开规则选择失败: " + (err && err.message ? err.message : err));
+    }
   }
+
   function renderPickList() {
-    const q = (($("rulePickSearch") && $("rulePickSearch").value) || "").toLowerCase();
     const list = $("rulePickList");
-    const rules = AppState.rules.filter((r) => {
+    if (!list) return;
+    const q = (($("rulePickSearch") && $("rulePickSearch").value) || "").toLowerCase().trim();
+    const all = Array.isArray(AppState.rules) ? AppState.rules : [];
+    // Prefer backtestable signal rules; still show others with badge
+    const rules = all.filter((r) => {
+      if (!r || r.hidden || r.archived) return false;
       if (!q) return true;
-      return ((r.name || "") + r.id).toLowerCase().includes(q);
+      return ((r.name || "") + " " + (r.id || "")).toLowerCase().includes(q);
     });
-    list.innerHTML = rules.map((r) => {
-      const st = ruleStatus(r);
-      return '<label class="rule-pick-item"><input type="checkbox" value="' + esc(r.id) + '" ' +
-        (_pickTemp.has(r.id) ? 'checked' : '') + ' />' +
-        '<div><div style="font-weight:700">' + esc(r.name) +
-        ' <span class="tag ' + st.cls + '">' + esc(st.label) + '</span></div>' +
-        '<div class="sub-id">' + esc(r.id) + '</div></div></label>';
-    }).join('') || '<div class="muted">无规则</div>';
+    if (!rules.length) {
+      list.innerHTML =
+        '<div class="muted" style="padding:12px">暂无规则。请先到「规则中心」刷新/导入，或检查 /api/v1/rules。</div>';
+      return;
+    }
+    list.innerHTML = rules
+      .map((r) => {
+        const st = typeof ruleStatus === "function" ? ruleStatus(r) : { cls: "", label: r.compile_status || "" };
+        const id = r.id || "";
+        return (
+          '<label class="rule-pick-item">' +
+          '<input type="checkbox" value="' +
+          esc(id) +
+          '" ' +
+          (_pickTemp.has(id) ? "checked" : "") +
+          " />" +
+          '<div><div style="font-weight:700">' +
+          esc(r.name || id) +
+          ' <span class="tag ' +
+          esc(st.cls || "") +
+          '">' +
+          esc(st.label || "") +
+          "</span></div>" +
+          '<div class="sub-id">' +
+          esc(id) +
+          "</div></div></label>"
+        );
+      })
+      .join("");
     list.querySelectorAll("input[type=checkbox]").forEach((cb) => {
       cb.addEventListener("change", () => {
         if (cb.checked) _pickTemp.add(cb.value);
         else _pickTemp.delete(cb.value);
       });
     });
+    // clicking the row (label) already toggles via native label; keep change handlers
   }
 
-  /* create rule */
+/* create rule */
   async function saveNewRule() {
     if (VISUAL_TEST) { toast("视觉模式不写入"); return; }
     const name = $("newRuleName").value.trim();
@@ -3561,7 +3954,197 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
     if (box) box.innerHTML = renderQuoteCard(data);
     AppState.forecast.results = [data];
   }
-  function renderForecastPage() {
+  
+  /* ---------- 查询卦象 ---------- */
+  function initBaguaQueryPage() {
+    const d = $("bqDate");
+    if (d && !d.value) {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, "0");
+      const day = String(now.getDate()).padStart(2, "0");
+      d.value = y + "-" + m + "-" + day;
+    }
+    const btn = $("bqSearchBtn");
+    if (btn && !btn._bqBound) {
+      btn._bqBound = true;
+      btn.addEventListener("click", runBaguaQuery);
+    }
+    const code = $("bqCode");
+    if (code && !code._bqBound) {
+      code._bqBound = true;
+      code.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") runBaguaQuery();
+      });
+    }
+  }
+
+  async function runBaguaQuery() {
+    const code = (($("bqCode") && $("bqCode").value) || "").trim();
+    const date = (($("bqDate") && $("bqDate").value) || "").trim();
+    const period = (($("bqPeriod") && $("bqPeriod").value) || "DAY").trim();
+    const hint = $("bqHint");
+    const card = $("bqResultCard");
+    const box = $("bqResult");
+    if (!code) {
+      toast("请填写股票代码");
+      if (hint) hint.textContent = "请填写股票代码。";
+      return;
+    }
+    if (!date) {
+      toast("请选择日期");
+      if (hint) hint.textContent = "请选择或填写日期。";
+      return;
+    }
+    if (hint) hint.textContent = "查询中…";
+    if (card) card.style.display = "none";
+    try {
+      const url =
+        "/api/v1/bagua/query?code=" +
+        encodeURIComponent(code) +
+        "&date=" +
+        encodeURIComponent(date) +
+        "&period=" +
+        encodeURIComponent(period);
+      const data = await api(url);
+      renderBaguaQueryResult(data);
+      if (hint) {
+        const label = data.display || ((data.code || code) + (data.name ? (" " + data.name) : ""));
+        hint.textContent =
+          "查询完成 · " +
+          label +
+          " · " +
+          (data.period || period) +
+          " · 请求日 " +
+          (data.query_date || date);
+      }
+      toast("卦象查询完成");
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      if (hint) hint.textContent = "查询失败：" + msg;
+      if (box) {
+        box.innerHTML =
+          '<div class="muted" style="color:var(--orange)">' + esc(msg) + "</div>";
+      }
+      if (card) card.style.display = "";
+      toast("查询失败: " + msg);
+    }
+  }
+
+  function renderBaguaQueryResult(data) {
+    const card = $("bqResultCard");
+    const box = $("bqResult");
+    const title = $("bqResultTitle");
+    if (!box) return;
+    const s = data.summary || {};
+    const b = data.bagua || {};
+    const bar = data.bar || {};
+    const periodLabel =
+      data.period === "WEEK" ? "周线" : data.period === "MONTH" ? "月线" : "日线";
+    const codeLabel = (data.display || ((data.code || "") + (data.name ? (" " + data.name) : ""))).trim();
+    if (title) {
+      title.textContent =
+        codeLabel +
+        " · " +
+        periodLabel +
+        " · " +
+        (s.full_name || b.full_name || "卦象") +
+        (s.yao_name ? " · " + s.yao_name : "");
+    }
+    const notes = (data.notes || [])
+      .map(function (n) {
+        return "<li>" + esc(n) + "</li>";
+      })
+      .join("");
+    const act = s.action_signal || b.action_signal || "—";
+    const judge = s.market_judgement || b.market_judgement || b.market_summary || "—";
+    box.innerHTML =
+      '<div class="forecast-panel" style="margin-bottom:12px">' +
+      "<h4>股票</h4>" +
+      "<p style=\"font-size:15px\"><b>" +
+      esc(codeLabel || data.code || "—") +
+      "</b></p>" +
+      "</div>" +
+      '<div class="forecast-panel" style="margin-bottom:12px">' +
+      "<h4>主卦与动爻</h4>" +
+      "<p><b>" +
+      esc(s.full_name || b.full_name || "—") +
+      "</b> " +
+      esc(b.gua_symbol || b.hexagram_symbol || "") +
+      " · 爻：" +
+      esc(s.yao_name || b.yao_name || "—") +
+      "（第 " +
+      esc(String(s.yao_order != null ? s.yao_order : b.yao_order || "—")) +
+      " 爻）</p>" +
+      "<p>上卦：" +
+      esc(s.upper || "") +
+      " · 下卦：" +
+      esc(s.lower || "") +
+      " · state_id：" +
+      esc(s.state_id || b.state_id || "—") +
+      "</p>" +
+      '<p class="judgement">操作信号：' +
+      esc(act) +
+      "</p>" +
+      '<p class="note">行情简判：' +
+      esc(judge) +
+      "</p>" +
+      "</div>" +
+      '<div class="forecast-panel" style="margin-bottom:12px">' +
+      "<h4>K 线 OHLC（未复权）</h4>" +
+      "<p>区间：" +
+      esc(String(bar.start_date || bar.date || "—")) +
+      " → " +
+      esc(String(bar.end_date || bar.date || "—")) +
+      " · 根数 " +
+      esc(String(bar.n_days != null ? bar.n_days : "—")) +
+      (bar.closed === false ? " · <b>未收官</b>" : " · 已收官") +
+      "</p>" +
+      "<p>开 " +
+      esc(String(b.open_price != null ? b.open_price : bar.open)) +
+      " · 高 " +
+      esc(String(b.high_price != null ? b.high_price : bar.high)) +
+      " · 低 " +
+      esc(String(b.low_price != null ? b.low_price : bar.low)) +
+      " · 收 " +
+      esc(String(b.close_price != null ? b.close_price : bar.close)) +
+      "</p>" +
+      "<p class='muted' style='font-size:11px'>数字和：开 " +
+      esc(String(b.open_digit_sum)) +
+      " · 高 " +
+      esc(String(b.high_digit_sum)) +
+      " · 低 " +
+      esc(String(b.low_digit_sum)) +
+      " · 收 " +
+      esc(String(b.close_digit_sum)) +
+      "</p>" +
+      "</div>" +
+      '<div class="forecast-panel" style="margin-bottom:12px">' +
+      "<h4>卦辞 / 爻辞</h4>" +
+      "<p><b>卦辞</b>：" +
+      esc(b.gua_ci || "—") +
+      "</p>" +
+      "<p><b>核心总纲</b>：" +
+      esc(b.core_gang || "—") +
+      "</p>" +
+      "<p><b>爻辞</b>：" +
+      esc(b.yao_ci || b.line_text || "—") +
+      "</p>" +
+      (b.biangua || b.changed_hexagram_name
+        ? "<p><b>变卦</b>：" + esc(b.biangua || b.changed_hexagram_name) + "</p>"
+        : "") +
+      (b.note ? "<p class='note'>" + esc(b.note) + "</p>" : "") +
+      "</div>" +
+      (notes
+        ? '<div class="forecast-panel"><h4>说明</h4><ul style="margin:0;padding-left:18px;font-size:12px;color:#9aafc4">' +
+          notes +
+          "</ul></div>"
+        : "");
+    if (card) card.style.display = "";
+  }
+
+
+function renderForecastPage() {
     bindForecastUi();
     bindTaskUi();
     bindBacktestUi();
@@ -4653,9 +5236,24 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
       ["换手", m.turnover != null ? formatNumber(m.turnover, 2) : "—"],
       ["未平仓", m.n_open_positions != null ? String(m.n_open_positions) : "—"],
     ];
-    box.innerHTML = rows.map(function (r) {
-      return '<div class="k">' + r[0] + '</div><div class="v">' + esc(r[1] != null ? r[1] : "—") + "</div>";
-    }).join("");
+    const note =
+      '<div class="muted" style="grid-column:1/-1;margin-top:8px;line-height:1.5">' +
+      "价格说明：技术指标/信号使用因果前复权；实际成交、股数、费用与权益使用未复权真实价格。" +
+      "trades/fills 中「买入价/卖出价」(price) 为真实成交价；「买入价_复权参考/卖出价_复权参考」为同日因果前复权审计价。" +
+      "详见 trades.csv / fills.csv / summary.xlsx。" +
+      "</div>";
+    box.innerHTML =
+      rows
+        .map(function (r) {
+          return (
+            '<div class="k">' +
+            r[0] +
+            '</div><div class="v">' +
+            esc(r[1] != null ? r[1] : "—") +
+            "</div>"
+          );
+        })
+        .join("") + note;
   }
   function renderTaskSettingsKv(summary, repro, metrics, runId) {
     const box = $("taskSettingsKv");
@@ -4676,6 +5274,30 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
       ["hold", src.hold != null ? src.hold : "—"],
       ["区间", (src.start || "—") + " ~ " + (src.end || "—")],
       ["引擎", src.engine || (metrics && metrics.engine) || "—"],
+      [
+        "价格模式",
+        src.price_mode ||
+          src.engine_result_version ||
+          (src.research_unadjusted ? "research_unadjusted" : "—"),
+      ],
+      [
+        "信号价格",
+        src.signal_price_mode ||
+          (src.research_unadjusted ? "raw" : "causal_qfq"),
+      ],
+      [
+        "成交/估值价格",
+        (src.execution_price_mode || "raw") +
+          " / " +
+          (src.valuation_price_mode || "raw"),
+      ],
+      [
+        "价格说明",
+        "技术指标：因果前复权；实际成交：未复权真实价格。" +
+          (src.price_mode === "adjusted"
+            ? "（历史任务可能为 legacy_adjusted_execution）"
+            : ""),
+      ],
       ["止损", src.stop_loss != null ? src.stop_loss : "—"],
       ["止盈", src.take_profit != null ? src.take_profit : "—"],
     ];
@@ -7944,25 +8566,25 @@ function renderBtRuleList() {
     bindForecastUi();
     bindTaskUi();
     bindBacktestUi();
-    $("btnHelp").onclick = () => toast("A 股研究工作台（V3 正式主页面）。旧版入口 /legacy ，V2 /v2 ，V3 / 与 /v3");
-    $("btnDiag").onclick = () => $("diagPanel").classList.toggle("show");
-    $("ruleSearch").addEventListener("input", () => renderRuleTable());
-    $("ruleFilterCat").addEventListener("change", () => renderRuleTable());
-    $("ruleFilterStatus").addEventListener("change", () => renderRuleTable());
-    $("btnRefreshRules").onclick = async () => {
+    if ($("btnHelp")) $("btnHelp").onclick = () => toast("A 股研究工作台（V3 正式主页面）。旧版入口 /legacy ，V2 /v2 ，V3 / 与 /v3");
+    if ($("btnDiag")) $("btnDiag").onclick = () => $("diagPanel").classList.toggle("show");
+    if ($("ruleSearch")) if ($("ruleSearch")) $("ruleSearch").addEventListener("input", () => renderRuleTable());
+    if ($("ruleFilterCat")) if ($("ruleFilterCat")) $("ruleFilterCat").addEventListener("change", () => renderRuleTable());
+    if ($("ruleFilterStatus")) if ($("ruleFilterStatus")) $("ruleFilterStatus").addEventListener("change", () => renderRuleTable());
+    if ($("btnRefreshRules")) $("btnRefreshRules").onclick = async () => {
       try { await loadRules(); renderRuleCenter(); toast("规则已刷新"); }
       catch (e) { toast("刷新失败: " + e.message); }
     };
-    $("btnNewRule").onclick = () => {
+    if ($("btnNewRule")) $("btnNewRule").onclick = () => {
       $("newRuleStatus").textContent = "";
       $("ruleCreateModal").classList.add("show");
     };
-    $("btnImportRule").onclick = () => toast("导入：请将公式放入规则目录或使用新建规则");
-    $("btnBatchTest").onclick = () => toast("批量测试：与回测任务打通");
-    $("btnNewCat").onclick = () => toast("分类为前端展示维度，由规则特征自动归类");
-    $("btnCancelCreate").onclick = () => $("ruleCreateModal").classList.remove("show");
-    $("btnSaveRule").onclick = saveNewRule;
-    $("btnValidateRule").onclick = async () => {
+    if ($("btnImportRule")) $("btnImportRule").onclick = () => toast("导入：请将公式放入规则目录或使用新建规则");
+    if ($("btnBatchTest")) $("btnBatchTest").onclick = () => toast("批量测试：与回测任务打通");
+    if ($("btnNewCat")) $("btnNewCat").onclick = () => toast("分类为前端展示维度，由规则特征自动归类");
+    if ($("btnCancelCreate")) $("btnCancelCreate").onclick = () => $("ruleCreateModal").classList.remove("show");
+    if ($("btnSaveRule")) $("btnSaveRule").onclick = saveNewRule;
+    if ($("btnValidateRule")) $("btnValidateRule").onclick = async () => {
       if (VISUAL_TEST) { toast("视觉模式跳过校验"); return; }
       try {
         const d = await api("/api/v1/rules/validate", {
@@ -7993,26 +8615,176 @@ function renderBtRuleList() {
         expEstimate();
       });
     });
-    $("btnPickRules").onclick = openRulePicker;
-    $("btnClosePick").onclick = () => $("rulePickModal").classList.remove("show");
-    $("btnPickCancel").onclick = () => $("rulePickModal").classList.remove("show");
-    $("btnPickConfirm").onclick = () => {
-      AppState.expRuleIds = Array.from(_pickTemp);
-      $("rulePickModal").classList.remove("show");
-      renderExperimentCreate();
-      expEstimate();
+    // Experiment rule picker (null-safe — never abort rest of bind)
+    const _bindClick = (id, fn) => {
+      const el = $(id);
+      if (!el) {
+        console.warn("bind skip missing #"+id);
+        return;
+      }
+      el.onclick = fn;
     };
-    $("rulePickSearch").addEventListener("input", renderPickList);
+    _bindClick("btnPickRules", () => { openRulePicker(); });
+    // also wire chip "选择规则" re-renders via openRulePicker globally
+    window.openRulePicker = openRulePicker;
+    _bindClick("btnClosePick", () => {
+      const m = $("rulePickModal");
+      if (m) m.classList.remove("show");
+    });
+    _bindClick("btnPickCancel", () => {
+      const m = $("rulePickModal");
+      if (m) m.classList.remove("show");
+    });
+    _bindClick("btnPickConfirm", () => {
+      AppState.expRuleIds = Array.from(_pickTemp || []);
+      const m = $("rulePickModal");
+      if (m) m.classList.remove("show");
+      try { renderExperimentCreate(); } catch (e) { console.warn(e); }
+      try { expEstimate(); } catch (e) { console.warn(e); }
+      toast("已选择 " + AppState.expRuleIds.length + " 条规则");
+    });
+    if ($("rulePickSearch")) {
+      $("rulePickSearch").addEventListener("input", () => renderPickList());
+    }
+    // Click backdrop to close
+    if ($("rulePickModal")) {
+      $("rulePickModal").addEventListener("click", (ev) => {
+        if (ev.target === $("rulePickModal")) $("rulePickModal").classList.remove("show");
+      });
+    }
     ["expStopLoss", "expTakeProfit", "expHoldDays", "expPeriod", "expGua", "expRange", "expMaxVariants"].forEach((id) => {
       const el = $(id);
       if (el) el.addEventListener("change", () => expEstimate());
       if (el) el.addEventListener("blur", () => expEstimate());
     });
-    $("btnRefreshEstimate").onclick = () => expEstimate();
-    $("btnStartExp").onclick = () => expCreateAndStart();
-    $("btnSaveDraft").onclick = () => toast("草稿：当前配置保留在本页内存，刷新后丢失（持久化草稿下一阶段）");
-    $("btnRefreshMon").onclick = () => renderExperimentMonitor();
-    $("btnRefreshResults").onclick = () => {
+    if ($("btnRefreshEstimate")) $("btnRefreshEstimate").onclick = () => expEstimate();
+    if ($("btnStartExp")) $("btnStartExp").onclick = () => expCreateAndStart();
+    // --- Experiment gua filter (like backtest; default OFF) ---
+    if ($("expGuaEnabled")) {
+      $("expGuaEnabled").addEventListener("change", () => {
+        expGuaSyncEnabledUi();
+        try { expEstimate(); } catch (e) {}
+      });
+    }
+    document.querySelectorAll("#expGuaUsageGrid .gua-usage-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        expGuaSetUsage(card.getAttribute("data-exp-usage"));
+        try { expEstimate(); } catch (e) {}
+      });
+    });
+    if ($("expGuaActionChecks")) {
+      $("expGuaActionChecks").querySelectorAll("input").forEach((cb) => {
+        cb.addEventListener("change", () => {
+          expGuaRefreshSummary();
+          try { expEstimate(); } catch (e) {}
+        });
+      });
+    }
+    if ($("btnExpGuaActBull")) {
+      $("btnExpGuaActBull").onclick = () => {
+        document.querySelectorAll("#expGuaActionChecks input").forEach((cb) => {
+          cb.checked = cb.value === "新开仓" || cb.value === "加仓";
+        });
+        AppState.expGuaAdvanced = { selected_state_ids: [], selected_main_hexagram_ids: [], selection_mode: "none" };
+        expGuaSetUsage("action");
+        try { expEstimate(); } catch (e) {}
+      };
+    }
+    if ($("btnExpGuaBest3")) {
+      $("btnExpGuaBest3").onclick = () => {
+        // BEST3 state ids used by product: 24-1, 46-1, 11-1
+        AppState.expGuaAdvanced = {
+          selected_state_ids: ["24-1", "46-1", "11-1"],
+          selected_main_hexagram_ids: [],
+          selection_mode: "exact_line",
+        };
+        document.querySelectorAll("#expGuaActionChecks input").forEach((cb) => { cb.checked = false; });
+        expGuaSetUsage("preset");
+        if ($("expGuaEnabled") && !$("expGuaEnabled").checked) {
+          $("expGuaEnabled").checked = true;
+          expGuaSyncEnabledUi();
+        }
+        try { expEstimate(); } catch (e) {}
+      };
+    }
+    if ($("btnExpGuaBull")) {
+      $("btnExpGuaBull").onclick = () => {
+        document.querySelectorAll("#expGuaActionChecks input").forEach((cb) => {
+          cb.checked = cb.value === "新开仓" || cb.value === "加仓";
+        });
+        AppState.expGuaAdvanced = { selected_state_ids: [], selected_main_hexagram_ids: [], selection_mode: "none" };
+        expGuaSetUsage("action");
+        if ($("expGuaEnabled") && !$("expGuaEnabled").checked) {
+          $("expGuaEnabled").checked = true;
+          expGuaSyncEnabledUi();
+        }
+        try { expEstimate(); } catch (e) {}
+      };
+    }
+    if ($("btnExpGuaOpenDrawer")) {
+      $("btnExpGuaOpenDrawer").onclick = () => {
+        expGuaSetUsage("advanced");
+        // Reuse backtest drawer; on OK, copy GuaUI payload into experiment advanced snapshot
+        try {
+          if (typeof GuaUI !== "undefined" && GuaUI && typeof GuaUI.ensureData === "function") {
+            GuaUI.ensureData();
+          }
+        } catch (e) {}
+        const openBtn = $("btnGuaOpen");
+        if (openBtn) openBtn.click();
+        else toast("卦象目录不可用");
+        // Hook one-shot: after drawer OK, sync from GuaUI.getPayload
+        const syncFromDrawer = () => {
+          try {
+            if (typeof GuaUI !== "undefined" && GuaUI && typeof GuaUI.getPayload === "function") {
+              const cfg = GuaUI.getPayload();
+              if (cfg) {
+                AppState.expGuaAdvanced = {
+                  selected_state_ids: (cfg.selected_state_ids || []).slice(),
+                  selected_main_hexagram_ids: (cfg.selected_main_hexagram_ids || []).slice(),
+                  selection_mode: cfg.selection_mode || "exact_line",
+                };
+                if ($("expGuaEnabled") && !$("expGuaEnabled").checked) {
+                  $("expGuaEnabled").checked = true;
+                  expGuaSyncEnabledUi();
+                }
+                expGuaRefreshSummary();
+                try { expEstimate(); } catch (e) {}
+              }
+            }
+          } catch (e) { console.warn(e); }
+        };
+        ["btnGuaOk", "btnGuaOk2"].forEach((id) => {
+          const b = $(id);
+          if (!b) return;
+          const prev = b.onclick;
+          b.onclick = function (ev) {
+            if (typeof prev === "function") prev.call(this, ev);
+            setTimeout(syncFromDrawer, 0);
+          };
+        });
+      };
+    }
+    try { expGuaSetUsage("action"); expGuaSyncEnabledUi(); } catch (e) {}
+
+    if ($("btnExpHoldPreset")) {
+      if ($("btnExpHoldPreset")) $("btnExpHoldPreset").onclick = () => {
+        if ($("expHoldDays")) $("expHoldDays").value = "3, 5, 7, 10, 20, 40, 60, 120";
+        try { expEstimate(); } catch (e) {}
+      };
+    }
+    document.querySelectorAll("#expPeriodChips input.exp-period").forEach((el) => {
+      el.addEventListener("change", () => { try { expEstimate(); } catch (e) {} });
+    });
+    ["expHoldDays", "expSellOn", "expBuyMode", "expForce", "expGua", "expPeriod"].forEach((id) => {
+      const el = $(id);
+      if (el) el.addEventListener("change", () => { try { expEstimate(); } catch (e) {} });
+    });
+    loadYaoRulesForExp();
+
+    if ($("btnSaveDraft")) $("btnSaveDraft").onclick = () => toast("草稿：当前配置保留在本页内存，刷新后丢失（持久化草稿下一阶段）");
+    if ($("btnRefreshMon")) $("btnRefreshMon").onclick = () => renderExperimentMonitor();
+    if ($("btnRefreshResults")) $("btnRefreshResults").onclick = () => {
       if (AppState.activeExperiment) renderExperimentResults(AppState.activeExperiment.experiment_id);
       else toast("请先选择实验");
     };
@@ -8021,10 +8793,27 @@ function renderBtRuleList() {
     });
   }
 
-  async function boot() {
+  
+  // Fallback: event delegation so "选择规则" always works even if bind() partially fails
+  document.addEventListener("click", function (ev) {
+    const t0 = ev.target;
+    if (!t0 || !t0.closest) return;
+    const btn = t0.closest("#btnPickRules, #chipPickMore, [data-open-rule-picker]");
+    if (!btn) return;
+    ev.preventDefault();
+    try {
+      if (typeof openRulePicker === "function") openRulePicker();
+      else if (typeof window.openRulePicker === "function") window.openRulePicker();
+    } catch (e) {
+      console.error(e);
+      try { toast("打开规则选择失败"); } catch (e2) {}
+    }
+  });
+async function boot() {
     $("modeBadge").textContent = VISUAL_TEST ? "视觉测试模式" : "真实 API";
     $("modeBadge").className = VISUAL_TEST ? "tag tag-orange" : "tag tag-blue";
     bind();
+    try { loadYaoRulesForExp(); } catch (e) {}
     await loadHealth();
     try {
       await loadRules();

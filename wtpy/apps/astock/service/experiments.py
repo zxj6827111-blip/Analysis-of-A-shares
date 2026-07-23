@@ -134,6 +134,12 @@ def _normalize_signal_weekdays(val: Any) -> Optional[List[int]]:
 
 
 def _resolve_buy_option(opt: dict) -> dict:
+    """Normalize buy axis option.
+
+    Do **not** invent hold=1 on the buy side — hold belongs to sell_options
+    (fixed holding period). Returning hold=1 here previously overrode real
+    sell hold (e.g. T20/T60) because merge used ``b.hold or s.hold``.
+    """
     o = dict(opt or {})
     buy_on = str(o.get("buy_on") or "open").lower()
     if buy_on not in ("open", "close"):
@@ -141,12 +147,18 @@ def _resolve_buy_option(opt: dict) -> dict:
     entry_lag = o.get("entry_lag")
     if entry_lag is None:
         entry_lag = 1
-    return {
+    out: Dict[str, Any] = {
         "buy_weekday": o.get("buy_weekday"),
         "buy_on": buy_on,
         "entry_lag": int(entry_lag),
-        "hold": int(o.get("hold") or 1),
     }
+    # Only keep buy-side hold if explicitly provided (rare schedule packs).
+    if o.get("hold") is not None:
+        try:
+            out["hold"] = int(o["hold"])
+        except (TypeError, ValueError):
+            pass
+    return out
 
 
 def _resolve_sell_option(opt: dict) -> dict:
@@ -160,6 +172,108 @@ def _resolve_sell_option(opt: dict) -> dict:
         "sell_on": sell_on,
         "hold": int(hold) if hold is not None else None,
     }
+
+
+def _merge_hold(buy_resolved: dict, sell_resolved: dict) -> int:
+    """Prefer sell hold (fixed holding days); fall back to buy, then 1."""
+    sh = sell_resolved.get("hold")
+    if sh is not None:
+        try:
+            h = int(sh)
+            if h >= 1:
+                return h
+        except (TypeError, ValueError):
+            pass
+    bh = buy_resolved.get("hold")
+    if bh is not None:
+        try:
+            h = int(bh)
+            if h >= 1:
+                return h
+        except (TypeError, ValueError):
+            pass
+    return 1
+
+
+def _resolve_gua_option(gkey_or_filter: Any) -> Dict[str, Any]:
+    """Resolve gua preset key or inline gua_filter dict → label/with_bagua/filter."""
+    if gkey_or_filter is None or gkey_or_filter == "none":
+        g = GUA_PRESETS["none"]
+        return {
+            "gua_key": "none",
+            "gua_label": g["label"],
+            "with_bagua": False,
+            "gua_filter": dict(g["gua_filter"]),
+        }
+    if isinstance(gkey_or_filter, dict):
+        gf = dict(gkey_or_filter)
+        # allow wrapping {gua_filter: {...}, label: ...}
+        if "gua_filter" in gf and isinstance(gf.get("gua_filter"), dict):
+            inner = dict(gf["gua_filter"])
+            label = str(gf.get("label") or gf.get("gua_label") or gf.get("manifest_name") or "custom")
+            enabled = bool(inner.get("enabled", True))
+            return {
+                "gua_key": str(gf.get("gua_key") or gf.get("rule_id") or "custom"),
+                "gua_label": label,
+                "with_bagua": enabled,
+                "gua_filter": inner,
+            }
+        enabled = bool(gf.get("enabled", True))
+        mode = str(gf.get("selection_mode") or "none")
+        if mode in ("", "none") and not gf.get("selected_state_ids"):
+            enabled = False
+        label = str(
+            gf.get("label")
+            or gf.get("gua_label")
+            or gf.get("manifest_name")
+            or "+".join(str(x) for x in (gf.get("selected_state_ids") or [])[:3])
+            or "custom"
+        )
+        return {
+            "gua_key": str(gf.get("rule_id") or gf.get("gua_key") or "custom"),
+            "gua_label": label,
+            "with_bagua": enabled,
+            "gua_filter": {
+                "enabled": enabled,
+                "selection_mode": mode if enabled else "none",
+                "selected_main_hexagram_ids": list(gf.get("selected_main_hexagram_ids") or []),
+                "selected_state_ids": [str(x) for x in (gf.get("selected_state_ids") or [])],
+                "selected_action_signals": list(gf.get("selected_action_signals") or []),
+                "rule_version": gf.get("rule_version") or "",
+            },
+        }
+    key = str(gkey_or_filter).strip()
+    if key not in GUA_PRESETS:
+        raise ValueError(f"unknown gua preset: {key}")
+    g = GUA_PRESETS[key]
+    return {
+        "gua_key": key,
+        "gua_label": g["label"],
+        "with_bagua": bool(g.get("with_bagua", False)),
+        "gua_filter": dict(g.get("gua_filter") or {}),
+    }
+
+
+def _normalize_gua_options(
+    gua_keys: Optional[Sequence[Any]] = None,
+    gua_filters: Optional[Sequence[Any]] = None,
+) -> List[Any]:
+    """Flatten gua_keys (str or dict) + gua_filters into one option list."""
+    opts: List[Any] = []
+    for g in list(gua_keys or []):
+        if g is None or g == "":
+            continue
+        opts.append(g)
+    for gf in list(gua_filters or []):
+        if gf is None or gf == "":
+            continue
+        opts.append(gf)
+    if not opts:
+        opts = ["none"]
+    # validate each resolves
+    for o in opts:
+        _resolve_gua_option(o)
+    return opts
 
 
 def _payload_to_parameter_space(payload: dict):
@@ -178,7 +292,14 @@ def _payload_to_parameter_space(payload: dict):
     }
     use_free = _has_free_axes(axes)
     rule_ids = list(payload.get("rule_ids") or [])
-    gua_keys = list(payload.get("gua_keys") or ["none"])
+    # Support preset keys + inline filters (dicts in gua_keys or gua_filters)
+    raw_gua_keys = list(payload.get("gua_keys") or [])
+    raw_gua_filters = list(payload.get("gua_filters") or [])
+    if not raw_gua_keys and not raw_gua_filters:
+        raw_gua_keys = ["none"]
+    str_keys = [g for g in raw_gua_keys if isinstance(g, str)]
+    dict_from_keys = [g for g in raw_gua_keys if isinstance(g, dict)]
+    gua_filters_all = dict_from_keys + [g for g in raw_gua_filters if g is not None]
     holiday_policy = payload.get("holiday_policy") or "next_trading_day"
     period = payload.get("period") or "DAY"
     codes = payload.get("codes")
@@ -197,13 +318,22 @@ def _payload_to_parameter_space(payload: dict):
             signal_weekdays = list(sig) if sig else [None]
         buy_modes = list(payload.get("buy_options") or [{"entry_lag": 1, "buy_on": "open"}])
         sell_modes = list(payload.get("sell_options") or [{"sell_on": "close"}])
+        # periods axis via extra_axes when multiple
+        periods = payload.get("periods")
+        extra: Dict[str, List[Any]] = {}
+        if periods and isinstance(periods, (list, tuple)) and len(periods) > 1:
+            extra["period"] = [str(p).upper() for p in periods]
+            period = str(periods[0]).upper()
+        elif periods and isinstance(periods, (list, tuple)) and len(periods) == 1:
+            period = str(periods[0]).upper()
         return ParameterSpace(
             rule_ids=rule_ids,
             period=period,
             signal_weekdays=signal_weekdays,
             buy_modes=buy_modes,
             sell_modes=sell_modes,
-            gua_keys=gua_keys,
+            gua_keys=str_keys or ([] if gua_filters_all else ["none"]),
+            gua_filters=gua_filters_all,
             stop_loss_list=list(stop_loss_list if stop_loss_list is not None else [None]),
             take_profit_list=list(take_profit_list if take_profit_list is not None else [None]),
             holiday_policy=holiday_policy,
@@ -212,15 +342,17 @@ def _payload_to_parameter_space(payload: dict):
             end=end,
             account_mode=account_mode,
             research_unadjusted=research_unadjusted,
+            extra_axes=extra,
         )
 
-    # Legacy weekday_keys templates
+    # Legacy weekday_keys templates (preset string keys only)
     wd = payload.get("weekday_keys") or ["all_signal_tn12"]
+    legacy_gua = str_keys or ["none"]
     try:
         return axes_from_legacy_templates(
             rule_ids=rule_ids,
             weekday_keys=list(wd),
-            gua_keys=gua_keys,
+            gua_keys=legacy_gua,
             stop_loss_list=stop_loss_list,
             take_profit_list=take_profit_list,
             period=period,
@@ -285,7 +417,8 @@ def _try_research_plan(payload: dict):
 def expand_param_grid_unified(
     *,
     rule_ids: Sequence[str],
-    gua_keys: Sequence[str] = ("none",),
+    gua_keys: Optional[Sequence[Any]] = None,
+    gua_filters: Optional[Sequence[Any]] = None,
     weekday_keys: Optional[Sequence[str]] = None,
     stop_loss_list: Optional[Sequence[Optional[float]]] = None,
     signal_weekdays_options: Optional[Sequence[Any]] = None,
@@ -294,6 +427,7 @@ def expand_param_grid_unified(
     take_profit_list: Optional[Sequence[Optional[float]]] = None,
     holiday_policy: str = "next_trading_day",
     period: str = "DAY",
+    periods: Optional[Sequence[str]] = None,
     codes: Optional[Sequence[str]] = None,
     start: Optional[int] = None,
     end: Optional[int] = None,
@@ -304,6 +438,8 @@ def expand_param_grid_unified(
     """Expand grid from free axes OR legacy weekday_keys templates.
 
     When any free axis is provided, weekday_keys templates are ignored.
+    ``gua_keys`` may mix preset strings and inline filter dicts.
+    ``periods`` expands an extra period axis (DAY/WEEK/...).
     Returns dict with theoretical/rejected/actual/rejection_reasons/variants.
     """
     axes_payload = {
@@ -317,13 +453,12 @@ def expand_param_grid_unified(
     rules = list(rule_ids or [])
     if not rules:
         raise ValueError("rule_ids required")
-    guas = list(gua_keys or ["none"])
+    guas = _normalize_gua_options(gua_keys, gua_filters)
     sls = list(stop_loss_list if stop_loss_list is not None else [None])
     tps = list(take_profit_list if take_profit_list is not None else [None])
-
-    for g in guas:
-        if g not in GUA_PRESETS:
-            raise ValueError(f"unknown gua preset: {g}")
+    period_list = [str(p).upper() for p in (periods or [period or "DAY"])]
+    if not period_list:
+        period_list = ["DAY"]
 
     rejection_reasons: Dict[str, int] = {}
     variants: List[Dict[str, Any]] = []
@@ -352,11 +487,11 @@ def expand_param_grid_unified(
         if not sell_opts:
             sell_opts = [{"sell_on": "close"}]
 
-        for rule_id, gkey, sig, bopt, sopt, sl, tp in itertools.product(
-            rules, guas, sig_opts, buy_opts, sell_opts, sls, tps
+        for rule_id, gopt, sig, bopt, sopt, sl, tp, per in itertools.product(
+            rules, guas, sig_opts, buy_opts, sell_opts, sls, tps, period_list
         ):
             theoretical += 1
-            g = GUA_PRESETS[gkey]
+            g = _resolve_gua_option(gopt)
             b = _resolve_buy_option(bopt if isinstance(bopt, dict) else {})
             s = _resolve_sell_option(sopt if isinstance(sopt, dict) else {})
 
@@ -370,7 +505,7 @@ def expand_param_grid_unified(
             buy_on = b.get("buy_on") or "open"
             sell_on = s.get("sell_on") or "open"
             entry_lag = int(b.get("entry_lag") if b.get("entry_lag") is not None else 1)
-            hold = int(b.get("hold") or s.get("hold") or 1)
+            hold = _merge_hold(b, s)
 
             if buy_wd is not None:
                 try:
@@ -411,8 +546,8 @@ def expand_param_grid_unified(
 
             meta = {
                 "rule_id": rule_id,
-                "gua_key": gkey,
-                "gua_label": g.get("label"),
+                "gua_key": g["gua_key"],
+                "gua_label": g["gua_label"],
                 "weekday_key": None,
                 "weekday_label": "free_axes",
                 "stop_loss": sl,
@@ -421,10 +556,11 @@ def expand_param_grid_unified(
                 "signal_weekdays": sw,
                 "buy_option": bopt if isinstance(bopt, dict) else {},
                 "sell_option": sopt if isinstance(sopt, dict) else {},
+                "period": per,
             }
             params: Dict[str, Any] = {
                 "rule_ids": [rule_id],
-                "period": period,
+                "period": per,
                 "account_mode": account_mode,
                 "codes": list(base_codes),
                 "start": start,
@@ -437,8 +573,8 @@ def expand_param_grid_unified(
                 "signal_weekdays": sw,
                 "buy_on": buy_on,
                 "sell_on": sell_on,
-                "with_bagua": g.get("with_bagua", False),
-                "gua_filter": dict(g.get("gua_filter") or {}),
+                "with_bagua": g["with_bagua"],
+                "gua_filter": dict(g["gua_filter"] or {}),
                 "stop_loss": sl,
                 "take_profit": tp,
                 "holiday_policy": holiday_policy,
@@ -446,17 +582,31 @@ def expand_param_grid_unified(
             }
             variants.append(params)
     else:
+        # legacy: only string preset keys
+        str_guas = []
+        for g in guas:
+            if isinstance(g, str):
+                str_guas.append(g)
+            else:
+                raise ValueError(
+                    "inline gua_filters require free axes (buy_options/sell_options); "
+                    "use free_axes mode for custom state_id filters"
+                )
+        if not str_guas:
+            str_guas = ["none"]
         wds = list(weekday_keys or ["all_signal_tn12"])
         for w in wds:
             if w not in WEEKDAY_TEMPLATES:
                 raise ValueError(f"unknown weekday template: {w}")
-        for rule_id, gkey, wkey, sl, tp in itertools.product(rules, guas, wds, sls, tps):
+        for rule_id, gkey, wkey, sl, tp, per in itertools.product(
+            rules, str_guas, wds, sls, tps, period_list
+        ):
             theoretical += 1
-            g = GUA_PRESETS[gkey]
+            g = _resolve_gua_option(gkey)
             w = WEEKDAY_TEMPLATES[wkey]
             params = {
                 "rule_ids": [rule_id],
-                "period": period,
+                "period": per,
                 "account_mode": account_mode,
                 "codes": list(base_codes),
                 "start": start,
@@ -469,20 +619,21 @@ def expand_param_grid_unified(
                 "signal_weekdays": w.get("signal_weekdays"),
                 "buy_on": w.get("buy_on", "open"),
                 "sell_on": w.get("sell_on", "open"),
-                "with_bagua": g.get("with_bagua", False),
-                "gua_filter": dict(g.get("gua_filter") or {}),
+                "with_bagua": g["with_bagua"],
+                "gua_filter": dict(g["gua_filter"] or {}),
                 "stop_loss": sl,
                 "take_profit": tp,
                 "holiday_policy": holiday_policy,
                 "_meta": {
                     "rule_id": rule_id,
-                    "gua_key": gkey,
-                    "gua_label": g.get("label"),
+                    "gua_key": g["gua_key"],
+                    "gua_label": g["gua_label"],
                     "weekday_key": wkey,
                     "weekday_label": w.get("label"),
                     "stop_loss": sl,
                     "take_profit": tp,
                     "holiday_policy": holiday_policy,
+                    "period": per,
                 },
             }
             variants.append(params)
@@ -522,6 +673,7 @@ def estimate_grid_from_payload(payload: dict) -> dict:
         plan = expand_param_grid_unified(
             rule_ids=payload.get("rule_ids") or [],
             gua_keys=payload.get("gua_keys") or ["none"],
+            gua_filters=payload.get("gua_filters"),
             weekday_keys=payload.get("weekday_keys"),
             stop_loss_list=payload.get("stop_loss_list"),
             signal_weekdays_options=payload.get("signal_weekdays_options"),
@@ -530,6 +682,7 @@ def estimate_grid_from_payload(payload: dict) -> dict:
             take_profit_list=payload.get("take_profit_list"),
             holiday_policy=payload.get("holiday_policy") or "next_trading_day",
             period=payload.get("period") or "DAY",
+            periods=payload.get("periods"),
             codes=payload.get("codes"),
             start=payload.get("start"),
             end=payload.get("end"),
@@ -625,10 +778,12 @@ def estimate_grid_size(
 def expand_param_grid(
     *,
     rule_ids: Sequence[str],
-    gua_keys: Sequence[str],
+    gua_keys: Optional[Sequence[Any]] = None,
+    gua_filters: Optional[Sequence[Any]] = None,
     weekday_keys: Sequence[str] = ("all_signal_tn12",),
     stop_loss_list: Optional[Sequence[Optional[float]]] = None,
     period: str = "DAY",
+    periods: Optional[Sequence[str]] = None,
     codes: Optional[Sequence[str]] = None,
     start: Optional[int] = None,
     end: Optional[int] = None,
@@ -647,6 +802,7 @@ def expand_param_grid(
     plan = expand_param_grid_unified(
         rule_ids=rule_ids,
         gua_keys=gua_keys,
+        gua_filters=gua_filters,
         weekday_keys=weekday_keys,
         stop_loss_list=stop_loss_list,
         signal_weekdays_options=signal_weekdays_options,
@@ -655,6 +811,7 @@ def expand_param_grid(
         take_profit_list=take_profit_list,
         holiday_policy=holiday_policy,
         period=period,
+        periods=periods,
         codes=codes,
         start=start,
         end=end,
@@ -672,11 +829,14 @@ def create_experiment_from_grid(
     *,
     name: str,
     rule_ids: Sequence[str],
-    gua_keys: Sequence[str],
+    gua_keys: Optional[Sequence[Any]] = None,
+    gua_filters: Optional[Sequence[Any]] = None,
     weekday_keys: Optional[Sequence[str]] = None,
     stop_loss_list: Optional[Sequence[Optional[float]]] = None,
     period: str = "DAY",
+    periods: Optional[Sequence[str]] = None,
     codes: Optional[Sequence[str]] = None,
+    universe: Optional[str] = None,
     start: Optional[int] = None,
     end: Optional[int] = None,
     account_mode: str = "portfolio",
@@ -704,8 +864,21 @@ def create_experiment_from_grid(
     Templates are presets only: when any free axis is provided, weekday_keys
     are ignored. Caps: DEFAULT_MAX_VARIANTS=50 soft; HARD_MAX_VARIANTS=500.
     force=True required to exceed max_variants; hard max always refuses.
+
+    Extra (爻辞回测):
+      - gua_filters: inline exact_line filters (or mix dicts into gua_keys)
+      - periods: e.g. [\"DAY\", \"WEEK\"] expands period axis
+      - universe: demo | full | custom (with codes)
     """
     cfg = cfg or get_default_config()
+    from .yao_rules import resolve_universe_codes, normalize_periods
+
+    resolved_codes = resolve_universe_codes(
+        cfg, universe=universe, codes=codes
+    )
+    period_list = normalize_periods(period, periods)
+    period0 = period_list[0] if period_list else (period or "DAY")
+
     axes = {
         "signal_weekdays_options": signal_weekdays_options,
         "buy_options": buy_options,
@@ -714,10 +887,13 @@ def create_experiment_from_grid(
     }
     use_free = _has_free_axes(axes)
     wd_keys = list(weekday_keys) if weekday_keys is not None else ["all_signal_tn12"]
+    gkeys = list(gua_keys) if gua_keys is not None else ["none"]
+    gfilters = list(gua_filters) if gua_filters is not None else None
 
     payload = {
         "rule_ids": list(rule_ids),
-        "gua_keys": list(gua_keys),
+        "gua_keys": gkeys,
+        "gua_filters": gfilters,
         "weekday_keys": None if use_free else wd_keys,
         "stop_loss_list": stop_loss_list,
         "signal_weekdays_options": signal_weekdays_options,
@@ -725,8 +901,10 @@ def create_experiment_from_grid(
         "sell_options": sell_options,
         "take_profit_list": take_profit_list,
         "holiday_policy": holiday_policy,
-        "period": period,
-        "codes": codes,
+        "period": period0,
+        "periods": period_list,
+        "codes": resolved_codes,
+        "universe": universe or "demo",
         "start": start,
         "end": end,
         "account_mode": account_mode,
@@ -772,7 +950,8 @@ def create_experiment_from_grid(
     else:
         plan = expand_param_grid_unified(
             rule_ids=rule_ids,
-            gua_keys=gua_keys,
+            gua_keys=gkeys,
+            gua_filters=gfilters,
             weekday_keys=None if use_free else wd_keys,
             stop_loss_list=stop_loss_list,
             signal_weekdays_options=signal_weekdays_options,
@@ -780,8 +959,9 @@ def create_experiment_from_grid(
             sell_options=sell_options,
             take_profit_list=take_profit_list,
             holiday_policy=holiday_policy,
-            period=period,
-            codes=codes,
+            period=period0,
+            periods=period_list,
+            codes=resolved_codes,
             start=start,
             end=end,
             account_mode=account_mode,
@@ -804,10 +984,26 @@ def create_experiment_from_grid(
     warning = None
     if n > 20:
         warning = "组合数 %s 较大，建议先用演示池试跑" % n
+    uni_label = (universe or "demo").strip().lower() or "demo"
+    if uni_label in ("full", "all", "market") and len(resolved_codes) > 100:
+        warning = ((warning + "；") if warning else "") + (
+            "全市场 %s 只，单组耗时可能很长" % len(resolved_codes)
+        )
+
+    # Serialize gua options for config (dicts kept; large lists ok)
+    def _ser_gua(items: Optional[Sequence[Any]]) -> List[Any]:
+        out: List[Any] = []
+        for x in list(items or []):
+            if isinstance(x, dict):
+                out.append(dict(x))
+            else:
+                out.append(x)
+        return out
 
     config = {
         "rule_ids": list(rule_ids),
-        "gua_keys": list(gua_keys),
+        "gua_keys": _ser_gua(gkeys),
+        "gua_filters": _ser_gua(gfilters) if gfilters else [],
         "weekday_keys": [] if use_free else wd_keys,
         "weekday_keys_note": "templates are presets only; ignored when free axes provided",
         "stop_loss_list": list(stop_loss_list) if stop_loss_list is not None else [None],
@@ -824,8 +1020,11 @@ def create_experiment_from_grid(
         "promote_top_n": int(promote_top_n or 0),
         "promote_metric": str(promote_metric or "total_return"),
         "mode": "free_axes" if use_free else "legacy_templates",
-        "period": period,
-        "codes": list(codes) if codes else ["sh600000", "sz000001"],
+        "period": period0,
+        "periods": list(period_list),
+        "universe": uni_label,
+        "codes": list(resolved_codes),
+        "n_codes": len(resolved_codes),
         "start": start,
         "end": end,
         "account_mode": account_mode,

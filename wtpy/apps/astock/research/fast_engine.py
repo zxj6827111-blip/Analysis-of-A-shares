@@ -2,6 +2,12 @@
 """Fast research engine: per-signal path stats without portfolio cash competition.
 
 Used for large grid screening. Final candidates should re-run full PortfolioBacktester.
+
+dual_price_v1:
+- ``bars_by_code`` must be RAW execution bars.
+- ``entry_price`` / ``exit_price`` are always RAW session prices.
+- Optional ``adj_bars_by_code`` only fills adjusted reference fields on FastTrade.
+- Does not support true cash simulation (``supports_true_cash_simulation=False``).
 """
 
 from __future__ import annotations
@@ -30,8 +36,8 @@ class FastTrade:
     signal_date: int
     entry_date: int
     exit_date: int
-    entry_price: float
-    exit_price: float
+    entry_price: float  # RAW execution
+    exit_price: float  # RAW execution
     ret: float
     mfe: float
     mae: float
@@ -40,6 +46,8 @@ class FastTrade:
     planned_exit_date: Optional[int] = None
     entry_shift_days: int = 0
     exit_shift_days: int = 0
+    entry_adjusted_reference_price: Optional[float] = None
+    exit_adjusted_reference_price: Optional[float] = None
 
 
 @dataclass
@@ -196,8 +204,13 @@ def run_fast_backtest(
     signal_weekdays: Optional[Sequence[int]] = None,
     start: Optional[int] = None,
     end: Optional[int] = None,
+    adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
 ) -> FastBacktestResult:
-    """Equal-weight per-signal trades; no cash / max_weight / concurrent position limits."""
+    """Equal-weight per-signal trades; no cash / max_weight / concurrent position limits.
+
+    ``bars_by_code`` must be RAW execution bars. Optional ``adj_bars_by_code`` only
+    populates adjusted reference prices on each FastTrade.
+    """
     buy_on = parse_price_session(buy_on, default="open")
     sell_on = parse_price_session(sell_on, default="open")
     buy_weekday = parse_single_weekday(buy_weekday)
@@ -215,11 +228,17 @@ def run_fast_backtest(
     index: Dict[str, Dict[int, DayBar]] = {
         code: _bar_index(bars) for code, bars in bars_by_code.items()
     }
+    adj_index: Dict[str, Dict[int, DayBar]] = {
+        code: _bar_index(bars) for code, bars in (adj_bars_by_code or {}).items()
+    }
     trades: List[FastTrade] = []
     n_sig = 0
     notes = [
         "engine=fast: per-signal path stats; no portfolio cash competition.",
         "holiday_policy=%s" % holiday_policy,
+        "execution_price_mode=raw",
+        "supports_true_cash_simulation=False",
+        "engine_result_version=dual_price_v1",
     ]
 
     for ev in events:
@@ -279,6 +298,24 @@ def run_fast_backtest(
             continue
         ret = exit_px / entry_px - 1.0
         mfe, mae = _path_mfe_mae(bars_idx, calendar, entry_date, exit_date, entry_px)
+
+        entry_adj_ref = None
+        exit_adj_ref = None
+        adj_idx = adj_index.get(code)
+        if adj_idx:
+            ab = adj_idx.get(entry_date)
+            if ab:
+                try:
+                    entry_adj_ref = float(bar_session_price(ab, buy_on))
+                except Exception:
+                    entry_adj_ref = None
+            xb = adj_idx.get(exit_date)
+            if xb:
+                try:
+                    exit_adj_ref = float(bar_session_price(xb, sell_on))
+                except Exception:
+                    exit_adj_ref = None
+
         trades.append(
             FastTrade(
                 std_code=code,
@@ -295,6 +332,8 @@ def run_fast_backtest(
                 planned_exit_date=planned_x,
                 entry_shift_days=int(e_shift or 0),
                 exit_shift_days=int(x_shift or 0),
+                entry_adjusted_reference_price=entry_adj_ref,
+                exit_adjusted_reference_price=exit_adj_ref,
             )
         )
 
@@ -315,5 +354,8 @@ def run_fast_backtest(
             "holiday_policy": holiday_policy,
             "signal_weekdays": list(signal_weekdays) if signal_weekdays else None,
             "engine": "fast",
+            "execution_price_mode": "raw",
+            "supports_true_cash_simulation": False,
+            "engine_result_version": "dual_price_v1",
         },
     )
