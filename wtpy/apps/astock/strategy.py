@@ -649,10 +649,11 @@ class PortfolioBacktester:
                         # ledger_factor_ratio: restate shares so MV continuous under pure split/送转.
                         # Cash dividends are NOT credited as cash (no cash-event detail in factors).
                         old_shares = int(pos.shares)
-                        new_shares = int(round(old_shares * ratio))
-                        if new_shares < self.cfg.lot_size and old_shares >= self.cfg.lot_size:
-                            # keep at least one lot if we had a board lot before
-                            new_shares = self.cfg.lot_size
+                        # Board-lot: round to nearest lot_size after ratio (A-share 100).
+                        lot = max(int(self.cfg.lot_size or 100), 1)
+                        new_shares = int(round((old_shares * ratio) / lot)) * lot
+                        if new_shares < lot and old_shares >= lot:
+                            new_shares = lot
                         if new_shares <= 0:
                             ca_fail = True
                             ca_unsupported_notes.append(

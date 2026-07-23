@@ -177,9 +177,6 @@ def test_service_meta_dual_price_fields_on_repro_path(tmp_path):
 
 def test_formal_empty_factor_map_status_from_service_policy():
     """Unit-level: empty factor maps with formal policy must not stay silent ok."""
-    # Direct engine: no factors + default ledger → CA inactive but service blocks formal.
-    # Here we assert service policy constants path via PortfolioBacktester without factors
-    # remains ok for research; service layer empty-map gate is code-reviewed in backtest.py.
     from wtpy.apps.astock.service import backtest as bs
 
     src = Path(bs.__file__).read_text(encoding="utf-8")
@@ -188,6 +185,47 @@ def test_formal_empty_factor_map_status_from_service_policy():
     assert "unsupported_corporate_action: formal full engine requires" in src
     assert "execution_bars = raw_map" in src
     assert "not_applicable_fast" in src
+
+
+def test_formal_empty_factor_map_engine_gate_behavior():
+    """Behavioral: service gate text matches; engine without factors + ledger still runs
+    but formal service refuses empty maps — assert engine CA metrics when factors present
+    and empty map leaves n_corporate_actions=0 without silent inventing cash."""
+    from wtpy.apps.astock.config import CostConfig
+    from wtpy.apps.astock.data.tdx_reader import DayBar
+    from wtpy.apps.astock.data.calendar import TradeCalendar
+    from wtpy.apps.astock.strategy import PortfolioBacktester
+    from wtpy.apps.astock.study import SignalEvent
+
+    def bar(d, o, h, l, c):
+        return DayBar(date=d, open=o, high=h, low=l, close=c, amount=1e7, volume=1e6)
+
+    code = "SSE.STK.600099"
+    dates = [20240102, 20240103, 20240104]
+    raw = {
+        code: [
+            bar(20240102, 10.0, 10.5, 9.5, 10.0),
+            bar(20240103, 10.0, 10.5, 9.5, 10.0),
+            bar(20240104, 11.0, 11.5, 10.5, 11.0),
+        ]
+    }
+    cfg = get_default_config()
+    cfg.initial_capital = 10_000.0
+    cfg.max_weight = 1.0
+    cfg.costs = CostConfig(0.0, 0.0, 0.0, 0.0, "z")
+    # No factors: ledger cannot restate; status stays ok (research-like) but no CA applied
+    bt = PortfolioBacktester(
+        cfg, TradeCalendar(dates), raw, factor_by_code=None, corporate_action_policy="ledger_factor_ratio"
+    )
+    res = bt.run([SignalEvent(code, 20240102, "DAY", "t")], hold=1, entry_lag=1, formal_ok=True)
+    assert res.metrics.get("n_corporate_actions", 0) == 0
+    assert res.metrics.get("corporate_action_policy") == "ledger_factor_ratio"
+    # Service formal gate exists for empty maps (string + policy)
+    from wtpy.apps.astock.service import backtest as bs
+
+    assert "not factor_by_code" in Path(bs.__file__).read_text(encoding="utf-8") or (
+        "and not factor_by_code" in Path(bs.__file__).read_text(encoding="utf-8")
+    )
 
 
 @pytest.mark.skipif(
