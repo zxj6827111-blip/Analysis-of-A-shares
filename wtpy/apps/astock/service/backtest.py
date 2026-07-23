@@ -874,7 +874,7 @@ def run_backtest(
     if engine in ("fast", "quick", "research_fast"):
         corporate_action_policy = "not_applicable_fast"
     else:
-        corporate_action_policy = "fail_closed"
+        corporate_action_policy = "ledger_factor_ratio"
 
     _progress({
         "phase": "portfolio",
@@ -976,11 +976,11 @@ def run_backtest(
             factor_by_code = {}
             factor_map_errors.append("factor_by_code build failed: %s" % _fe)
 
-        # Formal full path: fail_closed requires non-empty factor maps when we claim formal.
+        # Formal full path: require factor maps for CA policy when formal.
         if (
             not use_research
             and use_formal_ok
-            and corporate_action_policy == "fail_closed"
+            and corporate_action_policy in ("fail_closed", "ledger_factor_ratio", "ledger")
             and not factor_by_code
         ):
             from ..strategy import BacktestResult as _BTR
@@ -1002,7 +1002,8 @@ def run_backtest(
                 },
                 notes=[
                     "unsupported_corporate_action: formal full engine requires "
-                    "factor_by_code for fail_closed; maps empty or build failed.",
+                    "factor_by_code for corporate_action_policy=%s; maps empty or build failed."
+                    % corporate_action_policy,
                 ]
                 + factor_map_errors,
                 status="unsupported_corporate_action",
@@ -1014,6 +1015,7 @@ def run_backtest(
                 execution_bars,
                 adj_bars_by_code=adj_map if not research_unadj else None,
                 factor_by_code=factor_by_code or None,
+                corporate_action_policy=corporate_action_policy,
             )
             result = bt.run(
                 events,

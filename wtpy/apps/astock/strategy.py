@@ -368,6 +368,7 @@ class PortfolioBacktester:
         limit_rules: Optional[LimitRuleProvider] = None,
         adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
         factor_by_code: Optional[Dict[str, Dict[int, float]]] = None,
+        corporate_action_policy: str = "ledger_factor_ratio",
     ):
         self.cfg = cfg
         self.calendar = calendar
@@ -378,6 +379,9 @@ class PortfolioBacktester:
         self.raw_bars_by_code = trade_bars
         self.adj_bars_by_code = adj_bars_by_code
         self.factor_by_code: Dict[str, Dict[int, float]] = factor_by_code or {}
+        self.corporate_action_policy = str(
+            corporate_action_policy or "ledger_factor_ratio"
+        ).strip().lower()
         self.limit_rules = limit_rules or DefaultAShareLimitRule()
         self._index: Dict[str, Dict[int, DayBar]] = {}
         self._raw_index: Dict[str, Dict[int, DayBar]] = {}
@@ -605,13 +609,20 @@ class PortfolioBacktester:
         deferred_sells: Dict[str, dict] = {}
         ca_unsupported_notes: List[str] = []
         ca_fail = False
+        ca_ledger_notes: List[str] = []
+        ca_applied_n = 0
+        # corporate_action_policy: ledger_factor_ratio | fail_closed
+        # Formal default (service): ledger_factor_ratio when factor maps present.
+        ca_policy = str(
+            getattr(self, "corporate_action_policy", None) or "ledger_factor_ratio"
+        ).strip().lower()
 
         # precompute period end sets for week/month completion tracking
         week_ends = self._period_end_dates("WEEK")
         month_ends = self._period_end_dates("MONTH")
 
         for d in sim_dates:
-            # Corporate-action fail-closed while any position is open
+            # Corporate actions while any position is open (raw share ledger)
             if self.factor_by_code and positions:
                 for code, pos in list(positions.items()):
                     if pos.entry_factor is None:
@@ -620,17 +631,64 @@ class PortfolioBacktester:
                     if fac_now is None:
                         continue
                     try:
-                        if abs(float(fac_now) - float(pos.entry_factor)) > 1e-9:
+                        f0 = float(pos.entry_factor)
+                        f1 = float(fac_now)
+                        if abs(f1 - f0) <= 1e-9 or f0 == 0.0:
+                            continue
+                        ratio = f1 / f0
+                        if ca_policy in ("fail_closed", "fail", "unsupported"):
                             ca_fail = True
                             msg = (
                                 "unsupported_corporate_action: factor changed while open "
-                                "%s entry_date=%s entry_factor=%s day=%s factor=%s"
-                                % (code, pos.entry_date, pos.entry_factor, d, fac_now)
+                                "%s entry_date=%s entry_factor=%s day=%s factor=%s policy=%s"
+                                % (code, pos.entry_date, pos.entry_factor, d, fac_now, ca_policy)
                             )
                             if msg not in ca_unsupported_notes:
                                 ca_unsupported_notes.append(msg)
-                    except (TypeError, ValueError):
-                        pass
+                            continue
+                        # ledger_factor_ratio: restate shares so MV continuous under pure split/送转.
+                        # Cash dividends are NOT credited as cash (no cash-event detail in factors).
+                        old_shares = int(pos.shares)
+                        new_shares = int(round(old_shares * ratio))
+                        if new_shares < self.cfg.lot_size and old_shares >= self.cfg.lot_size:
+                            # keep at least one lot if we had a board lot before
+                            new_shares = self.cfg.lot_size
+                        if new_shares <= 0:
+                            ca_fail = True
+                            ca_unsupported_notes.append(
+                                "unsupported_corporate_action: share restatement non-positive "
+                                "%s day=%s ratio=%s old_shares=%s" % (code, d, ratio, old_shares)
+                            )
+                            continue
+                        old_entry = float(pos.entry_price)
+                        # Keep total cash cost; restate per-share entry for SL/TP %.
+                        pos.shares = int(new_shares)
+                        if ratio != 0:
+                            pos.entry_price = old_entry / ratio
+                        pos.entry_factor = f1
+                        ca_applied_n += 1
+                        msg = (
+                            "corporate_action_ledger: %s day=%s factor %s→%s ratio=%.6f "
+                            "shares %s→%s entry_px %.4f→%.4f (no cash dividend modeled)"
+                            % (
+                                code,
+                                d,
+                                f0,
+                                f1,
+                                ratio,
+                                old_shares,
+                                pos.shares,
+                                old_entry,
+                                pos.entry_price,
+                            )
+                        )
+                        ca_ledger_notes.append(msg)
+                    except (TypeError, ValueError) as e:
+                        ca_fail = True
+                        ca_unsupported_notes.append(
+                            "unsupported_corporate_action: ledger error %s day=%s %s"
+                            % (code, d, e)
+                        )
             # 1) process deferred + matured sells at open (never same-day as BUY)
             sell_codes = set(deferred_sells.keys())
             for code, pos in list(positions.items()):
@@ -949,6 +1007,102 @@ class PortfolioBacktester:
                     EquityPoint(date=d, cash=cash, market_value=mv, equity=cash + mv)
                 )
 
+        # ------------------------------------------------------------------
+        # EOD forced exit: liquidate residual positions on last sim day (raw).
+        # Policy: sell at last session close * (1 - slippage); reason forced_exit.
+        # A-share T+1: skip same-day entry (cannot sell entry day); leave open.
+        # ------------------------------------------------------------------
+        if positions and sim_dates:
+            last_d = int(sim_dates[-1])
+            forced_n = 0
+            for code, pos in list(positions.items()):
+                if int(pos.entry_date) >= last_d:
+                    # T+1: cannot force-sell same calendar session as entry
+                    continue
+                bar = self._index.get(code, {}).get(last_d)
+                if not bar:
+                    bar_px = self._last_px_on_or_before(code, last_d)
+                    if not bar_px or bar_px <= 0:
+                        continue
+                    session_raw = float(bar_px)
+                else:
+                    # EOD liquidation uses close (end-of-day mark), not sell_on
+                    session_raw = float(bar.close)
+                if session_raw <= 0:
+                    continue
+                px = session_raw * (1.0 - self.cfg.costs.slippage)
+                if px <= 0:
+                    continue
+                pos = positions.pop(code)
+                amount = pos.shares * px
+                comm = _commission(amount, self.cfg.costs)
+                tax = amount * self.cfg.costs.stamp_tax_rate
+                if account_mode == "per_symbol":
+                    cash_by_code[code] = (
+                        float(cash_by_code.get(code, 0.0)) + amount - comm - tax
+                    )
+                else:
+                    cash += amount - comm - tax
+                fills.append(
+                    Fill(
+                        date=last_d,
+                        std_code=code,
+                        side="SELL",
+                        price=px,
+                        shares=pos.shares,
+                        amount=amount,
+                        commission=comm,
+                        stamp_tax=tax,
+                        reason=EXIT_REASON_FORCED_EXIT,
+                        planned_date=last_d,
+                        actual_date=last_d,
+                        shift_days=0,
+                        holiday_policy=pos.holiday_policy,
+                        **self._fill_price_audit(
+                            code, last_d, "close", session_raw=session_raw
+                        ),
+                    )
+                )
+                forced_n += 1
+                deferred_sells.pop(code, None)
+            if forced_n:
+                notes.append(
+                    "EOD forced_exit: liquidated %d open position(s) at last "
+                    "sim day close (raw); T+1 skips same-day entry leftovers."
+                    % forced_n
+                )
+                # Refresh last equity point after cash returns
+                mv = self._mkt_value(positions, last_d)
+                if account_mode == "per_symbol":
+                    cash_sum = float(sum(cash_by_code.values())) if cash_by_code else 0.0
+                    if equity_curve and equity_curve[-1].date == last_d:
+                        equity_curve[-1] = EquityPoint(
+                            date=last_d,
+                            cash=cash_sum,
+                            market_value=mv,
+                            equity=cash_sum + mv,
+                        )
+                    else:
+                        equity_curve.append(
+                            EquityPoint(
+                                date=last_d,
+                                cash=cash_sum,
+                                market_value=mv,
+                                equity=cash_sum + mv,
+                            )
+                        )
+                else:
+                    if equity_curve and equity_curve[-1].date == last_d:
+                        equity_curve[-1] = EquityPoint(
+                            date=last_d, cash=cash, market_value=mv, equity=cash + mv
+                        )
+                    else:
+                        equity_curve.append(
+                            EquityPoint(
+                                date=last_d, cash=cash, market_value=mv, equity=cash + mv
+                            )
+                        )
+
         if account_mode == "per_symbol":
             n_books = max(1, len(cash_by_code))
             capital_base = float(self.cfg.initial_capital) * float(n_books)
@@ -959,11 +1113,15 @@ class PortfolioBacktester:
         )
         metrics["account_mode"] = account_mode
         metrics["capital_base"] = capital_base
-        # open positions at end
+        # open positions at end (after EOD forced exit)
         open_n = len(positions)
         open_mv = self._mkt_value(positions, sim_dates[-1]) if sim_dates and positions else 0.0
         metrics["n_open_positions"] = open_n
         metrics["open_market_value"] = float(open_mv)
+        metrics["eod_forced_exit"] = True
+        metrics["n_forced_exits"] = int(
+            sum(1 for f in fills if f.side == "SELL" and f.reason == EXIT_REASON_FORCED_EXIT)
+        )
         if account_mode == "per_symbol":
             # Equal-weight mean of per-stock total returns (TDX-style summary orientation).
             last_d = sim_dates[-1] if sim_dates else None
@@ -1022,6 +1180,7 @@ class PortfolioBacktester:
                     adj_bars_by_code=self.adj_bars_by_code,
                     factor_by_code=self.factor_by_code,
                     limit_rules=self.limit_rules,
+                    corporate_action_policy=self.corporate_action_policy,
                 )
                 z_res = z_bt.run(
                     events,
@@ -1063,8 +1222,23 @@ class PortfolioBacktester:
             notes.extend(ca_unsupported_notes)
             notes.append(
                 "Formal metrics not claimed: corporate action during open hold "
-                "(raw execution has no share/cash restatement)."
+                "(policy=%s)."
+                % ca_policy
             )
+        if ca_ledger_notes:
+            notes.extend(ca_ledger_notes[:20])  # cap noise
+            if len(ca_ledger_notes) > 20:
+                notes.append("... %d more corporate_action_ledger notes" % (len(ca_ledger_notes) - 20))
+            notes.append(
+                "corporate_action_policy=%s: factor-ratio share restatement only; "
+                "cash dividends not credited (no cash-event ledger)."
+                % ca_policy
+            )
+            metrics["n_corporate_actions"] = int(ca_applied_n)
+            metrics["corporate_action_policy"] = ca_policy
+        else:
+            metrics["n_corporate_actions"] = int(ca_applied_n)
+            metrics["corporate_action_policy"] = ca_policy
 
         return BacktestResult(
             run_id=run_id,

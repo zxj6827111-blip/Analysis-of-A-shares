@@ -295,7 +295,9 @@ def test_g_corporate_action_fail_closed():
     cfg = _cfg()
     cfg.initial_capital = 10_000.0
     cfg.max_weight = 1.0
-    bt = PortfolioBacktester(cfg, _cal(dates), raw, factor_by_code=fac)
+    bt = PortfolioBacktester(
+        cfg, _cal(dates), raw, factor_by_code=fac, corporate_action_policy="fail_closed"
+    )
     res = bt.run(
         [SignalEvent(code, 20240102, "DAY", "t")],
         hold=1,
@@ -303,8 +305,62 @@ def test_g_corporate_action_fail_closed():
         formal_ok=True,
     )
     assert res.status == "unsupported_corporate_action"
-    assert any("corporate" in n.lower() or "CORPORATE" in n or "因子" in n or "unsupported" in n.lower()
-               for n in res.notes) or res.status == "unsupported_corporate_action"
+    assert any(
+        "corporate" in n.lower() or "CORPORATE" in n or "因子" in n or "unsupported" in n.lower()
+        for n in res.notes
+    ) or res.status == "unsupported_corporate_action"
+
+
+def test_g2_corporate_action_ledger_factor_ratio_restates_shares():
+    """2:1 reverse-looking factor jump restates shares so MV continuous (no cash div)."""
+    code = "SSE.STK.600031"
+    dates = [20240102, 20240103, 20240104, 20240105]
+    raw = {
+        code: [
+            _bar(20240102, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240103, 10.0, 10.5, 9.5, 10.0),  # buy open 10, 1000 shares
+            _bar(20240104, 5.0, 5.2, 4.8, 5.0),  # factor doubles; price halves
+            _bar(20240105, 5.5, 5.6, 5.4, 5.5),  # sell open 5.5
+        ]
+    }
+    # entry factor 0.5 on 01-03; on 01-04 factor becomes 1.0 → ratio 2 → shares *2
+    fac = {
+        code: {
+            20240102: 0.5,
+            20240103: 0.5,
+            20240104: 1.0,
+            20240105: 1.0,
+        }
+    }
+    cfg = _cfg()
+    cfg.initial_capital = 10_000.0
+    cfg.max_weight = 1.0
+    bt = PortfolioBacktester(
+        cfg,
+        _cal(dates),
+        raw,
+        factor_by_code=fac,
+        corporate_action_policy="ledger_factor_ratio",
+    )
+    res = bt.run(
+        [SignalEvent(code, 20240102, "DAY", "t")],
+        hold=2,  # exit after 2 sessions so CA on 01-04 applies before sell 01-05
+        entry_lag=1,
+        buy_on="open",
+        sell_on="open",
+        formal_ok=True,
+    )
+    assert res.status == "ok"
+    buys = [f for f in res.fills if f.side == "BUY"]
+    sells = [f for f in res.fills if f.side == "SELL"]
+    assert len(buys) == 1 and len(sells) == 1
+    assert buys[0].shares == 1000
+    # after 2x factor ratio, shares should double before sell
+    assert sells[0].shares == 2000
+    assert sells[0].date == 20240105
+    assert abs(sells[0].price - 5.5) < 1e-9
+    assert res.metrics.get("n_corporate_actions", 0) >= 1
+    assert any("corporate_action_ledger" in n for n in res.notes)
 
 
 def test_h_full_and_fast_raw_same_dates_and_prices():
@@ -482,3 +538,63 @@ def test_constructor_never_trades_on_adj_only_bars():
     b = next(f for f in res.fills if f.side == "BUY")
     assert abs(b.price - 10.0) < 1e-9
     assert abs((b.adjusted_reference_price or 0) - 30.0) < 1e-9
+
+def test_eod_forced_exit_liquidates_open_at_last_close():
+    """Hold schedule leaves position open past end -> forced_exit at last close."""
+    code = "SSE.STK.600060"
+    dates = [20240102, 20240103, 20240104]
+    raw = {
+        code: [
+            _bar(20240102, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240103, 10.0, 10.5, 9.5, 10.2),
+            _bar(20240104, 10.5, 11.0, 10.0, 10.8),
+        ]
+    }
+    cfg = _cfg()
+    cfg.initial_capital = 10_000.0
+    cfg.max_weight = 1.0
+    bt = PortfolioBacktester(cfg, _cal(dates), raw)
+    res = bt.run(
+        [SignalEvent(code, 20240102, "DAY", "t")],
+        hold=10,
+        entry_lag=1,
+        buy_on="open",
+        sell_on="open",
+        formal_ok=True,
+        end=20240104,
+    )
+    sells = [f for f in res.fills if f.side == "SELL"]
+    assert len(sells) == 1
+    assert sells[0].reason == "forced_exit"
+    assert sells[0].date == 20240104
+    assert abs(sells[0].price - 10.8) < 1e-9
+    assert res.metrics.get("n_open_positions") == 0
+    assert res.metrics.get("n_forced_exits") == 1
+    assert abs(res.equity_curve[-1].market_value) < 1e-6
+
+
+def test_eod_forced_exit_skips_same_day_entry_t1():
+    code = "SSE.STK.600061"
+    dates = [20240102, 20240103]
+    raw = {
+        code: [
+            _bar(20240102, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240103, 10.0, 10.5, 9.5, 10.2),
+        ]
+    }
+    cfg = _cfg()
+    cfg.initial_capital = 10_000.0
+    cfg.max_weight = 1.0
+    bt = PortfolioBacktester(cfg, _cal(dates), raw)
+    res = bt.run(
+        [SignalEvent(code, 20240102, "DAY", "t")],
+        hold=10,
+        entry_lag=1,
+        formal_ok=True,
+        end=20240103,
+    )
+    sells = [f for f in res.fills if f.side == "SELL"]
+    buys = [f for f in res.fills if f.side == "BUY"]
+    assert buys and buys[0].date == 20240103
+    assert not any(f.reason == "forced_exit" for f in sells)
+    assert res.metrics.get("n_open_positions") == 1
