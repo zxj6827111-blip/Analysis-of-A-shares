@@ -858,18 +858,23 @@ def run_backtest(
     signal_price_mode = "raw" if research_unadj else "causal_qfq"
     execution_price_mode = "raw"
     valuation_price_mode = "raw"
-    corporate_action_policy = "fail_closed"
     engine_result_version = "dual_price_v1"
     # Legacy sole price_mode: do not mean "fills are adjusted" anymore.
     price_mode = "dual_price_v1"
     execution_bars = raw_map
-    signal_bars_ref = raw_map if research_unadj else adj_map
     if research_unadj:
         use_research = True
         use_formal_ok = True
     else:
         use_research = False
         use_formal_ok = formal_ok
+
+    engine = (getattr(req, "engine", None) or "full").strip().lower()
+    # Fast screening never implements corporate-action ledger / fail-closed.
+    if engine in ("fast", "quick", "research_fast"):
+        corporate_action_policy = "not_applicable_fast"
+    else:
+        corporate_action_policy = "fail_closed"
 
     _progress({
         "phase": "portfolio",
@@ -881,7 +886,6 @@ def run_backtest(
         "n_signals": len(events),
     })
 
-    engine = (getattr(req, "engine", None) or "full").strip().lower()
     holiday_policy = getattr(req, "holiday_policy", None) or "next_trading_day"
     artifact_level = getattr(req, "artifact_level", None) or "full"
     try:
@@ -926,10 +930,17 @@ def run_backtest(
             fills=[],
             equity_curve=[],
             metrics=dict(fast_res.metrics),
-            notes=list(fast_res.notes),
-            status="ok" if not use_research else "research_unadjusted",
+            notes=list(fast_res.notes)
+            + [
+                "engine=fast: screening only; no true cash ledger / CA fail_closed.",
+                "corporate_action_policy=not_applicable_fast",
+            ],
+            # Never claim formal fail_closed precision for fast path.
+            status="research_unadjusted" if use_research else "ok",
         )
         result.metrics["engine"] = "fast"
+        result.metrics["supports_true_cash_simulation"] = False
+        result.metrics["corporate_action_policy"] = corporate_action_policy
         result.metrics["n_signals_fast"] = fast_res.n_signals
         result.metrics["n_events"] = len(events)
         result.metrics["n_events_raw_signals"] = int(n_events_raw_signals)
@@ -940,9 +951,12 @@ def run_backtest(
         result.config["engine"] = "fast"
         result.config["holiday_policy"] = holiday_policy
         result.config["artifact_level"] = artifact_level
+        result.config["corporate_action_policy"] = corporate_action_policy
+        result.config["supports_true_cash_simulation"] = False
     else:
         # factor maps for corporate-action fail-closed (entry factor vs later factor)
         factor_by_code = {}
+        factor_map_errors = []
         try:
             for _fs in factor_series or []:
                 code_k = getattr(_fs, "std_code", None) or getattr(_fs, "code", None)
@@ -954,43 +968,86 @@ def run_backtest(
                     factor_by_code[str(code_k)] = {
                         int(d): float(f) for d, f in zip(dates_f, facs_f)
                     }
-        except Exception:
+                else:
+                    factor_map_errors.append(
+                        "factor series length mismatch for %s" % code_k
+                    )
+        except Exception as _fe:
             factor_by_code = {}
-        bt = PortfolioBacktester(
-            cfg,
-            cal,
-            execution_bars,
-            adj_bars_by_code=adj_map if not research_unadj else None,
-            factor_by_code=factor_by_code or None,
-        )
-        result = bt.run(
-            events,
-            hold=hold,
-            period=period,
-            run_id=run_id,
-            start=start,
-            end=end,
-            research_unadjusted=use_research,
-            formal_ok=use_formal_ok,
-            stop_loss_pct=req.stop_loss,
-            take_profit_pct=req.take_profit,
-            entry_lag=entry_lag,
-            account_mode=getattr(req, "account_mode", None) or "portfolio",
-            signal_weekdays=signal_weekdays,
-            buy_on=buy_on,
-            sell_on=sell_on,
-            buy_weekday=buy_weekday,
-            exit_weekday=exit_weekday,
-            holiday_policy=holiday_policy,
-        )
-        result.config["engine"] = "full"
-        result.config["artifact_level"] = artifact_level
-        result.metrics["n_events"] = len(events)
-        result.metrics["n_events_raw_signals"] = int(n_events_raw_signals)
-        result.metrics["n_events_after_weekday"] = int(n_events_after_weekday)
-        if bagua_enabled:
-            result.metrics["n_signals_before_bagua"] = bagua_n_before
-            result.metrics["n_signals_after_bagua"] = bagua_n_after
+            factor_map_errors.append("factor_by_code build failed: %s" % _fe)
+
+        # Formal full path: fail_closed requires non-empty factor maps when we claim formal.
+        if (
+            not use_research
+            and use_formal_ok
+            and corporate_action_policy == "fail_closed"
+            and not factor_by_code
+        ):
+            from ..strategy import BacktestResult as _BTR
+
+            result = _BTR(
+                run_id=run_id,
+                config={
+                    "engine": "full",
+                    "artifact_level": artifact_level,
+                    "corporate_action_policy": corporate_action_policy,
+                    "engine_result_version": engine_result_version,
+                },
+                fills=[],
+                equity_curve=[],
+                metrics={
+                    "engine": "full",
+                    "corporate_action_policy": corporate_action_policy,
+                    "n_events": len(events),
+                },
+                notes=[
+                    "unsupported_corporate_action: formal full engine requires "
+                    "factor_by_code for fail_closed; maps empty or build failed.",
+                ]
+                + factor_map_errors,
+                status="unsupported_corporate_action",
+            )
+        else:
+            bt = PortfolioBacktester(
+                cfg,
+                cal,
+                execution_bars,
+                adj_bars_by_code=adj_map if not research_unadj else None,
+                factor_by_code=factor_by_code or None,
+            )
+            result = bt.run(
+                events,
+                hold=hold,
+                period=period,
+                run_id=run_id,
+                start=start,
+                end=end,
+                research_unadjusted=use_research,
+                formal_ok=use_formal_ok,
+                stop_loss_pct=req.stop_loss,
+                take_profit_pct=req.take_profit,
+                entry_lag=entry_lag,
+                account_mode=getattr(req, "account_mode", None) or "portfolio",
+                signal_weekdays=signal_weekdays,
+                buy_on=buy_on,
+                sell_on=sell_on,
+                buy_weekday=buy_weekday,
+                exit_weekday=exit_weekday,
+                holiday_policy=holiday_policy,
+            )
+            result.config["engine"] = "full"
+            result.config["artifact_level"] = artifact_level
+            result.config["corporate_action_policy"] = corporate_action_policy
+            result.metrics["corporate_action_policy"] = corporate_action_policy
+            result.metrics["n_events"] = len(events)
+            result.metrics["n_events_raw_signals"] = int(n_events_raw_signals)
+            result.metrics["n_events_after_weekday"] = int(n_events_after_weekday)
+            if bagua_enabled:
+                result.metrics["n_signals_before_bagua"] = bagua_n_before
+                result.metrics["n_signals_after_bagua"] = bagua_n_after
+            if factor_map_errors:
+                result.notes = list(result.notes) + factor_map_errors
+
     if unconfirmed_run:
         result.status = "research_unconfirmed_formula"
         result.notes = list(result.notes) + [

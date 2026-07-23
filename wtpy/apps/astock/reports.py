@@ -722,15 +722,19 @@ def write_excel_summary(
         (
             "价格说明",
             (
-                "买入价/卖出价=正式回测成交价（因果前复权+滑点）；"
-                "买入价_复权参考/卖出价_复权参考=当日未复权开/收盘，便于对照行情软件；"
-                "金额与收益率按成交价计算。"
-                if str(repro.get("price_mode") or "") == "adjusted"
+                "dual_price_v1：技术指标/信号=因果前复权；买入价/卖出价=未复权真实成交价（含滑点）；"
+                "买入价_复权参考/卖出价_复权参考=同日因果前复权审计价（不参与股数/费用/权益）。"
+                if str(repro.get("price_mode") or "") in ("dual_price_v1", "dual_price")
+                or str(repro.get("engine_result_version") or "") == "dual_price_v1"
                 else (
                     "研究未复权：信号亦用未复权K线；成交/估值仍为未复权真实价格。"
                     if repro.get("research_unadjusted")
                     or str(repro.get("price_mode") or "") == "raw"
-                    else ""
+                    else (
+                        "【历史】price_mode=adjusted 表示旧版用复权价成交，属 legacy_adjusted_execution，不可当新口径。"
+                        if str(repro.get("price_mode") or "") == "adjusted"
+                        else "信号=因果前复权；成交/估值=未复权真实价格。"
+                    )
                 )
             ),
         ),
