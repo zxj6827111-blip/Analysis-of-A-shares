@@ -495,9 +495,32 @@ def write_backtest_csv(
             "bagua_filter_label",
             "start",
             "end",
+            "costs",
         ):
             if k in meta and k not in full_meta:
                 full_meta[k] = meta[k]
+    # Cost traceability (P1.7): always surface CostConfig fields on run_meta
+    costs_src = None
+    if isinstance(full_meta.get("costs"), dict):
+        costs_src = full_meta["costs"]
+    elif isinstance(full_meta.get("config"), dict) and isinstance(full_meta["config"].get("costs"), dict):
+        costs_src = full_meta["config"]["costs"]
+    elif isinstance(getattr(result, "config", None), dict) and isinstance(result.config.get("costs"), dict):
+        costs_src = result.config["costs"]
+        full_meta.setdefault("config", dict(result.config))
+    if costs_src is not None:
+        full_meta["costs"] = {
+            "commission_rate": costs_src.get("commission_rate"),
+            "min_commission": costs_src.get("min_commission"),
+            "stamp_tax_rate": costs_src.get("stamp_tax_rate"),
+            "slippage": costs_src.get("slippage"),
+            "note": costs_src.get("note", ""),
+        }
+        cfg = full_meta.get("config")
+        if isinstance(cfg, dict) and "costs" not in cfg:
+            cfg = dict(cfg)
+            cfg["costs"] = dict(full_meta["costs"])
+            full_meta["config"] = cfg
     # keep a tiny sample for debugging only
     full_meta["fills_sample"] = [
         asdict(f) if is_dataclass(f) else str(f) for f in result.fills[:20]
@@ -558,6 +581,14 @@ def write_excel_summary(
 
     repro = meta or {}
     m = result.metrics or {}
+    _costs_cfg = None
+    if isinstance(repro.get("costs"), dict):
+        _costs_cfg = repro["costs"]
+    elif isinstance(repro.get("config"), dict) and isinstance(repro["config"].get("costs"), dict):
+        _costs_cfg = repro["config"]["costs"]
+    elif isinstance(getattr(result, "config", None), dict) and isinstance(result.config.get("costs"), dict):
+        _costs_cfg = result.config["costs"]
+    _costs_cfg = _costs_cfg or {}
 
     closed = [t for t in trips if t.get("状态") == "已平仓"]
     open_n = sum(1 for t in trips if t.get("状态") == "未平仓")
@@ -646,6 +677,13 @@ def write_excel_summary(
         ("组合胜率%", _fmt_pct(m.get("win_rate"))),
         ("换手", _fmt_num(m.get("turnover"), 4)),
         ("总成本", _fmt_num(m.get("cost_total"), 2)),
+        ("", ""),
+        ("【成本口径 CostConfig】", ""),
+        ("手续费率 commission_rate", _costs_cfg.get("commission_rate", "")),
+        ("最低佣金 min_commission", _costs_cfg.get("min_commission", "")),
+        ("印花税率 stamp_tax_rate", _costs_cfg.get("stamp_tax_rate", "")),
+        ("滑点 slippage", _costs_cfg.get("slippage", "")),
+        ("成本说明 note", _costs_cfg.get("note", "")),
         ("未平仓数量", m.get("n_open_positions")),
         ("未平仓市值", _fmt_num(m.get("open_market_value"), 2)),
         ("不计成本收益%", _fmt_pct(m.get("zero_cost_return"))),
@@ -842,8 +880,8 @@ def write_excel_summary(
         "启用八卦时默认可按「最佳3爻」等方案过滤；明细列「卦名/爻位/卦象简判」来自信号日 OHLC 标注。",
         "交易明细超过 3000 行时，Excel 仅预览前 3000 行；完整明细见同目录 trades.csv。",
         "毛利润 = 卖出金额 - 买入金额；净利润 = 毛利润 - 买入手续费 - 卖出手续费及印花税。",
-        "收益率分母为买入金额。卖出原因含 hold_expired / stop_loss / take_profit 等。",
-        "hold_expired：时间止损或星期平仓日强制平仓，成交价按 sell_on（开/收盘）；止损/止盈为触发后下一可交易日开盘价。",
+        "收益率分母为买入金额。卖出原因含 time_exit / weekday_exit / stop_loss / take_profit 等（旧版 hold_expired 映射为 time_exit）。",
+        "time_exit：持有期/时间止损强制平仓；weekday_exit：指定星期平仓；成交价按 sell_on（开/收盘）。stop_loss / take_profit：触发后下一可交易日开盘价。旧版 hold_expired 映射为 time_exit。",
         "组合层总收益受仓位权重、资金不足拒单等影响，与明细净利润简单加总可能不完全一致。",
         f"run_id={result.run_id}",
         f"indicator_ids={repro.get('indicator_ids')}",

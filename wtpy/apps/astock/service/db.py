@@ -184,7 +184,11 @@ def _json_loads(s: Any, default=None):
 
 
 def param_hash(params: Dict[str, Any]) -> str:
-    """Stable hash for experiment de-dup."""
+    """Stable hash for experiment de-dup (request parameters only).
+
+    Prefer :func:`research_param_hash` when code/data version must invalidate
+    cached results (phase-1 full research fingerprint).
+    """
     def _norm(v):
         if isinstance(v, dict):
             return {str(k): _norm(v[k]) for k in sorted(v.keys(), key=str)}
@@ -194,6 +198,32 @@ def param_hash(params: Dict[str, Any]) -> str:
 
     blob = _json_dumps(_norm(params or {}))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def research_param_hash(
+    params: Dict[str, Any],
+    *,
+    costs: Optional[Dict[str, Any]] = None,
+    include_engine: bool = True,
+) -> str:
+    """16-char research fingerprint (params + optional engine code hash).
+
+    Drop-in style companion to :func:`param_hash` for trials that must not
+    reuse results after strategy/calendar/limit-rule code changes.
+    """
+    try:
+        from ..research.fingerprint import research_fingerprint_from_params
+
+        fp = research_fingerprint_from_params(
+            params,
+            costs=costs,
+            engine_code_hash=None if include_engine else "omit",
+        )
+        if not include_engine:
+            fp.execution["engine_code_hash"] = "omit"
+        return fp.as_param_hash_compat()
+    except Exception:
+        return param_hash(params)
 
 
 def _pick(d: dict, *keys, default=None):
@@ -322,7 +352,13 @@ def upsert_run_from_index_row(
                     row.get("n_signals_before_bagua"),
                     row.get("n_signals_after_bagua"),
                     row.get("error"),
-                    _json_dumps({k: row.get(k) for k in ("bagua_filter_label",) if k in row}),
+                    _json_dumps({k: row.get(k) for k in (
+                        "bagua_filter_label",
+                        "research_fingerprint",
+                        "signal_fp",
+                        "filter_fp",
+                        "execution_fp",
+                    ) if k in row and row.get(k) is not None}),
                 ),
             )
             conn.execute(

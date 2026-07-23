@@ -16,7 +16,7 @@ from . import db as exp_db
 
 # Soft cap — UI must warn; hard refuse above this unless force=True
 DEFAULT_MAX_VARIANTS = 50
-HARD_MAX_VARIANTS = 200
+HARD_MAX_VARIANTS = 500  # Phase2: soft DEFAULT=50; force required above max_variants; hard refuse >500
 
 # Weekday schedule templates (UI labels → engine fields)
 WEEKDAY_TEMPLATES = {
@@ -89,24 +89,544 @@ GUA_PRESETS = {
 }
 
 
+
+# ---------------------------------------------------------------------------
+# Phase2 free axes (signal / buy / sell independent) + legacy template path
+# Templates in WEEKDAY_TEMPLATES remain presets only; free axes ignore them.
+# ---------------------------------------------------------------------------
+
+_FREE_AXIS_KEYS = (
+    "signal_weekdays_options",
+    "buy_options",
+    "sell_options",
+    "take_profit_list",
+)
+
+
+def _has_free_axes(payload_or_kwargs: dict) -> bool:
+    """True if any independent-axis field is explicitly provided (non-empty)."""
+    for k in _FREE_AXIS_KEYS:
+        if k not in payload_or_kwargs:
+            continue
+        v = payload_or_kwargs.get(k)
+        if v is None:
+            continue
+        if isinstance(v, (list, tuple)) and len(v) == 0:
+            continue
+        return True
+    return False
+
+
+def _normalize_signal_weekdays(val: Any) -> Optional[List[int]]:
+    """None / [] / list of ints — empty list means unrestricted (None)."""
+    if val is None:
+        return None
+    if isinstance(val, (list, tuple)):
+        if len(val) == 0:
+            return None
+        out: List[int] = []
+        for x in val:
+            if x is None:
+                continue
+            out.append(int(x))
+        return out or None
+    return [int(val)]
+
+
+def _resolve_buy_option(opt: dict) -> dict:
+    o = dict(opt or {})
+    buy_on = str(o.get("buy_on") or "open").lower()
+    if buy_on not in ("open", "close"):
+        buy_on = "open"
+    entry_lag = o.get("entry_lag")
+    if entry_lag is None:
+        entry_lag = 1
+    return {
+        "buy_weekday": o.get("buy_weekday"),
+        "buy_on": buy_on,
+        "entry_lag": int(entry_lag),
+        "hold": int(o.get("hold") or 1),
+    }
+
+
+def _resolve_sell_option(opt: dict) -> dict:
+    o = dict(opt or {})
+    sell_on = str(o.get("sell_on") or "open").lower()
+    if sell_on not in ("open", "close"):
+        sell_on = "open"
+    hold = o.get("hold")
+    return {
+        "exit_weekday": o.get("exit_weekday"),
+        "sell_on": sell_on,
+        "hold": int(hold) if hold is not None else None,
+    }
+
+
+def _payload_to_parameter_space(payload: dict):
+    """Build research.ParameterSpace from API/experiment payload. None if research unavailable."""
+    try:
+        from ..research.models import ParameterSpace
+        from ..research.parameter_space import axes_from_legacy_templates
+    except Exception:
+        return None
+
+    axes = {
+        "signal_weekdays_options": payload.get("signal_weekdays_options"),
+        "buy_options": payload.get("buy_options"),
+        "sell_options": payload.get("sell_options"),
+        "take_profit_list": payload.get("take_profit_list"),
+    }
+    use_free = _has_free_axes(axes)
+    rule_ids = list(payload.get("rule_ids") or [])
+    gua_keys = list(payload.get("gua_keys") or ["none"])
+    holiday_policy = payload.get("holiday_policy") or "next_trading_day"
+    period = payload.get("period") or "DAY"
+    codes = payload.get("codes")
+    start = payload.get("start")
+    end = payload.get("end")
+    account_mode = payload.get("account_mode") or "portfolio"
+    research_unadjusted = bool(payload.get("research_unadjusted"))
+    stop_loss_list = payload.get("stop_loss_list")
+    take_profit_list = payload.get("take_profit_list")
+
+    if use_free:
+        sig = payload.get("signal_weekdays_options")
+        if sig is None:
+            signal_weekdays = [None]
+        else:
+            signal_weekdays = list(sig) if sig else [None]
+        buy_modes = list(payload.get("buy_options") or [{"entry_lag": 1, "buy_on": "open"}])
+        sell_modes = list(payload.get("sell_options") or [{"sell_on": "close"}])
+        return ParameterSpace(
+            rule_ids=rule_ids,
+            period=period,
+            signal_weekdays=signal_weekdays,
+            buy_modes=buy_modes,
+            sell_modes=sell_modes,
+            gua_keys=gua_keys,
+            stop_loss_list=list(stop_loss_list if stop_loss_list is not None else [None]),
+            take_profit_list=list(take_profit_list if take_profit_list is not None else [None]),
+            holiday_policy=holiday_policy,
+            codes=list(codes) if codes else None,
+            start=start,
+            end=end,
+            account_mode=account_mode,
+            research_unadjusted=research_unadjusted,
+        )
+
+    # Legacy weekday_keys templates
+    wd = payload.get("weekday_keys") or ["all_signal_tn12"]
+    try:
+        return axes_from_legacy_templates(
+            rule_ids=rule_ids,
+            weekday_keys=list(wd),
+            gua_keys=gua_keys,
+            stop_loss_list=stop_loss_list,
+            take_profit_list=take_profit_list,
+            period=period,
+            codes=codes,
+            start=start,
+            end=end,
+            account_mode=account_mode,
+            research_unadjusted=research_unadjusted,
+            holiday_policy=holiday_policy,
+        )
+    except Exception:
+        return None
+
+
+def _try_research_plan(payload: dict):
+    """If research.planner.plan_experiment is available, prefer it.
+
+    Normalizes planner keys to theoretical/rejected/actual/variants/...
+    """
+    try:
+        from ..research.planner import plan_experiment
+        from ..research.planner import HARD_MAX_VARIANTS as R_HARD
+    except Exception:
+        return None
+    space = _payload_to_parameter_space(payload)
+    if space is None:
+        return None
+    max_v = int(payload.get("max_variants") or DEFAULT_MAX_VARIANTS)
+    force = bool(payload.get("force"))
+    # Align hard max with experiments module for API consistency
+    hard = int(payload.get("hard_max") or HARD_MAX_VARIANTS)
+    try:
+        plan = plan_experiment(space, max_variants=max_v, force=force, hard_max=hard)
+    except Exception:
+        return None
+    if not isinstance(plan, dict):
+        return None
+    # Normalize key names
+    theoretical = int(plan.get("theoretical_count") or plan.get("theoretical") or 0)
+    rejected = int(plan.get("rejected_count") or plan.get("rejected") or 0)
+    actual = int(plan.get("actual_count") or plan.get("actual") or 0)
+    variants = list(plan.get("variants") or [])
+    preview = list(plan.get("preview") or [])
+    reasons = dict(plan.get("rejection_reasons") or {})
+    msg = plan.get("error") or plan.get("message")
+    return {
+        "theoretical": theoretical,
+        "rejected": rejected,
+        "actual": actual,
+        "rejection_reasons": reasons,
+        "variants": variants,
+        "preview": preview,
+        "message": msg,
+        "truncated": plan.get("truncated"),
+        "hard_max": plan.get("hard_max", hard),
+        "max_variants": plan.get("max_variants", max_v),
+        "force": force,
+        "source": "research.planner",
+    }
+
+
+def expand_param_grid_unified(
+    *,
+    rule_ids: Sequence[str],
+    gua_keys: Sequence[str] = ("none",),
+    weekday_keys: Optional[Sequence[str]] = None,
+    stop_loss_list: Optional[Sequence[Optional[float]]] = None,
+    signal_weekdays_options: Optional[Sequence[Any]] = None,
+    buy_options: Optional[Sequence[dict]] = None,
+    sell_options: Optional[Sequence[dict]] = None,
+    take_profit_list: Optional[Sequence[Optional[float]]] = None,
+    holiday_policy: str = "next_trading_day",
+    period: str = "DAY",
+    codes: Optional[Sequence[str]] = None,
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+    account_mode: str = "portfolio",
+    research_unadjusted: bool = False,
+    collect_rejections: bool = False,
+) -> Dict[str, Any]:
+    """Expand grid from free axes OR legacy weekday_keys templates.
+
+    When any free axis is provided, weekday_keys templates are ignored.
+    Returns dict with theoretical/rejected/actual/rejection_reasons/variants.
+    """
+    axes_payload = {
+        "signal_weekdays_options": signal_weekdays_options,
+        "buy_options": buy_options,
+        "sell_options": sell_options,
+        "take_profit_list": take_profit_list,
+    }
+    use_free = _has_free_axes(axes_payload)
+
+    rules = list(rule_ids or [])
+    if not rules:
+        raise ValueError("rule_ids required")
+    guas = list(gua_keys or ["none"])
+    sls = list(stop_loss_list if stop_loss_list is not None else [None])
+    tps = list(take_profit_list if take_profit_list is not None else [None])
+
+    for g in guas:
+        if g not in GUA_PRESETS:
+            raise ValueError(f"unknown gua preset: {g}")
+
+    rejection_reasons: Dict[str, int] = {}
+    variants: List[Dict[str, Any]] = []
+    theoretical = 0
+    rejected = 0
+
+    def _rej(reason: str) -> None:
+        nonlocal rejected
+        rejected += 1
+        rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+
+    base_codes = list(codes) if codes else ["sh600000", "sz000001"]
+
+    if use_free:
+        sig_opts = list(signal_weekdays_options) if signal_weekdays_options is not None else [None]
+        if not sig_opts:
+            sig_opts = [None]
+        buy_opts = list(buy_options) if buy_options is not None else [
+            {"entry_lag": 1, "buy_on": "open"}
+        ]
+        if not buy_opts:
+            buy_opts = [{"entry_lag": 1, "buy_on": "open"}]
+        sell_opts = list(sell_options) if sell_options is not None else [
+            {"sell_on": "close"}
+        ]
+        if not sell_opts:
+            sell_opts = [{"sell_on": "close"}]
+
+        for rule_id, gkey, sig, bopt, sopt, sl, tp in itertools.product(
+            rules, guas, sig_opts, buy_opts, sell_opts, sls, tps
+        ):
+            theoretical += 1
+            g = GUA_PRESETS[gkey]
+            b = _resolve_buy_option(bopt if isinstance(bopt, dict) else {})
+            s = _resolve_sell_option(sopt if isinstance(sopt, dict) else {})
+
+            if isinstance(sig, dict):
+                sw = _normalize_signal_weekdays(sig.get("signal_weekdays"))
+            else:
+                sw = _normalize_signal_weekdays(sig)
+
+            buy_wd = b.get("buy_weekday")
+            exit_wd = s.get("exit_weekday")
+            buy_on = b.get("buy_on") or "open"
+            sell_on = s.get("sell_on") or "open"
+            entry_lag = int(b.get("entry_lag") if b.get("entry_lag") is not None else 1)
+            hold = int(b.get("hold") or s.get("hold") or 1)
+
+            if buy_wd is not None:
+                try:
+                    bw = int(buy_wd)
+                except (TypeError, ValueError):
+                    _rej("invalid_buy_weekday")
+                    continue
+                if bw < 1 or bw > 5:
+                    _rej("buy_weekday_out_of_range")
+                    continue
+                buy_wd = bw
+            if exit_wd is not None:
+                try:
+                    ew = int(exit_wd)
+                except (TypeError, ValueError):
+                    _rej("invalid_exit_weekday")
+                    continue
+                if ew < 1 or ew > 5:
+                    _rej("exit_weekday_out_of_range")
+                    continue
+                exit_wd = ew
+            if entry_lag < 0:
+                _rej("entry_lag_negative")
+                continue
+            if hold < 1:
+                _rej("hold_lt_1")
+                continue
+            if (
+                buy_wd is not None
+                and exit_wd is not None
+                and int(buy_wd) == int(exit_wd)
+                and buy_on == "open"
+                and sell_on == "open"
+                and entry_lag == 0
+            ):
+                _rej("same_day_open_open_entry_lag0")
+                continue
+
+            meta = {
+                "rule_id": rule_id,
+                "gua_key": gkey,
+                "gua_label": g.get("label"),
+                "weekday_key": None,
+                "weekday_label": "free_axes",
+                "stop_loss": sl,
+                "take_profit": tp,
+                "holiday_policy": holiday_policy,
+                "signal_weekdays": sw,
+                "buy_option": bopt if isinstance(bopt, dict) else {},
+                "sell_option": sopt if isinstance(sopt, dict) else {},
+            }
+            params: Dict[str, Any] = {
+                "rule_ids": [rule_id],
+                "period": period,
+                "account_mode": account_mode,
+                "codes": list(base_codes),
+                "start": start,
+                "end": end,
+                "research_unadjusted": bool(research_unadjusted),
+                "hold": hold,
+                "entry_lag": entry_lag,
+                "buy_weekday": buy_wd,
+                "exit_weekday": exit_wd,
+                "signal_weekdays": sw,
+                "buy_on": buy_on,
+                "sell_on": sell_on,
+                "with_bagua": g.get("with_bagua", False),
+                "gua_filter": dict(g.get("gua_filter") or {}),
+                "stop_loss": sl,
+                "take_profit": tp,
+                "holiday_policy": holiday_policy,
+                "_meta": meta,
+            }
+            variants.append(params)
+    else:
+        wds = list(weekday_keys or ["all_signal_tn12"])
+        for w in wds:
+            if w not in WEEKDAY_TEMPLATES:
+                raise ValueError(f"unknown weekday template: {w}")
+        for rule_id, gkey, wkey, sl, tp in itertools.product(rules, guas, wds, sls, tps):
+            theoretical += 1
+            g = GUA_PRESETS[gkey]
+            w = WEEKDAY_TEMPLATES[wkey]
+            params = {
+                "rule_ids": [rule_id],
+                "period": period,
+                "account_mode": account_mode,
+                "codes": list(base_codes),
+                "start": start,
+                "end": end,
+                "research_unadjusted": bool(research_unadjusted),
+                "hold": w.get("hold", 1),
+                "entry_lag": w.get("entry_lag", 1),
+                "buy_weekday": w.get("buy_weekday"),
+                "exit_weekday": w.get("exit_weekday"),
+                "signal_weekdays": w.get("signal_weekdays"),
+                "buy_on": w.get("buy_on", "open"),
+                "sell_on": w.get("sell_on", "open"),
+                "with_bagua": g.get("with_bagua", False),
+                "gua_filter": dict(g.get("gua_filter") or {}),
+                "stop_loss": sl,
+                "take_profit": tp,
+                "holiday_policy": holiday_policy,
+                "_meta": {
+                    "rule_id": rule_id,
+                    "gua_key": gkey,
+                    "gua_label": g.get("label"),
+                    "weekday_key": wkey,
+                    "weekday_label": w.get("label"),
+                    "stop_loss": sl,
+                    "take_profit": tp,
+                    "holiday_policy": holiday_policy,
+                },
+            }
+            variants.append(params)
+
+    actual = len(variants)
+    return {
+        "theoretical": theoretical,
+        "rejected": rejected,
+        "actual": actual,
+        "rejection_reasons": rejection_reasons,
+        "variants": variants,
+    }
+
+
+def estimate_grid_from_payload(payload: dict) -> dict:
+    """Unified estimate / preview for legacy templates OR free axes.
+
+    Prefers research.planner.plan_experiment when available; otherwise local
+    expand_param_grid_unified. Returns theoretical/rejected/actual plus UI
+    aliases estimated_variants/n/count.
+    """
+    max_v = int(payload.get("max_variants") or DEFAULT_MAX_VARIANTS)
+    force = bool(payload.get("force"))
+    hard = HARD_MAX_VARIANTS
+
+    research_plan = _try_research_plan(payload)
+    if isinstance(research_plan, dict) and research_plan.get("source") == "research.planner":
+        theoretical = int(research_plan.get("theoretical") or 0)
+        rejected = int(research_plan.get("rejected") or 0)
+        variants = list(research_plan.get("variants") or [])
+        actual = int(research_plan.get("actual") or len(variants))
+        reasons = dict(research_plan.get("rejection_reasons") or {})
+        preview = list(research_plan.get("preview") or variants[:50])
+        msg = research_plan.get("message")
+        hard = int(research_plan.get("hard_max") or hard)
+    else:
+        plan = expand_param_grid_unified(
+            rule_ids=payload.get("rule_ids") or [],
+            gua_keys=payload.get("gua_keys") or ["none"],
+            weekday_keys=payload.get("weekday_keys"),
+            stop_loss_list=payload.get("stop_loss_list"),
+            signal_weekdays_options=payload.get("signal_weekdays_options"),
+            buy_options=payload.get("buy_options"),
+            sell_options=payload.get("sell_options"),
+            take_profit_list=payload.get("take_profit_list"),
+            holiday_policy=payload.get("holiday_policy") or "next_trading_day",
+            period=payload.get("period") or "DAY",
+            codes=payload.get("codes"),
+            start=payload.get("start"),
+            end=payload.get("end"),
+            account_mode=payload.get("account_mode") or "portfolio",
+            research_unadjusted=bool(payload.get("research_unadjusted")),
+            collect_rejections=True,
+        )
+        theoretical = int(plan["theoretical"])
+        rejected = int(plan["rejected"])
+        actual = int(plan["actual"])
+        reasons = dict(plan.get("rejection_reasons") or {})
+        preview = list(plan.get("variants") or [])[:50]
+        msg = None
+
+    ok = True
+    if actual > hard:
+        ok = False
+        msg = msg or ("组合数 %s 超过硬顶 %s" % (actual, hard))
+    elif actual > max_v and not force:
+        ok = False
+        msg = msg or (
+            "组合数 %s 超过上限 max_variants=%s；请缩小空间或提高 max_variants，或 force=true（硬顶 %s）"
+            % (actual, max_v, hard)
+        )
+    elif actual > max_v and force:
+        msg = msg or ("force=true：允许 %s 组（上限 %s，硬顶 %s）" % (actual, max_v, hard))
+    elif actual > 20:
+        msg = msg or ("组合数 %s 较大，建议先用演示池试跑" % actual)
+
+    if rejected and theoretical:
+        soft = "理论 %s，过滤 %s，实际 %s" % (theoretical, rejected, actual)
+        msg = ("%s；%s" % (msg, soft)) if msg else soft
+
+    return {
+        "theoretical": theoretical,
+        "rejected": rejected,
+        "actual": actual,
+        "rejection_reasons": reasons,
+        "preview": preview,
+        "max_variants": max_v,
+        "hard_max": hard,
+        "ok": ok,
+        "message": msg,
+        "estimated_variants": actual,
+        "n": actual,
+        "count": actual,
+        "exceeds_soft_cap": actual > max_v,
+        "warning": msg if actual > max_v or (actual > 20) else None,
+        "force": force,
+        "mode": "free_axes" if _has_free_axes(payload) else "legacy_templates",
+    }
+
+
 def estimate_grid_size(
     rule_ids: Sequence[str],
     gua_keys: Sequence[str],
     weekday_keys: Sequence[str],
     stop_loss_list: Optional[Sequence[Optional[float]]] = None,
+    *,
+    take_profit_list: Optional[Sequence[Optional[float]]] = None,
+    signal_weekdays_options: Optional[Sequence[Any]] = None,
+    buy_options: Optional[Sequence[dict]] = None,
+    sell_options: Optional[Sequence[dict]] = None,
 ) -> int:
+    """Legacy-compatible count; free axes use product of independent options.
+
+    Does not apply constraint filtering (use estimate_grid_from_payload).
+    Caps: DEFAULT_MAX_VARIANTS=50 soft; HARD_MAX_VARIANTS=500 hard.
+    """
+    axes = {
+        "signal_weekdays_options": signal_weekdays_options,
+        "buy_options": buy_options,
+        "sell_options": sell_options,
+        "take_profit_list": take_profit_list,
+    }
+    if _has_free_axes(axes):
+        n_rules = max(1, len(list(rule_ids or [])))
+        n_gua = max(1, len(list(gua_keys or ["none"])))
+        n_sig = max(1, len(list(signal_weekdays_options if signal_weekdays_options is not None else [None])))
+        n_buy = max(1, len(list(buy_options if buy_options is not None else [{}])))
+        n_sell = max(1, len(list(sell_options if sell_options is not None else [{}])))
+        n_sl = max(1, len(list(stop_loss_list if stop_loss_list is not None else [None])))
+        n_tp = max(1, len(list(take_profit_list if take_profit_list is not None else [None])))
+        return n_rules * n_gua * n_sig * n_buy * n_sell * n_sl * n_tp
     n_rules = max(1, len(list(rule_ids or [])))
     n_gua = max(1, len(list(gua_keys or ["none"])))
     n_wd = max(1, len(list(weekday_keys or ["all_signal_tn12"])))
     n_sl = max(1, len(list(stop_loss_list if stop_loss_list is not None else [None])))
-    return n_rules * n_gua * n_wd * n_sl
+    n_tp = max(1, len(list(take_profit_list if take_profit_list is not None else [None])))
+    return n_rules * n_gua * n_wd * n_sl * n_tp
 
 
 def expand_param_grid(
     *,
     rule_ids: Sequence[str],
     gua_keys: Sequence[str],
-    weekday_keys: Sequence[str],
+    weekday_keys: Sequence[str] = ("all_signal_tn12",),
     stop_loss_list: Optional[Sequence[Optional[float]]] = None,
     period: str = "DAY",
     codes: Optional[Sequence[str]] = None,
@@ -114,57 +634,37 @@ def expand_param_grid(
     end: Optional[int] = None,
     account_mode: str = "portfolio",
     research_unadjusted: bool = False,
+    signal_weekdays_options: Optional[Sequence[Any]] = None,
+    buy_options: Optional[Sequence[dict]] = None,
+    sell_options: Optional[Sequence[dict]] = None,
+    take_profit_list: Optional[Sequence[Optional[float]]] = None,
+    holiday_policy: str = "next_trading_day",
 ) -> List[Dict[str, Any]]:
-    """Cartesian product of research axes → list of BacktestRequest-like dicts."""
-    rules = list(rule_ids or [])
-    if not rules:
-        raise ValueError("rule_ids required")
-    guas = list(gua_keys or ["none"])
-    wds = list(weekday_keys or ["all_signal_tn12"])
-    sls = list(stop_loss_list if stop_loss_list is not None else [None])
+    """Cartesian product of research axes -> list of BacktestRequest-like dicts.
 
-    for g in guas:
-        if g not in GUA_PRESETS:
-            raise ValueError(f"unknown gua preset: {g}")
-    for w in wds:
-        if w not in WEEKDAY_TEMPLATES:
-            raise ValueError(f"unknown weekday template: {w}")
+    Free axes take precedence over weekday_keys templates when provided.
+    """
+    plan = expand_param_grid_unified(
+        rule_ids=rule_ids,
+        gua_keys=gua_keys,
+        weekday_keys=weekday_keys,
+        stop_loss_list=stop_loss_list,
+        signal_weekdays_options=signal_weekdays_options,
+        buy_options=buy_options,
+        sell_options=sell_options,
+        take_profit_list=take_profit_list,
+        holiday_policy=holiday_policy,
+        period=period,
+        codes=codes,
+        start=start,
+        end=end,
+        account_mode=account_mode,
+        research_unadjusted=research_unadjusted,
+        collect_rejections=False,
+    )
+    return list(plan["variants"])
 
-    out: List[Dict[str, Any]] = []
-    for rule_id, gkey, wkey, sl in itertools.product(rules, guas, wds, sls):
-        g = GUA_PRESETS[gkey]
-        w = WEEKDAY_TEMPLATES[wkey]
-        params: Dict[str, Any] = {
-            "rule_ids": [rule_id],
-            "period": period,
-            "account_mode": account_mode,
-            "codes": list(codes) if codes else ["sh600000", "sz000001"],
-            "start": start,
-            "end": end,
-            "research_unadjusted": bool(research_unadjusted),
-            "hold": w.get("hold", 1),
-            "entry_lag": w.get("entry_lag", 1),
-            "buy_weekday": w.get("buy_weekday"),
-            "exit_weekday": w.get("exit_weekday"),
-            "signal_weekdays": w.get("signal_weekdays"),
-            "buy_on": w.get("buy_on", "open"),
-            "sell_on": w.get("sell_on", "open"),
-            "with_bagua": g.get("with_bagua", False),
-            "gua_filter": dict(g.get("gua_filter") or {}),
-            "stop_loss": sl,
-            "take_profit": None,
-            # labels for result table
-            "_meta": {
-                "rule_id": rule_id,
-                "gua_key": gkey,
-                "gua_label": g.get("label"),
-                "weekday_key": wkey,
-                "weekday_label": w.get("label"),
-                "stop_loss": sl,
-            },
-        }
-        out.append(params)
-    return out
+
 
 
 def create_experiment_from_grid(
@@ -173,7 +673,7 @@ def create_experiment_from_grid(
     name: str,
     rule_ids: Sequence[str],
     gua_keys: Sequence[str],
-    weekday_keys: Sequence[str],
+    weekday_keys: Optional[Sequence[str]] = None,
     stop_loss_list: Optional[Sequence[Optional[float]]] = None,
     period: str = "DAY",
     codes: Optional[Sequence[str]] = None,
@@ -185,37 +685,145 @@ def create_experiment_from_grid(
     concurrency: int = 1,
     force: bool = False,
     note: str = "",
+    signal_weekdays_options: Optional[Sequence[Any]] = None,
+    buy_options: Optional[Sequence[dict]] = None,
+    sell_options: Optional[Sequence[dict]] = None,
+    take_profit_list: Optional[Sequence[Optional[float]]] = None,
+    holiday_policy: str = "next_trading_day",
+    engine: str = "fast",
+    artifact_level: str = "summary",
+    use_signal_cache: bool = True,
+    promote_top_n: int = 3,
+    promote_metric: str = "total_return",
 ) -> Dict[str, Any]:
-    cfg = cfg or get_default_config()
-    n = estimate_grid_size(rule_ids, gua_keys, weekday_keys, stop_loss_list)
-    warning = None
-    if n > max_variants and not force:
-        raise ValueError(
-            f"组合数 {n} 超过上限 max_variants={max_variants}；"
-            f"请缩小空间或提高 max_variants，或 force=true（硬顶 {HARD_MAX_VARIANTS}）"
-        )
-    if n > HARD_MAX_VARIANTS:
-        raise ValueError(f"组合数 {n} 超过硬顶 {HARD_MAX_VARIANTS}")
-    if n > 20:
-        warning = f"组合数 {n} 较大，建议先用演示池试跑"
+    """Create experiment from legacy weekday_keys templates OR free axes.
 
-    variants = expand_param_grid(
-        rule_ids=rule_ids,
-        gua_keys=gua_keys,
-        weekday_keys=weekday_keys,
-        stop_loss_list=stop_loss_list,
-        period=period,
-        codes=codes,
-        start=start,
-        end=end,
-        account_mode=account_mode,
-        research_unadjusted=research_unadjusted,
-    )
+    Phase-3 defaults: engine=fast, artifact_level=summary, use_signal_cache=True
+    so large grids screen quickly; promote winners with engine=full later.
+
+    Templates are presets only: when any free axis is provided, weekday_keys
+    are ignored. Caps: DEFAULT_MAX_VARIANTS=50 soft; HARD_MAX_VARIANTS=500.
+    force=True required to exceed max_variants; hard max always refuses.
+    """
+    cfg = cfg or get_default_config()
+    axes = {
+        "signal_weekdays_options": signal_weekdays_options,
+        "buy_options": buy_options,
+        "sell_options": sell_options,
+        "take_profit_list": take_profit_list,
+    }
+    use_free = _has_free_axes(axes)
+    wd_keys = list(weekday_keys) if weekday_keys is not None else ["all_signal_tn12"]
+
+    payload = {
+        "rule_ids": list(rule_ids),
+        "gua_keys": list(gua_keys),
+        "weekday_keys": None if use_free else wd_keys,
+        "stop_loss_list": stop_loss_list,
+        "signal_weekdays_options": signal_weekdays_options,
+        "buy_options": buy_options,
+        "sell_options": sell_options,
+        "take_profit_list": take_profit_list,
+        "holiday_policy": holiday_policy,
+        "period": period,
+        "codes": codes,
+        "start": start,
+        "end": end,
+        "account_mode": account_mode,
+        "research_unadjusted": research_unadjusted,
+        "max_variants": max_variants,
+        "force": force,
+        "hard_max": HARD_MAX_VARIANTS,
+    }
+
+    research_plan = _try_research_plan(payload)
+    if research_plan and research_plan.get("source") == "research.planner":
+        variants = list(research_plan.get("variants") or [])
+        n = int(research_plan.get("actual") or len(variants))
+        theoretical = research_plan.get("theoretical")
+        rejected = research_plan.get("rejected")
+        rejection_reasons = research_plan.get("rejection_reasons")
+        # When planner truncates (error set) without force, refuse create
+        if research_plan.get("message") and not variants and n > max_variants and not force:
+            raise ValueError(
+                "组合数 %s 超过上限 max_variants=%s；请缩小空间或提高 max_variants，或 force=true（硬顶 %s）"
+                % (n, max_variants, HARD_MAX_VARIANTS)
+            )
+        if n > max_variants and not force:
+            raise ValueError(
+                "组合数 %s 超过上限 max_variants=%s；请缩小空间或提高 max_variants，或 force=true（硬顶 %s）"
+                % (n, max_variants, HARD_MAX_VARIANTS)
+            )
+        if n > HARD_MAX_VARIANTS:
+            raise ValueError("组合数 %s 超过硬顶 %s" % (n, HARD_MAX_VARIANTS))
+        # If truncated due to cap, variants may be empty — expand via force path already handled
+        if not variants and n > 0:
+            # re-plan with force to materialize for storage only if user forced
+            if force:
+                payload["force"] = True
+                research_plan = _try_research_plan(payload) or research_plan
+                variants = list(research_plan.get("variants") or [])
+                n = int(research_plan.get("actual") or len(variants))
+            else:
+                raise ValueError(
+                    "组合数 %s 超过上限 max_variants=%s；请缩小空间或 force=true（硬顶 %s）"
+                    % (n, max_variants, HARD_MAX_VARIANTS)
+                )
+    else:
+        plan = expand_param_grid_unified(
+            rule_ids=rule_ids,
+            gua_keys=gua_keys,
+            weekday_keys=None if use_free else wd_keys,
+            stop_loss_list=stop_loss_list,
+            signal_weekdays_options=signal_weekdays_options,
+            buy_options=buy_options,
+            sell_options=sell_options,
+            take_profit_list=take_profit_list,
+            holiday_policy=holiday_policy,
+            period=period,
+            codes=codes,
+            start=start,
+            end=end,
+            account_mode=account_mode,
+            research_unadjusted=research_unadjusted,
+            collect_rejections=True,
+        )
+        variants = list(plan["variants"])
+        n = int(plan["actual"])
+        theoretical = plan.get("theoretical")
+        rejected = plan.get("rejected")
+        rejection_reasons = plan.get("rejection_reasons")
+        if n > max_variants and not force:
+            raise ValueError(
+                "组合数 %s 超过上限 max_variants=%s；请缩小空间或提高 max_variants，或 force=true（硬顶 %s）"
+                % (n, max_variants, HARD_MAX_VARIANTS)
+            )
+        if n > HARD_MAX_VARIANTS:
+            raise ValueError("组合数 %s 超过硬顶 %s" % (n, HARD_MAX_VARIANTS))
+
+    warning = None
+    if n > 20:
+        warning = "组合数 %s 较大，建议先用演示池试跑" % n
+
     config = {
         "rule_ids": list(rule_ids),
         "gua_keys": list(gua_keys),
-        "weekday_keys": list(weekday_keys),
+        "weekday_keys": [] if use_free else wd_keys,
+        "weekday_keys_note": "templates are presets only; ignored when free axes provided",
         "stop_loss_list": list(stop_loss_list) if stop_loss_list is not None else [None],
+        "take_profit_list": list(take_profit_list) if take_profit_list is not None else [None],
+        "signal_weekdays_options": list(signal_weekdays_options)
+        if signal_weekdays_options is not None
+        else None,
+        "buy_options": list(buy_options) if buy_options is not None else None,
+        "sell_options": list(sell_options) if sell_options is not None else None,
+        "holiday_policy": holiday_policy,
+        "engine": (engine or "fast").strip().lower(),
+        "artifact_level": (artifact_level or "summary").strip().lower(),
+        "use_signal_cache": bool(use_signal_cache),
+        "promote_top_n": int(promote_top_n or 0),
+        "promote_metric": str(promote_metric or "total_return"),
+        "mode": "free_axes" if use_free else "legacy_templates",
         "period": period,
         "codes": list(codes) if codes else ["sh600000", "sz000001"],
         "start": start,
@@ -223,19 +831,28 @@ def create_experiment_from_grid(
         "account_mode": account_mode,
         "research_unadjusted": research_unadjusted,
         "estimated": n,
+        "theoretical": theoretical,
+        "rejected": rejected,
+        "rejection_reasons": rejection_reasons,
         "warning": warning,
     }
+    note_parts = [note or ""]
+    if use_free:
+        note_parts.append("[free_axes; weekday templates ignored]")
     exp = exp_db.create_experiment(
         cfg,
-        name=name or f"实验·{n}组合",
+        name=name or ("实验·%s组合" % n),
         config=config,
         variants=variants,
         max_variants=max_variants,
         concurrency=concurrency,
-        note=note or "",
+        note=" ".join(x for x in note_parts if x).strip(),
     )
     if warning:
         exp["warning"] = warning
+    exp["theoretical"] = theoretical
+    exp["rejected"] = rejected
+    exp["actual"] = n
     return exp
 
 
@@ -283,16 +900,66 @@ class ExperimentRunner:
         params = dict(variant.get("params") or {})
         meta = params.pop("_meta", None)
         ph = variant.get("param_hash") or exp_db.param_hash(params)
-        # de-dup
+        # research fingerprint is metadata only; param_hash dedup stays param-only
+        research_fp = None
+        try:
+            from ..research.fingerprint import research_fingerprint_from_params
+            research_fp = research_fingerprint_from_params(params).full_hex(16)
+        except Exception:
+            research_fp = None
+        # de-dup: only skip if prior run has real activity (signals/trades).
+        # Empty historical runs (0 trades / 0 signals) must be re-executed.
         existing = exp_db.find_run_id_by_param_hash(self.cfg, ph)
         if existing:
-            exp_db.update_variant(
-                self.cfg, vid, status="skipped", run_id=existing, error="param_hash dedup"
-            )
-            return vid, "skipped", existing, None
+            reuse = True
+            try:
+                from .runs import load_run_summary
+                prev = load_run_summary(self.cfg, existing) or {}
+                pm = prev.get("metrics") if isinstance(prev.get("metrics"), dict) else {}
+                if not pm and isinstance(prev.get("summary"), dict):
+                    pm = (prev.get("summary") or {}).get("metrics") or {}
+                n_tr = pm.get("n_trades")
+                if n_tr is None:
+                    n_tr = pm.get("n_round_trips")
+                if n_tr is None:
+                    n_tr = pm.get("n_buys")
+                n_sig = pm.get("n_signals_fast")
+                if n_sig is None:
+                    n_sig = pm.get("n_events")
+                if n_sig is None:
+                    n_sig = pm.get("n_signals_after_bagua")
+                # reuse only when we have evidence of a non-empty or intentional run
+                empty = (n_tr is None or int(n_tr or 0) == 0) and (n_sig is None or int(n_sig or 0) == 0)
+                # if metrics missing entirely, also re-run
+                if not pm or empty:
+                    reuse = False
+            except Exception:
+                reuse = True  # keep old skip behavior if summary unreadable
+            if reuse:
+                exp_db.update_variant(
+                    self.cfg, vid, status="skipped", run_id=existing, error="param_hash dedup"
+                )
+                return vid, "skipped", existing, None
+            # fall through to re-run with a fresh run_id
 
         exp_db.update_variant(self.cfg, vid, status="running")
         try:
+            # Experiment-level defaults (Phase-3): fast screen + summary artifacts + cache
+            exp_row = exp_db.get_experiment(self.cfg, experiment_id)
+            exp_cfg = dict(exp_row.get("config") or {})
+            eng = (
+                params.get("engine")
+                or exp_cfg.get("engine")
+                or "fast"
+            )
+            art = (
+                params.get("artifact_level")
+                or exp_cfg.get("artifact_level")
+                or "summary"
+            )
+            use_cache = params.get("use_signal_cache")
+            if use_cache is None:
+                use_cache = exp_cfg.get("use_signal_cache", True)
             req = BacktestRequest(
                 rule_ids=list(params.get("rule_ids") or []),
                 period=params.get("period") or "DAY",
@@ -312,6 +979,12 @@ class ExperimentRunner:
                 stop_loss=params.get("stop_loss"),
                 take_profit=params.get("take_profit"),
                 account_mode=params.get("account_mode") or "portfolio",
+                engine=str(eng or "fast"),
+                artifact_level=str(art or "summary"),
+                use_signal_cache=bool(use_cache),
+                holiday_policy=params.get("holiday_policy")
+                or exp_cfg.get("holiday_policy")
+                or "next_trading_day",
             )
             svc = BacktestService(self.cfg)
             summary = svc.run(req)
@@ -343,6 +1016,8 @@ class ExperimentRunner:
                             "gua_filter": summary.get("gua_filter") or params.get("gua_filter"),
                             "metrics": summary.get("metrics"),
                             "param_hash": ph,
+                            "research_fingerprint": research_fp
+                            or (summary.get("research_fingerprint") if isinstance(summary, dict) else None),
                             "experiment_id": experiment_id,
                             "variant_id": vid,
                         },
@@ -415,12 +1090,72 @@ class ExperimentRunner:
                 failed_variants=failed,
                 skipped_variants=skipped,
             )
+            if final == "completed" and not self.is_cancelled(experiment_id):
+                try:
+                    self._promote_top_n_full(experiment_id)
+                except Exception:
+                    pass
         except Exception as e:
             exp_db.update_experiment_status(
                 self.cfg, experiment_id, "failed"
             )
             # best-effort
             _ = e
+
+    def _promote_top_n_full(self, experiment_id: str) -> None:
+        """Re-run top-N variants with engine=full + artifact_level=full (Phase-3)."""
+        exp = exp_db.get_experiment(self.cfg, experiment_id)
+        conf = dict(exp.get("config") or {})
+        top_n = int(conf.get("promote_top_n") or 0)
+        if top_n <= 0:
+            return
+        metric = str(conf.get("promote_metric") or "total_return")
+        table = exp_db.experiment_results_table(self.cfg, experiment_id)
+        rows = list(table.get("rows") or [])
+        scored = []
+        for row in rows:
+            if row.get("status") != "succeeded":
+                continue
+            m = row.get("metrics") or {}
+            val = m.get(metric)
+            if val is None:
+                continue
+            try:
+                scored.append((float(val), row))
+            except (TypeError, ValueError):
+                continue
+        if not scored:
+            return
+        scored.sort(key=lambda x: x[0], reverse=True)
+        winners = scored[:top_n]
+        for rank, (_score, row) in enumerate(winners, 1):
+            if self.is_cancelled(experiment_id):
+                break
+            params = dict(row.get("params") or {})
+            params.pop("_meta", None)
+            params["engine"] = "full"
+            params["artifact_level"] = "full"
+            params["use_signal_cache"] = conf.get("use_signal_cache", True)
+            vid = str(row.get("variant_id") or ("promote_%s" % rank))
+            variant = {
+                "variant_id": "%s__full" % vid,
+                "params": params,
+                "param_hash": None,
+                "status": "pending",
+            }
+            try:
+                _vid, st, rid, err = self._run_one(experiment_id, variant)
+                exp_db.update_variant(
+                    self.cfg,
+                    _vid,
+                    status=st,
+                    run_id=rid,
+                    error=(err[:500] if err else None),
+                )
+            except Exception:
+                continue
+
+
 
 
 _RUNNER: Optional[ExperimentRunner] = None
@@ -435,8 +1170,68 @@ def get_runner(cfg: Optional[AStockConfig] = None) -> ExperimentRunner:
         return _RUNNER
 
 
+def build_experiment_matrix_rows(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalize experiment result rows for ``build_result_matrix``.
+
+    Extracts ``exit_weekday``, ``sell_on``, ``gua_key`` from params/_meta and
+    flattens metrics (``total_return``, ``max_drawdown``, ...) onto each row.
+    Rows missing required axes are skipped.
+    """
+    out: List[Dict[str, Any]] = []
+    for row in rows or []:
+        p = dict(row.get("params") or {})
+        meta = dict(p.get("_meta") or {})
+        m = dict(row.get("metrics") or {})
+
+        exit_wd = p.get("exit_weekday")
+        if exit_wd is None:
+            exit_wd = meta.get("exit_weekday")
+        sell_on = p.get("sell_on")
+        if sell_on is None:
+            sell_on = meta.get("sell_on")
+        gua_key = meta.get("gua_key")
+        if gua_key is None:
+            gua_key = p.get("gua_key")
+        if gua_key is None:
+            gua_key = "none"
+
+        if exit_wd is None or sell_on is None:
+            continue
+        try:
+            exit_wd_i = int(exit_wd)
+        except (TypeError, ValueError):
+            continue
+
+        flat: Dict[str, Any] = {
+            "exit_weekday": exit_wd_i,
+            "sell_on": str(sell_on),
+            "gua_key": str(gua_key),
+            "variant_id": row.get("variant_id"),
+            "status": row.get("status"),
+            "run_id": row.get("run_id"),
+            "param_hash": row.get("param_hash"),
+            "id": row.get("variant_id") or row.get("param_hash"),
+        }
+        for k, v in m.items():
+            flat[k] = v
+        # also expose nested metrics for evaluate_trials
+        flat["metrics"] = m
+        out.append(flat)
+    return out
+
+
+def _append_matrix_sheet(wb, sheet_title: str, matrix: Dict[str, Any]) -> None:
+    """Write one matrix table sheet: exit_weekday, sell_on, then gua columns."""
+    ws = wb.create_sheet(sheet_title)
+    cols = list(matrix.get("columns") or [])
+    headers = ["exit_weekday", "sell_on"] + cols
+    ws.append(headers)
+    for entry in matrix.get("table") or []:
+        ws.append([entry.get(h) for h in headers])
+
+
 def write_experiment_excel(cfg: AStockConfig, experiment_id: str, path=None):
-    """Write a simple results workbook for the experiment."""
+    """Write a results workbook for the experiment (summary + optional matrix/evaluate)."""
     from pathlib import Path
 
     try:
@@ -444,7 +1239,10 @@ def write_experiment_excel(cfg: AStockConfig, experiment_id: str, path=None):
     except ImportError as e:
         raise RuntimeError("openpyxl required for experiment excel") from e
 
+    from ..research.matrix import build_result_matrix
+
     table = exp_db.experiment_results_table(cfg, experiment_id)
+    raw_rows = list(table.get("rows") or [])
     out = Path(path) if path else Path(cfg.output_root) / experiment_id / "experiment_summary.xlsx"
     out.parent.mkdir(parents=True, exist_ok=True)
     wb = Workbook()
@@ -468,7 +1266,7 @@ def write_experiment_excel(cfg: AStockConfig, experiment_id: str, path=None):
         "error",
     ]
     ws.append(headers)
-    for row in table.get("rows") or []:
+    for row in raw_rows:
         p = row.get("params") or {}
         meta = p.get("_meta") or {}
         m = row.get("metrics") or {}
@@ -491,5 +1289,81 @@ def write_experiment_excel(cfg: AStockConfig, experiment_id: str, path=None):
                 row.get("error"),
             ]
         )
+
+    # Matrix sheet(s) when rows carry exit_weekday + sell_on + gua
+    matrix_rows = build_experiment_matrix_rows(raw_rows)
+    if matrix_rows:
+        m_ret = build_result_matrix(matrix_rows, metric_key="total_return")
+        if m_ret.get("table"):
+            _append_matrix_sheet(wb, "matrix", m_ret)
+        # Second sheet when max_drawdown is present on any row
+        if any(r.get("max_drawdown") is not None for r in matrix_rows):
+            m_dd = build_result_matrix(matrix_rows, metric_key="max_drawdown")
+            if m_dd.get("table"):
+                _append_matrix_sheet(wb, "matrix_max_drawdown", m_dd)
+
+    # Optional evaluate sheet from succeeded trials
+    succeeded = [r for r in matrix_rows if r.get("total_return") is not None]
+    status_ok = [
+        r
+        for r in matrix_rows
+        if str(r.get("status") or "").lower()
+        in ("succeeded", "success", "done", "ok", "completed")
+    ]
+    if len(status_ok) >= 2:
+        trial_src = status_ok
+    elif len(succeeded) >= 2:
+        trial_src = succeeded
+    else:
+        trial_src = []
+
+    if trial_src:
+        try:
+            from ..research.evaluation import evaluate_trials
+
+            ev = evaluate_trials(trial_src)
+            ranking = list(ev.get("ranking") or [])
+            if ranking:
+                ws_ev = wb.create_sheet("evaluate")
+                rank_headers = [
+                    "rank",
+                    "id",
+                    "composite",
+                    "total_return",
+                    "max_drawdown",
+                    "win_rate",
+                    "n_round_trips",
+                    "exit_weekday",
+                    "sell_on",
+                    "gua_key",
+                    "hard_ok",
+                ]
+                ws_ev.append(rank_headers)
+                for i, r in enumerate(ranking[:50], 1):
+                    tid = (
+                        r.get("id")
+                        or r.get("variant_id")
+                        or r.get("trial_id")
+                        or r.get("param_hash")
+                    )
+                    ws_ev.append(
+                        [
+                            i,
+                            tid,
+                            r.get("_composite") or r.get("composite"),
+                            r.get("total_return"),
+                            r.get("max_drawdown"),
+                            r.get("win_rate"),
+                            r.get("n_round_trips") or r.get("n_trades"),
+                            r.get("exit_weekday"),
+                            r.get("sell_on"),
+                            r.get("gua_key"),
+                            r.get("_hard_ok"),
+                        ]
+                    )
+        except Exception:
+            # evaluate is best-effort; summary/matrix still useful
+            pass
+
     wb.save(out)
     return out

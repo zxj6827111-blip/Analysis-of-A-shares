@@ -5,10 +5,81 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import date as _date
+from datetime import timedelta
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 from .tdx_reader import parse_day_file
+
+# Holiday / non-session resolution when a planned calendar date is not a trading day.
+HOLIDAY_POLICY_NEXT = "next_trading_day"
+HOLIDAY_POLICY_PREV = "previous_trading_day"
+HOLIDAY_POLICY_SKIP = "skip_trade"
+HOLIDAY_POLICY_EXACT = "exact_weekday_only"
+
+DEFAULT_HOLIDAY_POLICY = HOLIDAY_POLICY_NEXT
+
+KNOWN_HOLIDAY_POLICIES = (
+    HOLIDAY_POLICY_NEXT,
+    HOLIDAY_POLICY_PREV,
+    HOLIDAY_POLICY_SKIP,
+    HOLIDAY_POLICY_EXACT,
+)
+
+
+def normalize_holiday_policy(value: Optional[str], *, default: str = DEFAULT_HOLIDAY_POLICY) -> str:
+    if value is None or str(value).strip() == "":
+        return default
+    p = str(value).strip().lower()
+    aliases = {
+        "next": HOLIDAY_POLICY_NEXT,
+        "forward": HOLIDAY_POLICY_NEXT,
+        "roll_forward": HOLIDAY_POLICY_NEXT,
+        "prev": HOLIDAY_POLICY_PREV,
+        "previous": HOLIDAY_POLICY_PREV,
+        "roll_back": HOLIDAY_POLICY_PREV,
+        "skip": HOLIDAY_POLICY_SKIP,
+        "cancel": HOLIDAY_POLICY_SKIP,
+        "exact": HOLIDAY_POLICY_EXACT,
+        "exact_only": HOLIDAY_POLICY_EXACT,
+    }
+    p = aliases.get(p, p)
+    if p not in KNOWN_HOLIDAY_POLICIES:
+        raise ValueError(
+            "holiday_policy must be one of %s, got %r" % (KNOWN_HOLIDAY_POLICIES, value)
+        )
+    return p
+
+
+def yyyymmdd_to_date(d: int) -> _date:
+    d = int(d)
+    return _date(d // 10000, (d // 100) % 100, d % 100)
+
+
+def date_to_yyyymmdd(d: _date) -> int:
+    return d.year * 10000 + d.month * 100 + d.day
+
+
+def first_calendar_date_on_weekday(
+    after_date: int, weekday: int, *, strict: bool = True
+) -> int:
+    """First civil calendar date with ISO weekday (1=Mon..7=Sun).
+
+    Unlike trading-day search, this returns the *planned* weekday even if that
+    civil day is a market holiday (so holiday_policy can shift it).
+    """
+    weekday = int(weekday)
+    if weekday < 1 or weekday > 7:
+        raise ValueError("weekday must be 1..7, got %s" % weekday)
+    d = yyyymmdd_to_date(int(after_date))
+    if strict:
+        d = d + timedelta(days=1)
+    # at most 7 steps to hit target weekday
+    for _ in range(8):
+        if d.isoweekday() == weekday:
+            return date_to_yyyymmdd(d)
+        d = d + timedelta(days=1)
+    raise RuntimeError("unreachable weekday search")
 
 
 @dataclass
@@ -28,9 +99,18 @@ class TradeCalendar:
     def next_trading_day(self, date: int) -> Optional[int]:
         """First trading day strictly after date."""
         date = int(date)
-        # binary-ish via linear since list is not huge
         for d in self.dates:
             if d > date:
+                return d
+        return None
+
+    def first_trading_day_on_or_after(self, date: int) -> Optional[int]:
+        """First trading day with d >= date."""
+        date = int(date)
+        if date in self._index:
+            return date
+        for d in self.dates:
+            if d >= date:
                 return d
         return None
 
@@ -48,14 +128,14 @@ class TradeCalendar:
             d = out
         return out
 
-
     def next_weekday_trading_day(
         self, after_date: int, weekday: int, *, strict: bool = True
     ) -> Optional[int]:
-        """First trading day on ISO weekday (1=Mon..7=Sun).
+        """First *trading* day on ISO weekday (1=Mon..7=Sun).
 
-        strict=True: strictly after after_date (default for buy/exit after signal/entry).
-        strict=False: on or after after_date.
+        Legacy helper: skips non-trading sessions and may jump to the next week
+        if the target weekday is a holiday. Prefer
+        :meth:`resolve_weekday_session` with an explicit holiday_policy.
         """
         after_date = int(after_date)
         weekday = int(weekday)
@@ -72,6 +152,63 @@ class TradeCalendar:
             if _date(y, m, day).isoweekday() == weekday:
                 return d
         return None
+
+    def apply_holiday_policy(
+        self, planned: int, policy: str
+    ) -> Optional[int]:
+        """Map a planned civil/trading date to an actual trading day.
+
+        Returns None when the trade should be cancelled (skip / exact fail).
+        """
+        planned = int(planned)
+        policy = normalize_holiday_policy(policy)
+        if self.is_trading_day(planned):
+            return planned
+        if policy == HOLIDAY_POLICY_NEXT:
+            return self.first_trading_day_on_or_after(planned)
+        if policy == HOLIDAY_POLICY_PREV:
+            return self.prev_trading_day(planned)
+        if policy in (HOLIDAY_POLICY_SKIP, HOLIDAY_POLICY_EXACT):
+            return None
+        raise ValueError("unknown holiday_policy: %r" % policy)
+
+    def resolve_weekday_session(
+        self,
+        after_date: int,
+        weekday: int,
+        *,
+        strict: bool = True,
+        holiday_policy: str = DEFAULT_HOLIDAY_POLICY,
+    ) -> Optional[Tuple[int, int, int]]:
+        """Resolve weekday anchor to (planned_date, actual_trading_date, shift_days).
+
+        *planned_date* is the civil calendar weekday target (may be a holiday).
+        *actual* is the trading day after applying ``holiday_policy``.
+        *shift_days* is the count of civil days from planned to actual (0 if same).
+
+        Returns None if cancelled by policy or calendar exhausted.
+        """
+        policy = normalize_holiday_policy(holiday_policy)
+        planned = first_calendar_date_on_weekday(int(after_date), int(weekday), strict=strict)
+        if policy == HOLIDAY_POLICY_EXACT:
+            if not self.is_trading_day(planned):
+                return None
+            return planned, planned, 0
+        actual = self.apply_holiday_policy(planned, policy)
+        if actual is None:
+            return None
+        # If policy rolled and actual falls on/before after_date when strict, try next week once.
+        if strict and actual <= int(after_date):
+            # move planned one week forward and re-apply
+            planned2 = date_to_yyyymmdd(yyyymmdd_to_date(planned) + timedelta(days=7))
+            if policy == HOLIDAY_POLICY_EXACT and not self.is_trading_day(planned2):
+                return None
+            actual2 = self.apply_holiday_policy(planned2, policy)
+            if actual2 is None or actual2 <= int(after_date):
+                return None
+            planned, actual = planned2, actual2
+        shift = (yyyymmdd_to_date(actual) - yyyymmdd_to_date(planned)).days
+        return planned, actual, int(shift)
 
     def prev_trading_day(self, date: int) -> Optional[int]:
         date = int(date)

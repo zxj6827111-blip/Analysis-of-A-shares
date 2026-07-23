@@ -1,0 +1,160 @@
+﻿# -*- coding: utf-8 -*-
+"""Research / experiment center building blocks (phase-1+)."""
+
+from .constraints import filter_variants, summarize_rejections, validate_variant
+from .fingerprint import (
+    ResearchFingerprint,
+    build_execution_fingerprint,
+    build_filter_fingerprint,
+    build_research_fingerprint,
+    build_signal_fingerprint,
+    fingerprint_hex,
+    research_fingerprint_from_params,
+    short_fingerprint,
+)
+from .models import AxisSpec, ParameterSpace, as_jsonable
+from .matrix import build_result_matrix, matrix_table_to_rows
+from .parameter_space import (
+    GUA_PRESETS,
+    PRESET_735_EXIT_WEEKDAYS,
+    PRESET_735_GUA_KEYS,
+    PRESET_735_SELL_ONS,
+    PRESET_WEEKDAY_TEMPLATES,
+    axes_from_legacy_templates,
+    expand_axes,
+    preset_735_hold_matrix,
+)
+from .planner import (
+    DEFAULT_MAX_VARIANTS,
+    HARD_MAX_VARIANTS,
+    plan_experiment,
+)
+from .signal_cache import get_or_compute_signals, signal_cache_key
+from .filter_cache import filter_cache_key, get_or_compute_filtered
+from .fast_engine import run_fast_backtest
+from .executor import cached_signal_pipeline, run_engine
+from .artifacts import apply_artifact_policy, normalize_artifact_level
+from .db_backend import (
+    DatabaseBackend,
+    PostgresDatabaseBackend,
+    SqliteDatabaseBackend,
+    get_database_backend,
+)
+from .queue_backend import MemoryQueueBackend, QueueBackend, SqliteQueueBackend
+from .trial_store import TrialStore
+from .worker import ResearchWorker
+from .platform import ResearchPlatform, default_platform_db_path
+from .regimes import assign_regime, slice_metrics_by_regime
+from .validation import fixed_split, walk_forward_folds, score_in_out, DEFAULT_HARD_GATES
+from .scoring import (
+    composite_score,
+    hard_filter,
+    pareto_front,
+    rank_candidates,
+    neighborhood_stability,
+    spike_risk_flag,
+    DEFAULT_WEIGHTS,
+)
+from .gua_gain import pair_gua_gain
+from .heatmap import build_heatmap
+from .evaluation import evaluate_trials
+from .optimizer import grid_search, random_search, staged_search, optuna_search, expand_cartesian
+from .promote import select_for_full_retest
+from .schedules import list_schedules, get_schedule, next_fire_times, ScheduleRunner, SCHEDULES
+from .drift import detect_drift, DEFAULT_THRESHOLDS
+from .reports_auto import build_research_summary, mark_paper_candidates
+from .continuous import run_budgeted_search, run_scheduled_research
+from .schedule_runner import ScheduleBeatStore, due_schedules, fire_schedule, beat_once, FIRE_MAX_TRIALS_CAP
+from .data_update_trigger import on_market_data_updated, monitor_drift_and_alert
+from .cross_section import board_of_symbol, slice_metrics_by_board, cross_section_summary
+
+__all__ = [
+    # fingerprint
+    "ResearchFingerprint",
+    "build_research_fingerprint",
+    "build_signal_fingerprint",
+    "build_filter_fingerprint",
+    "build_execution_fingerprint",
+    "fingerprint_hex",
+    "short_fingerprint",
+    "research_fingerprint_from_params",
+    # models / space
+    "AxisSpec",
+    "ParameterSpace",
+    "as_jsonable",
+    "PRESET_WEEKDAY_TEMPLATES",
+    "GUA_PRESETS",
+    "axes_from_legacy_templates",
+    "expand_axes",
+    "preset_735_hold_matrix",
+    "PRESET_735_EXIT_WEEKDAYS",
+    "PRESET_735_SELL_ONS",
+    "PRESET_735_GUA_KEYS",
+    "build_result_matrix",
+    "matrix_table_to_rows",
+    # constraints / planner
+    "validate_variant",
+    "filter_variants",
+    "summarize_rejections",
+    "plan_experiment",
+    "DEFAULT_MAX_VARIANTS",
+    "HARD_MAX_VARIANTS",
+    # phase-3 cache / engines
+    "signal_cache_key",
+    "get_or_compute_signals",
+    "filter_cache_key",
+    "get_or_compute_filtered",
+    "run_fast_backtest",
+    "cached_signal_pipeline",
+    "run_engine",
+    "normalize_artifact_level",
+    "apply_artifact_policy",
+    # phase-4 task / trial platform
+    "DatabaseBackend",
+    "SqliteDatabaseBackend",
+    "PostgresDatabaseBackend",
+    "get_database_backend",
+    "QueueBackend",
+    "MemoryQueueBackend",
+    "SqliteQueueBackend",
+    "TrialStore",
+    "ResearchWorker",
+    "ResearchPlatform",
+    "default_platform_db_path",
+    # phase-5 evaluation center
+    "assign_regime",
+    "slice_metrics_by_regime",
+    "fixed_split",
+    "walk_forward_folds",
+    "score_in_out",
+    "DEFAULT_HARD_GATES",
+    "composite_score",
+    "hard_filter",
+    "pareto_front",
+    "rank_candidates",
+    "neighborhood_stability",
+    "spike_risk_flag",
+    "DEFAULT_WEIGHTS",
+    "pair_gua_gain",
+    "build_heatmap",
+    "evaluate_trials",
+    # phase-6 search / continuous research
+    "expand_cartesian",
+    "grid_search",
+    "random_search",
+    "staged_search",
+    "optuna_search",
+    "select_for_full_retest",
+    "list_schedules",
+    "get_schedule",
+    "next_fire_times",
+    "ScheduleRunner",
+    "SCHEDULES",
+    "detect_drift",
+    "DEFAULT_THRESHOLDS",
+    "build_research_summary",
+    "mark_paper_candidates",
+    "run_budgeted_search",
+    "run_scheduled_research",
+]
+
