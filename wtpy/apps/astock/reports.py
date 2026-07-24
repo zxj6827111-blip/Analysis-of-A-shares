@@ -974,7 +974,7 @@ def write_excel_summary(
         "买入价_复权参考/卖出价_复权参考为同日因果前复权参考价（审计用，不参与股数/费用/权益）。",
         "无公司行为区间内，复权参考收益率应与真实成交收益率接近。"
         "正式默认 corporate_action_policy=fail_closed：持仓跨越累计复权因子变化时标记 unsupported_corporate_action，"
-        "不虚构送转/分红账本；仅显式 opt-in ledger_factor_ratio 时才做因子比例股数重述（仍无现金分红入账）。",
+        "绝不根据累计因子虚构送转/分红账本。真实现金分红/送转明细账本尚未接入；ledger_factor_ratio 已被拒绝。",
         "【交易日程 · 双层模型】前台用「信号星期 / 买入日星期 / 平仓日星期 / 开盘·收盘」配置；",
         "后台一律在 A 股交易日日历上求解（T+N 体系）：有 buy_weekday 时用 next_weekday_trading_day（覆盖 entry_lag 步进），",
         "有 exit_weekday 时同理覆盖 hold；未设星期时仍用 entry_lag + hold。节假日自动顺延到之后第一个可交易日。",

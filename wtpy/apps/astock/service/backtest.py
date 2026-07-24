@@ -937,6 +937,7 @@ def run_backtest(
             end=end,
             adj_bars_by_code=adj_map if not research_unadj else None,
             factor_by_code=factor_by_code_fast or None,
+            require_factor_map=True,
         )
         # Adapt to BacktestResult-like surface for writers / history
         from ..strategy import BacktestResult as _BTR
@@ -1005,7 +1006,7 @@ def run_backtest(
         if (
             not use_research
             and use_formal_ok
-            and corporate_action_policy in ("fail_closed", "ledger_factor_ratio", "ledger")
+            and corporate_action_policy in ("fail_closed", "fail", "unsupported")
             and not factor_by_code
         ):
             from ..strategy import BacktestResult as _BTR

@@ -311,19 +311,18 @@ def test_g_corporate_action_fail_closed():
     ) or res.status == "unsupported_corporate_action"
 
 
-def test_g2_corporate_action_ledger_factor_ratio_restates_shares():
-    """2:1 reverse-looking factor jump restates shares so MV continuous (no cash div)."""
+def test_g2_ledger_factor_ratio_rejected_no_share_restatement():
+    """ledger_factor_ratio must never invent shares or status=ok under formal_ok."""
     code = "SSE.STK.600031"
     dates = [20240102, 20240103, 20240104, 20240105]
     raw = {
         code: [
             _bar(20240102, 10.0, 10.5, 9.5, 10.0),
-            _bar(20240103, 10.0, 10.5, 9.5, 10.0),  # buy open 10, 1000 shares
-            _bar(20240104, 5.0, 5.2, 4.8, 5.0),  # factor doubles; price halves
-            _bar(20240105, 5.5, 5.6, 5.4, 5.5),  # sell open 5.5
+            _bar(20240103, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240104, 5.0, 5.2, 4.8, 5.0),
+            _bar(20240105, 5.5, 5.6, 5.4, 5.5),
         ]
     }
-    # entry factor 0.5 on 01-03; on 01-04 factor becomes 1.0 → ratio 2 → shares *2
     fac = {
         code: {
             20240102: 0.5,
@@ -344,23 +343,22 @@ def test_g2_corporate_action_ledger_factor_ratio_restates_shares():
     )
     res = bt.run(
         [SignalEvent(code, 20240102, "DAY", "t")],
-        hold=2,  # exit after 2 sessions so CA on 01-04 applies before sell 01-05
+        hold=2,
         entry_lag=1,
         buy_on="open",
         sell_on="open",
         formal_ok=True,
     )
-    assert res.status == "ok"
+    assert res.status == "unsupported_corporate_action"
     buys = [f for f in res.fills if f.side == "BUY"]
     sells = [f for f in res.fills if f.side == "SELL"]
-    assert len(buys) == 1 and len(sells) == 1
+    assert buys
+    # Shares must NOT be doubled by factor ratio inventing a CA ledger
     assert buys[0].shares == 1000
-    # after 2x factor ratio, shares should double before sell
-    assert sells[0].shares == 2000
-    assert sells[0].date == 20240105
-    assert abs(sells[0].price - 5.5) < 1e-9
-    assert res.metrics.get("n_corporate_actions", 0) >= 1
-    assert any("corporate_action_ledger" in n for n in res.notes)
+    if sells:
+        assert sells[0].shares == 1000
+    assert res.metrics.get("n_corporate_actions", 0) == 0
+    assert any("ledger_factor_ratio rejected" in n or "unsupported_corporate_action" in n for n in res.notes)
 
 
 def test_h_full_and_fast_raw_same_dates_and_prices():
@@ -657,3 +655,32 @@ def test_fast_blocks_factor_change_in_hold():
     assert res.metrics.get("n_ca_blocked_trades", 0) >= 1
     assert res.metrics.get("status") == "unsupported_corporate_action"
     assert res.config.get("status") == "unsupported_corporate_action"
+
+def test_fast_without_factors_marks_not_checked_not_fail_closed():
+    """Missing factor map must not claim fail_closed."""
+    from wtpy.apps.astock.research.fast_engine import run_fast_backtest
+
+    code = "SSE.STK.600072"
+    dates = [20240102, 20240103, 20240104]
+    raw = {
+        code: [
+            _bar(20240102, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240103, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240104, 5.0, 5.2, 4.8, 5.0),
+        ]
+    }
+    cal = _cal(dates)
+    res = run_fast_backtest(
+        [SignalEvent(code, 20240102, "DAY", "t")],
+        raw,
+        cal,
+        hold=1,
+        entry_lag=1,
+        factor_by_code=None,
+    )
+    assert res.config.get("corporate_action_policy") == "not_checked"
+    assert res.metrics.get("corporate_action_policy") == "not_checked"
+    assert res.metrics.get("factor_map_provided") is False
+    # Without factors, trade may exist but must not claim fail_closed
+    assert "fail_closed" not in str(res.config.get("corporate_action_policy"))
+    assert any("not_checked" in n for n in res.notes)

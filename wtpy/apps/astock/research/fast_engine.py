@@ -206,14 +206,19 @@ def run_fast_backtest(
     end: Optional[int] = None,
     adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
     factor_by_code: Optional[Dict[str, Dict[int, float]]] = None,
+    require_factor_map: bool = False,
 ) -> FastBacktestResult:
     """Equal-weight per-signal trades; no cash / max_weight / concurrent position limits.
 
     ``bars_by_code`` must be RAW execution bars. Optional ``adj_bars_by_code`` only
     populates adjusted reference prices on each FastTrade.
 
-    If ``factor_by_code`` is set and hold spans a factor change, the trade is blocked
-    (fail_closed); fast never invents share restatement and will not status=ok.
+    Corporate-action policy:
+    - When ``factor_by_code`` is provided and hold spans a factor change → trade blocked,
+      status=unsupported_corporate_action (never invent share restatement).
+    - When ``factor_by_code`` is missing/empty → corporate_action_policy=not_checked and
+      notes make clear CA was not verified (do not claim fail_closed).
+    - Service formal path should pass factor maps and set require_factor_map=True.
     """
     buy_on = parse_price_session(buy_on, default="open")
     sell_on = parse_price_session(sell_on, default="open")
@@ -235,7 +240,10 @@ def run_fast_backtest(
     adj_index: Dict[str, Dict[int, DayBar]] = {
         code: _bar_index(bars) for code, bars in (adj_bars_by_code or {}).items()
     }
+    factors_provided = bool(factor_by_code)
     factor_by_code = factor_by_code or {}
+    has_any_factor = any(bool(v) for v in factor_by_code.values())
+    ca_policy = "fail_closed" if has_any_factor else "not_checked"
     trades: List[FastTrade] = []
     n_sig = 0
     ca_blocked = 0
@@ -246,8 +254,17 @@ def run_fast_backtest(
         "execution_price_mode=raw",
         "supports_true_cash_simulation=False",
         "engine_result_version=dual_price_v1",
-        "corporate_action_policy=fail_closed",
+        "corporate_action_policy=%s" % ca_policy,
     ]
+    if not has_any_factor:
+        notes.append(
+            "corporate_action_policy=not_checked: no factor_by_code provided; "
+            "CA fail_closed not applied (do not treat as formal fail_closed)."
+        )
+        if require_factor_map:
+            notes.append(
+                "unsupported_corporate_action: require_factor_map=True but factor map empty."
+            )
 
     def _factor_on(code: str, date: int) -> Optional[float]:
         fmap = factor_by_code.get(code) or {}
@@ -385,9 +402,12 @@ def run_fast_backtest(
 
     metrics = _summarize(trades)
     metrics["n_ca_blocked_trades"] = int(ca_blocked)
-    metrics["corporate_action_policy"] = "fail_closed"
+    metrics["corporate_action_policy"] = ca_policy
     metrics["supports_true_cash_simulation"] = False
+    metrics["factor_map_provided"] = bool(has_any_factor)
     status = "ok"
+    if require_factor_map and not has_any_factor:
+        status = "unsupported_corporate_action"
     if ca_blocked:
         status = "unsupported_corporate_action"
         notes.extend(ca_notes[:20])
@@ -415,7 +435,8 @@ def run_fast_backtest(
             "execution_price_mode": "raw",
             "supports_true_cash_simulation": False,
             "engine_result_version": "dual_price_v1",
-            "corporate_action_policy": "fail_closed",
+            "corporate_action_policy": ca_policy,
             "status": status,
+            "factor_map_provided": bool(has_any_factor),
         },
     )

@@ -609,20 +609,26 @@ class PortfolioBacktester:
         deferred_sells: Dict[str, dict] = {}
         ca_unsupported_notes: List[str] = []
         ca_fail = False
-        ca_ledger_notes: List[str] = []
-        ca_applied_n = 0
-        # corporate_action_policy: fail_closed (formal default) | ledger_factor_ratio (opt-in only)
-        # Formal default is fail_closed: never invent shares from cumulative factors alone.
+        # corporate_action_policy: formal path is fail_closed only.
+        # Cumulative factors alone must NEVER invent share/cash corporate-action ledgers.
         ca_policy = str(
             getattr(self, "corporate_action_policy", None) or "fail_closed"
         ).strip().lower()
+        if ca_policy in ("ledger_factor_ratio", "ledger"):
+            # Explicit opt-in without real CA cash/share events is still not formal-ok.
+            ca_policy = "fail_closed"
+            ca_fail = True
+            ca_unsupported_notes.append(
+                "unsupported_corporate_action: ledger_factor_ratio rejected without "
+                "real corporate-action cash/share events; forced fail_closed."
+            )
 
         # precompute period end sets for week/month completion tracking
         week_ends = self._period_end_dates("WEEK")
         month_ends = self._period_end_dates("MONTH")
 
         for d in sim_dates:
-            # Corporate actions while any position is open (raw share ledger)
+            # Factor change while open → unsupported (no share restatement / no invented ledger)
             if self.factor_by_code and positions:
                 for code, pos in list(positions.items()):
                     if pos.entry_factor is None:
@@ -635,59 +641,18 @@ class PortfolioBacktester:
                         f1 = float(fac_now)
                         if abs(f1 - f0) <= 1e-9 or f0 == 0.0:
                             continue
-                        ratio = f1 / f0
-                        if ca_policy in ("fail_closed", "fail", "unsupported"):
-                            ca_fail = True
-                            msg = (
-                                "unsupported_corporate_action: factor changed while open "
-                                "%s entry_date=%s entry_factor=%s day=%s factor=%s policy=%s"
-                                % (code, pos.entry_date, pos.entry_factor, d, fac_now, ca_policy)
-                            )
-                            if msg not in ca_unsupported_notes:
-                                ca_unsupported_notes.append(msg)
-                            continue
-                        # ledger_factor_ratio: restate shares so MV continuous under pure split/送转.
-                        # Cash dividends are NOT credited as cash (no cash-event detail in factors).
-                        old_shares = int(pos.shares)
-                        # Board-lot: round to nearest lot_size after ratio (A-share 100).
-                        lot = max(int(self.cfg.lot_size or 100), 1)
-                        new_shares = int(round((old_shares * ratio) / lot)) * lot
-                        if new_shares < lot and old_shares >= lot:
-                            new_shares = lot
-                        if new_shares <= 0:
-                            ca_fail = True
-                            ca_unsupported_notes.append(
-                                "unsupported_corporate_action: share restatement non-positive "
-                                "%s day=%s ratio=%s old_shares=%s" % (code, d, ratio, old_shares)
-                            )
-                            continue
-                        old_entry = float(pos.entry_price)
-                        # Keep total cash cost; restate per-share entry for SL/TP %.
-                        pos.shares = int(new_shares)
-                        if ratio != 0:
-                            pos.entry_price = old_entry / ratio
-                        pos.entry_factor = f1
-                        ca_applied_n += 1
+                        ca_fail = True
                         msg = (
-                            "corporate_action_ledger: %s day=%s factor %s→%s ratio=%.6f "
-                            "shares %s→%s entry_px %.4f→%.4f (no cash dividend modeled)"
-                            % (
-                                code,
-                                d,
-                                f0,
-                                f1,
-                                ratio,
-                                old_shares,
-                                pos.shares,
-                                old_entry,
-                                pos.entry_price,
-                            )
+                            "unsupported_corporate_action: factor changed while open "
+                            "%s entry_date=%s entry_factor=%s day=%s factor=%s policy=%s"
+                            % (code, pos.entry_date, pos.entry_factor, d, fac_now, ca_policy)
                         )
-                        ca_ledger_notes.append(msg)
+                        if msg not in ca_unsupported_notes:
+                            ca_unsupported_notes.append(msg)
                     except (TypeError, ValueError) as e:
                         ca_fail = True
                         ca_unsupported_notes.append(
-                            "unsupported_corporate_action: ledger error %s day=%s %s"
+                            "unsupported_corporate_action: factor check error %s day=%s %s"
                             % (code, d, e)
                         )
             # 1) process deferred + matured sells at open (never same-day as BUY)
@@ -1231,23 +1196,11 @@ class PortfolioBacktester:
             notes.extend(ca_unsupported_notes)
             notes.append(
                 "Formal metrics not claimed: corporate action during open hold "
-                "(policy=%s)."
+                "(policy=%s). No share restatement from cumulative factors."
                 % ca_policy
             )
-        if ca_ledger_notes:
-            notes.extend(ca_ledger_notes[:20])  # cap noise
-            if len(ca_ledger_notes) > 20:
-                notes.append("... %d more corporate_action_ledger notes" % (len(ca_ledger_notes) - 20))
-            notes.append(
-                "corporate_action_policy=%s: factor-ratio share restatement only; "
-                "cash dividends not credited (no cash-event ledger)."
-                % ca_policy
-            )
-            metrics["n_corporate_actions"] = int(ca_applied_n)
-            metrics["corporate_action_policy"] = ca_policy
-        else:
-            metrics["n_corporate_actions"] = int(ca_applied_n)
-            metrics["corporate_action_policy"] = ca_policy
+        metrics["n_corporate_actions"] = 0
+        metrics["corporate_action_policy"] = ca_policy
 
         return BacktestResult(
             run_id=run_id,
