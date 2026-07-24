@@ -684,3 +684,66 @@ def test_fast_without_factors_marks_not_checked_not_fail_closed():
     # Without factors, trade may exist but must not claim fail_closed
     assert "fail_closed" not in str(res.config.get("corporate_action_policy"))
     assert any("not_checked" in n for n in res.notes)
+
+def test_fast_partial_code_missing_factor_blocks_trade():
+    """Other codes have factors but trade code missing → block (not silent -50%)."""
+    from wtpy.apps.astock.research.fast_engine import run_fast_backtest
+
+    code_trade = "SSE.STK.600080"
+    code_other = "SSE.STK.600081"
+    dates = [20240102, 20240103, 20240104]
+    raw = {
+        code_trade: [
+            _bar(20240102, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240103, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240104, 5.0, 5.2, 4.8, 5.0),
+        ],
+        code_other: [
+            _bar(20240102, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240103, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240104, 10.0, 10.5, 9.5, 10.0),
+        ],
+    }
+    # only other code has factors → has_any_factor True but trade code uncovered
+    fac = {code_other: {20240102: 1.0, 20240103: 1.0, 20240104: 1.0}}
+    res = run_fast_backtest(
+        [SignalEvent(code_trade, 20240102, "DAY", "t")],
+        raw,
+        _cal(dates),
+        hold=1,
+        entry_lag=1,
+        factor_by_code=fac,
+        require_factor_map=True,
+    )
+    assert res.n_trades == 0
+    assert res.metrics.get("n_ca_blocked_trades", 0) >= 1
+    assert res.metrics.get("status") == "unsupported_corporate_action"
+
+
+def test_fast_incomplete_date_coverage_blocks_trade():
+    """Non-empty map for code but missing entry-day factor coverage → block."""
+    from wtpy.apps.astock.research.fast_engine import run_fast_backtest
+
+    code = "SSE.STK.600082"
+    dates = [20240102, 20240103, 20240104]
+    raw = {
+        code: [
+            _bar(20240102, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240103, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240104, 5.0, 5.2, 4.8, 5.0),
+        ]
+    }
+    # factor only exists after exit — entry has no on-or-before factor
+    fac = {code: {20240105: 1.0}}
+    res = run_fast_backtest(
+        [SignalEvent(code, 20240102, "DAY", "t")],
+        raw,
+        _cal(dates),
+        hold=1,
+        entry_lag=1,
+        factor_by_code=fac,
+        require_factor_map=True,
+    )
+    assert res.n_trades == 0
+    assert res.metrics.get("status") == "unsupported_corporate_action"
+    assert res.metrics.get("n_ca_blocked_trades", 0) >= 1

@@ -240,9 +240,11 @@ def run_fast_backtest(
     adj_index: Dict[str, Dict[int, DayBar]] = {
         code: _bar_index(bars) for code, bars in (adj_bars_by_code or {}).items()
     }
-    factors_provided = bool(factor_by_code)
-    factor_by_code = factor_by_code or {}
+    factors_provided = factor_by_code is not None
+    factor_by_code = dict(factor_by_code or {})
     has_any_factor = any(bool(v) for v in factor_by_code.values())
+    # Honest policy: fail_closed only when we will enforce per-trade factor coverage.
+    # Empty map → not_checked (unless require_factor_map forces unsupported at end).
     ca_policy = "fail_closed" if has_any_factor else "not_checked"
     trades: List[FastTrade] = []
     n_sig = 0
@@ -267,6 +269,7 @@ def run_fast_backtest(
             )
 
     def _factor_on(code: str, date: int) -> Optional[float]:
+        """Last factor with event/date <= date (forward-filled from known events)."""
         fmap = factor_by_code.get(code) or {}
         if not fmap:
             return None
@@ -285,6 +288,9 @@ def run_fast_backtest(
             return float(fmap[best])
         except (TypeError, ValueError):
             return None
+
+    def _code_has_factor_map(code: str) -> bool:
+        return bool(factor_by_code.get(code))
 
     for ev in events:
         d = int(ev.date)
@@ -338,15 +344,34 @@ def run_fast_backtest(
         exit_bar = bars_idx.get(exit_date)
         if not exit_bar:
             continue
-        # CA fail-closed: block trades whose hold spans a cumulative-factor jump
-        if factor_by_code.get(code):
+
+        # ---- Per-trade CA coverage (code + entry + exit) ----
+        # When fail_closed (any factors present) OR require_factor_map: incomplete
+        # coverage for THIS trade is unsupported (never silent ok with -50%).
+        enforce_ca = bool(require_factor_map or has_any_factor)
+        if enforce_ca:
+            if not _code_has_factor_map(code):
+                ca_blocked += 1
+                msg = (
+                    "unsupported_corporate_action: missing factor map for trade code "
+                    "%s entry=%s exit=%s" % (code, entry_date, exit_date)
+                )
+                if msg not in ca_notes:
+                    ca_notes.append(msg)
+                continue
             f_ent = _factor_on(code, entry_date)
             f_ex = _factor_on(code, exit_date)
-            if (
-                f_ent is not None
-                and f_ex is not None
-                and abs(float(f_ex) - float(f_ent)) > 1e-9
-            ):
+            if f_ent is None or f_ex is None:
+                ca_blocked += 1
+                msg = (
+                    "unsupported_corporate_action: incomplete factor coverage "
+                    "%s entry=%s factor=%s exit=%s factor=%s"
+                    % (code, entry_date, f_ent, exit_date, f_ex)
+                )
+                if msg not in ca_notes:
+                    ca_notes.append(msg)
+                continue
+            if abs(float(f_ex) - float(f_ent)) > 1e-9:
                 ca_blocked += 1
                 msg = (
                     "unsupported_corporate_action: fast hold spans factor change "
@@ -356,6 +381,7 @@ def run_fast_backtest(
                 if msg not in ca_notes:
                     ca_notes.append(msg)
                 continue
+
         exit_px = float(bar_session_price(exit_bar, sell_on))
         if exit_px <= 0:
             continue
@@ -412,7 +438,8 @@ def run_fast_backtest(
         status = "unsupported_corporate_action"
         notes.extend(ca_notes[:20])
         notes.append(
-            "Fast engine fail_closed: %d trade(s) blocked for factor change in hold."
+            "Fast engine CA gate: %d trade(s) blocked (factor change or incomplete "
+            "code/entry/exit factor coverage)."
             % ca_blocked
         )
     metrics["status"] = status
