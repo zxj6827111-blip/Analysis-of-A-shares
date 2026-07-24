@@ -169,7 +169,9 @@ def test_unconfirmed_research_adjusted_without_raw(tmp_path):
         out = Path("outputs/astock/research_adj_unconfirmed")
     meta = json.loads((out / "run_meta.json").read_text(encoding="utf-8"))
     assert meta["status"] == "research_unconfirmed_formula"
-    assert meta["repro"]["price_mode"] == "adjusted"
+    assert meta["repro"]["price_mode"] in ("dual_price_v1", "adjusted")
+    assert meta["repro"].get("execution_price_mode", "raw") == "raw"
+    assert meta["repro"].get("signal_price_mode") in ("causal_qfq", "raw", None)
 
 
 def test_confirmed_formal_ok_meta_fields(tmp_path):
@@ -208,7 +210,9 @@ def test_confirmed_formal_ok_meta_fields(tmp_path):
     meta = json.loads((out / "run_meta.json").read_text(encoding="utf-8"))
     repro = meta["repro"]
     assert meta["status"] == "ok"
-    assert repro["price_mode"] == "adjusted"
+    assert repro["price_mode"] in ("dual_price_v1", "adjusted")
+    assert repro.get("execution_price_mode", "raw") == "raw"
+    assert repro.get("signal_price_mode") in ("causal_qfq", None)
     assert repro["formula_provenance"] == "user_provided_human_formula"
     assert repro["source_pair_status"] == "paired_confirmed"
     assert repro["formal_backtest_allowed"] is True

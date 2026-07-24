@@ -5276,27 +5276,33 @@ function renderForecastPage() {
       ["引擎", src.engine || (metrics && metrics.engine) || "—"],
       [
         "价格模式",
-        src.price_mode ||
-          src.engine_result_version ||
-          (src.research_unadjusted ? "research_unadjusted" : "—"),
+        src.legacy_adjusted_execution || src.price_mode === "adjusted"
+          ? "legacy_adjusted_execution"
+          : src.price_mode_display ||
+            src.price_mode ||
+            src.engine_result_version ||
+            (src.research_unadjusted ? "research_unadjusted" : "—"),
       ],
       [
         "信号价格",
-        src.signal_price_mode ||
-          (src.research_unadjusted ? "raw" : "causal_qfq"),
+        src.legacy_adjusted_execution || src.price_mode === "adjusted"
+          ? "历史未知/可能为因果前复权(成交也用了复权)"
+          : src.signal_price_mode ||
+            (src.research_unadjusted ? "raw" : "causal_qfq"),
       ],
       [
         "成交/估值价格",
-        (src.execution_price_mode || "raw") +
-          " / " +
-          (src.valuation_price_mode || "raw"),
+        src.legacy_adjusted_execution || src.price_mode === "adjusted"
+          ? "legacy adjusted (不可显示为 raw/raw)"
+          : (src.execution_price_mode || "raw") +
+            " / " +
+            (src.valuation_price_mode || "raw"),
       ],
       [
         "价格说明",
-        "技术指标：因果前复权；实际成交：未复权真实价格。" +
-          (src.price_mode === "adjusted"
-            ? "（历史任务可能为 legacy_adjusted_execution）"
-            : ""),
+        src.legacy_adjusted_execution || src.price_mode === "adjusted"
+          ? "历史任务：成交使用了复权OHLC，勿与 dual_price_v1 混淆。请用新引擎重跑。"
+          : "技术指标：因果前复权；实际成交：未复权真实价格。",
       ],
       ["止损", src.stop_loss != null ? src.stop_loss : "—"],
       ["止盈", src.take_profit != null ? src.take_profit : "—"],

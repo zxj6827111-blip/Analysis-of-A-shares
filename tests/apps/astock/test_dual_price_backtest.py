@@ -598,3 +598,62 @@ def test_eod_forced_exit_skips_same_day_entry_t1():
     assert buys and buys[0].date == 20240103
     assert not any(f.reason == "forced_exit" for f in sells)
     assert res.metrics.get("n_open_positions") == 1
+
+def test_risk_exit_always_next_open_ignores_sell_on_close():
+    """stop_loss must sell next trading day OPEN even if sell_on=close."""
+    code = "SSE.STK.600070"
+    dates = [20240102, 20240103, 20240104]
+    raw = {
+        code: [
+            _bar(20240102, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240103, 10.0, 10.5, 8.0, 12.0),  # buy open 10; low 8 hits 10% SL; close 12
+            _bar(20240104, 9.4, 9.5, 9.0, 9.3),  # risk sell must be open 9.4 not close 9.3
+        ]
+    }
+    cfg = _cfg()
+    cfg.initial_capital = 10_000.0
+    cfg.max_weight = 1.0
+    bt = PortfolioBacktester(cfg, _cal(dates), raw)
+    res = bt.run(
+        [SignalEvent(code, 20240102, "DAY", "t")],
+        hold=10,
+        entry_lag=1,
+        buy_on="open",
+        sell_on="close",
+        stop_loss_pct=0.10,
+        formal_ok=True,
+        _skip_zero_replay=True,
+    )
+    sells = [f for f in res.fills if f.side == "SELL"]
+    assert sells
+    assert sells[0].date == 20240104
+    assert abs(sells[0].price - 9.4) < 1e-9
+    assert "stop_loss" in (sells[0].reason or "")
+
+
+def test_fast_blocks_factor_change_in_hold():
+    from wtpy.apps.astock.research.fast_engine import run_fast_backtest
+
+    code = "SSE.STK.600071"
+    dates = [20240102, 20240103, 20240104]
+    raw = {
+        code: [
+            _bar(20240102, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240103, 10.0, 10.5, 9.5, 10.0),
+            _bar(20240104, 5.0, 5.2, 4.8, 5.0),
+        ]
+    }
+    fac = {code: {20240102: 0.5, 20240103: 0.5, 20240104: 1.0}}
+    cal = _cal(dates)
+    res = run_fast_backtest(
+        [SignalEvent(code, 20240102, "DAY", "t")],
+        raw,
+        cal,
+        hold=1,
+        entry_lag=1,
+        factor_by_code=fac,
+    )
+    assert res.n_trades == 0
+    assert res.metrics.get("n_ca_blocked_trades", 0) >= 1
+    assert res.metrics.get("status") == "unsupported_corporate_action"
+    assert res.config.get("status") == "unsupported_corporate_action"

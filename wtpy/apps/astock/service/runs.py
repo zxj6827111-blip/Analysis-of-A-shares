@@ -10,6 +10,57 @@ from typing import Any, Dict, List, Optional
 from ..config import AStockConfig, get_default_config
 
 
+
+def classify_price_execution_legacy(meta_or_repro):
+    src = meta_or_repro if isinstance(meta_or_repro, dict) else {}
+    repro = src.get("repro") if isinstance(src.get("repro"), dict) else src
+    if not isinstance(repro, dict):
+        repro = {}
+    price_mode = str(repro.get("price_mode") or src.get("price_mode") or "").strip()
+    eng_ver = str(
+        repro.get("engine_result_version") or src.get("engine_result_version") or ""
+    ).strip()
+    exec_m = repro.get("execution_price_mode") or src.get("execution_price_mode")
+    sig_m = repro.get("signal_price_mode") or src.get("signal_price_mode")
+    val_m = repro.get("valuation_price_mode") or src.get("valuation_price_mode")
+    legacy = False
+    tag = None
+    if price_mode == "adjusted" and eng_ver != "dual_price_v1":
+        legacy = True
+        tag = "legacy_adjusted_execution"
+    elif eng_ver == "dual_price_v1" or price_mode == "dual_price_v1":
+        tag = "dual_price_v1"
+        if not exec_m:
+            exec_m = "raw"
+        if not sig_m:
+            sig_m = (
+                "raw"
+                if (repro.get("research_unadjusted") or src.get("research_unadjusted"))
+                else "causal_qfq"
+            )
+        if not val_m:
+            val_m = "raw"
+    elif price_mode == "raw":
+        tag = "research_raw_or_unadjusted"
+        exec_m = exec_m or "raw"
+        sig_m = sig_m or "raw"
+        val_m = val_m or "raw"
+    return {
+        "legacy_adjusted_execution": legacy,
+        "price_execution_tag": tag,
+        "price_mode": price_mode or None,
+        "engine_result_version": eng_ver or None,
+        "signal_price_mode": None if legacy else sig_m,
+        "execution_price_mode": None if legacy else exec_m,
+        "valuation_price_mode": None if legacy else val_m,
+        "price_mode_display": (
+            "legacy_adjusted_execution (historical fills used adjusted OHLC)"
+            if legacy
+            else (price_mode or eng_ver or "unknown")
+        ),
+    }
+
+
 def _index_path(cfg: AStockConfig) -> Path:
     return Path(cfg.output_root) / "runs_index.json"
 
@@ -113,6 +164,11 @@ def _enrich_row(row: dict, out_dir: Optional[Path] = None) -> dict:
             try:
                 meta = json.loads(meta_p.read_text(encoding="utf-8"))
                 r.setdefault("status", meta.get("status") or "ok")
+                _leg = classify_price_execution_legacy(meta)
+                for _k, _v in _leg.items():
+                    if _v is not None:
+                        r[_k] = _v
+
                 if not r.get("indicator_ids"):
                     r["indicator_ids"] = meta.get("indicator_ids") or (
                         (meta.get("repro") or {}).get("indicator_ids")
@@ -339,6 +395,7 @@ def load_run_summary(cfg: AStockConfig, run_id: str) -> Dict[str, Any]:
         "account_mode": meta.get("account_mode") or repro.get("account_mode"),
         "repro": repro,
     }
+    result.update(classify_price_execution_legacy(meta))
     # Prefer title from runs_index when meta lacks a human title
     if not result.get("title"):
         try:

@@ -205,11 +205,15 @@ def run_fast_backtest(
     start: Optional[int] = None,
     end: Optional[int] = None,
     adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
+    factor_by_code: Optional[Dict[str, Dict[int, float]]] = None,
 ) -> FastBacktestResult:
     """Equal-weight per-signal trades; no cash / max_weight / concurrent position limits.
 
     ``bars_by_code`` must be RAW execution bars. Optional ``adj_bars_by_code`` only
     populates adjusted reference prices on each FastTrade.
+
+    If ``factor_by_code`` is set and hold spans a factor change, the trade is blocked
+    (fail_closed); fast never invents share restatement and will not status=ok.
     """
     buy_on = parse_price_session(buy_on, default="open")
     sell_on = parse_price_session(sell_on, default="open")
@@ -231,15 +235,39 @@ def run_fast_backtest(
     adj_index: Dict[str, Dict[int, DayBar]] = {
         code: _bar_index(bars) for code, bars in (adj_bars_by_code or {}).items()
     }
+    factor_by_code = factor_by_code or {}
     trades: List[FastTrade] = []
     n_sig = 0
+    ca_blocked = 0
+    ca_notes: List[str] = []
     notes = [
         "engine=fast: per-signal path stats; no portfolio cash competition.",
         "holiday_policy=%s" % holiday_policy,
         "execution_price_mode=raw",
         "supports_true_cash_simulation=False",
         "engine_result_version=dual_price_v1",
+        "corporate_action_policy=fail_closed",
     ]
+
+    def _factor_on(code: str, date: int) -> Optional[float]:
+        fmap = factor_by_code.get(code) or {}
+        if not fmap:
+            return None
+        if date in fmap:
+            try:
+                return float(fmap[date])
+            except (TypeError, ValueError):
+                return None
+        best = None
+        for k in fmap:
+            if int(k) <= int(date) and (best is None or int(k) > int(best)):
+                best = k
+        if best is None:
+            return None
+        try:
+            return float(fmap[best])
+        except (TypeError, ValueError):
+            return None
 
     for ev in events:
         d = int(ev.date)
@@ -293,6 +321,24 @@ def run_fast_backtest(
         exit_bar = bars_idx.get(exit_date)
         if not exit_bar:
             continue
+        # CA fail-closed: block trades whose hold spans a cumulative-factor jump
+        if factor_by_code.get(code):
+            f_ent = _factor_on(code, entry_date)
+            f_ex = _factor_on(code, exit_date)
+            if (
+                f_ent is not None
+                and f_ex is not None
+                and abs(float(f_ex) - float(f_ent)) > 1e-9
+            ):
+                ca_blocked += 1
+                msg = (
+                    "unsupported_corporate_action: fast hold spans factor change "
+                    "%s entry=%s factor=%s exit=%s factor=%s"
+                    % (code, entry_date, f_ent, exit_date, f_ex)
+                )
+                if msg not in ca_notes:
+                    ca_notes.append(msg)
+                continue
         exit_px = float(bar_session_price(exit_bar, sell_on))
         if exit_px <= 0:
             continue
@@ -338,6 +384,18 @@ def run_fast_backtest(
         )
 
     metrics = _summarize(trades)
+    metrics["n_ca_blocked_trades"] = int(ca_blocked)
+    metrics["corporate_action_policy"] = "fail_closed"
+    metrics["supports_true_cash_simulation"] = False
+    status = "ok"
+    if ca_blocked:
+        status = "unsupported_corporate_action"
+        notes.extend(ca_notes[:20])
+        notes.append(
+            "Fast engine fail_closed: %d trade(s) blocked for factor change in hold."
+            % ca_blocked
+        )
+    metrics["status"] = status
     return FastBacktestResult(
         n_signals=n_sig,
         n_trades=len(trades),
@@ -357,5 +415,7 @@ def run_fast_backtest(
             "execution_price_mode": "raw",
             "supports_true_cash_simulation": False,
             "engine_result_version": "dual_price_v1",
+            "corporate_action_policy": "fail_closed",
+            "status": status,
         },
     )

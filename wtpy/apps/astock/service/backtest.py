@@ -871,10 +871,11 @@ def run_backtest(
 
     engine = (getattr(req, "engine", None) or "full").strip().lower()
     # Fast screening never implements corporate-action ledger / fail-closed.
+    # Fast also uses fail_closed (block trades spanning factor jumps); not a cash ledger.
     if engine in ("fast", "quick", "research_fast"):
-        corporate_action_policy = "not_applicable_fast"
+        corporate_action_policy = "fail_closed"
     else:
-        corporate_action_policy = "ledger_factor_ratio"
+        corporate_action_policy = "fail_closed"
 
     _progress({
         "phase": "portfolio",
@@ -905,6 +906,21 @@ def run_backtest(
     if engine in ("fast", "quick", "research_fast"):
         from ..research.fast_engine import run_fast_backtest
 
+        # Build factor maps early for fast CA fail-closed (same series as full)
+        factor_by_code_fast = {}
+        try:
+            for _fs in factor_series or []:
+                code_k = getattr(_fs, "std_code", None) or getattr(_fs, "code", None)
+                if not code_k:
+                    continue
+                dates_f = list(getattr(_fs, "dates", None) or [])
+                facs_f = list(getattr(_fs, "factors", None) or [])
+                if dates_f and facs_f and len(dates_f) == len(facs_f):
+                    factor_by_code_fast[str(code_k)] = {
+                        int(d): float(f) for d, f in zip(dates_f, facs_f)
+                    }
+        except Exception:
+            factor_by_code_fast = {}
         fast_res = run_fast_backtest(
             events,
             execution_bars,
@@ -920,10 +936,20 @@ def run_backtest(
             start=start,
             end=end,
             adj_bars_by_code=adj_map if not research_unadj else None,
+            factor_by_code=factor_by_code_fast or None,
         )
         # Adapt to BacktestResult-like surface for writers / history
         from ..strategy import BacktestResult as _BTR
 
+        _fast_status = (
+            "research_unadjusted"
+            if use_research
+            else str(
+                (fast_res.metrics or {}).get("status")
+                or (fast_res.config or {}).get("status")
+                or "ok"
+            )
+        )
         result = _BTR(
             run_id=run_id,
             config=dict(fast_res.config),
@@ -932,11 +958,10 @@ def run_backtest(
             metrics=dict(fast_res.metrics),
             notes=list(fast_res.notes)
             + [
-                "engine=fast: screening only; no true cash ledger / CA fail_closed.",
-                "corporate_action_policy=not_applicable_fast",
+                "engine=fast: screening only; no true cash simulation.",
+                "corporate_action_policy=fail_closed (block trades spanning factor jumps).",
             ],
-            # Never claim formal fail_closed precision for fast path.
-            status="research_unadjusted" if use_research else "ok",
+            status=_fast_status,
         )
         result.metrics["engine"] = "fast"
         result.metrics["supports_true_cash_simulation"] = False

@@ -344,7 +344,7 @@ def research_fingerprint_from_params(
     )
     execution_price_mode = p.get("execution_price_mode") or "raw"
     valuation_price_mode = p.get("valuation_price_mode") or "raw"
-    corporate_action_policy = p.get("corporate_action_policy") or "ledger_factor_ratio"
+    corporate_action_policy = p.get("corporate_action_policy") or "fail_closed"
     engine_result_version = p.get("engine_result_version") or "dual_price_v1"
     return build_research_fingerprint(
         indicator_ids=p.get("indicator_ids") or p.get("rule_ids"),

@@ -368,7 +368,7 @@ class PortfolioBacktester:
         limit_rules: Optional[LimitRuleProvider] = None,
         adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
         factor_by_code: Optional[Dict[str, Dict[int, float]]] = None,
-        corporate_action_policy: str = "ledger_factor_ratio",
+        corporate_action_policy: str = "fail_closed",
     ):
         self.cfg = cfg
         self.calendar = calendar
@@ -380,7 +380,7 @@ class PortfolioBacktester:
         self.adj_bars_by_code = adj_bars_by_code
         self.factor_by_code: Dict[str, Dict[int, float]] = factor_by_code or {}
         self.corporate_action_policy = str(
-            corporate_action_policy or "ledger_factor_ratio"
+            corporate_action_policy or "fail_closed"
         ).strip().lower()
         self.limit_rules = limit_rules or DefaultAShareLimitRule()
         self._index: Dict[str, Dict[int, DayBar]] = {}
@@ -611,10 +611,10 @@ class PortfolioBacktester:
         ca_fail = False
         ca_ledger_notes: List[str] = []
         ca_applied_n = 0
-        # corporate_action_policy: ledger_factor_ratio | fail_closed
-        # Formal default (service): ledger_factor_ratio when factor maps present.
+        # corporate_action_policy: fail_closed (formal default) | ledger_factor_ratio (opt-in only)
+        # Formal default is fail_closed: never invent shares from cumulative factors alone.
         ca_policy = str(
-            getattr(self, "corporate_action_policy", None) or "ledger_factor_ratio"
+            getattr(self, "corporate_action_policy", None) or "fail_closed"
         ).strip().lower()
 
         # precompute period end sets for week/month completion tracking
@@ -739,8 +739,14 @@ class PortfolioBacktester:
                     pos.defer_reason = "limit_down"
                     deferred_sells[code] = {"trigger": trigger, "defer": "limit_down"}
                     continue
-                # Time-stop / deferred risk: execute at buy/sell session (open or close).
-                raw_px = bar_session_price(bar, sell_on)
+                # Exit session: risk-triggered sells always next-day OPEN (contract),
+                # independent of sell_on. Time/weekday exits honor sell_on.
+                is_risk_exit = bool(
+                    (info.get("trigger") or pos.trigger_reason)
+                    in (EXIT_REASON_STOP_LOSS, EXIT_REASON_TAKE_PROFIT, "stop_loss", "take_profit")
+                )
+                sell_session = "open" if is_risk_exit else sell_on
+                raw_px = bar_session_price(bar, sell_session)
                 px = raw_px * (1.0 - self.cfg.costs.slippage)
                 if px <= 0:
                     pos.defer_reason = "bad_price"
@@ -784,7 +790,9 @@ class PortfolioBacktester:
                         actual_date=d,
                         shift_days=int(pos.exit_shift_days or 0),
                         holiday_policy=pos.holiday_policy,
-                        **self._fill_price_audit(code, d, sell_on, session_raw=raw_px),
+                        **self._fill_price_audit(
+                            code, d, sell_session, session_raw=raw_px
+                        ),
                     )
                 )
 

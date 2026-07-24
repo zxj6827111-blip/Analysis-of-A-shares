@@ -68,7 +68,7 @@ def test_service_style_wiring_300040_raw_exec_and_adj_ref():
         {code: raw},
         adj_bars_by_code={code: adj},
         factor_by_code=factor_by_code,
-        corporate_action_policy="ledger_factor_ratio",
+        corporate_action_policy="fail_closed",
     )
     res = bt.run(
         [SignalEvent(code, 20260529, "DAY", "combine_any")],
@@ -98,8 +98,10 @@ def test_service_style_wiring_300040_raw_exec_and_adj_ref():
     assert abs(float(trips[0]["买入价"]) - 7.79) < 1e-6
     assert abs(float(trips[0]["买入价_复权参考"]) - 11.7572) < 1e-3
     # meta contract
-    assert res.metrics.get("corporate_action_policy") == "ledger_factor_ratio"
+    assert res.metrics.get("corporate_action_policy") == "fail_closed"
     assert res.metrics.get("eod_forced_exit") is True
+    # no CA during this hold window for 300040 (factor stable 20260601-04)
+    assert res.status == "ok"
 
 
 def test_service_meta_dual_price_fields_on_repro_path(tmp_path):
@@ -180,11 +182,11 @@ def test_formal_empty_factor_map_status_from_service_policy():
     from wtpy.apps.astock.service import backtest as bs
 
     src = Path(bs.__file__).read_text(encoding="utf-8")
-    assert "ledger_factor_ratio" in src
+    assert "ledger_factor_ratio" in src or "fail_closed" in src
     assert "factor_by_code" in src
     assert "unsupported_corporate_action: formal full engine requires" in src
     assert "execution_bars = raw_map" in src
-    assert "not_applicable_fast" in src
+    assert "fail_closed" in src
 
 
 def test_formal_empty_factor_map_engine_gate_behavior():
@@ -215,11 +217,11 @@ def test_formal_empty_factor_map_engine_gate_behavior():
     cfg.costs = CostConfig(0.0, 0.0, 0.0, 0.0, "z")
     # No factors: ledger cannot restate; status stays ok (research-like) but no CA applied
     bt = PortfolioBacktester(
-        cfg, TradeCalendar(dates), raw, factor_by_code=None, corporate_action_policy="ledger_factor_ratio"
+        cfg, TradeCalendar(dates), raw, factor_by_code=None, corporate_action_policy="fail_closed"
     )
     res = bt.run([SignalEvent(code, 20240102, "DAY", "t")], hold=1, entry_lag=1, formal_ok=True)
     assert res.metrics.get("n_corporate_actions", 0) == 0
-    assert res.metrics.get("corporate_action_policy") == "ledger_factor_ratio"
+    assert res.metrics.get("corporate_action_policy") == "fail_closed"
     # Service formal gate exists for empty maps (string + policy)
     from wtpy.apps.astock.service import backtest as bs
 
@@ -254,7 +256,7 @@ def test_eod_forced_exit_with_real_calendar_window():
         cal,
         {code: raw},
         factor_by_code=fmap,
-        corporate_action_policy="ledger_factor_ratio",
+        corporate_action_policy="fail_closed",
     )
     # Signal Friday 20260529 → buy Mon 20260601; end 20260603 before Thu exit
     res = bt.run(
