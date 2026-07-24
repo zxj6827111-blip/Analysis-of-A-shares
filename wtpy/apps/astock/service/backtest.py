@@ -777,5 +777,6 @@ def run_backtest(
         events=events,
         raw_map=raw_map,
         adj_map=adj_map,
+        standard_qfq_map=standard_qfq_map,
         progress=_progress,
     )

@@ -77,6 +77,9 @@ class PortfolioBacktesterHelpers:
                     self.calendar,
                     self.raw_bars_by_code,
                     adj_bars_by_code=self.adj_bars_by_code,
+                    standard_qfq_bars_by_code=getattr(
+                        self, "standard_qfq_bars_by_code", None
+                    ),
                     factor_by_code=self.factor_by_code,
                     limit_rules=self.limit_rules,
                     corporate_action_policy=self.corporate_action_policy,
@@ -277,8 +280,22 @@ class PortfolioBacktesterHelpers:
     def _adj_session_price(
         self, code: str, date: int, session: str
     ) -> Optional[float]:
-        """Adjusted-reference session price (audit only; not used for PnL)."""
+        """Point-in-time research reference session price (audit only)."""
         bar = (self._adj_index.get(code) or {}).get(date)
+        if not bar:
+            return None
+        try:
+            px = bar_session_price(bar, session)
+            return float(px) if px and float(px) > 0 else None
+        except Exception:
+            return None
+
+    def _qfq_session_price(
+        self, code: str, date: int, session: str
+    ) -> Optional[float]:
+        """Standard ordinary qfq session price (signal-level audit only)."""
+        qfq_index = getattr(self, "_qfq_index", None) or {}
+        bar = (qfq_index.get(code) or {}).get(date)
         if not bar:
             return None
         try:
@@ -298,32 +315,48 @@ class PortfolioBacktesterHelpers:
         *,
         session_raw: Optional[float] = None,
     ) -> dict:
-        """Build Fill dual-price audit fields (execution remains RAW)."""
+        """Build Fill four-lane audit fields (execution remains RAW)."""
         raw_px = session_raw
         if raw_px is None:
             raw_px = self._unadj_session_price(code, date, session)
-        adj_px = self._adj_session_price(code, date, session)
+        pit_px = self._adj_session_price(code, date, session)
+        qfq_px = self._qfq_session_price(code, date, session)
         fac = self._factor_on(code, date)
-        scale = None
-        base = None
-        if adj_px is not None and raw_px is not None and float(raw_px) > 0:
+        point_scale = None
+        point_anchor = None
+        qfq_scale = None
+        qfq_anchor = None
+        if pit_px is not None and raw_px is not None and float(raw_px) > 0:
             try:
-                scale = float(adj_px) / float(raw_px)
-                base = float(raw_px)
+                point_scale = float(pit_px) / float(raw_px)
+                if fac is not None and point_scale and float(point_scale) != 0.0:
+                    point_anchor = float(fac) / float(point_scale)
             except (TypeError, ValueError, ZeroDivisionError):
-                scale = None
-                base = None
-        pit = float(adj_px) if adj_px is not None else None
+                point_scale = None
+                point_anchor = None
+        if qfq_px is not None and raw_px is not None and float(raw_px) > 0:
+            try:
+                qfq_scale = float(qfq_px) / float(raw_px)
+                if fac is not None and qfq_scale and float(qfq_scale) != 0.0:
+                    qfq_anchor = float(fac) / float(qfq_scale)
+            except (TypeError, ValueError, ZeroDivisionError):
+                qfq_scale = None
+                qfq_anchor = None
+        pit = float(pit_px) if pit_px is not None else None
+        qfq = float(qfq_px) if qfq_px is not None else None
         return {
             "raw_price": float(raw_px) if raw_px is not None else None,
             # execution_price set by caller (RAW * slippage)
             "adjusted_reference_price": pit,
             "point_in_time_reference_price": pit,
+            "standard_qfq_reference_price": qfq,
             "adjustment_factor": fac,
-            "adjustment_base": base,
-            "adjustment_scale": scale,
-            "point_scale": scale,
-            "point_anchor_factor": base,
+            "adjustment_base": point_anchor,
+            "adjustment_scale": point_scale,
+            "point_scale": point_scale,
+            "point_anchor_factor": point_anchor,
+            "qfq_scale": qfq_scale,
+            "qfq_anchor_factor": qfq_anchor,
             "price_session": parse_price_session(session),
             "price_source": "raw",
             "execution_price_mode": "raw",
@@ -347,7 +380,6 @@ class PortfolioBacktesterHelpers:
         if fill_kwargs.get("adjustment_base") is not None:
             fill_kwargs.setdefault("point_anchor_factor", fill_kwargs.get("adjustment_base"))
         if fill_kwargs.get("adjustment_factor") is not None and session_raw:
-            # standard_qfq reference if we only have PIT ref is not inventable without end factor
             pass
         slip = abs(float(px) - float(session_raw)) if session_raw is not None else None
         if slip is not None:

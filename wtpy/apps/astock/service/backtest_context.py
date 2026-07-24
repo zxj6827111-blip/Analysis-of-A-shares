@@ -119,6 +119,7 @@ def run_engine_with_ctx(
     events: Sequence[Any],
     execution_bars: Dict[str, Any],
     adj_map: Dict[str, Any],
+    standard_qfq_map: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """Dispatch fast/full engine using schedule + price bundles on ctx."""
     from .backtest_engines import run_fast_or_full_engine
@@ -131,6 +132,7 @@ def run_engine_with_ctx(
         events=events,
         execution_bars=execution_bars,
         adj_map=adj_map,
+        standard_qfq_map=standard_qfq_map,
         factor_series=ctx.factor_series or [],
         research_unadj=p.research_unadj,
         use_research=p.use_research,
@@ -345,9 +347,10 @@ def run_portfolio_and_finalize(
     raw_map: Dict[str, Any],
     adj_map: Dict[str, Any],
     progress: Callable[[dict], None],
+    standard_qfq_map: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """dual_price portfolio phase + execution cache + artifact write."""
-    ctx.apply_dual_price_v1()
+    """Four-lane portfolio phase + execution cache + artifact write."""
+    ctx.apply_standard_qfq_raw_execution_v2()
     execution_bars = raw_map  # always raw for cash ledger
 
     progress(
@@ -368,6 +371,7 @@ def run_portfolio_and_finalize(
         events=events,
         execution_bars=execution_bars,
         adj_map=adj_map,
+        standard_qfq_map=standard_qfq_map,
     )
     # Keep service-level policy in sync with engine resolution (esp. fast not_checked)
     ctx.price.corporate_action_policy = str(

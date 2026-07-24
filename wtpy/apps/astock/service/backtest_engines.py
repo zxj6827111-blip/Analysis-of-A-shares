@@ -18,6 +18,7 @@ def run_fast_or_full_engine(
     events: Sequence[Any],
     execution_bars: Dict[str, Any],
     adj_map: Dict[str, Any],
+    standard_qfq_map: Optional[Dict[str, Any]] = None,
     factor_series: Sequence[Any],
     research_unadj: bool,
     use_research: bool,
@@ -72,6 +73,9 @@ def run_fast_or_full_engine(
             start=start,
             end=end,
             adj_bars_by_code=adj_map if not research_unadj else None,
+            standard_qfq_bars_by_code=(
+                standard_qfq_map if not research_unadj else None
+            ),
             factor_by_code=factor_by_code_fast or None,
             require_factor_map=True,
         )
@@ -157,6 +161,9 @@ def run_fast_or_full_engine(
         cal,
         execution_bars,
         adj_bars_by_code=adj_map if not research_unadj else None,
+        standard_qfq_bars_by_code=(
+            standard_qfq_map if not research_unadj else None
+        ),
         factor_by_code=factor_by_code or None,
         corporate_action_policy=corporate_action_policy,
     )

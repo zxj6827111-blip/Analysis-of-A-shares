@@ -68,17 +68,20 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
         *,
         limit_rules: Optional[LimitRuleProvider] = None,
         adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
+        standard_qfq_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
         factor_by_code: Optional[Dict[str, Dict[int, float]]] = None,
         corporate_action_policy: str = "fail_closed",
     ):
         self.cfg = cfg
         self.calendar = calendar
         # four-lane: execution+valuation ALWAYS on bars_by_code (RAW formal);
-        # adj_bars_by_code is fill audit only — never trading index.
+        # adj_bars_by_code = point_in_time research audit; standard_qfq_bars = signal-level audit.
+        # Neither is a trading index.
         trade_bars = bars_by_code or {}
         self.bars_by_code = trade_bars
         self.raw_bars_by_code = trade_bars
         self.adj_bars_by_code = adj_bars_by_code
+        self.standard_qfq_bars_by_code = standard_qfq_bars_by_code
         self.factor_by_code: Dict[str, Dict[int, float]] = factor_by_code or {}
         self.corporate_action_policy = str(
             corporate_action_policy or "fail_closed"
@@ -104,6 +107,9 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
 
         for code, bars in (adj_bars_by_code or {}).items():
             self._adj_index[code] = {b.date: b for b in bars}
+        self._qfq_index: Dict[str, Dict[int, DayBar]] = {}
+        for code, bars in (standard_qfq_bars_by_code or {}).items():
+            self._qfq_index[code] = {b.date: b for b in bars}
 
         # prev close map for limit rules (RAW execution bars only)
         self._prev_close: Dict[str, Dict[int, float]] = {}
@@ -169,8 +175,8 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
             "Example costs only; not user real trading costs.",
             "Survivor bias possible: local TDX may lack delisted stocks.",
             DefaultAShareLimitRule.BOUNDARY_NOTE,
-            "Price dual-mode: signal may use causal qfq outside; execution/valuation ALWAYS on "
-            "bars_by_code (RAW in formal). adj_bars_by_code is fill audit only.",
+            "Price dual-mode: signal may use standard_qfq outside; execution/valuation ALWAYS on "
+            "bars_by_code (RAW in formal). adj=PIT research audit; qfq=signal-level audit.",
             "Schedule engine: all entry/exit dates are solved on the A-share trading-day calendar "
             "(T+N family); weekday anchors use planned civil date + holiday_policy=%s."
             % holiday_policy,
