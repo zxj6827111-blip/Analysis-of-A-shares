@@ -19,7 +19,7 @@ from ..bagua.filter_rules import (
     mode_label as bagua_mode_label,
 )
 from ..config import AStockConfig, get_default_config
-from ..data.adjustments import build_factor_series, formal_adjustment_ready
+from ..data.adjustments import build_factor_series, factor_manifest_sha, formal_adjustment_ready
 from ..data.calendar import TradeCalendar
 from ..data.catalog import selected_universe_sha
 from ..data.data_store import DataStore
@@ -229,133 +229,177 @@ def run_backtest(
                     period_raw_map[code] = build_period_bars(day_raw, period, asof=asof)
                 continue
 
-            if period == "DWM":
-                base = trade_specs[0]
-                w_bars = build_period_bars(day_for_ind, "WEEK", asof=asof)
-                m_bars = build_period_bars(day_for_ind, "MONTH", asof=asof)
-                d_dict = bars_dict_from_day(day_for_ind)
-                w_dict = bars_dict_from_period(w_bars)
-                m_dict = bars_dict_from_period(m_bars)
-                ds, e1 = compute_indicator_signal(base, d_dict)
-                ws, e2 = compute_indicator_signal(base, w_dict)
-                ms, e3 = compute_indicator_signal(base, m_dict)
-                if ds is None or ws is None or ms is None:
-                    errors.append({"code": code, "dwm_errors": [e1, e2, e3]})
-                    continue
-                res = compute_v5_dwm_resonance(day_for_ind, ds, w_bars, ws, m_bars, ms)
-                period_raw_map[code] = day_raw
-                for d in signal_dates(d_dict["date"], res):
-                    if start and d < start:
-                        continue
-                    if end and d > end:
-                        continue
-                    local_events.append(SignalEvent(code, d, "DWM", f"{base.id}_dwm", is_dwm=True))
-            else:
-                if period == "MIN60":
-                    m60 = load_min60_daybars(
-                        cfg.tdx_root,
-                        code,
-                        start=start,
-                        end=end,
-                    )
-                    if not m60:
-                        errors.append({"code": code, "indicator": "*", "error": "无60分钟线数据(.lc1)"})
-                        continue
-                    period_raw_map[code] = m60
-                    bars = min60_bars_to_arrays(m60)
-                    trade_dates = bars.get("trade_date")
-                else:
-                    p_bars_ind = build_period_bars(day_for_ind, period, asof=asof)
-                    p_bars_raw = build_period_bars(day_raw, period, asof=asof)
-                    period_raw_map[code] = p_bars_raw
-                    bars = bars_dict_from_day(p_bars_ind) if period == "DAY" else bars_dict_from_period(p_bars_ind)
-                    trade_dates = None
-                sigs = []
-                for spec in trade_specs:
-                    sig, err = compute_indicator_signal(spec, bars)
-                    if err:
-                        errors.append({"code": code, "indicator": spec.id, "error": err})
-                        continue
-                    sigs.append(sig)
-                    if not combine:
-                        date_arr = bars["date"]
-                        for i, d in enumerate(date_arr):
-                            try:
-                                on = int(sig[i]) != 0 and not (
-                                    isinstance(sig[i], float) and __import__("math").isnan(sig[i])
-                                )
-                            except Exception:
-                                on = bool(sig[i])
-                            if not on:
-                                continue
-                            if trade_dates is not None and i < len(trade_dates):
-                                d_out = int(trade_dates[i])
-                            else:
-                                d_out = int(d)
-                            if start and d_out < start:
-                                continue
-                            if end and d_out > end:
-                                continue
-                            local_events.append(SignalEvent(code, d_out, period, spec.id))
-                if combine and sigs:
-                    combined = sigs[0] if len(sigs) == 1 else combine_signals(sigs, mode=combine)
-                    date_arr = bars["date"]
-                    for i, d in enumerate(date_arr):
-                        try:
-                            on = int(combined[i]) != 0
-                        except Exception:
-                            on = bool(combined[i])
-                        if not on:
-                            continue
-                        if trade_dates is not None and i < len(trade_dates):
-                            d_out = int(trade_dates[i])
-                        else:
-                            d_out = int(d)
-                        if start and d_out < start:
-                            continue
-                        if end and d_out > end:
-                            continue
-                        local_events.append(SignalEvent(code, d_out, period, f"combine_{combine}"))
+            local_events.extend(
+                _events_for_code(code, day_raw, day_for_ind, asof)
+            )
         return local_events
+
+    def _events_for_code(code, day_raw, day_for_ind, asof) -> List[SignalEvent]:
+        """Indicator signals for one code from already-built bar lanes."""
+        local_events: List[SignalEvent] = []
+        if period == "DWM":
+            base = trade_specs[0]
+            w_bars = build_period_bars(day_for_ind, "WEEK", asof=asof)
+            m_bars = build_period_bars(day_for_ind, "MONTH", asof=asof)
+            d_dict = bars_dict_from_day(day_for_ind)
+            w_dict = bars_dict_from_period(w_bars)
+            m_dict = bars_dict_from_period(m_bars)
+            ds, e1 = compute_indicator_signal(base, d_dict)
+            ws, e2 = compute_indicator_signal(base, w_dict)
+            ms, e3 = compute_indicator_signal(base, m_dict)
+            if ds is None or ws is None or ms is None:
+                errors.append({"code": code, "dwm_errors": [e1, e2, e3]})
+                return local_events
+            res = compute_v5_dwm_resonance(day_for_ind, ds, w_bars, ws, m_bars, ms)
+            period_raw_map[code] = day_raw
+            for d in signal_dates(d_dict["date"], res):
+                if start and d < start:
+                    continue
+                if end and d > end:
+                    continue
+                local_events.append(SignalEvent(code, d, "DWM", f"{base.id}_dwm", is_dwm=True))
+            return local_events
+
+        if period == "MIN60":
+            m60 = period_raw_map.get(code)
+            if m60 is None:
+                m60 = load_min60_daybars(
+                    cfg.tdx_root,
+                    code,
+                    start=start,
+                    end=end,
+                )
+                period_raw_map[code] = m60 or []
+            if not m60:
+                errors.append({"code": code, "indicator": "*", "error": "无60分钟线数据(.lc1)"})
+                return local_events
+            bars = min60_bars_to_arrays(m60)
+            trade_dates = bars.get("trade_date")
+        else:
+            p_bars_ind = build_period_bars(day_for_ind, period, asof=asof)
+            p_bars_raw = build_period_bars(day_raw, period, asof=asof)
+            period_raw_map[code] = p_bars_raw
+            bars = bars_dict_from_day(p_bars_ind) if period == "DAY" else bars_dict_from_period(p_bars_ind)
+            trade_dates = None
+        sigs = []
+        for spec in trade_specs:
+            sig, err = compute_indicator_signal(spec, bars)
+            if err:
+                errors.append({"code": code, "indicator": spec.id, "error": err})
+                continue
+            sigs.append(sig)
+            if not combine:
+                date_arr = bars["date"]
+                for i, d in enumerate(date_arr):
+                    try:
+                        on = int(sig[i]) != 0 and not (
+                            isinstance(sig[i], float) and __import__("math").isnan(sig[i])
+                        )
+                    except Exception:
+                        on = bool(sig[i])
+                    if not on:
+                        continue
+                    if trade_dates is not None and i < len(trade_dates):
+                        d_out = int(trade_dates[i])
+                    else:
+                        d_out = int(d)
+                    if start and d_out < start:
+                        continue
+                    if end and d_out > end:
+                        continue
+                    local_events.append(SignalEvent(code, d_out, period, spec.id))
+        if combine and sigs:
+            combined = sigs[0] if len(sigs) == 1 else combine_signals(sigs, mode=combine)
+            date_arr = bars["date"]
+            for i, d in enumerate(date_arr):
+                try:
+                    on = int(combined[i]) != 0
+                except Exception:
+                    on = bool(combined[i])
+                if not on:
+                    continue
+                if trade_dates is not None and i < len(trade_dates):
+                    d_out = int(trade_dates[i])
+                else:
+                    d_out = int(d)
+                if start and d_out < start:
+                    continue
+                if end and d_out > end:
+                    continue
+                local_events.append(SignalEvent(code, d_out, period, f"combine_{combine}"))
+        return local_events
+
+    def _compute_events_from_loaded_maps() -> List[SignalEvent]:
+        """Compute signals using maps already filled by a prior bars/factors load."""
+        local_events: List[SignalEvent] = []
+        for idx, code in enumerate(codes):
+            if n_codes > 0:
+                pct = 5.0 + 80.0 * (idx / float(n_codes))
+            else:
+                pct = 5.0
+            if idx == 0 or (idx + 1) % 5 == 0 or (idx + 1) == n_codes:
+                _progress({
+                    "phase": "signals",
+                    "pct": round(pct, 2),
+                    "current": idx + 1,
+                    "total": n_codes,
+                    "message": "计算信号 %d/%d" % (idx + 1, n_codes),
+                    "code": code,
+                })
+            day_raw = raw_map.get(code) or []
+            if research_unadj:
+                day_for_ind = day_raw
+            else:
+                day_for_ind = standard_qfq_map.get(code) or day_raw
+            asof = day_raw[-1].date if day_raw else None
+            local_events.extend(_events_for_code(code, day_raw, day_for_ind, asof))
+        return local_events
+
+    def _make_signal_cache_key(factor_manifest: str) -> str:
+        from ..research.signal_cache import signal_cache_key
+
+        _ind_src = "|".join(
+            sorted(
+                "%s:%s" % (s.id, getattr(s, "source_sha256", None) or "")
+                for s in trade_specs
+            )
+        )
+        return signal_cache_key(
+            indicator_ids=[s.id for s in trade_specs],
+            indicator_source_hash=_ind_src,
+            period=period,
+            start=start,
+            end=end,
+            universe_hash=selected_universe_sha(codes),
+            adjust_mode=("research_unadjusted" if research_unadj else "standard_qfq"),
+            factor_manifest_sha=factor_manifest or "",
+            combine=combine,
+        )
 
     if use_signal_cache:
         try:
-            from ..research.signal_cache import get_or_compute_signals, signal_cache_key
+            from ..research.signal_cache import get_or_compute_signals
 
-            _ind_src = "|".join(
-                sorted(
-                    "%s:%s" % (s.id, getattr(s, "source_sha256", None) or "")
-                    for s in trade_specs
-                )
-            )
-            _sig_key = signal_cache_key(
-                indicator_ids=[s.id for s in trade_specs],
-                indicator_source_hash=_ind_src,
-                period=period,
-                start=start,
-                end=end,
-                universe_hash=selected_universe_sha(codes),
-                adjust_mode=("research_unadjusted" if research_unadj else "standard_qfq"),
-                combine=combine,
-            )
-
-            def _compute_signals():
-                return _load_maps_and_maybe_signals(compute_signals=True)
+            # Load bars/factors first so the cache key pins factor_manifest_sha.
+            # Without this, standard_qfq signals can change after CA updates while
+            # the disk cache still returns stale events.
+            _load_maps_and_maybe_signals(compute_signals=False)
+            _factor_manifest = factor_manifest_sha(factor_series)
+            _sig_key = _make_signal_cache_key(_factor_manifest)
 
             events, signal_cache_hit = get_or_compute_signals(
                 _sig_key,
-                _compute_signals,
+                _compute_events_from_loaded_maps,
                 cfg=cfg,
                 use_cache=True,
                 meta={
                     "period": period,
                     "n_codes": n_codes,
                     "rule_ids": [s.id for s in trade_specs],
+                    "factor_manifest_sha": _factor_manifest,
                 },
             )
             if signal_cache_hit:
-                # Cache stores events only — still need bars/factors for portfolio
-                _load_maps_and_maybe_signals(compute_signals=False)
                 _progress({
                     "phase": "signals",
                     "pct": 85.0,
@@ -368,7 +412,10 @@ def run_backtest(
         except Exception as _cache_err:
             # Fail open: recompute without cache
             signal_cache_hit = False
-            events = _load_maps_and_maybe_signals(compute_signals=True)
+            if not raw_map:
+                events = _load_maps_and_maybe_signals(compute_signals=True)
+            else:
+                events = _compute_events_from_loaded_maps()
             errors.append({"code": "*", "indicator": "signal_cache", "error": str(_cache_err)[:200]})
     else:
         events = _load_maps_and_maybe_signals(compute_signals=True)
@@ -604,6 +651,7 @@ def run_backtest(
                         end=end,
                         universe_hash=selected_universe_sha(codes),
                         adjust_mode=("research_unadjusted" if research_unadj else "standard_qfq"),
+                        factor_manifest_sha=factor_manifest_sha(factor_series),
                         combine=combine,
                     )
                 _filter_key = filter_cache_key(

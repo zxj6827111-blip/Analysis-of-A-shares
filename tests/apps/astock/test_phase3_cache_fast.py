@@ -55,6 +55,28 @@ def test_signal_cache_hit_second_call(tmp_path: Path):
     assert load_signal_cache(key, cfg=cfg) is not None
 
 
+
+def test_signal_cache_key_includes_factor_manifest():
+    """P1: factor change must not hit stale standard_qfq signal cache."""
+    base = dict(
+        indicator_ids=["735"],
+        period="DAY",
+        start=20240101,
+        end=20240131,
+        universe_hash="u1",
+        adjust_mode="standard_qfq",
+    )
+    k1 = signal_cache_key(**base, factor_manifest_sha="aaa")
+    k2 = signal_cache_key(**base, factor_manifest_sha="bbb")
+    k3 = signal_cache_key(**base, factor_manifest_sha="aaa")
+    k_empty = signal_cache_key(**base)
+    k_empty2 = signal_cache_key(**base, factor_manifest_sha=None)
+    assert k1 != k2
+    assert k1 == k3
+    assert k_empty == k_empty2
+    assert k_empty != k1
+
+
 def test_filter_cache_depends_on_signal_key(tmp_path: Path):
     cfg = _cfg_tmp(tmp_path)
     sk = signal_cache_key(

@@ -19,12 +19,14 @@ def build_signal_key_from_request(
     *,
     universe_hash: Optional[str] = None,
     indicator_source_hash: Optional[str] = None,
+    factor_manifest_sha: Optional[str] = None,
 ) -> str:
     period = (getattr(req, "period", None) or "DAY").upper()
+    # Align with service/backtest adjust_mode labels (standard_qfq vs research_unadjusted).
     adjust = (
         "research_unadjusted"
         if getattr(req, "research_unadjusted", False)
-        else "adjusted"
+        else "standard_qfq"
     )
     return signal_cache_key(
         indicator_ids=list(getattr(req, "rule_ids", None) or []),
@@ -34,6 +36,7 @@ def build_signal_key_from_request(
         end=getattr(req, "end", None),
         universe_hash=universe_hash,
         adjust_mode=adjust,
+        factor_manifest_sha=factor_manifest_sha or "",
         combine=getattr(req, "combine", None),
     )
 

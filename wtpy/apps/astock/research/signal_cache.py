@@ -33,11 +33,13 @@ def signal_cache_key(
     end: Optional[int],
     universe_hash: Optional[str],
     adjust_mode: str,
+    factor_manifest_sha: Optional[str] = None,
     market_data_version: Optional[str] = None,
     calendar_version: Optional[str] = None,
     combine: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> str:
+    # factor_manifest_sha isolates cache when cumulative factors change (CA).
     payload = {
         "schema": CACHE_SCHEMA,
         "indicator_ids": list(indicator_ids or []),
@@ -47,6 +49,7 @@ def signal_cache_key(
         "end": end,
         "universe_hash": universe_hash,
         "adjust_mode": adjust_mode,
+        "factor_manifest_sha": factor_manifest_sha or "",
         "market_data_version": market_data_version,
         "calendar_version": calendar_version,
         "combine": combine,
