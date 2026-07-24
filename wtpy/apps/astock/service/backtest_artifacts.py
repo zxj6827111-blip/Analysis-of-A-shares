@@ -56,6 +56,11 @@ def build_repro_meta(
     from ..data.universe import AShareUniverse
     from .backtest_universe import _astock_code_sha
     from .backtest_request import research_fingerprint_fields_from_request
+    from ..price_planes import (
+        PRICE_MODE_NOTE_V3,
+        THREE_PLANE_SUMMARY_ZH,
+        three_plane_repro_fields,
+    )
 
     bagua_sha = ""
     try:
@@ -82,16 +87,10 @@ def build_repro_meta(
         "valuation_price_mode": valuation_price_mode,
         "corporate_action_policy": corporate_action_policy,
         "engine_result_version": engine_result_version,
-        "price_mode_note": (
-            "standard_qfq_signal_raw_execution_v2: signals use standard_qfq "
-            "(factor_t/snapshot_end; or raw if research_unadjusted); "
-            "fills/equity use unadjusted market prices; "
-            "point_in_time_adjusted is research/audit reference only. "
-            "Legacy price_mode=adjusted / dual_price_v1+causal_qfq signal: obsolete."
-        ),
+        "price_mode_note": PRICE_MODE_NOTE_V3,
         "research_price_mode": "point_in_time_adjusted",
         "display_price_mode": "standard_qfq",
-        "result_semantics_tag": "standard_qfq_signal_raw_execution_v2",
+        "result_semantics_tag": "asof_qfq_signal_raw_execution_v3",
         "risk_conflict_policy": "stop_first",
         "risk_trigger_policy": "daily_high_low",
         "risk_execution_policy": "next_trading_day_open",
@@ -185,6 +184,17 @@ def build_repro_meta(
         repro.update(_fp_fields)
     except Exception:
         _fp_fields = {}
+    
+    repro.update(
+        three_plane_repro_fields(
+            signal_price_mode=str(signal_price_mode or ""),
+            execution_price_mode=str(execution_price_mode or "raw"),
+            valuation_price_mode=str(valuation_price_mode or "raw"),
+            corporate_action_policy=str(corporate_action_policy or "fail_closed"),
+        )
+    )
+    repro["three_plane_summary_zh"] = THREE_PLANE_SUMMARY_ZH
+
     return repro, _fp_fields
 
 

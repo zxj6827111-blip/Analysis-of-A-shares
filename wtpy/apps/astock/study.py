@@ -122,22 +122,73 @@ def day_bars_to_adj(
     )
 
 
+def day_bars_to_asof_forward_adjusted(
+    bars: Sequence[DayBar],
+    factor: np.ndarray,
+    *,
+    asof_factor=None,
+    asof_index=None,
+) -> List[DayBar]:
+    """时点动态前复权 DayBars: scale_t = factor_t / factor_asof (L1 signal only)."""
+    if not bars:
+        return []
+    from .data.adjustments import asof_forward_adjusted_scale
+
+    factor = np.asarray(factor, dtype=np.float64)
+    scale = asof_forward_adjusted_scale(
+        factor, asof_factor=asof_factor, asof_index=asof_index
+    )
+    return _scale_day_bars(bars, scale)
+
+
 def day_bars_for_signals(
     bars: Sequence[DayBar],
     factor: np.ndarray,
     *,
     research_unadjusted: bool = False,
     snapshot_end_factor=None,
+    signal_adjust: str = "asof_forward_qfq",
+    asof_date: Optional[int] = None,
+    dates: Optional[Sequence[int]] = None,
 ) -> List[DayBar]:
-    """Bars used for technical signal generation (formal default: standard_qfq).
+    """Bars used for technical signal generation (L1).
 
-    research_unadjusted=True → raw OHLC; else ordinary qfq (not point-in-time).
+    research_unadjusted=True → raw OHLC.
+    Formal default signal_adjust=asof_forward_qfq: scale = factor_t / factor_asof.
+    Batch backtest should pass asof_date=run_end (anchor run_end; equals
+    standard_qfq on a snapshot that ends at run_end). Bagua query may pass
+    the query date for true asof.
+    signal_adjust=standard_qfq keeps ordinary snapshot-end qfq.
     """
     if research_unadjusted:
         return list(bars)
-    return day_bars_to_standard_qfq(
-        bars, factor, snapshot_end_factor=snapshot_end_factor
+    mode = (signal_adjust or "asof_forward_qfq").strip().lower()
+    if mode in ("standard_qfq", "ordinary_qfq", "qfq"):
+        return day_bars_to_standard_qfq(
+            bars, factor, snapshot_end_factor=snapshot_end_factor
+        )
+    # asof_forward_qfq (default)
+    asof_factor = snapshot_end_factor
+    if asof_factor is None and asof_date is not None:
+        from .data.adjustments import factor_value_on_or_before
+
+        if dates is not None:
+            ds = [int(x) for x in dates]
+        elif bars:
+            ds = [int(b.date) for b in bars]
+        else:
+            ds = []
+        fac_list = list(np.asarray(factor, dtype=float))
+        if ds and len(ds) == len(fac_list):
+            asof_factor = factor_value_on_or_before(ds, fac_list, int(asof_date))
+        elif bars:
+            ds = [int(b.date) for b in bars]
+            fac_list = list(np.asarray(factor, dtype=float))
+            asof_factor = factor_value_on_or_before(ds, fac_list, int(asof_date))
+    return day_bars_to_asof_forward_adjusted(
+        bars, factor, asof_factor=asof_factor, asof_index=None
     )
+
 
 
 def compute_indicator_signal(
@@ -258,10 +309,12 @@ def attach_bagua(
     bars_by_code_period: Dict[str, Sequence],
     calculator: BaguaCalculator,
 ) -> List[SignalEvent]:
-    """Attach bagua using the period K-line OHLC for the event date.
+    """Attach bagua using period K-line OHLC for the event date (L1 signal plane).
 
-    bars_by_code_period must contain the same period bars used for the signal
-    (day bars for DAY/DWM, aggregated week/month for WEEK/MONTH).
+    ``bars_by_code_period`` must be the **same** period bars used for technical
+    signals (standard_qfq or research raw via ``day_bars_for_signals``), not L2
+    raw execution bars. Day/DWM use day signal bars; WEEK/MONTH use aggregated
+    signal-period bars. MIN60 has no factor scale today — bars are as loaded.
     """
     by_code_date: Dict[str, Dict[int, object]] = {}
     for code, bars in bars_by_code_period.items():

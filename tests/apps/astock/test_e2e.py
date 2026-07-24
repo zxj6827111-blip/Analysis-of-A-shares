@@ -63,7 +63,7 @@ def test_e2e_small_pool(tmp_path):
     assert meta.get("status") == "research_unadjusted"
     # standard_qfq_signal_raw_execution_v2: research_unadjusted still executes raw; price_mode is standard_qfq_signal_raw_execution_v2
     _pm = meta.get("repro", {}).get("price_mode")
-    assert _pm in ("raw", "standard_qfq_signal_raw_execution_v2", "dual_price_v1")
+    assert _pm in ("raw", "standard_qfq_signal_raw_execution_v2", "asof_qfq_signal_raw_execution_v3", "dual_price_v1")
     assert meta.get("repro", {}).get("execution_price_mode", "raw") == "raw"
     assert meta.get("repro", {}).get("signal_price_mode") in ("raw", None)
     # hold is top-level / repro (AppConfig snapshot in config has no strategy hold)

@@ -229,6 +229,78 @@ def standard_qfq_scale(
     return np.where(np.isfinite(scale), scale, 1.0).astype(np.float64)
 
 
+
+def asof_forward_adjusted_scale(
+    factor: np.ndarray,
+    *,
+    asof_factor: Optional[float] = None,
+    asof_index: Optional[int] = None,
+) -> np.ndarray:
+    """Historical time-point dynamic forward-adjustment (时点动态前复权).
+
+    scale_t = factor_t / factor_asof
+
+    ``factor_asof`` is the cumulative factor known at the observation time T
+    (default: last finite factor in the series, same as standard_qfq for a
+    fixed snapshot). For a query/backtest as-of date T, pass the factor on
+    or before T so later corporate actions do not re-anchor history.
+
+    Unlike point_in_time_adjusted (起点锚定 factor_t/base_first), this keeps
+    the *asof day* price level equal to raw when factor_asof == factor_T.
+
+    Signal / chart only — never for cash, shares, or fees.
+    """
+    factor = np.asarray(factor, dtype=np.float64)
+    if factor.size == 0:
+        return factor.copy()
+    if asof_factor is not None:
+        end = float(asof_factor)
+    elif asof_index is not None:
+        i = int(asof_index)
+        if i < 0:
+            i = factor.size + i
+        i = max(0, min(i, factor.size - 1))
+        end = float(factor[i]) if np.isfinite(factor[i]) and factor[i] != 0.0 else np.nan
+        if not np.isfinite(end) or end == 0.0:
+            # walk backward from asof_index
+            end = np.nan
+            for v in factor[i::-1]:
+                if np.isfinite(v) and float(v) != 0.0:
+                    end = float(v)
+                    break
+    else:
+        end = np.nan
+        for v in factor[::-1]:
+            if np.isfinite(v) and float(v) != 0.0:
+                end = float(v)
+                break
+    if not np.isfinite(end) or end == 0.0:
+        return np.ones_like(factor, dtype=np.float64)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        scale = factor / end
+    return np.where(np.isfinite(scale), scale, 1.0).astype(np.float64)
+
+
+def factor_value_on_or_before(
+    dates: Sequence[int],
+    factors: Sequence[float],
+    asof: int,
+) -> Optional[float]:
+    """Last factor with date <= asof from aligned series."""
+    best = None
+    best_d = None
+    for d, f in zip(dates, factors):
+        try:
+            di, fv = int(d), float(f)
+        except (TypeError, ValueError):
+            continue
+        if di <= int(asof) and np.isfinite(fv) and fv != 0.0:
+            if best_d is None or di >= best_d:
+                best_d = di
+                best = fv
+    return best
+
+
 def point_in_time_adjusted_scale(
     factor: np.ndarray,
     *,

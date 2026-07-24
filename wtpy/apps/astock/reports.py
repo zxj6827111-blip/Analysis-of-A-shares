@@ -679,15 +679,19 @@ def write_excel_summary(
         ("信号价格模式", repro.get("signal_price_mode") or ""),
         ("成交价格模式", repro.get("execution_price_mode") or "raw"),
         ("估值价格模式", repro.get("valuation_price_mode") or "raw"),
+        ("三平面架构", repro.get("three_plane_summary_zh") or "L1信号/L2交易/L3公司行为账本"),
+        ("卦象OHLC平面", repro.get("bagua_ohlc_plane") or "L1_signal_price"),
+        ("卦象OHLC来源", repro.get("bagua_ohlc_source") or "signal_period_bars"),
         ("公司行为策略", repro.get("corporate_action_policy") or ""),
         ("引擎结果版本", repro.get("engine_result_version") or ""),
         (
             "价格说明",
             (
-                "standard_qfq_signal_raw_execution_v2：信号=普通前复权；买入价/卖出价=未复权真实成交价（含滑点）；"
-                "买入价_起点锚定研究参考/卖出价_起点锚定研究参考=同日起点锚定复权研究价审计价（不参与股数/费用/权益）。"
-                if str(repro.get("price_mode") or "") in ("standard_qfq_signal_raw_execution_v2", "dual_price_v1", "dual_price")
-                or str(repro.get("engine_result_version") or "") in ("standard_qfq_signal_raw_execution_v2", "dual_price_v1")
+                "三平面：L1信号(指标+卦象)=时点动态前复权asof_forward_qfq（兼容审计列 ordinary qfq）；L2成交/估值=未复权；L3正式默认fail_closed（不按累计因子改股数）。"
+                "买入价/卖出价=L2真实成交价（含滑点）；买入价_普通前复权参考=L1审计；"
+                "买入价_起点锚定研究参考=研究审计价（不参与股数/费用/权益）。"
+                if str(repro.get("price_mode") or "") in ("asof_qfq_signal_raw_execution_v3", "standard_qfq_signal_raw_execution_v2", "dual_price_v1", "dual_price")
+                or str(repro.get("engine_result_version") or "") in ("asof_qfq_signal_raw_execution_v3", "standard_qfq_signal_raw_execution_v2", "dual_price_v1")
                 else (
                     "研究未复权：信号亦用未复权K线；成交/估值仍为未复权真实价格。"
                     if repro.get("research_unadjusted")
@@ -778,44 +782,15 @@ def write_excel_summary(
 
     # ---- 交易明细 ----
     ws2 = wb.create_sheet("交易明细")
-    headers = [
-        "序号",
-        "证券代码",
-        "代码",
-        "信号日期",
-        "指标",
-        "卦名",
-        "爻位",
-        "卦序",
-        "变卦",
-        "操作信号",
-        "state_id",
-        "卦象简判",
-        "买入日期",
-        "买入价",
-        "买入价_起点锚定研究参考",
-        "买入价_普通前复权参考",
-        "买入复权因子",
-        "买入复权比例",
-        "卖出日期",
-        "卖出价",
-        "卖出价_起点锚定研究参考",
-        "卖出价_普通前复权参考",
-        "卖出复权因子",
-        "卖出复权比例",
-        "数量",
-        "买入金额",
-        "卖出金额",
-        "买入手续费",
-        "卖出手续费及印花税",
-        "毛利润",
-        "净利润",
-        "毛收益率%",
-        "净收益率%",
-        "是否盈利",
-        "卖出原因",
-        "状态",
-    ]
+    # Single source of truth with trades.csv (report_price_schema.TRADE_TRIP_FIELDS).
+    # Display-only renames for percent columns; never diverge field order from CSV.
+    from .report_price_schema import TRADE_TRIP_FIELDS
+
+    _excel_header_alias = {
+        "毛收益率": "毛收益率%",
+        "净收益率": "净收益率%",
+    }
+    headers = [_excel_header_alias.get(h, h) for h in TRADE_TRIP_FIELDS]
     excel_cap = 3000
     trips_for_excel = list(trips)
     excel_truncated = False
@@ -846,7 +821,7 @@ def write_excel_summary(
             f"price_mode={repro.get('price_mode') or ''} | "
             f"{repro.get('bagua_filter_label') or '无八卦过滤'} | "
             f"已平{len(closed)} 盈{win_n} 亏{loss_n} 未平{open_n} | 合计净利润≈{_fmt_num(net_sum, 2)} | "
-            f"明细行{len(trips)} | 买入价/卖出价=未复权成交；*_起点锚定/_普通前复权参考=审计"
+            f"明细行{len(trips)} | 买入价/卖出价=L2未复权成交；*_普通前复权参考=L1审计；*_起点锚定=研究审计"
             + (f"（Excel仅预览前{excel_cap}行，完整见 trades.csv）" if excel_truncated else "")
         ]
     )
@@ -865,45 +840,59 @@ def write_excel_summary(
     red = PatternFill("solid", fgColor="FADBD8")
     gray = PatternFill("solid", fgColor="F2F3F4")
 
+    def _excel_trip_cell(field: str, t: dict):
+        """Format one trade-trip cell; empty string stays empty (not 0)."""
+        v = t.get(field)
+        if v == "" or v is None:
+            if field in (
+                "序号",
+                "证券代码",
+                "代码",
+                "指标",
+                "卦名",
+                "爻位",
+                "卦序",
+                "变卦",
+                "操作信号",
+                "state_id",
+                "卦象简判",
+                "是否盈利",
+                "卖出原因",
+                "状态",
+                "数量",
+            ):
+                return "" if v is None else v
+            return ""
+        if field in ("信号日期", "买入日期", "卖出日期"):
+            return _fmt_date(v)
+        if field in ("买入价", "卖出价"):
+            return _fmt_num(v, 4)
+        if field in (
+            "买入价_起点锚定研究参考",
+            "买入价_普通前复权参考",
+            "卖出价_起点锚定研究参考",
+            "卖出价_普通前复权参考",
+        ):
+            return _fmt_num(v, 4)
+        if field in (
+            "买入复权因子",
+            "买入复权比例",
+            "卖出复权因子",
+            "卖出复权比例",
+        ):
+            return _fmt_num(v, 6)
+        if field in ("买入金额", "卖出金额", "毛利润", "净利润"):
+            return _fmt_num(v, 2)
+        if field in ("买入手续费", "卖出手续费及印花税"):
+            return _fmt_num(v, 4)
+        if field in ("毛收益率", "净收益率"):
+            return _fmt_pct(v)
+        return v
+
     # openpyxl is very slow for tens of thousands of styled rows (UI stuck at 96%).
     # Full FIFO list is always in trades.csv; Excel keeps a preview + summary.
     for t in trips_for_excel:
-        row = [
-            t.get("序号"),
-            t.get("证券代码"),
-            t.get("代码"),
-            _fmt_date(t.get("信号日期")),
-            t.get("指标"),
-            t.get("卦名"),
-            t.get("爻位"),
-            t.get("卦序"),
-            t.get("变卦"),
-            t.get("操作信号"),
-            t.get("state_id"),
-            t.get("卦象简判"),
-            _fmt_date(t.get("买入日期")),
-            _fmt_num(t.get("买入价"), 4),
-            _fmt_num(t.get("买入价_起点锚定研究参考"), 4) if t.get("买入价_起点锚定研究参考") != "" else "",
-            _fmt_num(t.get("买入复权因子"), 6) if t.get("买入复权因子") != "" else "",
-            _fmt_num(t.get("买入复权比例"), 6) if t.get("买入复权比例") != "" else "",
-            _fmt_date(t.get("卖出日期")),
-            _fmt_num(t.get("卖出价"), 4) if t.get("卖出价") != "" else "",
-            _fmt_num(t.get("卖出价_起点锚定研究参考"), 4) if t.get("卖出价_起点锚定研究参考") != "" else "",
-            _fmt_num(t.get("卖出复权因子"), 6) if t.get("卖出复权因子") != "" else "",
-            _fmt_num(t.get("卖出复权比例"), 6) if t.get("卖出复权比例") != "" else "",
-            t.get("数量"),
-            _fmt_num(t.get("买入金额"), 2),
-            _fmt_num(t.get("卖出金额"), 2) if t.get("卖出金额") != "" else "",
-            _fmt_num(t.get("买入手续费"), 4),
-            _fmt_num(t.get("卖出手续费及印花税"), 4) if t.get("卖出手续费及印花税") != "" else "",
-            _fmt_num(t.get("毛利润"), 2) if t.get("毛利润") != "" else "",
-            _fmt_num(t.get("净利润"), 2) if t.get("净利润") != "" else "",
-            _fmt_pct(t.get("毛收益率")) if t.get("毛收益率") != "" else "",
-            _fmt_pct(t.get("净收益率")) if t.get("净收益率") != "" else "",
-            t.get("是否盈利"),
-            t.get("卖出原因"),
-            t.get("状态"),
-        ]
+        row = [_excel_trip_cell(f, t) for f in TRADE_TRIP_FIELDS]
         ws2.append(row)
         r_idx = ws2.max_row
         fill = None
@@ -919,12 +908,17 @@ def write_excel_summary(
             if fill:
                 cell.fill = fill
 
+    # widths aligned to TRADE_TRIP_FIELDS order
     widths = [
         6, 16, 10, 12, 18, 14, 10, 8, 10, 10, 10, 28,
-        12, 10, 12, 12, 10, 12, 8, 12, 12, 12, 14, 10, 10, 10, 10, 8, 16, 10,
+        12, 10, 14, 14, 12, 12, 12, 10, 14, 14, 12, 12,
+        8, 12, 12, 12, 14, 10, 10, 10, 10, 8, 16, 10,
     ]
     for i, w in enumerate(widths, 1):
-        ws2.column_dimensions[get_column_letter(i)].width = w
+        if i <= len(headers):
+            ws2.column_dimensions[get_column_letter(i)].width = w
+    for i in range(len(widths) + 1, len(headers) + 1):
+        ws2.column_dimensions[get_column_letter(i)].width = 12
     ws2.auto_filter.ref = f"A2:{get_column_letter(len(headers))}{ws2.max_row}"
     ws2.freeze_panes = "A3"
 
@@ -934,16 +928,17 @@ def write_excel_summary(
         "本工作簿为单次回测的一份总表，研究用途，非投资建议。",
         "「汇总」：组合层收益/回撤/买卖次数等。",
         "「交易明细」：按 FIFO 将买入与卖出配对；信号日期取不晚于买入日的最近信号。",
-        "【价格口径】信号=普通前复权(standard_qfq)；成交/估值=未复权真实价格；高级研究参考=起点锚定复权研究价。买入价/卖出价为真实成交价（含滑点）；",
-        "买入价_起点锚定研究参考/卖出价_起点锚定研究参考为同日起点锚定复权研究价参考价（审计用，不参与股数/费用/权益）。",
-        "无公司行为区间内，普通前复权/起点锚定参考收益率应与真实成交收益率接近（仅审计）。"
-        "正式默认 corporate_action_policy=fail_closed：持仓跨越累计复权因子变化时标记 unsupported_corporate_action，"
-        "绝不根据累计因子虚构送转/分红账本。真实现金分红/送转明细账本尚未接入；ledger_factor_ratio 已被拒绝。",
+        "【三平面价格架构】L1信号价格层：指标/形态/趋势/技术信号/卦象OHLC特征使用时点动态前复权asof_forward_qfq（锚点=回测截止日）。",
+        "L2真实交易价格层：买卖成交/滑点/涨跌停/费用/持仓估值/资金占用仅用未复权OHLC。买入价/卖出价=L2。",
+        "L3公司行为账本层：正式默认 fail_closed（持仓跨因子跳变→unsupported，不改股数）；真实现金分红/送转需显式事件。",
+        "【价格口径】买入价_普通前复权参考=L1审计；买入价_起点锚定研究参考=研究审计（不参与股数/费用/权益）。",
+        "无公司行为区间内，普通前复权/起点锚定参考收益率应与真实成交收益率接近（仅审计）。",
+        "正式默认 corporate_action_policy=fail_closed：持仓跨越累计复权因子变化时标记 unsupported_corporate_action，绝不按累计因子虚构送转/分红账本。",
         "【交易日程 · 双层模型】前台用「信号星期 / 买入日星期 / 平仓日星期 / 开盘·收盘」配置；",
         "后台一律在 A 股交易日日历上求解（T+N 体系）：有 buy_weekday 时用 next_weekday_trading_day（覆盖 entry_lag 步进），",
         "有 exit_weekday 时同理覆盖 hold；未设星期时仍用 entry_lag + hold。节假日自动顺延到之后第一个可交易日。",
         "「按星期」不是另一套经济逻辑，而是 T+N 在星期锚定约束下的日历求解。",
-        "启用八卦时默认可按「最佳3爻」等方案过滤；明细列「卦名/爻位/卦象简判」来自信号日 OHLC 标注（八卦用未复权价）。",
+        "启用八卦时默认可按「最佳3爻」等方案过滤；明细列「卦名/爻位/卦象简判」来自信号日 L1 OHLC（与技术指标同一套信号复权K线，非L2未复权成交价）。",
         "交易明细超过 3000 行时，Excel 仅预览前 3000 行；完整明细见同目录 trades.csv。",
         "毛利润 = 卖出金额 - 买入金额；净利润 = 毛利润 - 买入手续费 - 卖出手续费及印花税。",
         "收益率分母为买入金额。卖出原因含 time_exit / weekday_exit / stop_loss / take_profit 等（旧版 hold_expired 映射为 time_exit）。",

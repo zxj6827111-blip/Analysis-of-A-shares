@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """Corporate-action policy helpers shared by full and fast engines.
 
-Formal path: fail_closed only. Cumulative adjustment factors alone never invent
-share/cash ledgers. Real cash-dividend / split event ledgers are not implemented.
+Formal paths:
+- fail_closed: factor jump while open → unsupported (no silent restatement)
+- event_ledger: research opt-in; factor-jump share apply disabled; residual jumps fail_closed.
+  Explicit cash/share events required for any restatement.
 """
 
 from __future__ import annotations
@@ -19,22 +21,12 @@ POLICY_LEDGER_ALIASES = frozenset({"ledger_factor_ratio", "ledger"})
 def normalize_corporate_action_policy(policy: Optional[str]) -> Tuple[str, List[str], bool]:
     """Return (policy, notes, force_unsupported).
 
-    Any ledger_* request is rewritten to fail_closed and marked unsupported.
+    Supports fail_closed | event_ledger | not_checked.
+    Aliases ledger/ledger_factor_ratio map to event_ledger (research; no factor-jump share apply).
     """
-    p = str(policy or POLICY_FAIL_CLOSED).strip().lower()
-    notes: List[str] = []
-    force = False
-    if p in POLICY_LEDGER_ALIASES:
-        notes.append(
-            "unsupported_corporate_action: ledger_factor_ratio rejected without "
-            "real corporate-action cash/share events; forced fail_closed."
-        )
-        return POLICY_FAIL_CLOSED, notes, True
-    if p in ("fail", "unsupported"):
-        p = POLICY_FAIL_CLOSED
-    if p not in (POLICY_FAIL_CLOSED, POLICY_NOT_CHECKED):
-        p = POLICY_FAIL_CLOSED
-    return p, notes, force
+    from .ca_ledger import normalize_corporate_action_policy as _norm
+
+    return _norm(policy)
 
 
 def build_factor_by_code(

@@ -317,6 +317,7 @@ def collect_indicator_signals_with_bagua(
     store = DataStore(cfg.storage_root)
     events: List[SignalEvent] = []
     period_raw_map: Dict[str, Any] = {}
+    period_signal_map: Dict[str, Any] = {}
     errors: List[dict] = []
     n_codes = len(code_list)
 
@@ -349,7 +350,12 @@ def collect_indicator_signals_with_bagua(
 
                 fac = np.array(series.factors, dtype=float)
                 day_for_ind = day_bars_for_signals(
-                    day_raw, fac, research_unadjusted=False
+                    day_raw,
+                    fac,
+                    research_unadjusted=False,
+                    signal_adjust="asof_forward_qfq",
+                    asof_date=end if end else (day_raw[-1].date if day_raw else None),
+                    dates=dates,
                 )
             except Exception:
                 day_for_ind = day_raw
@@ -357,12 +363,14 @@ def collect_indicator_signals_with_bagua(
         try:
             if period == "DAY":
                 p_bars_raw = day_raw
+                p_bars_ind = day_for_ind
                 bars = bars_dict_from_day(day_for_ind)
             else:
                 p_bars_raw = build_period_bars(day_raw, period, asof=asof)
                 p_bars_ind = build_period_bars(day_for_ind, period, asof=asof)
                 bars = bars_dict_from_period(p_bars_ind)
             period_raw_map[code] = p_bars_raw
+            period_signal_map[code] = p_bars_ind
         except Exception as e:
             errors.append({"code": code, "error": f"period bars: {e}"})
             continue
@@ -388,7 +396,7 @@ def collect_indicator_signals_with_bagua(
                 events.append(SignalEvent(code, d_out, period, spec.id))
 
     calc = BaguaCalculator.from_json(cfg.bagua_json)
-    attach_bagua(events, period_raw_map, calc)
+    attach_bagua(events, period_signal_map, calc)
     n_with_bagua = sum(1 for e in events if getattr(e, "bagua", None))
     return {
         "events": events,
@@ -403,6 +411,8 @@ def collect_indicator_signals_with_bagua(
         "errors_sample": errors[:20],
         "n_errors": len(errors),
         "research_unadjusted": research_unadjusted,
+        "bagua_ohlc_plane": "L1_signal_price",
+        "bagua_ohlc_source": "signal_period_bars",
     }
 
 

@@ -966,12 +966,16 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         code: str = Query(..., min_length=1, description="stock code e.g. 600000 / sh600000"),
         date: str = Query(..., min_length=4, description="YYYY-MM-DD or YYYYMMDD"),
         period: str = Query("DAY", description="DAY | WEEK | MONTH"),
+        adjust: str = Query(
+            "raw",
+            description="raw | standard_qfq (前复权) | asof_forward_qfq (时点前复权)",
+        ),
     ) -> dict:
         """Query hexagram for one stock on a date (OHLC digit-sum algorithm)."""
         from .service.bagua_query import query_bagua
 
         try:
-            return query_bagua(cfg, code=code, date=date, period=period)
+            return query_bagua(cfg, code=code, date=date, period=period, adjust=adjust)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         except FileNotFoundError as e:

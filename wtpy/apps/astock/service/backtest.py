@@ -160,7 +160,8 @@ def run_backtest(
     raw_map: Dict[str, Any] = {}  # execution + valuation
     adj_map: Dict[str, Any] = {}  # point_in_time_adjusted research refs (legacy name)
     standard_qfq_map: Dict[str, Any] = {}  # default signal bars
-    period_raw_map: Dict[str, Any] = {}
+    period_raw_map: Dict[str, Any] = {}  # L2 period bars (audit / future use)
+    period_signal_map: Dict[str, Any] = {}  # L1 period bars for indicators + bagua
     factor_series = []
     errors: List[dict] = []
     combine = req.combine
@@ -208,25 +209,35 @@ def run_backtest(
             day_pit = day_bars_to_point_in_time_adjusted(day_raw, fac)
             adj_map[code] = day_pit
             # signal bars: formal = standard_qfq; research_unadj = raw (single build)
+            # L1 formal: asof_forward_qfq (anchor = run end or last bar; no CA after asof)
+            _asof_sig = end if end else (day_raw[-1].date if day_raw else None)
             day_for_ind = day_bars_for_signals(
-                day_raw, fac, research_unadjusted=research_unadj
+                day_raw,
+                fac,
+                research_unadjusted=research_unadj,
+                signal_adjust="asof_forward_qfq",
+                asof_date=_asof_sig,
+                dates=dates,
             )
-            # audit map always keeps ordinary qfq levels (even when signals are raw)
-            if research_unadj:
-                standard_qfq_map[code] = day_bars_to_standard_qfq(day_raw, fac)
-            else:
-                standard_qfq_map[code] = day_for_ind
+            # audit map: ordinary snapshot-end qfq (column 普通前复权参考)
+            # signals use day_for_ind (asof_forward_qfq formal default)
+            standard_qfq_map[code] = day_bars_to_standard_qfq(day_raw, fac)
             asof = day_raw[-1].date if day_raw else None
 
             if not compute_signals:
-                # Still need period_raw_map for bagua attach when cache hit
+                # Fill period maps for bagua (L1 signal bars) when signal cache hits.
                 if period == "DWM":
                     period_raw_map[code] = day_raw
+                    period_signal_map[code] = day_for_ind
                 elif period == "MIN60":
                     m60 = load_min60_daybars(cfg.tdx_root, code, start=start, end=end)
                     period_raw_map[code] = m60 or []
+                    period_signal_map[code] = m60 or []
                 else:
                     period_raw_map[code] = build_period_bars(day_raw, period, asof=asof)
+                    period_signal_map[code] = build_period_bars(
+                        day_for_ind, period, asof=asof
+                    )
                 continue
 
             local_events.extend(
@@ -252,6 +263,7 @@ def run_backtest(
                 return local_events
             res = compute_v5_dwm_resonance(day_for_ind, ds, w_bars, ws, m_bars, ms)
             period_raw_map[code] = day_raw
+            period_signal_map[code] = day_for_ind
             for d in signal_dates(d_dict["date"], res):
                 if start and d < start:
                     continue
@@ -270,6 +282,9 @@ def run_backtest(
                     end=end,
                 )
                 period_raw_map[code] = m60 or []
+                period_signal_map[code] = m60 or []
+            elif code not in period_signal_map:
+                period_signal_map[code] = m60 or []
             if not m60:
                 errors.append({"code": code, "indicator": "*", "error": "无60分钟线数据(.lc1)"})
                 return local_events
@@ -279,6 +294,7 @@ def run_backtest(
             p_bars_ind = build_period_bars(day_for_ind, period, asof=asof)
             p_bars_raw = build_period_bars(day_raw, period, asof=asof)
             period_raw_map[code] = p_bars_raw
+            period_signal_map[code] = p_bars_ind
             bars = bars_dict_from_day(p_bars_ind) if period == "DAY" else bars_dict_from_period(p_bars_ind)
             trade_dates = None
         sigs = []
@@ -371,7 +387,7 @@ def run_backtest(
             start=start,
             end=end,
             universe_hash=selected_universe_sha(codes),
-            adjust_mode=("research_unadjusted" if research_unadj else "standard_qfq"),
+            adjust_mode=("research_unadjusted" if research_unadj else "asof_forward_qfq"),
             factor_manifest_sha=factor_manifest or "",
             combine=combine,
         )
@@ -593,7 +609,8 @@ def run_backtest(
             nonlocal bagua_filter_mode, gua_filter_meta, bagua_n_before, bagua_n_after
             evs = list(src_events)
             calc = BaguaCalculator.from_json(cfg.bagua_json)
-            attach_bagua(evs, period_raw_map, calc)
+            # L1: bagua OHLC must match technical signal bars (not L2 raw).
+            attach_bagua(evs, period_signal_map, calc)
             bagua_n_before = len(evs)
             if gf.is_active():
                 try:
@@ -650,7 +667,7 @@ def run_backtest(
                         start=start,
                         end=end,
                         universe_hash=selected_universe_sha(codes),
-                        adjust_mode=("research_unadjusted" if research_unadj else "standard_qfq"),
+                        adjust_mode=("research_unadjusted" if research_unadj else "asof_forward_qfq"),
                         factor_manifest_sha=factor_manifest_sha(factor_series),
                         combine=combine,
                     )
@@ -661,9 +678,11 @@ def run_backtest(
                     gua_filter=gf.to_dict() if gf else None,
                     with_bagua=bool(req.with_bagua) or bagua_enabled,
                     bagua_filter_mode=getattr(req, "bagua_filter_mode", None),
+                    extra={"bagua_ohlc_plane": "L1_signal_price", "bagua_ohlc_source": "signal_period_bars"},
                 )
-                # Cache stores post-filter events; bagua attach needs period_raw_map on miss.
+                # Cache stores post-filter events; bagua attach needs period_signal_map on miss.
                 # On hit, bagua fields are already on events from prior save.
+                # Filter keys inherit signal_cache_key (adjust_mode + factor_manifest).
                 events, filter_cache_hit = get_or_compute_filtered(
                     _filter_key,
                     lambda: _apply_bagua_filters(events),

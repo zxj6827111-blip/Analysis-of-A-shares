@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""CSV column contracts for price-lane exports (keeps reports.py thinner)."""
+"""CSV column contracts for price-lane exports (keeps reports.py thinner).
+
+Three planes: L1 signal (asof_forward_qfq / ordinary qfq audit refs),
+L2 trade (price/raw_price), L3 CA ledger not in fill rows (formal fail_closed).
+"""
 
 from __future__ import annotations
 

@@ -17,6 +17,12 @@ from .corporate_action import (
     normalize_corporate_action_policy,
     risk_exit_session,
 )
+
+from .ca_ledger import (
+    POLICY_EVENT_LEDGER,
+    apply_day_events_to_open_positions,
+    build_events_by_code,
+)
 from .data.calendar import (
     DEFAULT_HOLIDAY_POLICY,
     TradeCalendar,
@@ -70,6 +76,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
         adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
         standard_qfq_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
         factor_by_code: Optional[Dict[str, Dict[int, float]]] = None,
+        ca_events_by_code: Optional[Dict[str, list]] = None,
         corporate_action_policy: str = "fail_closed",
     ):
         self.cfg = cfg
@@ -83,6 +90,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
         self.adj_bars_by_code = adj_bars_by_code
         self.standard_qfq_bars_by_code = standard_qfq_bars_by_code
         self.factor_by_code: Dict[str, Dict[int, float]] = factor_by_code or {}
+        self.ca_events_by_code: Dict[str, list] = ca_events_by_code or {}
         self.corporate_action_policy = str(
             corporate_action_policy or "fail_closed"
         ).strip().lower()
@@ -330,8 +338,35 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
         month_ends = self._period_end_dates("MONTH")
 
         for d in sim_dates:
-            # Factor change while open → unsupported (no share restatement)
+            # L3: optional explicit CA apply (factor_jump share apply disabled in ca_ledger);
+            # residual / all factor jumps use fail_closed check (not_checked skips).
+            if (
+                ca_policy == POLICY_EVENT_LEDGER
+                and positions
+                and self.ca_events_by_code
+            ):
+                if not hasattr(self, "_ca_last_applied") or self._ca_last_applied is None:
+                    self._ca_last_applied = {}
+                cash, ca_notes, n_ca = apply_day_events_to_open_positions(
+                    positions=positions,
+                    cash=cash,
+                    day=d,
+                    events_by_code=self.ca_events_by_code,
+                    last_applied=self._ca_last_applied,
+                    lot_size=int(getattr(self.cfg, "lot_size", 100) or 100),
+                )
+                if n_ca:
+                    self._n_corporate_actions = int(
+                        getattr(self, "_n_corporate_actions", 0) or 0
+                    ) + n_ca
             if self.factor_by_code and positions:
+                # Use fail_closed semantics for residual jumps even under event_ledger
+                # until explicit events re-base entry_factor (factor_jump apply off).
+                check_policy = (
+                    "fail_closed"
+                    if ca_policy == POLICY_EVENT_LEDGER
+                    else ca_policy
+                )
                 for code, pos in list(positions.items()):
                     if pos.entry_factor is None:
                         continue
@@ -342,7 +377,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                         entry_factor=pos.entry_factor,
                         day=d,
                         fac_now=fac_now,
-                        policy=ca_policy,
+                        policy=check_policy,
                     )
                     if msg:
                         ca_fail = True
@@ -774,7 +809,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                 "(policy=%s). No share restatement from cumulative factors."
                 % ca_policy
             )
-        metrics["n_corporate_actions"] = 0
+        metrics["n_corporate_actions"] = int(getattr(self, "_n_corporate_actions", 0) or 0)
         metrics["corporate_action_policy"] = ca_policy
 
         return BacktestResult(

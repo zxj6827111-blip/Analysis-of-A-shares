@@ -361,18 +361,23 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
         day_adj = day_bars_to_point_in_time_adjusted(day_raw, fac)
         day_adj_map[code] = day_adj
         day_for_ind = day_bars_for_signals(
-            day_raw, fac, research_unadjusted=research_unadj
+            day_raw,
+            fac,
+            research_unadjusted=research_unadj,
+            signal_adjust="asof_forward_qfq",
+            asof_date=end if end else (day_raw[-1].date if day_raw else None),
+            dates=dates,
         )
 
         asof = day_raw[-1].date if day_raw else None
-        # bagua always uses period raw OHLC
+        # bagua uses L1 signal period OHLC (same as indicators), not L2 raw
         if period == "DWM":
             trade_period = "DAY"
         else:
             trade_period = period
         p_bars_ind = build_period_bars(day_for_ind, trade_period, asof=asof, include_open=False)
         p_bars_raw = build_period_bars(day_raw, trade_period, asof=asof, include_open=False)
-        period_bars_map[code] = p_bars_raw
+        period_bars_map[code] = p_bars_ind
         if trade_period == "DAY":
             bars = bars_dict_from_day(p_bars_ind)
         else:
@@ -462,6 +467,8 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
         "adjustment_status": adj_msg,
         "factor_manifest_sha": factor_manifest_sha(factor_series),
         "research_unadjusted": research_unadj,
+        "bagua_ohlc_plane": "L1_signal_price",
+        "bagua_ohlc_source": "signal_period_bars",
         "start": start,
         "end": end,
     }

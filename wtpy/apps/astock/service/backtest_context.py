@@ -31,11 +31,11 @@ class ScheduleParams:
 class PriceModes:
     """Four-lane: signal standard_qfq (or raw), exec/valuation raw; PIT audit only."""
 
-    price_mode: str = "standard_qfq_signal_raw_execution_v2"
-    signal_price_mode: str = "standard_qfq"
+    price_mode: str = "asof_qfq_signal_raw_execution_v3"
+    signal_price_mode: str = "asof_forward_qfq"
     execution_price_mode: str = "raw"
     valuation_price_mode: str = "raw"
-    engine_result_version: str = "standard_qfq_signal_raw_execution_v2"
+    engine_result_version: str = "asof_qfq_signal_raw_execution_v3"
     research_unadj: bool = False
     formal_ok: bool = True
     use_research: bool = False
@@ -95,21 +95,37 @@ class BacktestRunContext:
         self.apply_standard_qfq_raw_execution_v2()
 
     def apply_standard_qfq_raw_execution_v2(self) -> None:
-        """Set four-lane modes from research_unadj / formal_ok."""
+        """Set four-lane / three-plane modes from research_unadj / formal_ok.
+
+        L1 formal default: asof_forward_qfq (时点动态前复权, anchor=run end).
+        L2: raw execution/valuation.
+        L3: fail_closed (no factor-jump share restatement); req may override for research.
+        """
         p = self.price
-        p.signal_price_mode = "raw" if p.research_unadj else "standard_qfq"
+        p.signal_price_mode = "raw" if p.research_unadj else "asof_forward_qfq"
         p.execution_price_mode = "raw"
         p.valuation_price_mode = "raw"
-        p.engine_result_version = "standard_qfq_signal_raw_execution_v2"
-        p.price_mode = "standard_qfq_signal_raw_execution_v2"
-        # research_price_mode: point_in_time_adjusted is always built for audit fills
+        p.engine_result_version = "asof_qfq_signal_raw_execution_v3"
+        p.price_mode = "asof_qfq_signal_raw_execution_v3"
         if p.research_unadj:
             p.use_research = True
             p.use_formal_ok = True
         else:
             p.use_research = False
             p.use_formal_ok = p.formal_ok
-        p.corporate_action_policy = "fail_closed"
+        # L3 formal default: fail_closed; request may override (aliases normalized)
+        from ..corporate_action import normalize_corporate_action_policy
+
+        req_ca = None
+        try:
+            req_ca = getattr(self.req, "corporate_action_policy", None)
+        except Exception:
+            req_ca = None
+        if req_ca:
+            pol, _notes, _force = normalize_corporate_action_policy(req_ca)
+            p.corporate_action_policy = pol
+        else:
+            p.corporate_action_policy = "fail_closed"
 
 
 def run_engine_with_ctx(

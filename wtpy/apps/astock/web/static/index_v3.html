@@ -1485,7 +1485,7 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
   <div class="page-title-row">
     <div>
       <h1 class="page-title">查询卦象</h1>
-      <p class="page-sub">按股票代码与日期，用未复权 OHLC 数字位求和算法查询当日 / 当周 / 当月卦象（开盘→上卦、收盘→下卦、高低→动爻）。</p>
+      <p class="page-sub">按股票代码与日期查询卦象；可选择未复权 / 普通前复权 / 时点前复权 OHLC（与回测 L1 信号可选对齐）。</p>
     </div>
   </div>
   <div class="forecast-layout">
@@ -1493,7 +1493,7 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
       <div class="card side-card">
         <div class="side-title">算法说明</div>
         <div class="muted" style="font-size:12px;line-height:1.65">
-          <p style="margin:0 0 8px"><b>价格</b>：未复权，保留两位小数。</p>
+          <p style="margin:0 0 8px"><b>价格</b>：可选未复权(L2)、普通前复权、时点前复权(L1)，保留两位小数后求位和。</p>
           <p style="margin:0 0 8px"><b>上卦</b>：开盘价各位数字之和 mod 8（0 记为 8）。</p>
           <p style="margin:0 0 8px"><b>下卦</b>：收盘价各位数字之和 mod 8（0 记为 8）。</p>
           <p style="margin:0 0 8px"><b>动爻</b>：最高价与最低价数字和相加后 mod 6（0 记为 6）。</p>
@@ -1513,6 +1513,11 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
             <option value="DAY" selected>按日</option>
             <option value="WEEK">按周</option>
             <option value="MONTH">按月</option>
+          </select>
+          <select class="select" id="bqAdjust" style="min-width:150px" title="价格复权">
+            <option value="raw" selected>未复权</option>
+            <option value="standard_qfq">普通前复权</option>
+            <option value="asof_forward_qfq">时点前复权(L1)</option>
           </select>
           <button type="button" class="btn btn-primary" id="bqSearchBtn">查询卦象</button>
         </div>
@@ -3999,13 +4004,16 @@ async function expCreateAndStart() {
     if (hint) hint.textContent = "查询中…";
     if (card) card.style.display = "none";
     try {
+      const adjust = (($("bqAdjust") && $("bqAdjust").value) || "raw");
       const url =
         "/api/v1/bagua/query?code=" +
         encodeURIComponent(code) +
         "&date=" +
         encodeURIComponent(date) +
         "&period=" +
-        encodeURIComponent(period);
+        encodeURIComponent(period) +
+        "&adjust=" +
+        encodeURIComponent(adjust);
       const data = await api(url);
       renderBaguaQueryResult(data);
       if (hint) {
@@ -4015,6 +4023,8 @@ async function expCreateAndStart() {
           label +
           " · " +
           (data.period || period) +
+          " · " +
+          (data.adjust || adjust || "raw") +
           " · 请求日 " +
           (data.query_date || date);
       }
@@ -5238,8 +5248,8 @@ function renderForecastPage() {
     ];
     const note =
       '<div class="muted" style="grid-column:1/-1;margin-top:8px;line-height:1.5">' +
-      "价格说明：技术指标/信号使用普通前复权；实际成交、股数、费用与权益使用未复权真实价格。" +
-      "trades/fills 中「买入价/卖出价」(price) 为未复权真实成交价；「买入价_起点锚定研究参考」为起点锚定复权研究价；「买入价_普通前复权参考」为信号口径普通前复权审计价（均不参与股数/费用/权益）。" +
+      "价格说明：三平面：L1信号层(指标+卦象OHLC)=时点前复权asof_forward_qfq（批回测锚截止日）；L2交易层=未复权成交/费用/权益；L3正式默认fail_closed（不按累计因子改股）。" +
+      "trades/fills 中「买入价/卖出价」(price) 为未复权真实成交价；「买入价_起点锚定研究参考」为起点锚定复权研究价；「买入价/卖出价」=L2未复权成交；「买入价_普通前复权参考」=L1审计；「买入价_起点锚定研究参考」=研究审计（均不参与股数/费用/权益）。" +
       "详见 trades.csv / fills.csv / summary.xlsx。" +
       "</div>";
     box.innerHTML =
@@ -5299,10 +5309,24 @@ function renderForecastPage() {
             (src.valuation_price_mode || "raw"),
       ],
       [
+        "三平面",
+        src.legacy_adjusted_execution || src.price_mode === "adjusted"
+          ? "—"
+          : "L1信号 / L2交易 / L3公司行为账本",
+      ],
+      [
+        "卦象OHLC",
+        src.legacy_adjusted_execution || src.price_mode === "adjusted"
+          ? "—"
+          : (src.bagua_ohlc_plane || "L1_signal_price") +
+            " · " +
+            (src.bagua_ohlc_source || "signal_period_bars"),
+      ],
+      [
         "价格说明",
         src.legacy_adjusted_execution || src.price_mode === "adjusted"
           ? "历史任务：旧版复权成交或 dual_price_v1(信号=起点锚定) 口径，勿与 standard_qfq信号+raw成交(v2) 混淆。请用新引擎重跑。"
-          : "信号计算：普通前复权；实际成交：未复权真实价格；账户估值：未复权真实价格；高级研究：起点锚定复权研究价。",
+          : "L1信号(+卦象)：asof_forward_qfq（批回测锚截止日）；L2成交/估值：未复权；L3：fail_closed；高级研究：起点锚定复权研究价。",
       ],
       ["止损", src.stop_loss != null ? src.stop_loss : "—"],
       ["止盈", src.take_profit != null ? src.take_profit : "—"],
