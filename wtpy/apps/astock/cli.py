@@ -39,7 +39,9 @@ from .study import (
     combine_signals,
     compute_indicator_signal,
     compute_v5_dwm_resonance,
-    day_bars_to_adj,
+    day_bars_for_signals,
+    day_bars_to_standard_qfq,
+    day_bars_to_point_in_time_adjusted,
     signal_dates,
     study_indicator_events,
 )
@@ -355,16 +357,12 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
         factor_series.append(series)
         import numpy as np
         fac = np.array(series.factors, dtype=float)
-        day_adj = day_bars_to_adj(day_raw, fac)  # PIT research
-        # CLI study path: prefer standard_qfq for indicators when available
-        try:
-            from .study import day_bars_to_standard_qfq as _to_qfq
-            day_qfq = _to_qfq(day_raw, fac)
-        except Exception:
-            day_qfq = day_adj
+        # PIT research map (audit only); signals use day_bars_for_signals (standard_qfq|raw)
+        day_adj = day_bars_to_point_in_time_adjusted(day_raw, fac)
         day_adj_map[code] = day_adj
-        # indicator bars: raw if research-unadjusted else adjusted
-        day_for_ind = day_raw if research_unadj else day_qfq
+        day_for_ind = day_bars_for_signals(
+            day_raw, fac, research_unadjusted=research_unadj
+        )
 
         asof = day_raw[-1].date if day_raw else None
         # bagua always uses period raw OHLC

@@ -207,12 +207,15 @@ def run_backtest(
             # research/audit: 起点锚定复权 (factor_t / base_factor)
             day_pit = day_bars_to_point_in_time_adjusted(day_raw, fac)
             adj_map[code] = day_pit
-            # default signals: 普通前复权 (factor_t / snapshot_end_factor)
-            day_qfq = day_bars_to_standard_qfq(day_raw, fac)
-            standard_qfq_map[code] = day_qfq
+            # signal bars: formal = standard_qfq; research_unadj = raw (single build)
             day_for_ind = day_bars_for_signals(
                 day_raw, fac, research_unadjusted=research_unadj
             )
+            # audit map always keeps ordinary qfq levels (even when signals are raw)
+            if research_unadj:
+                standard_qfq_map[code] = day_bars_to_standard_qfq(day_raw, fac)
+            else:
+                standard_qfq_map[code] = day_for_ind
             asof = day_raw[-1].date if day_raw else None
 
             if not compute_signals:
