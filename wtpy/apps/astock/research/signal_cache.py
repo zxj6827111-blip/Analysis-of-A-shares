@@ -81,9 +81,18 @@ def events_to_records(events: Sequence[SignalEvent]) -> List[dict]:
 def records_to_events(rows: Sequence[dict]) -> List[SignalEvent]:
     events: List[SignalEvent] = []
     for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        raw_date = r.get("date")
+        if raw_date is None:
+            continue
+        try:
+            date_i = int(raw_date)
+        except (TypeError, ValueError):
+            continue
         ev = SignalEvent(
             std_code=str(r.get("std_code") or r.get("code") or ""),
-            date=int(r["date"]),
+            date=date_i,
             period=str(r.get("period") or "DAY"),
             indicator_id=str(
                 r.get("indicator_id") or r.get("source") or r.get("indicator") or ""

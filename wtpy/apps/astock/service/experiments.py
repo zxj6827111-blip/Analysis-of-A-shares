@@ -1237,16 +1237,11 @@ class ExperimentRunner:
         try:
             exp = exp_db.get_experiment(self.cfg, experiment_id)
             concurrency = max(1, int(exp.get("concurrency") or 1))
+            # Re-run pending and failed when experiment is (re)started.
             pending = [
                 v
                 for v in (exp.get("variants") or [])
                 if v.get("status") in ("pending", "failed")
-            ]
-            # only re-run pending; failed retry if restarted
-            pending = [
-                v
-                for v in (exp.get("variants") or [])
-                if v.get("status") == "pending"
             ]
             completed = int(exp.get("completed_variants") or 0)
             failed = int(exp.get("failed_variants") or 0)

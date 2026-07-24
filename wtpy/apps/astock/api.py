@@ -1,4 +1,4 @@
-﻿"""FastAPI server for A-stock frontend: rules + backtests."""
+"""FastAPI server for A-stock frontend: rules + backtests."""
 
 from __future__ import annotations
 
@@ -998,17 +998,19 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         import shutil
 
         suffix = Path(file.filename or "gua.xlsx").suffix or ".xlsx"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            shutil.copyfileobj(file.file, tmp)
-            tmp_path = Path(tmp.name)
+        tmp_path = None
         try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                shutil.copyfileobj(file.file, tmp)
+                tmp_path = Path(tmp.name)
             report = reimport_excel(tmp_path, cfg=cfg, archive_previous=True)
+            return report
         finally:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-        return report
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     @app.get("/api/v1/forecast/health")
     def forecast_health() -> dict:
@@ -1022,6 +1024,7 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         from tempfile import NamedTemporaryFile
 
         suffix = Path(file.filename or "kb.xlsx").suffix or ".xlsx"
+        tmp_path = None
         try:
             with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 data = await file.read()
@@ -1031,10 +1034,11 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(400, str(e)) from e
         finally:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     @app.post("/api/v1/forecast/kb/seed")
     def forecast_kb_seed() -> dict:
@@ -1070,8 +1074,11 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
                 data = await file.read()
                 tmp.write(data)
                 tmp_path = Path(tmp.name)
-            # keep original name for week_key detection
-            named = tmp_path.with_name(file.filename or tmp_path.name)
+            # keep original basename for week_key detection (no path segments)
+            safe_name = Path(file.filename or tmp_path.name).name
+            if not safe_name or safe_name in (".", ".."):
+                safe_name = tmp_path.name
+            named = tmp_path.with_name(safe_name)
             if named != tmp_path:
                 named.write_bytes(tmp_path.read_bytes())
                 tmp_path.unlink(missing_ok=True)
