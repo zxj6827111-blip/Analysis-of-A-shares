@@ -27,7 +27,6 @@ from ..data.tdx_reader import TdxDayReader
 from ..data.minline_reader import load_min60_daybars, min60_bars_to_arrays
 from ..indicators.registry import IndicatorRegistry
 from ..indicators.tn6_importer import load_source_map, resolve_formula_audit
-from .backtest_engines import run_fast_or_full_engine
 from ..strategy import (
     PortfolioBacktester,
     filter_events_by_signal_weekdays,
@@ -689,38 +688,8 @@ def run_backtest(
             for a in formula_audits.values()
         )
     )
-    # dual_price_v1:
-    # - signal: causal_qfq (adj_map) unless research_unadjusted → raw
-    # - execution + valuation: ALWAYS raw_map (true tape / cash ledger)
-    # - adj_map is audit/reference only for fills — never trade_map for PnL
-    signal_price_mode = "raw" if research_unadj else "causal_qfq"
-    execution_price_mode = "raw"
-    valuation_price_mode = "raw"
-    engine_result_version = "dual_price_v1"
-    # Legacy sole price_mode: do not mean "fills are adjusted" anymore.
-    price_mode = "dual_price_v1"
-    execution_bars = raw_map
-    if research_unadj:
-        use_research = True
-        use_formal_ok = True
-    else:
-        use_research = False
-        use_formal_ok = formal_ok
-
+    # dual_price_v1 portfolio + artifacts (schedule/price/bagua/cache via context)
     engine = (getattr(req, "engine", None) or "full").strip().lower()
-    # Formal corporate-action policy: fail_closed (no invented factor-ratio ledgers).
-    corporate_action_policy = "fail_closed"
-
-    _progress({
-        "phase": "portfolio",
-        "pct": 90.0,
-        "current": n_codes,
-        "total": n_codes,
-        "message": "组合回测（信号 %d 条）" % len(events),
-        "code": None,
-        "n_signals": len(events),
-    })
-
     holiday_policy = getattr(req, "holiday_policy", None) or "next_trading_day"
     artifact_level = getattr(req, "artifact_level", None) or "full"
     try:
@@ -737,205 +706,69 @@ def run_backtest(
             "write_meta": True,
         }
 
-    result = run_fast_or_full_engine(
-        engine=engine,
-        cfg=cfg,
-        cal=cal,
-        events=events,
-        execution_bars=execution_bars,
-        adj_map=adj_map,
-        factor_series=factor_series,
-        research_unadj=research_unadj,
-        use_research=use_research,
-        use_formal_ok=use_formal_ok,
-        formal_ok=formal_ok,
-        corporate_action_policy=corporate_action_policy,
-        engine_result_version=engine_result_version,
-        run_id=run_id,
-        hold=hold,
-        period=period,
-        start=start,
-        end=end,
-        entry_lag=entry_lag,
-        account_mode=getattr(req, "account_mode", None) or "portfolio",
-        signal_weekdays=signal_weekdays,
-        buy_on=buy_on,
-        sell_on=sell_on,
-        buy_weekday=buy_weekday,
-        exit_weekday=exit_weekday,
-        holiday_policy=holiday_policy,
-        stop_loss=req.stop_loss,
-        take_profit=req.take_profit,
-        artifact_level=artifact_level,
-        n_codes=n_codes,
-        n_events_raw_signals=n_events_raw_signals,
-        n_events_after_weekday=n_events_after_weekday,
-        bagua_enabled=bagua_enabled,
-        bagua_n_before=bagua_n_before,
-        bagua_n_after=bagua_n_after,
-    )
-    # Keep service-level policy in sync with engine resolution (esp. fast not_checked)
-    corporate_action_policy = str(
-        (result.metrics or {}).get("_resolved_corporate_action_policy")
-        or (result.metrics or {}).get("corporate_action_policy")
-        or corporate_action_policy
+    from .backtest_context import (
+        BacktestRunContext,
+        BaguaState,
+        CacheState,
+        PriceModes,
+        ScheduleParams,
+        run_portfolio_and_finalize,
     )
 
-    if unconfirmed_run:
-        result.status = "research_unconfirmed_formula"
-        result.notes = list(result.notes) + [
-            "RESEARCH_UNCONFIRMED_FORMULA: paired source not user-confirmed; not formal.",
-        ]
-
-    # Phase-3 execution cache: store metrics for identical screen runs (fast/summary)
-    try:
-        from ..research.execution_cache import (
-            execution_cache_key,
-            load_execution_cache,
-            save_execution_cache,
-        )
-        from dataclasses import asdict as _asdict_c
-
-        _ex_payload = {
-            "engine": "fast" if engine in ("fast", "quick", "research_fast") else "full",
-            "engine_result_version": engine_result_version,
-            "signal_price_mode": signal_price_mode,
-            "execution_price_mode": execution_price_mode,
-            "valuation_price_mode": valuation_price_mode,
-            "corporate_action_policy": corporate_action_policy,
-            "artifact_level": artifact_level,
-            "rule_ids": [s.id for s in trade_specs],
-            "period": period,
-            "hold": hold,
-            "entry_lag": entry_lag,
-            "buy_on": buy_on,
-            "sell_on": sell_on,
-            "buy_weekday": buy_weekday,
-            "exit_weekday": exit_weekday,
-            "signal_weekdays": signal_weekdays,
-            "holiday_policy": holiday_policy,
-            "stop_loss": req.stop_loss,
-            "take_profit": req.take_profit,
-            "account_mode": getattr(req, "account_mode", None) or "portfolio",
-            "start": start,
-            "end": end,
-            "universe": selected_universe_sha(codes),
-            # legacy key kept but dual modes are authoritative for cache isolation
-            "adjust": "research_unadjusted" if research_unadj else "signal_causal_qfq_exec_raw",
-            "gua": (gf.to_dict() if gf else None),
-            "with_bagua": bagua_enabled,
-            "bagua_filter_mode": bagua_filter_mode,
-            "n_events": len(events),
-            "costs": _asdict_c(cfg.costs),
-        }
-        _ex_key = execution_cache_key(_ex_payload)
-        # Only auto-load for fast+summary screening to avoid stale formal full results
-        if (
-            use_signal_cache
-            and engine in ("fast", "quick", "research_fast")
-            and artifact_level == "summary"
-        ):
-            _ex_hit = load_execution_cache(_ex_key, cfg=cfg)
-            if _ex_hit and isinstance(_ex_hit.get("metrics"), dict):
-                execution_cache_hit = True
-                result.metrics = dict(_ex_hit["metrics"])
-                result.metrics["execution_cache_hit"] = True
-                result.notes = list(result.notes) + ["execution_cache_hit"]
-        if not execution_cache_hit and use_signal_cache:
-            try:
-                save_execution_cache(
-                    _ex_key,
-                    metrics=dict(result.metrics or {}),
-                    meta={"run_id": run_id, "engine": engine},
-                    cfg=cfg,
-                )
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    out_dir = cfg.output_root / run_id
-    from .backtest_artifacts import build_repro_meta, finalize_run_outputs
-
-    repro, _fp_fields = build_repro_meta(
+    ctx = BacktestRunContext(
         cfg=cfg,
         req=req,
-        events=events,
-        trade_specs=trade_specs,
         codes=codes,
+        schedule=ScheduleParams(
+            period=period,
+            hold=hold,
+            entry_lag=entry_lag,
+            buy_on=buy_on,
+            sell_on=sell_on,
+            buy_weekday=buy_weekday,
+            exit_weekday=exit_weekday,
+            signal_weekdays=signal_weekdays,
+            holiday_policy=holiday_policy,
+            start=start,
+            end=end,
+        ),
+        price=PriceModes(
+            research_unadj=research_unadj,
+            formal_ok=formal_ok,
+            adj_msg=adj_msg,
+        ),
+        bagua=BaguaState(
+            enabled=bagua_enabled,
+            filter_mode=bagua_filter_mode,
+            gua_filter_meta=gua_filter_meta,
+            gf=gf,
+            n_before=bagua_n_before,
+            n_after=bagua_n_after,
+        ),
+        cache=CacheState(
+            signal_hit=signal_cache_hit,
+            filter_hit=filter_cache_hit,
+            execution_hit=execution_cache_hit,
+            use_signal_cache=use_signal_cache,
+        ),
+        combine=combine,
+        engine=engine,
+        artifact_level=artifact_level,
+        art_flags=art_flags,
+        run_id=run_id,
+        trade_specs=trade_specs,
         formula_audits=formula_audits,
         factor_series=factor_series,
-        adj_msg=adj_msg,
-        research_unadj=research_unadj,
-        formal_ok=formal_ok,
         unconfirmed_run=unconfirmed_run,
-        price_mode=price_mode,
-        signal_price_mode=signal_price_mode,
-        execution_price_mode=execution_price_mode,
-        valuation_price_mode=valuation_price_mode,
-        corporate_action_policy=corporate_action_policy,
-        engine_result_version=engine_result_version,
-        entry_lag=entry_lag,
-        signal_weekdays=signal_weekdays,
-        buy_on=buy_on,
-        sell_on=sell_on,
-        buy_weekday=buy_weekday,
-        exit_weekday=exit_weekday,
-        period=period,
-        hold=hold,
-        combine=combine,
-        start=start,
-        end=end,
-        bagua_enabled=bagua_enabled,
-        bagua_filter_mode=bagua_filter_mode,
-        gua_filter_meta=gua_filter_meta,
-        gf=gf,
-        bagua_n_before=bagua_n_before,
-        bagua_n_after=bagua_n_after,
-        signal_cache_hit=signal_cache_hit,
-        filter_cache_hit=filter_cache_hit,
-        execution_cache_hit=execution_cache_hit,
-        use_signal_cache=use_signal_cache,
-    )
-
-    return finalize_run_outputs(
-        cfg=cfg,
-        req=req,
-        result=result,
-        events=events,
-        trade_specs=trade_specs,
-        out_dir=out_dir,
-        repro=repro,
-        art_flags=art_flags,
-        artifact_level=artifact_level,
-        progress=_progress,
-        n_codes=n_codes,
-        run_id=run_id,
-        period=period,
-        hold=hold,
-        entry_lag=entry_lag,
-        start=start,
-        end=end,
-        buy_on=buy_on,
-        sell_on=sell_on,
-        buy_weekday=buy_weekday,
-        exit_weekday=exit_weekday,
-        signal_weekdays=signal_weekdays,
-        codes=codes,
-        engine=engine,
-        holiday_policy=holiday_policy,
-        bagua_enabled=bagua_enabled,
-        bagua_filter_mode=bagua_filter_mode,
-        gua_filter_meta=gua_filter_meta,
-        gf=gf,
-        bagua_n_before=bagua_n_before,
-        bagua_n_after=bagua_n_after,
         n_events_raw_signals=n_events_raw_signals,
         n_events_after_weekday=n_events_after_weekday,
         errors=errors,
-        signal_cache_hit=signal_cache_hit,
-        filter_cache_hit=filter_cache_hit,
-        execution_cache_hit=execution_cache_hit,
-        use_signal_cache=use_signal_cache,
-        _fp_fields=_fp_fields,
+    )
+    return run_portfolio_and_finalize(
+        ctx,
+        cal=cal,
+        events=events,
+        raw_map=raw_map,
+        adj_map=adj_map,
+        progress=_progress,
     )

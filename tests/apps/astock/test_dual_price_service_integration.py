@@ -183,11 +183,14 @@ def test_formal_empty_factor_map_status_from_service_policy():
     from wtpy.apps.astock.service import backtest_engines as be
     from wtpy.apps.astock import corporate_action as ca
 
+    from wtpy.apps.astock.service import backtest_context as bc
+
     src = Path(bs.__file__).read_text(encoding="utf-8")
+    ctx = Path(bc.__file__).read_text(encoding="utf-8")
     eng = Path(be.__file__).read_text(encoding="utf-8")
     cas = Path(ca.__file__).read_text(encoding="utf-8")
-    assert "fail_closed" in src or "fail_closed" in eng
-    assert "execution_bars = raw_map" in src
+    assert "fail_closed" in src or "fail_closed" in eng or "fail_closed" in ctx
+    assert "execution_bars = raw_map" in src or "execution_bars = raw_map" in ctx
     assert "factor_by_code" in eng or "build_factor_by_code" in cas
     assert "unsupported_corporate_action: formal full engine requires" in eng
     assert "fail_closed" in cas
