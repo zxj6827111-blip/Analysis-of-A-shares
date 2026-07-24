@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
@@ -13,7 +12,6 @@ from ..bagua.filter_rules import (
     DEFAULT_BAGUA_FILTER_MODE,
     DEFAULT_RULE_VERSION,
     GuaFilter,
-    best3_display_pairs,
     filter_events_by_bagua_mode,
     filter_events_by_gua_filter,
     gua_filter_history_summary,
@@ -21,25 +19,20 @@ from ..bagua.filter_rules import (
     mode_label as bagua_mode_label,
 )
 from ..config import AStockConfig, get_default_config
-from ..data.adjustments import build_factor_series, factor_manifest_sha, formal_adjustment_ready
+from ..data.adjustments import build_factor_series, formal_adjustment_ready
 from ..data.calendar import TradeCalendar
-from ..data.catalog import file_sha_or_empty, selected_universe_sha
+from ..data.catalog import selected_universe_sha
 from ..data.data_store import DataStore
 from ..data.tdx_reader import TdxDayReader
 from ..data.minline_reader import load_min60_daybars, min60_bars_to_arrays
-from ..data.universe import AShareUniverse
 from ..indicators.registry import IndicatorRegistry
 from ..indicators.tn6_importer import load_source_map, resolve_formula_audit
-from ..reports import write_backtest_csv, write_signals_csv
 from ..strategy import (
     PortfolioBacktester,
     filter_events_by_signal_weekdays,
-    format_signal_weekdays,
     parse_price_session,
     parse_signal_weekdays,
     parse_single_weekday,
-    format_single_weekday,
-    session_label_cn,
 )
 from ..study import (
     SignalEvent,
@@ -55,173 +48,17 @@ from ..study import (
 )
 from .rules import RuleService
 
-
-def _astock_code_sha() -> str:
-    import hashlib
-
-    root = Path(__file__).resolve().parents[1]
-    h = hashlib.sha256()
-    files = sorted(
-        [
-            p
-            for p in root.rglob("*")
-            if p.is_file()
-            and p.suffix in {".py", ".json"}
-            and "__pycache__" not in p.parts
-        ],
-        key=lambda p: str(p.relative_to(root)).replace("\\", "/"),
-    )
-    for p in files:
-        rel = str(p.relative_to(root)).replace("\\", "/")
-        h.update(rel.encode("utf-8"))
-        h.update(b"\0")
-        h.update(p.read_bytes())
-        h.update(b"\0")
-    return h.hexdigest()
-
-
-DEMO_CODES = ["SSE.STK.600000", "SZSE.STK.000001"]
-
-FULL_MARKET_TOKENS = frozenset(
-    {
-        "*",
-        "ALL",
-        "ALL_A",
-        "ALL_MARKET",
-        "FULL",
-        "FULL_MARKET",
-        "全市场",
-        "全部A股",
-        "全部",
-    }
+from .backtest_universe import (  # noqa: F401
+    DEMO_CODES,
+    FULL_MARKET_TOKENS,
+    _astock_code_sha,
+    _is_full_market_token,
+    select_universe,
 )
-
-
-def _is_full_market_token(token: str) -> bool:
-    t = (token or "").strip()
-    if not t:
-        return False
-    if t in FULL_MARKET_TOKENS:
-        return True
-    return t.upper() in {x.upper() for x in FULL_MARKET_TOKENS if x.isascii()}
-
-
-def select_universe(cfg: AStockConfig, codes: Optional[Union[Sequence[str], str]]) -> List[str]:
-    """Resolve stock universe.
-
-    - None / empty / full-market token -> entire universe.json (all A-shares)
-    - otherwise parse comma list or sequence of codes
-    """
-    from ..data.universe import to_std_code
-
-    def _full() -> List[str]:
-        if cfg.universe_path.exists():
-            return AShareUniverse.load(cfg.universe_path).codes()
-        return list(DEMO_CODES)
-
-    if codes is None:
-        return _full()
-    if isinstance(codes, str):
-        parts = [c.strip() for c in codes.split(",") if c.strip()]
-    else:
-        parts = [str(c).strip() for c in codes if str(c).strip()]
-    if not parts:
-        return _full()
-    if any(_is_full_market_token(c) for c in parts):
-        return _full()
-    out: List[str] = []
-    for c in parts:
-        if c.startswith("SSE.") or c.startswith("SZSE."):
-            out.append(c)
-        else:
-            out.append(to_std_code(c))
-    return out if out else _full()
-
-
-@dataclass
-class BacktestRequest:
-    rule_ids: List[str]
-    period: str = "DAY"
-    hold: int = 1
-    entry_lag: int = 1
-    # ISO weekdays 1=Mon..7=Sun; empty/None = all. Example: [5] = Friday only.
-    signal_weekdays: Optional[List] = None
-    # open | close — default open (T+N open buy / open sell)
-    buy_on: str = "open"
-    sell_on: str = "open"
-    # Preferred UI: ISO weekday 1=Mon..7=Sun; overrides entry_lag / hold when set
-    buy_weekday: Optional[int] = None
-    exit_weekday: Optional[int] = None
-    combine: Optional[str] = None  # all | any | None
-    codes: Optional[List[str]] = None
-    start: Optional[int] = None
-    end: Optional[int] = None
-    dwm: bool = False
-    with_bagua: bool = False
-    # When with_bagua / bagua_ohlc is on: default best3 (最佳3爻) filter.
-    bagua_filter_mode: Optional[str] = None
-    # Flexible gua filter (UI); when active, takes precedence over bagua_filter_mode.
-    gua_filter: Optional[dict] = None
-    research_unadjusted: bool = False
-    research_unconfirmed_formula: bool = False
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
-    # portfolio = shared cash; per_symbol = TDX-style independent capital per stock
-    account_mode: str = "portfolio"
-    run_id: Optional[str] = None
-    # Phase-3 research options
-    engine: str = "full"  # full | fast
-    use_signal_cache: bool = False
-    artifact_level: str = "full"  # summary | candidate | full
-    holiday_policy: Optional[str] = None
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-
-
-
-
-def research_fingerprint_fields_from_request(
-    req: "BacktestRequest",
-    *,
-    costs: Optional[Dict[str, Any]] = None,
-    universe_hash: Optional[str] = None,
-    indicator_source_hash: Optional[str] = None,
-    engine_code_hash: Optional[str] = None,
-    market_data_version: Optional[str] = None,
-    calendar_version: Optional[str] = None,
-    bagua_json_hash: Optional[str] = None,
-) -> Dict[str, str]:
-    """Compute research fingerprint metadata for run summary / repro / index.
-
-    Does not replace experiment ``param_hash`` (request-params only). Returns
-    16-char ``research_fingerprint`` plus cheap component hashes.
-    """
-    from ..research.fingerprint import research_fingerprint_from_params
-
-    params = req.to_dict() if hasattr(req, "to_dict") else dict(req or {})
-    # Align with fingerprint param keys (indicator_ids preferred over rule_ids)
-    if params.get("rule_ids") and not params.get("indicator_ids"):
-        params = dict(params)
-        params["indicator_ids"] = params.get("rule_ids")
-    fp = research_fingerprint_from_params(
-        params,
-        costs=costs,
-        engine_code_hash=engine_code_hash,
-        universe_hash=universe_hash,
-        indicator_source_hash=indicator_source_hash,
-        market_data_version=market_data_version,
-        calendar_version=calendar_version,
-        bagua_json_hash=bagua_json_hash,
-    )
-    return {
-        "research_fingerprint": fp.full_hex(16),
-        "signal_fp": fp.signal_hex(16),
-        "filter_fp": fp.filter_hex(16),
-        "execution_fp": fp.execution_hex(16),
-    }
-
+from .backtest_request import (  # noqa: F401
+    BacktestRequest,
+    research_fingerprint_fields_from_request,
+)
 
 class BacktestService:
     def __init__(self, cfg: Optional[AStockConfig] = None):
@@ -851,27 +688,7 @@ def run_backtest(
             for a in formula_audits.values()
         )
     )
-    if research_unadj:
-        price_mode = "raw"
-        trade_map = raw_map
-        use_research = True
-        use_formal_ok = True
-    else:
-        price_mode = "adjusted"
-        trade_map = adj_map
-        use_research = False
-        use_formal_ok = formal_ok
-
-    _progress({
-        "phase": "portfolio",
-        "pct": 90.0,
-        "current": n_codes,
-        "total": n_codes,
-        "message": "组合回测（信号 %d 条）" % len(events),
-        "code": None,
-        "n_signals": len(events),
-    })
-
+    # dual_price_v1 portfolio + artifacts (schedule/price/bagua/cache via context)
     engine = (getattr(req, "engine", None) or "full").strip().lower()
     holiday_policy = getattr(req, "holiday_policy", None) or "next_trading_day"
     artifact_level = getattr(req, "artifact_level", None) or "full"
@@ -889,526 +706,69 @@ def run_backtest(
             "write_meta": True,
         }
 
-    if engine in ("fast", "quick", "research_fast"):
-        from ..research.fast_engine import run_fast_backtest
+    from .backtest_context import (
+        BacktestRunContext,
+        BaguaState,
+        CacheState,
+        PriceModes,
+        ScheduleParams,
+        run_portfolio_and_finalize,
+    )
 
-        fast_res = run_fast_backtest(
-            events,
-            trade_map,
-            cal,
-            hold=hold,
-            entry_lag=entry_lag,
-            buy_on=buy_on,
-            sell_on=sell_on,
-            buy_weekday=buy_weekday,
-            exit_weekday=exit_weekday,
-            holiday_policy=holiday_policy,
-            signal_weekdays=signal_weekdays,
-            start=start,
-            end=end,
-        )
-        # Adapt to BacktestResult-like surface for writers / history
-        from ..strategy import BacktestResult as _BTR
-
-        result = _BTR(
-            run_id=run_id,
-            config=dict(fast_res.config),
-            fills=[],
-            equity_curve=[],
-            metrics=dict(fast_res.metrics),
-            notes=list(fast_res.notes),
-            status="ok" if not use_research else "research_unadjusted",
-        )
-        result.metrics["engine"] = "fast"
-        result.metrics["n_signals_fast"] = fast_res.n_signals
-        result.metrics["n_events"] = len(events)
-        result.metrics["n_events_raw_signals"] = int(n_events_raw_signals)
-        result.metrics["n_events_after_weekday"] = int(n_events_after_weekday)
-        if bagua_enabled:
-            result.metrics["n_signals_before_bagua"] = bagua_n_before
-            result.metrics["n_signals_after_bagua"] = bagua_n_after
-        result.config["engine"] = "fast"
-        result.config["holiday_policy"] = holiday_policy
-        result.config["artifact_level"] = artifact_level
-    else:
-        bt = PortfolioBacktester(cfg, cal, raw_map, adj_bars_by_code=trade_map)
-        result = bt.run(
-            events,
-            hold=hold,
+    ctx = BacktestRunContext(
+        cfg=cfg,
+        req=req,
+        codes=codes,
+        schedule=ScheduleParams(
             period=period,
-            run_id=run_id,
-            start=start,
-            end=end,
-            research_unadjusted=use_research,
-            formal_ok=use_formal_ok,
-            stop_loss_pct=req.stop_loss,
-            take_profit_pct=req.take_profit,
+            hold=hold,
             entry_lag=entry_lag,
-            account_mode=getattr(req, "account_mode", None) or "portfolio",
-            signal_weekdays=signal_weekdays,
             buy_on=buy_on,
             sell_on=sell_on,
             buy_weekday=buy_weekday,
             exit_weekday=exit_weekday,
+            signal_weekdays=signal_weekdays,
             holiday_policy=holiday_policy,
-        )
-        result.config["engine"] = "full"
-        result.config["artifact_level"] = artifact_level
-        result.metrics["n_events"] = len(events)
-        result.metrics["n_events_raw_signals"] = int(n_events_raw_signals)
-        result.metrics["n_events_after_weekday"] = int(n_events_after_weekday)
-        if bagua_enabled:
-            result.metrics["n_signals_before_bagua"] = bagua_n_before
-            result.metrics["n_signals_after_bagua"] = bagua_n_after
-    if unconfirmed_run:
-        result.status = "research_unconfirmed_formula"
-        result.notes = list(result.notes) + [
-            "RESEARCH_UNCONFIRMED_FORMULA: paired source not user-confirmed; not formal.",
-        ]
-
-    # Phase-3 execution cache: store metrics for identical screen runs (fast/summary)
-    try:
-        from ..research.execution_cache import (
-            execution_cache_key,
-            load_execution_cache,
-            save_execution_cache,
-        )
-        from dataclasses import asdict as _asdict_c
-
-        _ex_payload = {
-            "engine": "fast" if engine in ("fast", "quick", "research_fast") else "full",
-            "artifact_level": artifact_level,
-            "rule_ids": [s.id for s in trade_specs],
-            "period": period,
-            "hold": hold,
-            "entry_lag": entry_lag,
-            "buy_on": buy_on,
-            "sell_on": sell_on,
-            "buy_weekday": buy_weekday,
-            "exit_weekday": exit_weekday,
-            "signal_weekdays": signal_weekdays,
-            "holiday_policy": holiday_policy,
-            "stop_loss": req.stop_loss,
-            "take_profit": req.take_profit,
-            "account_mode": getattr(req, "account_mode", None) or "portfolio",
-            "start": start,
-            "end": end,
-            "universe": selected_universe_sha(codes),
-            "adjust": "research_unadjusted" if research_unadj else "adjusted",
-            "gua": (gf.to_dict() if gf else None),
-            "with_bagua": bagua_enabled,
-            "bagua_filter_mode": bagua_filter_mode,
-            "n_events": len(events),
-            "costs": _asdict_c(cfg.costs),
-        }
-        _ex_key = execution_cache_key(_ex_payload)
-        # Only auto-load for fast+summary screening to avoid stale formal full results
-        if (
-            use_signal_cache
-            and engine in ("fast", "quick", "research_fast")
-            and artifact_level == "summary"
-        ):
-            _ex_hit = load_execution_cache(_ex_key, cfg=cfg)
-            if _ex_hit and isinstance(_ex_hit.get("metrics"), dict):
-                execution_cache_hit = True
-                result.metrics = dict(_ex_hit["metrics"])
-                result.metrics["execution_cache_hit"] = True
-                result.notes = list(result.notes) + ["execution_cache_hit"]
-        if not execution_cache_hit and use_signal_cache:
-            try:
-                save_execution_cache(
-                    _ex_key,
-                    metrics=dict(result.metrics or {}),
-                    meta={"run_id": run_id, "engine": engine},
-                    cfg=cfg,
-                )
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    out_dir = cfg.output_root / run_id
-    bagua_sha = ""
-    try:
-        bagua_sha = __import__("hashlib").sha256(Path(cfg.bagua_json).read_bytes()).hexdigest()
-    except Exception:
-        pass
-    global_manifest_sha = file_sha_or_empty(cfg.manifest_path)
-    global_universe_sha = file_sha_or_empty(cfg.universe_path)
-    global_universe_count = 0
-    if cfg.universe_path.exists():
-        try:
-            global_universe_count = len(AShareUniverse.load(cfg.universe_path))
-        except Exception:
-            global_universe_count = 0
-    sel_sha = selected_universe_sha(codes)
-    primary_audit: Dict[str, Any] = {}
-    for s in trade_specs:
-        primary_audit = formula_audits.get(s.id, {})
-        break
-    repro = {
-        "price_mode": price_mode,
-        "risk_conflict_policy": "stop_first",
-        "risk_trigger_policy": "daily_high_low",
-        "risk_execution_policy": "next_trading_day_open",
-        "entry_lag": entry_lag,
-        "signal_weekdays": signal_weekdays,
-        "buy_on": buy_on,
-        "sell_on": sell_on,
-        "buy_weekday": buy_weekday,
-        "exit_weekday": exit_weekday,
-        "schedule_mode": (
-            "weekday" if (buy_weekday is not None or exit_weekday is not None) else "tn"
+            start=start,
+            end=end,
         ),
-        "account_mode": (getattr(req, "account_mode", None) or "portfolio"),
-        "stop_loss_pct": req.stop_loss,
-        "take_profit_pct": req.take_profit,
-        "formula_provenance": primary_audit.get("formula_provenance"),
-        "source_pair_status": primary_audit.get("source_pair_status"),
-        "formal_backtest_allowed": primary_audit.get("formal_backtest_allowed"),
-        "confirmed_by": primary_audit.get("confirmed_by"),
-        "confirmed_at": primary_audit.get("confirmed_at"),
-        "confirmation_method": primary_audit.get("confirmation_method"),
-        "confirmation_note": primary_audit.get("confirmation_note"),
-        "package_file": primary_audit.get("package_file"),
-        "package_sha256": primary_audit.get("package_sha256"),
-        "source_file": primary_audit.get("source_file"),
-        "source_sha256": primary_audit.get("source_sha256"),
-        "formula_audits": formula_audits,
-        "indicator_ids": [s.id for s in trade_specs],
-        "indicator_source_sha": {s.id: s.source_sha256 for s in trade_specs},
-        "indicator_package_sha": {s.id: s.package_sha256 for s in trade_specs},
-        "package_sha_note": "package_sha is null for pure .txt indicators (no .tn6 package); only tn6_* entries carry package_sha256.",
-        "period": period,
-        "hold": hold,
-        "combine": combine,
-        "selected_codes": codes,
-        "selected_codes_count": len(codes),
-        "selected_universe_sha": sel_sha,
-        "global_manifest_sha": global_manifest_sha,
-        "global_universe_sha": global_universe_sha,
-        "global_universe_count": global_universe_count,
-        "start": start,
-        "end": end,
-        "config": cfg.to_dict(),
-        "factor_manifest_sha": factor_manifest_sha(factor_series),
-        "adjustment_status": adj_msg,
-        "research_unadjusted": research_unadj or not formal_ok,
-        "research_unconfirmed_formula": unconfirmed_run,
-        "bagua_sha": bagua_sha,
-        "with_bagua": bagua_enabled,
-        "bagua_filter_mode": bagua_filter_mode,
-        "bagua_filter_label": (
-            (gua_filter_meta or {}).get("natural_language")
-            if gua_filter_meta
-            else (bagua_mode_label(bagua_filter_mode) if bagua_filter_mode else None)
+        price=PriceModes(
+            research_unadj=research_unadj,
+            formal_ok=formal_ok,
+            adj_msg=adj_msg,
         ),
-        "bagua_allowlist": (
-            best3_display_pairs()
-            if bagua_filter_mode and not gua_filter_meta
-            else None
+        bagua=BaguaState(
+            enabled=bagua_enabled,
+            filter_mode=bagua_filter_mode,
+            gua_filter_meta=gua_filter_meta,
+            gf=gf,
+            n_before=bagua_n_before,
+            n_after=bagua_n_after,
         ),
-        "gua_filter": gua_filter_meta or (gf.to_dict() if gf else None),
-        "n_signals_before_bagua": bagua_n_before if bagua_enabled else None,
-        "n_signals_after_bagua": bagua_n_after if bagua_enabled else None,
-        "code_version": "astock-0.5.0",
-        "astock_code_sha": _astock_code_sha(),
-        "n_signals": len(events),
-        "signal_cache_hit": signal_cache_hit,
-        "filter_cache_hit": filter_cache_hit,
-        "execution_cache_hit": execution_cache_hit,
-        "use_signal_cache": use_signal_cache,
-        "request": req.to_dict(),
-    }
-    try:
-        _ind_src = None
-        if trade_specs:
-            _ind_src = "|".join(
-                sorted(
-                    "%s:%s" % (s.id, getattr(s, "source_sha256", None) or "")
-                    for s in trade_specs
-                )
-            )
-        _fp_fields = research_fingerprint_fields_from_request(
-            req,
-            universe_hash=sel_sha,
-            indicator_source_hash=_ind_src,
-            bagua_json_hash=bagua_sha if bagua_enabled else None,
-        )
-        repro.update(_fp_fields)
-    except Exception:
-        _fp_fields = {}
-    _progress({
-        "phase": "writing",
-        "pct": 96.0,
-        "current": n_codes,
-        "total": n_codes,
-        "message": f"写入结果（信号 {len(events)} / 成交 {len(getattr(result, 'fills', []) or [])}）…",
-        "code": None,
-        "run_id": run_id,
-    })
-
-    if art_flags.get("write_signals", True):
-        write_signals_csv(out_dir / "signals.csv", events)
-        try:
-            from ..research.parquet_io import write_events_parquet
-            write_events_parquet(out_dir / "signals.parquet", events)
-        except Exception:
-            pass
-    _progress({
-        "phase": "writing_excel",
-        "pct": 97.0,
-        "current": n_codes,
-        "total": n_codes,
-        "message": (
-            "写入摘要…"
-            if not art_flags.get("write_excel", True)
-            else "写入 CSV / Excel 汇总（大明细可能仍需片刻）…"
+        cache=CacheState(
+            signal_hit=signal_cache_hit,
+            filter_hit=filter_cache_hit,
+            execution_hit=execution_cache_hit,
+            use_signal_cache=use_signal_cache,
         ),
-        "code": None,
-        "run_id": run_id,
-        "n_fills": len(getattr(result, "fills", []) or []),
-    })
-    rule_names = [s.name for s in trade_specs]
-    period_label = {
-        "DAY": "日线",
-        "WEEK": "周线",
-        "MONTH": "月线",
-        "DWM": "日周月共振",
-        "MIN60": "60分钟",
-    }.get(period, period)
-    title = "、".join(rule_names) if rule_names else "回测"
-    if gua_filter_meta:
-        hs = (gua_filter_meta.get("history_summary") or {}).get("short") or "卦象过滤"
-        # Fingerprint classic best-3 preset for human-readable history titles
-        try:
-            _sids = sorted(str(x) for x in (gua_filter_meta.get("selected_state_ids") or []))
-            if _sids == ["11-1", "24-1", "46-1"]:
-                hs = "卦象·最佳3爻"
-            elif gua_filter_meta.get("selection_mode") == "action_signal":
-                acts = list(gua_filter_meta.get("selected_action_signals") or [])
-                if set(acts) == {"新开仓", "加仓"} or set(acts) == {"加仓", "新开仓"}:
-                    hs = "卦象·偏多信号"
-        except Exception:
-            pass
-        # Prefer compact but explicit: 卦象·最佳3爻 / 卦象信号：…
-        title = f"{title} + {hs}"
-    elif bagua_enabled and bagua_filter_mode:
-        title = f"{title} + {bagua_mode_label(bagua_filter_mode)}"
-    elif bagua_enabled:
-        title = f"{title} + 八卦"
-    am = (getattr(req, "account_mode", None) or "portfolio").strip().lower()
-    if am in ("tdx", "per_stock", "independent", "通达信", "单票"):
-        am = "per_symbol"
-    if am == "per_symbol":
-        title = f"{title} · 通达信对照(单票独立资金)"
-    else:
-        title = f"{title} · 组合账户"
-    schedule_mode = (
-        "weekday" if (buy_weekday is not None or exit_weekday is not None) else "tn"
+        combine=combine,
+        engine=engine,
+        artifact_level=artifact_level,
+        art_flags=art_flags,
+        run_id=run_id,
+        trade_specs=trade_specs,
+        formula_audits=formula_audits,
+        factor_series=factor_series,
+        unconfirmed_run=unconfirmed_run,
+        n_events_raw_signals=n_events_raw_signals,
+        n_events_after_weekday=n_events_after_weekday,
+        errors=errors,
     )
-    title = f"{title} · {period_label}"
-    if schedule_mode == "tn":
-        title = f"{title} · 持有{hold}"
-    if signal_weekdays:
-        title = f"{title} · 仅{format_signal_weekdays(signal_weekdays)}信号"
-    title = f"{title} · {session_label_cn(buy_on)}买/{session_label_cn(sell_on)}卖"
-    if buy_weekday is not None:
-        title = f"{title} · {format_single_weekday(buy_weekday)}买"
-    if exit_weekday is not None:
-        title = f"{title} · {format_single_weekday(exit_weekday)}平"
-    if start or end:
-        title += f" · {start or ''}~{end or ''}"
-
-    repro["title"] = title
-    repro["schedule_mode"] = schedule_mode
-    repro["indicator_names"] = rule_names
-    # CostConfig snapshot for run_meta / Excel (P1.7)
-    try:
-        from dataclasses import asdict as _asdict_costs
-        repro["costs"] = _asdict_costs(cfg.costs)
-        if isinstance(repro.get("config"), dict):
-            repro["config"].setdefault("costs", repro["costs"])
-    except Exception:
-        pass
-    if gua_filter_meta is not None:
-        repro["gua_filter"] = gua_filter_meta
-    elif "gua_filter" not in repro:
-        repro["gua_filter"] = gf.to_dict() if gf else None
-
-    repro["engine"] = engine if engine in ("fast", "quick", "research_fast") else "full"
-    if repro["engine"] != "full":
-        repro["engine"] = "fast"
-    repro["artifact_level"] = artifact_level
-    repro["holiday_policy"] = holiday_policy
-
-    # Always write compact meta/metrics; heavy CSV/Excel respect artifact_level
-    out_dir.mkdir(parents=True, exist_ok=True)
-    import json as _json
-
-    (out_dir / "run_meta.json").write_text(
-        _json.dumps(repro, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
+    return run_portfolio_and_finalize(
+        ctx,
+        cal=cal,
+        events=events,
+        raw_map=raw_map,
+        adj_map=adj_map,
+        progress=_progress,
     )
-    (out_dir / "metrics.json").write_text(
-        _json.dumps(result.metrics or {}, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
-    )
-    paths: dict = {
-        "run_meta": out_dir / "run_meta.json",
-        "metrics": out_dir / "metrics.json",
-    }
-    if art_flags.get("write_fills", True) or art_flags.get("write_excel", True) or art_flags.get(
-        "write_equity", True
-    ):
-        # full/candidate writers
-        if artifact_level == "summary":
-            pass
-        else:
-            paths.update(
-                write_backtest_csv(
-                    out_dir,
-                    result,
-                    meta=repro,
-                    events=events if art_flags.get("write_signals") else None,
-                )
-            )
-    else:
-        # summary: skip heavy write_backtest_csv
-        pass
-
-
-    # index for history UI
-    try:
-        from .runs import append_run_index
-
-        append_run_index(
-
-            cfg,
-            {
-                "run_id": run_id,
-                "title": title,
-                "status": result.status,
-                "created_at": int(time.time()),
-                "indicator_ids": [s.id for s in trade_specs],
-                "indicator_names": rule_names,
-                "hold": hold,
-                "entry_lag": entry_lag,
-                "buy_weekday": buy_weekday,
-                "exit_weekday": exit_weekday,
-                "buy_on": buy_on,
-                "sell_on": sell_on,
-                "signal_weekdays": signal_weekdays,
-                "schedule_mode": schedule_mode,
-                "account_mode": (getattr(req, "account_mode", None) or "portfolio"),
-                "gua_filter": gua_filter_meta,
-                "with_bagua": bagua_enabled,
-                "n_signals_before_bagua": bagua_n_before if bagua_enabled else None,
-                "n_signals_after_bagua": bagua_n_after if bagua_enabled else None,
-                "period": period,
-                "period_label": period_label,
-                "start": start,
-                "end": end,
-                "selected_codes_count": len(codes),
-                "metrics": result.metrics,
-                **(_fp_fields if isinstance(_fp_fields, dict) else {}),
-            },
-        )
-    except Exception:
-        pass
-
-    _progress({
-        "phase": "done",
-        "pct": 100.0,
-        "current": n_codes,
-        "total": n_codes,
-        "message": "完成",
-        "code": None,
-        "run_id": run_id,
-    })
-
-    # P1.7: expose CostConfig on service summary for API/CLI traceability
-    _costs = None
-    if isinstance(getattr(result, "config", None), dict):
-        _costs = result.config.get("costs")
-    if _costs is None:
-        try:
-            from dataclasses import asdict as _asdict
-            _costs = _asdict(cfg.costs)
-        except Exception:
-            _costs = None
-    if isinstance(repro.get("config"), dict) and isinstance(repro["config"].get("costs"), dict):
-        # prefer cfg snapshot already in repro
-        _costs = repro["config"]["costs"]
-    elif _costs is not None:
-        repro.setdefault("costs", _costs)
-        if isinstance(repro.get("config"), dict):
-            repro["config"].setdefault("costs", _costs)
-
-    summary = {
-        "run_id": run_id,
-        "title": title,
-        "status": result.status,
-        "metrics": result.metrics,
-        "costs": _costs,
-        "n_events": len(events),
-        "n_events_raw_signals": int(n_events_raw_signals),
-        "n_events_after_weekday": int(n_events_after_weekday),
-        "with_bagua": bagua_enabled,
-        "bagua_filter_mode": bagua_filter_mode,
-        "bagua_filter_label": (
-            (gua_filter_meta or {}).get("natural_language")
-            if gua_filter_meta
-            else (bagua_mode_label(bagua_filter_mode) if bagua_filter_mode else None)
-        ),
-        "gua_filter": gua_filter_meta or (gf.to_dict() if gf else None),
-        "n_signals_before_bagua": bagua_n_before if bagua_enabled else None,
-        "n_signals_after_bagua": bagua_n_after if bagua_enabled else None,
-        "n_fills": len(getattr(result, "fills", None) or []),
-        "n_buys": result.metrics.get("n_buys"),
-        "n_sells": result.metrics.get("n_sells"),
-        "n_round_trips": result.metrics.get("n_round_trips"),
-        "paths": {k: str(v) for k, v in paths.items()},
-        "errors_sample": errors[:20],
-        "notes": result.notes,
-        "entry_lag": entry_lag,
-        "signal_weekdays": signal_weekdays,
-        "buy_on": buy_on,
-        "sell_on": sell_on,
-        "buy_weekday": buy_weekday,
-        "exit_weekday": exit_weekday,
-        "schedule_mode": schedule_mode,
-        "hold": hold,
-        "account_mode": (getattr(req, "account_mode", None) or "portfolio"),
-        "period": period,
-        "engine": repro.get("engine") or "full",
-        "artifact_level": artifact_level,
-        "holiday_policy": holiday_policy,
-        "signal_cache_hit": signal_cache_hit,
-        "filter_cache_hit": filter_cache_hit,
-        "execution_cache_hit": execution_cache_hit,
-        "use_signal_cache": use_signal_cache,
-        "repro": {
-            "factor_manifest_sha": repro["factor_manifest_sha"],
-            "entry_lag": entry_lag,
-            "hold": hold,
-            "period": period,
-            "signal_weekdays": signal_weekdays,
-            "buy_on": buy_on,
-            "sell_on": sell_on,
-            "buy_weekday": buy_weekday,
-            "exit_weekday": exit_weekday,
-            "schedule_mode": schedule_mode,
-            "indicator_ids": repro["indicator_ids"],
-            "astock_code_sha": repro.get("astock_code_sha"),
-            "research_fingerprint": repro.get("research_fingerprint"),
-            "signal_fp": repro.get("signal_fp"),
-            "filter_fp": repro.get("filter_fp"),
-            "execution_fp": repro.get("execution_fp"),
-        },
-        "research_fingerprint": repro.get("research_fingerprint"),
-        "signal_fp": repro.get("signal_fp"),
-        "filter_fp": repro.get("filter_fp"),
-        "execution_fp": repro.get("execution_fp"),
-    }
-    return summary

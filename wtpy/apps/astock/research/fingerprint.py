@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
 
 # Bump when fingerprint field set or hashing rules change.
-FINGERPRINT_SCHEMA_VERSION = "research_fp_v1"
+FINGERPRINT_SCHEMA_VERSION = "research_fp_v2"
 
 
 def _norm(v: Any) -> Any:
@@ -204,6 +204,11 @@ def build_execution_fingerprint(
     costs: Optional[Dict[str, Any]] = None,
     engine_code_hash: Optional[str] = None,
     limit_rules_version: Optional[str] = None,
+    signal_price_mode: Optional[str] = None,
+    execution_price_mode: Optional[str] = None,
+    valuation_price_mode: Optional[str] = None,
+    corporate_action_policy: Optional[str] = None,
+    engine_result_version: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     body = {
@@ -220,6 +225,11 @@ def build_execution_fingerprint(
         "costs": costs or {},
         "engine_code_hash": engine_code_hash or default_engine_code_hash(),
         "limit_rules_version": limit_rules_version or "DefaultAShareLimitRule",
+        "signal_price_mode": signal_price_mode,
+        "execution_price_mode": execution_price_mode,
+        "valuation_price_mode": valuation_price_mode,
+        "corporate_action_policy": corporate_action_policy,
+        "engine_result_version": engine_result_version,
     }
     if extra:
         body["extra"] = extra
@@ -262,6 +272,11 @@ def build_research_fingerprint(
     extra_signal: Optional[Dict[str, Any]] = None,
     extra_filter: Optional[Dict[str, Any]] = None,
     extra_execution: Optional[Dict[str, Any]] = None,
+    signal_price_mode: Optional[str] = None,
+    execution_price_mode: Optional[str] = None,
+    valuation_price_mode: Optional[str] = None,
+    corporate_action_policy: Optional[str] = None,
+    engine_result_version: Optional[str] = None,
 ) -> ResearchFingerprint:
     sig = build_signal_fingerprint(
         indicator_ids=indicator_ids,
@@ -299,6 +314,11 @@ def build_research_fingerprint(
         account_mode=account_mode,
         costs=costs,
         engine_code_hash=engine_code_hash,
+        signal_price_mode=signal_price_mode,
+        execution_price_mode=execution_price_mode,
+        valuation_price_mode=valuation_price_mode,
+        corporate_action_policy=corporate_action_policy,
+        engine_result_version=engine_result_version,
         extra=extra_execution,
     )
     return ResearchFingerprint(signal=sig, filter=flt, execution=exe)
@@ -318,6 +338,14 @@ def research_fingerprint_from_params(
 ) -> ResearchFingerprint:
     """Build fingerprint from a loose params dict (API / experiment variant)."""
     p = params or {}
+    research_unadj = bool(p.get("research_unadjusted"))
+    signal_price_mode = p.get("signal_price_mode") or (
+        "raw" if research_unadj else "causal_qfq"
+    )
+    execution_price_mode = p.get("execution_price_mode") or "raw"
+    valuation_price_mode = p.get("valuation_price_mode") or "raw"
+    corporate_action_policy = p.get("corporate_action_policy") or "fail_closed"
+    engine_result_version = p.get("engine_result_version") or "dual_price_v1"
     return build_research_fingerprint(
         indicator_ids=p.get("indicator_ids") or p.get("rule_ids"),
         indicator_names=p.get("indicator_names"),
@@ -329,7 +357,7 @@ def research_fingerprint_from_params(
         universe_hash=universe_hash or p.get("universe_hash"),
         market_data_version=market_data_version or p.get("market_data_version"),
         adjust_mode=p.get("adjust_mode")
-        or ("research_unadjusted" if p.get("research_unadjusted") else "adjusted"),
+        or ("research_unadjusted" if research_unadj else "adjusted"),
         calendar_version=calendar_version or p.get("calendar_version"),
         signal_weekdays=p.get("signal_weekdays"),
         gua_filter=p.get("gua_filter"),
@@ -356,4 +384,9 @@ def research_fingerprint_from_params(
         account_mode=p.get("account_mode"),
         costs=costs or p.get("costs"),
         engine_code_hash=engine_code_hash,
+        signal_price_mode=signal_price_mode,
+        execution_price_mode=execution_price_mode,
+        valuation_price_mode=valuation_price_mode,
+        corporate_action_policy=corporate_action_policy,
+        engine_result_version=engine_result_version,
     )

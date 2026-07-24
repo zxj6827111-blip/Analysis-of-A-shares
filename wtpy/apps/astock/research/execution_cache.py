@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 from ..config import AStockConfig, get_default_config
 from .fingerprint import short_fingerprint
 
-CACHE_SCHEMA = "execution_cache_v1"
+CACHE_SCHEMA = "execution_cache_v2"
 
 
 def default_execution_cache_dir(cfg: Optional[AStockConfig] = None) -> Path:

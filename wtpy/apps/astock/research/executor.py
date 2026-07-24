@@ -112,6 +112,9 @@ def run_engine(
     signal_weekdays: Optional[Sequence[int]] = None,
     start: Optional[int] = None,
     end: Optional[int] = None,
+    adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
+    factor_by_code: Optional[Dict[str, Dict[int, float]]] = None,
+    require_factor_map: bool = False,
 ) -> Dict[str, Any]:
     """Dispatch to fast or full engine."""
     eng = (engine or "full").strip().lower()
@@ -132,12 +135,18 @@ def run_engine(
             signal_weekdays=signal_weekdays,
             start=start,
             end=end,
+            adj_bars_by_code=adj_bars_by_code,
+            factor_by_code=factor_by_code,
+            require_factor_map=require_factor_map,
         )
         return {
             "engine": "fast",
             "result": res,
             "metrics": res.metrics,
             "summary": res.to_dict(),
+            "corporate_action_policy": (res.metrics or {}).get(
+                "corporate_action_policy", "not_checked"
+            ),
         }
     if full_runner is None:
         raise ValueError("full engine requires full_runner callable")

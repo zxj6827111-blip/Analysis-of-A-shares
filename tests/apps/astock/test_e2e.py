@@ -61,7 +61,11 @@ def test_e2e_small_pool(tmp_path):
     meta = json.loads((out / "run_meta.json").read_text(encoding="utf-8"))
     assert "total_return" in metrics
     assert meta.get("status") == "research_unadjusted"
-    assert meta.get("repro", {}).get("price_mode") == "raw"
+    # dual_price_v1: research_unadjusted still executes raw; price_mode is dual_price_v1
+    _pm = meta.get("repro", {}).get("price_mode")
+    assert _pm in ("raw", "dual_price_v1")
+    assert meta.get("repro", {}).get("execution_price_mode", "raw") == "raw"
+    assert meta.get("repro", {}).get("signal_price_mode") in ("raw", None)
     # hold is top-level / repro (AppConfig snapshot in config has no strategy hold)
     assert meta.get("hold") == 1 or meta.get("repro", {}).get("hold") == 1
     if (out / "signals.csv").exists():

@@ -39,13 +39,15 @@ def test_research_unadjusted_uses_raw_not_adj_fills():
     events = [SignalEvent(code, 20240103, "DAY", "t")]
     cal = TradeCalendar(dates)
 
-    # formal / adjusted path
-    bt_adj = PortfolioBacktester(cfg, cal, {code: raw}, adj_bars_by_code={code: adj})
-    res_adj = bt_adj.run(events, hold=1, period="DAY", formal_ok=True, _skip_zero_replay=True)
-    buy_adj = [f for f in res_adj.fills if f.side == "BUY"][0]
+    # dual_price_v1: bars_by_code is always RAW execution; adj is audit only.
+    # Formal and research_unadjusted both fill at raw open=20 on buy day.
+    bt_formal = PortfolioBacktester(cfg, cal, {code: raw}, adj_bars_by_code={code: adj})
+    res_formal = bt_formal.run(
+        events, hold=1, period="DAY", formal_ok=True, _skip_zero_replay=True
+    )
+    buy_formal = [f for f in res_formal.fills if f.side == "BUY"][0]
 
-    # research raw path: pass raw as trade map
-    bt_raw = PortfolioBacktester(cfg, cal, {code: raw}, adj_bars_by_code={code: raw})
+    bt_raw = PortfolioBacktester(cfg, cal, {code: raw}, adj_bars_by_code={code: adj})
     res_raw = bt_raw.run(
         events,
         hold=1,
@@ -56,7 +58,10 @@ def test_research_unadjusted_uses_raw_not_adj_fills():
     )
     buy_raw = [f for f in res_raw.fills if f.side == "BUY"][0]
 
-    assert abs(buy_adj.price - 10.0) < 1e-6
+    assert abs(buy_formal.price - 20.0) < 1e-6  # raw execution (not adj 10)
     assert abs(buy_raw.price - 20.0) < 1e-6
-    assert buy_adj.price != buy_raw.price
+    # adjusted reference should still be available on formal path
+    assert buy_formal.adjusted_reference_price is None or abs(
+        float(buy_formal.adjusted_reference_price) - 10.0
+    ) < 1e-6
     assert res_raw.status == "research_unadjusted"

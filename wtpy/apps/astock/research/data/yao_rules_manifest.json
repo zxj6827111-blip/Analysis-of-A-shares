@@ -1,0 +1,285 @@
+{
+  "version": "yao_rules_v20260723",
+  "rule_version_note": "Filtering uses state_id; bagua calc unchanged. biangua display may be empty in KB.",
+  "hold_templates": [
+    3,
+    5,
+    7,
+    10,
+    20,
+    40,
+    60,
+    120
+  ],
+  "rules": [
+    {
+      "rule_id": "core_tai_sheng",
+      "name": "泰之升",
+      "state_id": "11-1",
+      "main_gua": "地天泰",
+      "yao_name": "初九",
+      "biangua": "升",
+      "group": "long_tier1",
+      "source": "爻辞材料1",
+      "status": "confirmed",
+      "suggested_holds": [
+        20,
+        40,
+        60,
+        120
+      ]
+    },
+    {
+      "rule_id": "core_tai_mingyi",
+      "name": "泰之明夷",
+      "state_id": "11-2",
+      "main_gua": "地天泰",
+      "yao_name": "九二",
+      "biangua": "明夷",
+      "group": "long_tier1",
+      "source": "爻辞材料1",
+      "status": "confirmed",
+      "suggested_holds": [
+        20,
+        40,
+        60
+      ]
+    },
+    {
+      "rule_id": "core_tai_xu",
+      "name": "泰之需",
+      "state_id": "11-5",
+      "main_gua": "地天泰",
+      "yao_name": "六五",
+      "biangua": "需",
+      "group": "long_tier1",
+      "source": "爻辞材料1",
+      "status": "confirmed",
+      "suggested_holds": [
+        20,
+        40,
+        60
+      ]
+    },
+    {
+      "rule_id": "core_fu_kun",
+      "name": "复之坤",
+      "state_id": "24-1",
+      "main_gua": "地雷复",
+      "yao_name": "初九",
+      "biangua": "坤",
+      "group": "long_tier1",
+      "source": "爻辞材料1/2",
+      "status": "confirmed",
+      "suggested_holds": [
+        3,
+        5,
+        7,
+        20,
+        60
+      ]
+    },
+    {
+      "rule_id": "core_fu_lin",
+      "name": "复之临",
+      "state_id": "24-2",
+      "main_gua": "地雷复",
+      "yao_name": "六二",
+      "biangua": "临",
+      "group": "long_tier1",
+      "source": "爻辞材料1",
+      "status": "confirmed",
+      "suggested_holds": [
+        5,
+        20,
+        60
+      ]
+    },
+    {
+      "rule_id": "core_zhongfu_lv",
+      "name": "中孚之履",
+      "state_id": "61-4",
+      "main_gua": "风泽中孚",
+      "yao_name": "六四",
+      "biangua": "履",
+      "group": "week_tier1",
+      "source": "爻辞材料2",
+      "status": "confirmed",
+      "suggested_holds": [
+        3,
+        5,
+        7
+      ]
+    },
+    {
+      "rule_id": "core_daxu_bi",
+      "name": "大畜之贲",
+      "state_id": "26-2",
+      "main_gua": "山天大畜",
+      "yao_name": "九二",
+      "biangua": "贲",
+      "group": "mid",
+      "source": "爻辞材料",
+      "status": "confirmed",
+      "suggested_holds": [
+        5,
+        20
+      ]
+    },
+    {
+      "rule_id": "core_daxu_xiaoxu",
+      "name": "大畜之小畜",
+      "state_id": "26-5",
+      "main_gua": "山天大畜",
+      "yao_name": "六五",
+      "biangua": "小畜",
+      "group": "mid",
+      "source": "爻辞材料",
+      "status": "confirmed",
+      "suggested_holds": [
+        5,
+        20
+      ]
+    },
+    {
+      "rule_id": "core_cui_kun",
+      "name": "萃之困",
+      "state_id": "45-2",
+      "main_gua": "泽地萃",
+      "yao_name": "六二",
+      "biangua": "困",
+      "group": "mid",
+      "source": "爻辞材料",
+      "status": "confirmed",
+      "suggested_holds": [
+        5,
+        20
+      ]
+    },
+    {
+      "rule_id": "core_cui_yu",
+      "name": "萃之豫",
+      "state_id": "45-5",
+      "main_gua": "泽地萃",
+      "yao_name": "九五",
+      "biangua": "豫",
+      "group": "mid",
+      "source": "爻辞材料",
+      "status": "confirmed",
+      "suggested_holds": [
+        5,
+        20
+      ]
+    },
+    {
+      "rule_id": "core_gou_ding",
+      "name": "姤之鼎",
+      "state_id": "44-5",
+      "main_gua": "天风姤",
+      "yao_name": "九五",
+      "biangua": "鼎",
+      "group": "small",
+      "source": "爻辞材料",
+      "status": "confirmed",
+      "suggested_holds": [
+        3,
+        5,
+        7
+      ]
+    },
+    {
+      "rule_id": "core_kan_bi",
+      "name": "坎之比",
+      "state_id": "29-2",
+      "main_gua": "坎为水",
+      "yao_name": "九二",
+      "biangua": "比",
+      "group": "small",
+      "source": "爻辞材料",
+      "status": "confirmed",
+      "suggested_holds": [
+        3,
+        5,
+        7
+      ]
+    },
+    {
+      "rule_id": "pending_dayou_ding",
+      "name": "大有之鼎",
+      "state_id": "",
+      "main_gua": "火天大有",
+      "yao_name": "",
+      "biangua": "鼎",
+      "group": "long_tier1",
+      "source": "爻辞材料1",
+      "status": "pending",
+      "note": "biangua empty in KB; await user mapping"
+    },
+    {
+      "rule_id": "pending_dayou_li",
+      "name": "大有之离",
+      "state_id": "",
+      "main_gua": "火天大有",
+      "yao_name": "",
+      "biangua": "离",
+      "group": "long_tier1",
+      "source": "爻辞材料1",
+      "status": "pending"
+    },
+    {
+      "rule_id": "pending_dayou_qian",
+      "name": "大有之乾",
+      "state_id": "",
+      "main_gua": "火天大有",
+      "yao_name": "",
+      "biangua": "乾",
+      "group": "long_tier1",
+      "source": "爻辞材料1",
+      "status": "pending"
+    },
+    {
+      "rule_id": "pending_yi_guan",
+      "name": "益之观",
+      "state_id": "",
+      "main_gua": "风雷益",
+      "yao_name": "",
+      "biangua": "观",
+      "group": "long_tier1",
+      "source": "爻辞材料1",
+      "status": "pending"
+    },
+    {
+      "rule_id": "pending_yi_zhongfu",
+      "name": "益之中孚",
+      "state_id": "",
+      "main_gua": "风雷益",
+      "yao_name": "",
+      "biangua": "中孚",
+      "group": "long_tier1",
+      "source": "爻辞材料1",
+      "status": "pending"
+    },
+    {
+      "rule_id": "pending_yi_yi",
+      "name": "益之颐",
+      "state_id": "",
+      "main_gua": "风雷益",
+      "yao_name": "",
+      "biangua": "颐",
+      "group": "long_tier1",
+      "source": "爻辞材料1",
+      "status": "pending"
+    },
+    {
+      "rule_id": "pending_jie_yu",
+      "name": "解之豫",
+      "state_id": "",
+      "main_gua": "雷水解",
+      "yao_name": "",
+      "biangua": "豫",
+      "group": "week_tier1",
+      "source": "爻辞材料2",
+      "status": "pending"
+    }
+  ]
+}

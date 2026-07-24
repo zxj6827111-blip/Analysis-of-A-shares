@@ -2,6 +2,12 @@
 """Fast research engine: per-signal path stats without portfolio cash competition.
 
 Used for large grid screening. Final candidates should re-run full PortfolioBacktester.
+
+dual_price_v1:
+- ``bars_by_code`` must be RAW execution bars.
+- ``entry_price`` / ``exit_price`` are always RAW session prices.
+- Optional ``adj_bars_by_code`` only fills adjusted reference fields on FastTrade.
+- Does not support true cash simulation (``supports_true_cash_simulation=False``).
 """
 
 from __future__ import annotations
@@ -11,6 +17,13 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..corporate_action import (
+    POLICY_FAIL_CLOSED,
+    POLICY_NOT_CHECKED,
+    check_trade_factor_coverage,
+    code_has_factor_map,
+    factor_on_or_before,
+)
 from ..data.calendar import DEFAULT_HOLIDAY_POLICY, TradeCalendar, normalize_holiday_policy
 from ..data.tdx_reader import DayBar
 from ..strategy import (
@@ -30,8 +43,8 @@ class FastTrade:
     signal_date: int
     entry_date: int
     exit_date: int
-    entry_price: float
-    exit_price: float
+    entry_price: float  # RAW execution
+    exit_price: float  # RAW execution
     ret: float
     mfe: float
     mae: float
@@ -40,6 +53,8 @@ class FastTrade:
     planned_exit_date: Optional[int] = None
     entry_shift_days: int = 0
     exit_shift_days: int = 0
+    entry_adjusted_reference_price: Optional[float] = None
+    exit_adjusted_reference_price: Optional[float] = None
 
 
 @dataclass
@@ -196,8 +211,22 @@ def run_fast_backtest(
     signal_weekdays: Optional[Sequence[int]] = None,
     start: Optional[int] = None,
     end: Optional[int] = None,
+    adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
+    factor_by_code: Optional[Dict[str, Dict[int, float]]] = None,
+    require_factor_map: bool = False,
 ) -> FastBacktestResult:
-    """Equal-weight per-signal trades; no cash / max_weight / concurrent position limits."""
+    """Equal-weight per-signal trades; no cash / max_weight / concurrent position limits.
+
+    ``bars_by_code`` must be RAW execution bars. Optional ``adj_bars_by_code`` only
+    populates adjusted reference prices on each FastTrade.
+
+    Corporate-action policy:
+    - When ``factor_by_code`` is provided and hold spans a factor change → trade blocked,
+      status=unsupported_corporate_action (never invent share restatement).
+    - When ``factor_by_code`` is missing/empty → corporate_action_policy=not_checked and
+      notes make clear CA was not verified (do not claim fail_closed).
+    - Service formal path should pass factor maps and set require_factor_map=True.
+    """
     buy_on = parse_price_session(buy_on, default="open")
     sell_on = parse_price_session(sell_on, default="open")
     buy_weekday = parse_single_weekday(buy_weekday)
@@ -215,12 +244,35 @@ def run_fast_backtest(
     index: Dict[str, Dict[int, DayBar]] = {
         code: _bar_index(bars) for code, bars in bars_by_code.items()
     }
+    adj_index: Dict[str, Dict[int, DayBar]] = {
+        code: _bar_index(bars) for code, bars in (adj_bars_by_code or {}).items()
+    }
+    factors_provided = factor_by_code is not None
+    factor_by_code = dict(factor_by_code or {})
+    has_any_factor = any(bool(v) for v in factor_by_code.values())
+    # Honest policy label: fail_closed when we enforce per-trade coverage.
+    ca_policy = POLICY_FAIL_CLOSED if has_any_factor else POLICY_NOT_CHECKED
     trades: List[FastTrade] = []
     n_sig = 0
+    ca_blocked = 0
+    ca_notes: List[str] = []
     notes = [
         "engine=fast: per-signal path stats; no portfolio cash competition.",
         "holiday_policy=%s" % holiday_policy,
+        "execution_price_mode=raw",
+        "supports_true_cash_simulation=False",
+        "engine_result_version=dual_price_v1",
+        "corporate_action_policy=%s" % ca_policy,
     ]
+    if not has_any_factor:
+        notes.append(
+            "corporate_action_policy=not_checked: no factor_by_code provided; "
+            "CA fail_closed not applied (do not treat as formal fail_closed)."
+        )
+        if require_factor_map:
+            notes.append(
+                "unsupported_corporate_action: require_factor_map=True but factor map empty."
+            )
 
     for ev in events:
         d = int(ev.date)
@@ -274,11 +326,45 @@ def run_fast_backtest(
         exit_bar = bars_idx.get(exit_date)
         if not exit_bar:
             continue
+
+        # Per-trade CA: code + entry + exit coverage (shared gate)
+        enforce_ca = bool(require_factor_map or has_any_factor)
+        ca_msg = check_trade_factor_coverage(
+            factor_by_code,
+            code=code,
+            entry_date=entry_date,
+            exit_date=exit_date,
+            enforce=enforce_ca,
+        )
+        if ca_msg:
+            ca_blocked += 1
+            if ca_msg not in ca_notes:
+                ca_notes.append(ca_msg)
+            continue
+
         exit_px = float(bar_session_price(exit_bar, sell_on))
         if exit_px <= 0:
             continue
         ret = exit_px / entry_px - 1.0
         mfe, mae = _path_mfe_mae(bars_idx, calendar, entry_date, exit_date, entry_px)
+
+        entry_adj_ref = None
+        exit_adj_ref = None
+        adj_idx = adj_index.get(code)
+        if adj_idx:
+            ab = adj_idx.get(entry_date)
+            if ab:
+                try:
+                    entry_adj_ref = float(bar_session_price(ab, buy_on))
+                except Exception:
+                    entry_adj_ref = None
+            xb = adj_idx.get(exit_date)
+            if xb:
+                try:
+                    exit_adj_ref = float(bar_session_price(xb, sell_on))
+                except Exception:
+                    exit_adj_ref = None
+
         trades.append(
             FastTrade(
                 std_code=code,
@@ -295,10 +381,28 @@ def run_fast_backtest(
                 planned_exit_date=planned_x,
                 entry_shift_days=int(e_shift or 0),
                 exit_shift_days=int(x_shift or 0),
+                entry_adjusted_reference_price=entry_adj_ref,
+                exit_adjusted_reference_price=exit_adj_ref,
             )
         )
 
     metrics = _summarize(trades)
+    metrics["n_ca_blocked_trades"] = int(ca_blocked)
+    metrics["corporate_action_policy"] = ca_policy
+    metrics["supports_true_cash_simulation"] = False
+    metrics["factor_map_provided"] = bool(has_any_factor)
+    status = "ok"
+    if require_factor_map and not has_any_factor:
+        status = "unsupported_corporate_action"
+    if ca_blocked:
+        status = "unsupported_corporate_action"
+        notes.extend(ca_notes[:20])
+        notes.append(
+            "Fast engine CA gate: %d trade(s) blocked (factor change or incomplete "
+            "code/entry/exit factor coverage)."
+            % ca_blocked
+        )
+    metrics["status"] = status
     return FastBacktestResult(
         n_signals=n_sig,
         n_trades=len(trades),
@@ -315,5 +419,11 @@ def run_fast_backtest(
             "holiday_policy": holiday_policy,
             "signal_weekdays": list(signal_weekdays) if signal_weekdays else None,
             "engine": "fast",
+            "execution_price_mode": "raw",
+            "supports_true_cash_simulation": False,
+            "engine_result_version": "dual_price_v1",
+            "corporate_action_policy": ca_policy,
+            "status": status,
+            "factor_map_provided": bool(has_any_factor),
         },
     )
