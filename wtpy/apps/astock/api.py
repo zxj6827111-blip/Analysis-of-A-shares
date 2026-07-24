@@ -961,6 +961,25 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 
+    @app.get("/api/v1/bagua/query")
+    def api_bagua_query(
+        code: str = Query(..., min_length=1, description="stock code e.g. 600000 / sh600000"),
+        date: str = Query(..., min_length=4, description="YYYY-MM-DD or YYYYMMDD"),
+        period: str = Query("DAY", description="DAY | WEEK | MONTH"),
+    ) -> dict:
+        """Query hexagram for one stock on a date (OHLC digit-sum algorithm)."""
+        from .service.bagua_query import query_bagua
+
+        try:
+            return query_bagua(cfg, code=code, date=date, period=period)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(404, str(e)) from e
+        except Exception as e:
+            raise HTTPException(500, f"bagua query failed: {e}") from e
+
+
     @app.get("/api/v1/backtests/{run_id}/bagua-metrics")
     def api_run_bagua_metrics(run_id: str) -> dict:
         from .service.gua import run_bagua_metrics_for_run
