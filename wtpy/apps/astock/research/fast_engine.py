@@ -17,6 +17,13 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..corporate_action import (
+    POLICY_FAIL_CLOSED,
+    POLICY_NOT_CHECKED,
+    check_trade_factor_coverage,
+    code_has_factor_map,
+    factor_on_or_before,
+)
 from ..data.calendar import DEFAULT_HOLIDAY_POLICY, TradeCalendar, normalize_holiday_policy
 from ..data.tdx_reader import DayBar
 from ..strategy import (
@@ -243,9 +250,8 @@ def run_fast_backtest(
     factors_provided = factor_by_code is not None
     factor_by_code = dict(factor_by_code or {})
     has_any_factor = any(bool(v) for v in factor_by_code.values())
-    # Honest policy: fail_closed only when we will enforce per-trade factor coverage.
-    # Empty map → not_checked (unless require_factor_map forces unsupported at end).
-    ca_policy = "fail_closed" if has_any_factor else "not_checked"
+    # Honest policy label: fail_closed when we enforce per-trade coverage.
+    ca_policy = POLICY_FAIL_CLOSED if has_any_factor else POLICY_NOT_CHECKED
     trades: List[FastTrade] = []
     n_sig = 0
     ca_blocked = 0
@@ -267,30 +273,6 @@ def run_fast_backtest(
             notes.append(
                 "unsupported_corporate_action: require_factor_map=True but factor map empty."
             )
-
-    def _factor_on(code: str, date: int) -> Optional[float]:
-        """Last factor with event/date <= date (forward-filled from known events)."""
-        fmap = factor_by_code.get(code) or {}
-        if not fmap:
-            return None
-        if date in fmap:
-            try:
-                return float(fmap[date])
-            except (TypeError, ValueError):
-                return None
-        best = None
-        for k in fmap:
-            if int(k) <= int(date) and (best is None or int(k) > int(best)):
-                best = k
-        if best is None:
-            return None
-        try:
-            return float(fmap[best])
-        except (TypeError, ValueError):
-            return None
-
-    def _code_has_factor_map(code: str) -> bool:
-        return bool(factor_by_code.get(code))
 
     for ev in events:
         d = int(ev.date)
@@ -345,42 +327,20 @@ def run_fast_backtest(
         if not exit_bar:
             continue
 
-        # ---- Per-trade CA coverage (code + entry + exit) ----
-        # When fail_closed (any factors present) OR require_factor_map: incomplete
-        # coverage for THIS trade is unsupported (never silent ok with -50%).
+        # Per-trade CA: code + entry + exit coverage (shared gate)
         enforce_ca = bool(require_factor_map or has_any_factor)
-        if enforce_ca:
-            if not _code_has_factor_map(code):
-                ca_blocked += 1
-                msg = (
-                    "unsupported_corporate_action: missing factor map for trade code "
-                    "%s entry=%s exit=%s" % (code, entry_date, exit_date)
-                )
-                if msg not in ca_notes:
-                    ca_notes.append(msg)
-                continue
-            f_ent = _factor_on(code, entry_date)
-            f_ex = _factor_on(code, exit_date)
-            if f_ent is None or f_ex is None:
-                ca_blocked += 1
-                msg = (
-                    "unsupported_corporate_action: incomplete factor coverage "
-                    "%s entry=%s factor=%s exit=%s factor=%s"
-                    % (code, entry_date, f_ent, exit_date, f_ex)
-                )
-                if msg not in ca_notes:
-                    ca_notes.append(msg)
-                continue
-            if abs(float(f_ex) - float(f_ent)) > 1e-9:
-                ca_blocked += 1
-                msg = (
-                    "unsupported_corporate_action: fast hold spans factor change "
-                    "%s entry=%s factor=%s exit=%s factor=%s"
-                    % (code, entry_date, f_ent, exit_date, f_ex)
-                )
-                if msg not in ca_notes:
-                    ca_notes.append(msg)
-                continue
+        ca_msg = check_trade_factor_coverage(
+            factor_by_code,
+            code=code,
+            entry_date=entry_date,
+            exit_date=exit_date,
+            enforce=enforce_ca,
+        )
+        if ca_msg:
+            ca_blocked += 1
+            if ca_msg not in ca_notes:
+                ca_notes.append(ca_msg)
+            continue
 
         exit_px = float(bar_session_price(exit_bar, sell_on))
         if exit_px <= 0:

@@ -31,6 +31,7 @@ from ..data.universe import AShareUniverse
 from ..indicators.registry import IndicatorRegistry
 from ..indicators.tn6_importer import load_source_map, resolve_formula_audit
 from ..reports import write_backtest_csv, write_signals_csv
+from ..corporate_action import build_factor_by_code
 from ..strategy import (
     PortfolioBacktester,
     filter_events_by_signal_weekdays,
@@ -870,12 +871,8 @@ def run_backtest(
         use_formal_ok = formal_ok
 
     engine = (getattr(req, "engine", None) or "full").strip().lower()
-    # Fast screening never implements corporate-action ledger / fail-closed.
-    # Fast also uses fail_closed (block trades spanning factor jumps); not a cash ledger.
-    if engine in ("fast", "quick", "research_fast"):
-        corporate_action_policy = "fail_closed"
-    else:
-        corporate_action_policy = "fail_closed"
+    # Formal corporate-action policy: fail_closed (no invented factor-ratio ledgers).
+    corporate_action_policy = "fail_closed"
 
     _progress({
         "phase": "portfolio",
@@ -906,21 +903,11 @@ def run_backtest(
     if engine in ("fast", "quick", "research_fast"):
         from ..research.fast_engine import run_fast_backtest
 
-        # Build factor maps early for fast CA fail-closed (same series as full)
-        factor_by_code_fast = {}
-        try:
-            for _fs in factor_series or []:
-                code_k = getattr(_fs, "std_code", None) or getattr(_fs, "code", None)
-                if not code_k:
-                    continue
-                dates_f = list(getattr(_fs, "dates", None) or [])
-                facs_f = list(getattr(_fs, "factors", None) or [])
-                if dates_f and facs_f and len(dates_f) == len(facs_f):
-                    factor_by_code_fast[str(code_k)] = {
-                        int(d): float(f) for d, f in zip(dates_f, facs_f)
-                    }
-        except Exception:
-            factor_by_code_fast = {}
+        # Shared factor maps (same builder as full path)
+        factor_by_code_fast, _factor_errs_fast = build_factor_by_code(factor_series)
+        if _factor_errs_fast:
+            # non-fatal for building; require_factor_map handles empty maps
+            pass
         fast_res = run_fast_backtest(
             events,
             execution_bars,
@@ -987,27 +974,8 @@ def run_backtest(
         # repro still records intended service policy for formal full; fast engine may report not_checked
         corporate_action_policy = str(_engine_ca)
     else:
-        # factor maps for corporate-action fail-closed (entry factor vs later factor)
-        factor_by_code = {}
-        factor_map_errors = []
-        try:
-            for _fs in factor_series or []:
-                code_k = getattr(_fs, "std_code", None) or getattr(_fs, "code", None)
-                if not code_k:
-                    continue
-                dates_f = list(getattr(_fs, "dates", None) or [])
-                facs_f = list(getattr(_fs, "factors", None) or [])
-                if dates_f and facs_f and len(dates_f) == len(facs_f):
-                    factor_by_code[str(code_k)] = {
-                        int(d): float(f) for d, f in zip(dates_f, facs_f)
-                    }
-                else:
-                    factor_map_errors.append(
-                        "factor series length mismatch for %s" % code_k
-                    )
-        except Exception as _fe:
-            factor_by_code = {}
-            factor_map_errors.append("factor_by_code build failed: %s" % _fe)
+        # Shared factor maps for full CA fail-closed
+        factor_by_code, factor_map_errors = build_factor_by_code(factor_series)
 
         # Formal full path: require factor maps for CA policy when formal.
         if (

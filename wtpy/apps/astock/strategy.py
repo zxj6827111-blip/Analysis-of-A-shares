@@ -37,6 +37,12 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 import numpy as np
 
 from .config import AStockConfig, CostConfig
+from .corporate_action import (
+    check_open_hold_factor_change,
+    factor_on_or_before,
+    normalize_corporate_action_policy,
+    risk_exit_session,
+)
 from .data.calendar import (
     DEFAULT_HOLIDAY_POLICY,
     TradeCalendar,
@@ -609,52 +615,37 @@ class PortfolioBacktester:
         deferred_sells: Dict[str, dict] = {}
         ca_unsupported_notes: List[str] = []
         ca_fail = False
-        # corporate_action_policy: formal path is fail_closed only.
-        # Cumulative factors alone must NEVER invent share/cash corporate-action ledgers.
-        ca_policy = str(
-            getattr(self, "corporate_action_policy", None) or "fail_closed"
-        ).strip().lower()
-        if ca_policy in ("ledger_factor_ratio", "ledger"):
-            # Explicit opt-in without real CA cash/share events is still not formal-ok.
-            ca_policy = "fail_closed"
+        ca_policy, _ca_init_notes, _ca_force = normalize_corporate_action_policy(
+            getattr(self, "corporate_action_policy", None)
+        )
+        if _ca_init_notes:
+            ca_unsupported_notes.extend(_ca_init_notes)
+        if _ca_force:
             ca_fail = True
-            ca_unsupported_notes.append(
-                "unsupported_corporate_action: ledger_factor_ratio rejected without "
-                "real corporate-action cash/share events; forced fail_closed."
-            )
 
         # precompute period end sets for week/month completion tracking
         week_ends = self._period_end_dates("WEEK")
         month_ends = self._period_end_dates("MONTH")
 
         for d in sim_dates:
-            # Factor change while open → unsupported (no share restatement / no invented ledger)
+            # Factor change while open → unsupported (no share restatement)
             if self.factor_by_code and positions:
                 for code, pos in list(positions.items()):
                     if pos.entry_factor is None:
                         continue
-                    fac_now = self._factor_on(code, d)
-                    if fac_now is None:
-                        continue
-                    try:
-                        f0 = float(pos.entry_factor)
-                        f1 = float(fac_now)
-                        if abs(f1 - f0) <= 1e-9 or f0 == 0.0:
-                            continue
+                    fac_now = factor_on_or_before(self.factor_by_code, code, d)
+                    msg = check_open_hold_factor_change(
+                        code=code,
+                        entry_date=int(pos.entry_date),
+                        entry_factor=pos.entry_factor,
+                        day=d,
+                        fac_now=fac_now,
+                        policy=ca_policy,
+                    )
+                    if msg:
                         ca_fail = True
-                        msg = (
-                            "unsupported_corporate_action: factor changed while open "
-                            "%s entry_date=%s entry_factor=%s day=%s factor=%s policy=%s"
-                            % (code, pos.entry_date, pos.entry_factor, d, fac_now, ca_policy)
-                        )
                         if msg not in ca_unsupported_notes:
                             ca_unsupported_notes.append(msg)
-                    except (TypeError, ValueError) as e:
-                        ca_fail = True
-                        ca_unsupported_notes.append(
-                            "unsupported_corporate_action: factor check error %s day=%s %s"
-                            % (code, d, e)
-                        )
             # 1) process deferred + matured sells at open (never same-day as BUY)
             sell_codes = set(deferred_sells.keys())
             for code, pos in list(positions.items()):
@@ -704,13 +695,10 @@ class PortfolioBacktester:
                     pos.defer_reason = "limit_down"
                     deferred_sells[code] = {"trigger": trigger, "defer": "limit_down"}
                     continue
-                # Exit session: risk-triggered sells always next-day OPEN (contract),
-                # independent of sell_on. Time/weekday exits honor sell_on.
-                is_risk_exit = bool(
-                    (info.get("trigger") or pos.trigger_reason)
-                    in (EXIT_REASON_STOP_LOSS, EXIT_REASON_TAKE_PROFIT, "stop_loss", "take_profit")
+                # Exit session: risk SL/TP always next-day OPEN; time/weekday honor sell_on.
+                sell_session = risk_exit_session(
+                    info.get("trigger") or pos.trigger_reason, sell_on
                 )
-                sell_session = "open" if is_risk_exit else sell_on
                 raw_px = bar_session_price(bar, sell_session)
                 px = raw_px * (1.0 - self.cfg.costs.slippage)
                 if px <= 0:
@@ -982,100 +970,19 @@ class PortfolioBacktester:
                 )
 
         # ------------------------------------------------------------------
-        # EOD forced exit: liquidate residual positions on last sim day (raw).
-        # Policy: sell at last session close * (1 - slippage); reason forced_exit.
-        # A-share T+1: skip same-day entry (cannot sell entry day); leave open.
+        # EOD forced exit (extracted helper)
         # ------------------------------------------------------------------
-        if positions and sim_dates:
-            last_d = int(sim_dates[-1])
-            forced_n = 0
-            for code, pos in list(positions.items()):
-                if int(pos.entry_date) >= last_d:
-                    # T+1: cannot force-sell same calendar session as entry
-                    continue
-                bar = self._index.get(code, {}).get(last_d)
-                if not bar:
-                    bar_px = self._last_px_on_or_before(code, last_d)
-                    if not bar_px or bar_px <= 0:
-                        continue
-                    session_raw = float(bar_px)
-                else:
-                    # EOD liquidation uses close (end-of-day mark), not sell_on
-                    session_raw = float(bar.close)
-                if session_raw <= 0:
-                    continue
-                px = session_raw * (1.0 - self.cfg.costs.slippage)
-                if px <= 0:
-                    continue
-                pos = positions.pop(code)
-                amount = pos.shares * px
-                comm = _commission(amount, self.cfg.costs)
-                tax = amount * self.cfg.costs.stamp_tax_rate
-                if account_mode == "per_symbol":
-                    cash_by_code[code] = (
-                        float(cash_by_code.get(code, 0.0)) + amount - comm - tax
-                    )
-                else:
-                    cash += amount - comm - tax
-                fills.append(
-                    Fill(
-                        date=last_d,
-                        std_code=code,
-                        side="SELL",
-                        price=px,
-                        shares=pos.shares,
-                        amount=amount,
-                        commission=comm,
-                        stamp_tax=tax,
-                        reason=EXIT_REASON_FORCED_EXIT,
-                        planned_date=last_d,
-                        actual_date=last_d,
-                        shift_days=0,
-                        holiday_policy=pos.holiday_policy,
-                        **self._fill_price_audit(
-                            code, last_d, "close", session_raw=session_raw
-                        ),
-                    )
-                )
-                forced_n += 1
-                deferred_sells.pop(code, None)
-            if forced_n:
-                notes.append(
-                    "EOD forced_exit: liquidated %d open position(s) at last "
-                    "sim day close (raw); T+1 skips same-day entry leftovers."
-                    % forced_n
-                )
-                # Refresh last equity point after cash returns
-                mv = self._mkt_value(positions, last_d)
-                if account_mode == "per_symbol":
-                    cash_sum = float(sum(cash_by_code.values())) if cash_by_code else 0.0
-                    if equity_curve and equity_curve[-1].date == last_d:
-                        equity_curve[-1] = EquityPoint(
-                            date=last_d,
-                            cash=cash_sum,
-                            market_value=mv,
-                            equity=cash_sum + mv,
-                        )
-                    else:
-                        equity_curve.append(
-                            EquityPoint(
-                                date=last_d,
-                                cash=cash_sum,
-                                market_value=mv,
-                                equity=cash_sum + mv,
-                            )
-                        )
-                else:
-                    if equity_curve and equity_curve[-1].date == last_d:
-                        equity_curve[-1] = EquityPoint(
-                            date=last_d, cash=cash, market_value=mv, equity=cash + mv
-                        )
-                    else:
-                        equity_curve.append(
-                            EquityPoint(
-                                date=last_d, cash=cash, market_value=mv, equity=cash + mv
-                            )
-                        )
+        cash = self._force_eod_exits(
+            positions=positions,
+            deferred_sells=deferred_sells,
+            fills=fills,
+            equity_curve=equity_curve,
+            notes=notes,
+            sim_dates=sim_dates,
+            account_mode=account_mode,
+            cash=cash,
+            cash_by_code=cash_by_code,
+        )
 
         if account_mode == "per_symbol":
             n_books = max(1, len(cash_by_code))
@@ -1237,6 +1144,97 @@ class PortfolioBacktester:
         )
 
 
+    def _force_eod_exits(
+        self,
+        *,
+        positions: Dict[str, Position],
+        deferred_sells: Dict[str, dict],
+        fills: List[Fill],
+        equity_curve: List[EquityPoint],
+        notes: List[str],
+        sim_dates: Sequence[int],
+        account_mode: str,
+        cash: float,
+        cash_by_code: Dict[str, float],
+    ) -> float:
+        """Liquidate residual positions on last sim day at raw close (T+1 aware).
+
+        Mutates positions/fills/equity_curve/notes/cash_by_code. Returns updated cash.
+        """
+        if not positions or not sim_dates:
+            return cash
+        last_d = int(sim_dates[-1])
+        forced_n = 0
+        for code, pos in list(positions.items()):
+            if int(pos.entry_date) >= last_d:
+                continue
+            bar = self._index.get(code, {}).get(last_d)
+            if not bar:
+                bar_px = self._last_px_on_or_before(code, last_d)
+                if not bar_px or bar_px <= 0:
+                    continue
+                session_raw = float(bar_px)
+            else:
+                session_raw = float(bar.close)
+            if session_raw <= 0:
+                continue
+            px = session_raw * (1.0 - self.cfg.costs.slippage)
+            if px <= 0:
+                continue
+            pos = positions.pop(code)
+            amount = pos.shares * px
+            comm = _commission(amount, self.cfg.costs)
+            tax = amount * self.cfg.costs.stamp_tax_rate
+            if account_mode == "per_symbol":
+                cash_by_code[code] = (
+                    float(cash_by_code.get(code, 0.0)) + amount - comm - tax
+                )
+            else:
+                cash += amount - comm - tax
+            fills.append(
+                Fill(
+                    date=last_d,
+                    std_code=code,
+                    side="SELL",
+                    price=px,
+                    shares=pos.shares,
+                    amount=amount,
+                    commission=comm,
+                    stamp_tax=tax,
+                    reason=EXIT_REASON_FORCED_EXIT,
+                    planned_date=last_d,
+                    actual_date=last_d,
+                    shift_days=0,
+                    holiday_policy=pos.holiday_policy,
+                    **self._fill_price_audit(
+                        code, last_d, "close", session_raw=session_raw
+                    ),
+                )
+            )
+            forced_n += 1
+            deferred_sells.pop(code, None)
+        if forced_n:
+            notes.append(
+                "EOD forced_exit: liquidated %d open position(s) at last "
+                "sim day close (raw); T+1 skips same-day entry leftovers."
+                % forced_n
+            )
+            mv = self._mkt_value(positions, last_d)
+            if account_mode == "per_symbol":
+                cash_sum = float(sum(cash_by_code.values())) if cash_by_code else 0.0
+                pt = EquityPoint(
+                    date=last_d, cash=cash_sum, market_value=mv, equity=cash_sum + mv
+                )
+            else:
+                pt = EquityPoint(
+                    date=last_d, cash=cash, market_value=mv, equity=cash + mv
+                )
+            if equity_curve and equity_curve[-1].date == last_d:
+                equity_curve[-1] = pt
+            else:
+                equity_curve.append(pt)
+        return cash
+
     def _is_exit_due(
         self,
         pos: Position,
@@ -1315,25 +1313,7 @@ class PortfolioBacktester:
             return None
 
     def _factor_on(self, code: str, date: int) -> Optional[float]:
-        fmap = self.factor_by_code.get(code) or {}
-        if not fmap:
-            return None
-        if date in fmap:
-            try:
-                return float(fmap[date])
-            except (TypeError, ValueError):
-                return None
-        # last factor on or before date
-        best = None
-        for k in fmap:
-            if k <= date and (best is None or k > best):
-                best = k
-        if best is None:
-            return None
-        try:
-            return float(fmap[best])
-        except (TypeError, ValueError):
-            return None
+        return factor_on_or_before(self.factor_by_code, code, date)
 
     def _fill_price_audit(
         self,
