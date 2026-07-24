@@ -184,7 +184,7 @@ class PortfolioBacktesterHelpers:
                     shift_days=0,
                     holiday_policy=pos.holiday_policy,
                     execution_price=px,
-                        **self._fill_price_audit(
+                    **self._fill_price_audit(
                         code, last_d, "close", session_raw=session_raw
                     ),
                 )
@@ -361,30 +361,12 @@ class PortfolioBacktesterHelpers:
             "price_source": "raw",
             "execution_price_mode": "raw",
             "valuation_price_mode": "raw",
-            "signal_price_mode": "standard_qfq",
+            "signal_price_mode": (
+                "raw"
+                if getattr(self, "_research_unadjusted", False)
+                else "standard_qfq"
+            ),
         }
-
-    def _enrich_fill_price_fields(self, fill_kwargs: dict, *, session_raw: float, px: float) -> dict:
-        """Ensure four-lane Fill fields; price remains raw execution."""
-        fill_kwargs = dict(fill_kwargs or {})
-        fill_kwargs.setdefault("raw_price", session_raw)
-        fill_kwargs["execution_price"] = px
-        fill_kwargs.setdefault("execution_price_mode", "raw")
-        fill_kwargs.setdefault("valuation_price_mode", "raw")
-        fill_kwargs.setdefault("signal_price_mode", "standard_qfq")
-        pit = fill_kwargs.get("adjusted_reference_price")
-        if pit is not None:
-            fill_kwargs.setdefault("point_in_time_reference_price", pit)
-        if fill_kwargs.get("adjustment_scale") is not None:
-            fill_kwargs.setdefault("point_scale", fill_kwargs.get("adjustment_scale"))
-        if fill_kwargs.get("adjustment_base") is not None:
-            fill_kwargs.setdefault("point_anchor_factor", fill_kwargs.get("adjustment_base"))
-        if fill_kwargs.get("adjustment_factor") is not None and session_raw:
-            pass
-        slip = abs(float(px) - float(session_raw)) if session_raw is not None else None
-        if slip is not None:
-            fill_kwargs.setdefault("slippage_amount", slip)
-        return fill_kwargs
 
 
     def _last_px_on_or_before(self, code: str, date: int) -> Optional[float]:

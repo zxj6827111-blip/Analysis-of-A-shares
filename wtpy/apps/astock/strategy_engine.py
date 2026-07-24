@@ -171,6 +171,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
         schedule_mode = (
             "weekday" if (buy_weekday is not None or exit_weekday is not None) else "tn"
         )
+        self._research_unadjusted = bool(research_unadjusted)
         notes = [
             "Example costs only; not user real trading costs.",
             "Survivor bias possible: local TDX may lack delisted stocks.",
@@ -606,6 +607,9 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                     holiday_policy=order_hp,
                     time_exit_kind=time_exit_kind,
                     entry_adjusted_reference_price=self._adj_session_price(code, d, buy_on),
+                    entry_raw_price=float(raw_buy) if raw_buy is not None else None,
+                    entry_signal_reference_price=self._qfq_session_price(code, d, buy_on),
+                    true_cash_cost=float(amount + comm),
                     entry_factor=self._factor_on(code, d),
                 )
                 fills.append(

@@ -43,9 +43,9 @@ from ..study import (
     combine_signals,
     compute_indicator_signal,
     compute_v5_dwm_resonance,
-    day_bars_to_adj,
     day_bars_to_standard_qfq,
     day_bars_to_point_in_time_adjusted,
+    day_bars_for_signals,
     signal_dates,
 )
 from .rules import RuleService
@@ -210,7 +210,9 @@ def run_backtest(
             # default signals: 普通前复权 (factor_t / snapshot_end_factor)
             day_qfq = day_bars_to_standard_qfq(day_raw, fac)
             standard_qfq_map[code] = day_qfq
-            day_for_ind = day_raw if research_unadj else day_qfq
+            day_for_ind = day_bars_for_signals(
+                day_raw, fac, research_unadjusted=research_unadj
+            )
             asof = day_raw[-1].date if day_raw else None
 
             if not compute_signals:

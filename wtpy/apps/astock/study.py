@@ -122,6 +122,24 @@ def day_bars_to_adj(
     )
 
 
+def day_bars_for_signals(
+    bars: Sequence[DayBar],
+    factor: np.ndarray,
+    *,
+    research_unadjusted: bool = False,
+    snapshot_end_factor=None,
+) -> List[DayBar]:
+    """Bars used for technical signal generation (formal default: standard_qfq).
+
+    research_unadjusted=True → raw OHLC; else ordinary qfq (not point-in-time).
+    """
+    if research_unadjusted:
+        return list(bars)
+    return day_bars_to_standard_qfq(
+        bars, factor, snapshot_end_factor=snapshot_end_factor
+    )
+
+
 def compute_indicator_signal(
     spec: IndicatorSpec,
     bars: Dict[str, np.ndarray],

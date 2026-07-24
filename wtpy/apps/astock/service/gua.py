@@ -279,7 +279,7 @@ def collect_indicator_signals_with_bagua(
         bars_dict_from_period,
         build_period_bars,
         compute_indicator_signal,
-        day_bars_to_adj,
+        day_bars_for_signals,
     )
     from .backtest import DEMO_CODES, select_universe
     from .rules import RuleService
@@ -348,7 +348,9 @@ def collect_indicator_signals_with_bagua(
                 import numpy as np
 
                 fac = np.array(series.factors, dtype=float)
-                day_for_ind = day_bars_to_adj(day_raw, fac)
+                day_for_ind = day_bars_for_signals(
+                    day_raw, fac, research_unadjusted=False
+                )
             except Exception:
                 day_for_ind = day_raw
         asof = day_raw[-1].date if day_raw else None
