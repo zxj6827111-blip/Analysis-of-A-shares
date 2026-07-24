@@ -31,7 +31,7 @@ from ..data.universe import AShareUniverse
 from ..indicators.registry import IndicatorRegistry
 from ..indicators.tn6_importer import load_source_map, resolve_formula_audit
 from ..reports import write_backtest_csv, write_signals_csv
-from ..corporate_action import build_factor_by_code
+from .backtest_engines import run_fast_or_full_engine
 from ..strategy import (
     PortfolioBacktester,
     filter_events_by_signal_weekdays,
@@ -900,156 +900,49 @@ def run_backtest(
             "write_meta": True,
         }
 
-    if engine in ("fast", "quick", "research_fast"):
-        from ..research.fast_engine import run_fast_backtest
-
-        # Shared factor maps (same builder as full path)
-        factor_by_code_fast, _factor_errs_fast = build_factor_by_code(factor_series)
-        if _factor_errs_fast:
-            # non-fatal for building; require_factor_map handles empty maps
-            pass
-        fast_res = run_fast_backtest(
-            events,
-            execution_bars,
-            cal,
-            hold=hold,
-            entry_lag=entry_lag,
-            buy_on=buy_on,
-            sell_on=sell_on,
-            buy_weekday=buy_weekday,
-            exit_weekday=exit_weekday,
-            holiday_policy=holiday_policy,
-            signal_weekdays=signal_weekdays,
-            start=start,
-            end=end,
-            adj_bars_by_code=adj_map if not research_unadj else None,
-            factor_by_code=factor_by_code_fast or None,
-            require_factor_map=True,
-        )
-        # Adapt to BacktestResult-like surface for writers / history
-        from ..strategy import BacktestResult as _BTR
-
-        _fast_status = (
-            "research_unadjusted"
-            if use_research
-            else str(
-                (fast_res.metrics or {}).get("status")
-                or (fast_res.config or {}).get("status")
-                or "ok"
-            )
-        )
-        result = _BTR(
-            run_id=run_id,
-            config=dict(fast_res.config),
-            fills=[],
-            equity_curve=[],
-            metrics=dict(fast_res.metrics),
-            notes=list(fast_res.notes)
-            + [
-                "engine=fast: screening only; no true cash simulation.",
-            ],
-            status=_fast_status,
-        )
-        # Prefer engine-reported CA policy (fail_closed | not_checked | unsupported path)
-        _engine_ca = (
-            (fast_res.metrics or {}).get("corporate_action_policy")
-            or (fast_res.config or {}).get("corporate_action_policy")
-            or corporate_action_policy
-        )
-        result.metrics["engine"] = "fast"
-        result.metrics["supports_true_cash_simulation"] = False
-        result.metrics["corporate_action_policy"] = _engine_ca
-        result.metrics["n_signals_fast"] = fast_res.n_signals
-        result.metrics["n_events"] = len(events)
-        result.metrics["n_events_raw_signals"] = int(n_events_raw_signals)
-        result.metrics["n_events_after_weekday"] = int(n_events_after_weekday)
-        if bagua_enabled:
-            result.metrics["n_signals_before_bagua"] = bagua_n_before
-            result.metrics["n_signals_after_bagua"] = bagua_n_after
-        result.config["engine"] = "fast"
-        result.config["holiday_policy"] = holiday_policy
-        result.config["artifact_level"] = artifact_level
-        result.config["corporate_action_policy"] = _engine_ca
-        result.config["supports_true_cash_simulation"] = False
-        # repro still records intended service policy for formal full; fast engine may report not_checked
-        corporate_action_policy = str(_engine_ca)
-    else:
-        # Shared factor maps for full CA fail-closed
-        factor_by_code, factor_map_errors = build_factor_by_code(factor_series)
-
-        # Formal full path: require factor maps for CA policy when formal.
-        if (
-            not use_research
-            and use_formal_ok
-            and corporate_action_policy in ("fail_closed", "fail", "unsupported")
-            and not factor_by_code
-        ):
-            from ..strategy import BacktestResult as _BTR
-
-            result = _BTR(
-                run_id=run_id,
-                config={
-                    "engine": "full",
-                    "artifact_level": artifact_level,
-                    "corporate_action_policy": corporate_action_policy,
-                    "engine_result_version": engine_result_version,
-                },
-                fills=[],
-                equity_curve=[],
-                metrics={
-                    "engine": "full",
-                    "corporate_action_policy": corporate_action_policy,
-                    "n_events": len(events),
-                },
-                notes=[
-                    "unsupported_corporate_action: formal full engine requires "
-                    "factor_by_code for corporate_action_policy=%s; maps empty or build failed."
-                    % corporate_action_policy,
-                ]
-                + factor_map_errors,
-                status="unsupported_corporate_action",
-            )
-        else:
-            bt = PortfolioBacktester(
-                cfg,
-                cal,
-                execution_bars,
-                adj_bars_by_code=adj_map if not research_unadj else None,
-                factor_by_code=factor_by_code or None,
-                corporate_action_policy=corporate_action_policy,
-            )
-            result = bt.run(
-                events,
-                hold=hold,
-                period=period,
-                run_id=run_id,
-                start=start,
-                end=end,
-                research_unadjusted=use_research,
-                formal_ok=use_formal_ok,
-                stop_loss_pct=req.stop_loss,
-                take_profit_pct=req.take_profit,
-                entry_lag=entry_lag,
-                account_mode=getattr(req, "account_mode", None) or "portfolio",
-                signal_weekdays=signal_weekdays,
-                buy_on=buy_on,
-                sell_on=sell_on,
-                buy_weekday=buy_weekday,
-                exit_weekday=exit_weekday,
-                holiday_policy=holiday_policy,
-            )
-            result.config["engine"] = "full"
-            result.config["artifact_level"] = artifact_level
-            result.config["corporate_action_policy"] = corporate_action_policy
-            result.metrics["corporate_action_policy"] = corporate_action_policy
-            result.metrics["n_events"] = len(events)
-            result.metrics["n_events_raw_signals"] = int(n_events_raw_signals)
-            result.metrics["n_events_after_weekday"] = int(n_events_after_weekday)
-            if bagua_enabled:
-                result.metrics["n_signals_before_bagua"] = bagua_n_before
-                result.metrics["n_signals_after_bagua"] = bagua_n_after
-            if factor_map_errors:
-                result.notes = list(result.notes) + factor_map_errors
+    result = run_fast_or_full_engine(
+        engine=engine,
+        cfg=cfg,
+        cal=cal,
+        events=events,
+        execution_bars=execution_bars,
+        adj_map=adj_map,
+        factor_series=factor_series,
+        research_unadj=research_unadj,
+        use_research=use_research,
+        use_formal_ok=use_formal_ok,
+        formal_ok=formal_ok,
+        corporate_action_policy=corporate_action_policy,
+        engine_result_version=engine_result_version,
+        run_id=run_id,
+        hold=hold,
+        period=period,
+        start=start,
+        end=end,
+        entry_lag=entry_lag,
+        account_mode=getattr(req, "account_mode", None) or "portfolio",
+        signal_weekdays=signal_weekdays,
+        buy_on=buy_on,
+        sell_on=sell_on,
+        buy_weekday=buy_weekday,
+        exit_weekday=exit_weekday,
+        holiday_policy=holiday_policy,
+        stop_loss=req.stop_loss,
+        take_profit=req.take_profit,
+        artifact_level=artifact_level,
+        n_codes=n_codes,
+        n_events_raw_signals=n_events_raw_signals,
+        n_events_after_weekday=n_events_after_weekday,
+        bagua_enabled=bagua_enabled,
+        bagua_n_before=bagua_n_before,
+        bagua_n_after=bagua_n_after,
+    )
+    # Keep service-level policy in sync with engine resolution (esp. fast not_checked)
+    corporate_action_policy = str(
+        (result.metrics or {}).get("_resolved_corporate_action_policy")
+        or (result.metrics or {}).get("corporate_action_policy")
+        or corporate_action_policy
+    )
 
     if unconfirmed_run:
         result.status = "research_unconfirmed_formula"
