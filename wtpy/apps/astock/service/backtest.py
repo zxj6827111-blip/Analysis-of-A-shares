@@ -44,6 +44,8 @@ from ..study import (
     compute_indicator_signal,
     compute_v5_dwm_resonance,
     day_bars_to_adj,
+    day_bars_to_standard_qfq,
+    day_bars_to_point_in_time_adjusted,
     signal_dates,
 )
 from .rules import RuleService
@@ -155,8 +157,9 @@ def run_backtest(
             )
 
     events: List[SignalEvent] = []
-    raw_map: Dict[str, Any] = {}
-    adj_map: Dict[str, Any] = {}
+    raw_map: Dict[str, Any] = {}  # execution + valuation
+    adj_map: Dict[str, Any] = {}  # point_in_time_adjusted research refs (legacy name)
+    standard_qfq_map: Dict[str, Any] = {}  # default signal bars
     period_raw_map: Dict[str, Any] = {}
     factor_series = []
     errors: List[dict] = []
@@ -201,9 +204,13 @@ def run_backtest(
             import numpy as np
 
             fac = np.array(series.factors, dtype=float)
-            day_adj = day_bars_to_adj(day_raw, fac)
-            adj_map[code] = day_adj
-            day_for_ind = day_raw if research_unadj else day_adj
+            # research/audit: 起点锚定复权 (factor_t / base_factor)
+            day_pit = day_bars_to_point_in_time_adjusted(day_raw, fac)
+            adj_map[code] = day_pit
+            # default signals: 普通前复权 (factor_t / snapshot_end_factor)
+            day_qfq = day_bars_to_standard_qfq(day_raw, fac)
+            standard_qfq_map[code] = day_qfq
+            day_for_ind = day_raw if research_unadj else day_qfq
             asof = day_raw[-1].date if day_raw else None
 
             if not compute_signals:
@@ -323,7 +330,7 @@ def run_backtest(
                 start=start,
                 end=end,
                 universe_hash=selected_universe_sha(codes),
-                adjust_mode=("research_unadjusted" if research_unadj else "adjusted"),
+                adjust_mode=("research_unadjusted" if research_unadj else "standard_qfq"),
                 combine=combine,
             )
 
@@ -591,7 +598,7 @@ def run_backtest(
                         start=start,
                         end=end,
                         universe_hash=selected_universe_sha(codes),
-                        adjust_mode=("research_unadjusted" if research_unadj else "adjusted"),
+                        adjust_mode=("research_unadjusted" if research_unadj else "standard_qfq"),
                         combine=combine,
                     )
                 _filter_key = filter_cache_key(
@@ -688,7 +695,7 @@ def run_backtest(
             for a in formula_audits.values()
         )
     )
-    # dual_price_v1 portfolio + artifacts (schedule/price/bagua/cache via context)
+    # four-lane portfolio + artifacts (schedule/price/bagua/cache via context)
     engine = (getattr(req, "engine", None) or "full").strip().lower()
     holiday_policy = getattr(req, "holiday_policy", None) or "next_trading_day"
     artifact_level = getattr(req, "artifact_level", None) or "full"

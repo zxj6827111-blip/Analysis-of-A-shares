@@ -340,12 +340,12 @@ def research_fingerprint_from_params(
     p = params or {}
     research_unadj = bool(p.get("research_unadjusted"))
     signal_price_mode = p.get("signal_price_mode") or (
-        "raw" if research_unadj else "causal_qfq"
+        "raw" if research_unadj else "standard_qfq"
     )
     execution_price_mode = p.get("execution_price_mode") or "raw"
     valuation_price_mode = p.get("valuation_price_mode") or "raw"
     corporate_action_policy = p.get("corporate_action_policy") or "fail_closed"
-    engine_result_version = p.get("engine_result_version") or "dual_price_v1"
+    engine_result_version = p.get("engine_result_version") or "standard_qfq_signal_raw_execution_v2"
     return build_research_fingerprint(
         indicator_ids=p.get("indicator_ids") or p.get("rule_ids"),
         indicator_names=p.get("indicator_names"),
@@ -357,7 +357,7 @@ def research_fingerprint_from_params(
         universe_hash=universe_hash or p.get("universe_hash"),
         market_data_version=market_data_version or p.get("market_data_version"),
         adjust_mode=p.get("adjust_mode")
-        or ("research_unadjusted" if research_unadj else "adjusted"),
+        or ("research_unadjusted" if research_unadj else "standard_qfq"),
         calendar_version=calendar_version or p.get("calendar_version"),
         signal_weekdays=p.get("signal_weekdays"),
         gua_filter=p.get("gua_filter"),

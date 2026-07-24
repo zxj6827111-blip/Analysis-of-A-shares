@@ -29,13 +29,13 @@ class ScheduleParams:
 
 @dataclass
 class PriceModes:
-    """dual_price_v1: signal causal_qfq (or raw), exec/valuation always raw."""
+    """Four-lane: signal standard_qfq (or raw), exec/valuation raw; PIT audit only."""
 
-    price_mode: str = "dual_price_v1"
-    signal_price_mode: str = "causal_qfq"
+    price_mode: str = "standard_qfq_signal_raw_execution_v2"
+    signal_price_mode: str = "standard_qfq"
     execution_price_mode: str = "raw"
     valuation_price_mode: str = "raw"
-    engine_result_version: str = "dual_price_v1"
+    engine_result_version: str = "standard_qfq_signal_raw_execution_v2"
     research_unadj: bool = False
     formal_ok: bool = True
     use_research: bool = False
@@ -91,13 +91,18 @@ class BacktestRunContext:
         return len(self.codes)
 
     def apply_dual_price_v1(self) -> None:
-        """Set dual_price_v1 modes from research_unadj / formal_ok."""
+        """Alias: apply four-lane standard_qfq signal + raw execution modes."""
+        self.apply_standard_qfq_raw_execution_v2()
+
+    def apply_standard_qfq_raw_execution_v2(self) -> None:
+        """Set four-lane modes from research_unadj / formal_ok."""
         p = self.price
-        p.signal_price_mode = "raw" if p.research_unadj else "causal_qfq"
+        p.signal_price_mode = "raw" if p.research_unadj else "standard_qfq"
         p.execution_price_mode = "raw"
         p.valuation_price_mode = "raw"
-        p.engine_result_version = "dual_price_v1"
-        p.price_mode = "dual_price_v1"
+        p.engine_result_version = "standard_qfq_signal_raw_execution_v2"
+        p.price_mode = "standard_qfq_signal_raw_execution_v2"
+        # research_price_mode: point_in_time_adjusted is always built for audit fills
         if p.research_unadj:
             p.use_research = True
             p.use_formal_ok = True
@@ -202,7 +207,7 @@ def apply_execution_cache(
             "adjust": (
                 "research_unadjusted"
                 if p.research_unadj
-                else "signal_causal_qfq_exec_raw"
+                else "signal_standard_qfq_exec_raw"
             ),
             "gua": (b.gf.to_dict() if b.gf else None),
             "with_bagua": b.enabled,

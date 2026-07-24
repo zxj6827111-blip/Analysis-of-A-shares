@@ -237,12 +237,12 @@ def pair_round_trips(
                     "指标": "",
                     "买入日期": "",
                     "买入价": "",
-                    "买入价_复权参考": "",
+                    "买入价_起点锚定研究参考": "",
                     "买入复权因子": "",
                     "买入复权比例": "",
                     "卖出日期": sell_date,
                     "卖出价": sell_price,
-                    "卖出价_复权参考": sell_adj_ref,
+                    "卖出价_起点锚定研究参考": sell_adj_ref,
                     "卖出复权因子": sell_fac,
                     "卖出复权比例": sell_scale,
                     "数量": int(f.shares or 0),
@@ -301,12 +301,12 @@ def pair_round_trips(
                     "卦象简判": judge,
                     "买入日期": buy_date,
                     "买入价": buy_price,
-                    "买入价_复权参考": buy_adj_ref,
+                    "买入价_起点锚定研究参考": buy_adj_ref,
                     "买入复权因子": buy_fac,
                     "买入复权比例": buy_scale,
                     "卖出日期": sell_date,
                     "卖出价": sell_price,
-                    "卖出价_复权参考": sell_adj_ref,
+                    "卖出价_起点锚定研究参考": sell_adj_ref,
                     "卖出复权因子": sell_fac,
                     "卖出复权比例": sell_scale,
                     "数量": take,
@@ -362,12 +362,12 @@ def pair_round_trips(
                     "卦象简判": judge,
                     "买入日期": buy_date,
                     "买入价": buy_price,
-                    "买入价_复权参考": buy_adj_ref,
+                    "买入价_起点锚定研究参考": buy_adj_ref,
                     "买入复权因子": buy_fac,
                     "买入复权比例": buy_scale,
                     "卖出日期": "",
                     "卖出价": "",
-                    "卖出价_复权参考": "",
+                    "卖出价_起点锚定研究参考": "",
                     "卖出复权因子": "",
                     "卖出复权比例": "",
                     "数量": left,
@@ -483,12 +483,12 @@ def write_backtest_csv(
         "卦象简判",
         "买入日期",
         "买入价",
-        "买入价_复权参考",
+        "买入价_起点锚定研究参考",
         "买入复权因子",
         "买入复权比例",
         "卖出日期",
         "卖出价",
-        "卖出价_复权参考",
+        "卖出价_起点锚定研究参考",
         "卖出复权因子",
         "卖出复权比例",
         "数量",
@@ -722,10 +722,10 @@ def write_excel_summary(
         (
             "价格说明",
             (
-                "dual_price_v1：技术指标/信号=因果前复权；买入价/卖出价=未复权真实成交价（含滑点）；"
-                "买入价_复权参考/卖出价_复权参考=同日因果前复权审计价（不参与股数/费用/权益）。"
-                if str(repro.get("price_mode") or "") in ("dual_price_v1", "dual_price")
-                or str(repro.get("engine_result_version") or "") == "dual_price_v1"
+                "standard_qfq_signal_raw_execution_v2：信号=普通前复权；买入价/卖出价=未复权真实成交价（含滑点）；"
+                "买入价_起点锚定研究参考/卖出价_起点锚定研究参考=同日起点锚定复权研究价审计价（不参与股数/费用/权益）。"
+                if str(repro.get("price_mode") or "") in ("standard_qfq_signal_raw_execution_v2", "dual_price_v1", "dual_price")
+                or str(repro.get("engine_result_version") or "") in ("standard_qfq_signal_raw_execution_v2", "dual_price_v1")
                 else (
                     "研究未复权：信号亦用未复权K线；成交/估值仍为未复权真实价格。"
                     if repro.get("research_unadjusted")
@@ -733,7 +733,7 @@ def write_excel_summary(
                     else (
                         "【历史】price_mode=adjusted 表示旧版用复权价成交，属 legacy_adjusted_execution，不可当新口径。"
                         if str(repro.get("price_mode") or "") == "adjusted"
-                        else "信号=因果前复权；成交/估值=未复权真实价格。"
+                        else "信号=起点锚定复权研究价；成交/估值=未复权真实价格。"
                     )
                 )
             ),
@@ -831,12 +831,12 @@ def write_excel_summary(
         "卦象简判",
         "买入日期",
         "买入价",
-        "买入价_复权参考",
+        "买入价_起点锚定研究参考",
         "买入复权因子",
         "买入复权比例",
         "卖出日期",
         "卖出价",
-        "卖出价_复权参考",
+        "卖出价_起点锚定研究参考",
         "卖出复权因子",
         "卖出复权比例",
         "数量",
@@ -919,12 +919,12 @@ def write_excel_summary(
             t.get("卦象简判"),
             _fmt_date(t.get("买入日期")),
             _fmt_num(t.get("买入价"), 4),
-            _fmt_num(t.get("买入价_复权参考"), 4) if t.get("买入价_复权参考") != "" else "",
+            _fmt_num(t.get("买入价_起点锚定研究参考"), 4) if t.get("买入价_起点锚定研究参考") != "" else "",
             _fmt_num(t.get("买入复权因子"), 6) if t.get("买入复权因子") != "" else "",
             _fmt_num(t.get("买入复权比例"), 6) if t.get("买入复权比例") != "" else "",
             _fmt_date(t.get("卖出日期")),
             _fmt_num(t.get("卖出价"), 4) if t.get("卖出价") != "" else "",
-            _fmt_num(t.get("卖出价_复权参考"), 4) if t.get("卖出价_复权参考") != "" else "",
+            _fmt_num(t.get("卖出价_起点锚定研究参考"), 4) if t.get("卖出价_起点锚定研究参考") != "" else "",
             _fmt_num(t.get("卖出复权因子"), 6) if t.get("卖出复权因子") != "" else "",
             _fmt_num(t.get("卖出复权比例"), 6) if t.get("卖出复权比例") != "" else "",
             t.get("数量"),
@@ -970,8 +970,8 @@ def write_excel_summary(
         "本工作簿为单次回测的一份总表，研究用途，非投资建议。",
         "「汇总」：组合层收益/回撤/买卖次数等。",
         "「交易明细」：按 FIFO 将买入与卖出配对；信号日期取不晚于买入日的最近信号。",
-        "【价格口径】dual_price_v1：信号=因果前复权；成交/估值=未复权真实价格。买入价/卖出价为真实成交价（含滑点）；",
-        "买入价_复权参考/卖出价_复权参考为同日因果前复权参考价（审计用，不参与股数/费用/权益）。",
+        "【价格口径】信号=普通前复权(standard_qfq)；成交/估值=未复权真实价格；高级研究参考=起点锚定复权研究价。买入价/卖出价为真实成交价（含滑点）；",
+        "买入价_起点锚定研究参考/卖出价_起点锚定研究参考为同日起点锚定复权研究价参考价（审计用，不参与股数/费用/权益）。",
         "无公司行为区间内，复权参考收益率应与真实成交收益率接近。"
         "正式默认 corporate_action_policy=fail_closed：持仓跨越累计复权因子变化时标记 unsupported_corporate_action，"
         "绝不根据累计因子虚构送转/分红账本。真实现金分红/送转明细账本尚未接入；ledger_factor_ratio 已被拒绝。",

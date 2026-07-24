@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""dual_price_v1 regression: raw execution + causal_qfq signals/reference."""
+"""standard_qfq_signal_raw_execution_v2 regression: raw execution + standard_qfq signals/reference."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -126,7 +126,7 @@ def test_a_300040_style_raw_execution_and_adj_reference():
     trips = pair_round_trips(res.fills)
     assert abs(float(trips[0]["买入价"]) - 7.79) < 1e-6
     assert abs(float(trips[0]["卖出价"]) - 7.98) < 1e-6
-    assert abs(float(trips[0]["买入价_复权参考"]) - round(7.79 * scale, 4)) < 1e-3
+    assert abs(float(trips[0]["买入价_起点锚定研究参考"]) - round(7.79 * scale, 4)) < 1e-3
 
 
 def test_b_constant_scale_return_matches_and_shares_from_raw():
@@ -456,12 +456,12 @@ def test_i_reports_meta_and_csv_raw_prices(tmp_path):
         res,
         meta={
             "repro": {
-                "price_mode": "dual_price_v1",
-                "signal_price_mode": "causal_qfq",
+                "price_mode": "standard_qfq_signal_raw_execution_v2",
+                "signal_price_mode": "standard_qfq",
                 "execution_price_mode": "raw",
                 "valuation_price_mode": "raw",
                 "corporate_action_policy": "fail_closed",
-                "engine_result_version": "dual_price_v1",
+                "engine_result_version": "standard_qfq_signal_raw_execution_v2",
                 "start": 20240101,
                 "end": 20260701,
             }
@@ -474,7 +474,7 @@ def test_i_reports_meta_and_csv_raw_prices(tmp_path):
     assert abs(float(fills_df.iloc[0]["price"]) - 7.79) < 1e-6
     assert abs(float(fills_df.iloc[0]["adjusted_reference_price"]) - 11.7572) < 1e-3
     assert abs(float(trades_df.iloc[0]["买入价"]) - 7.79) < 1e-6
-    assert abs(float(trades_df.iloc[0]["买入价_复权参考"]) - 11.7572) < 1e-3
+    assert abs(float(trades_df.iloc[0]["买入价_起点锚定研究参考"]) - 11.7572) < 1e-3
     assert abs(float(trades_df.iloc[0]["卖出价"]) - 7.98) < 1e-6
 
 
@@ -483,9 +483,9 @@ def test_j_execution_cache_schema_v2_isolates_old():
     k1 = execution_cache_key(
         {
             "engine": "full",
-            "engine_result_version": "dual_price_v1",
+            "engine_result_version": "standard_qfq_signal_raw_execution_v2",
             "execution_price_mode": "raw",
-            "signal_price_mode": "causal_qfq",
+            "signal_price_mode": "standard_qfq",
         }
     )
     k_legacy = execution_cache_key(
@@ -507,7 +507,7 @@ def test_j_execution_cache_schema_v2_isolates_old():
             "engine": "full",
             "engine_result_version": "legacy_adjusted_execution",
             "execution_price_mode": "adjusted",
-            "signal_price_mode": "causal_qfq",
+            "signal_price_mode": "standard_qfq",
         }
     )
     assert k1 != k_adj_exec

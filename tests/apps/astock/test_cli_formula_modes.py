@@ -169,10 +169,10 @@ def test_unconfirmed_research_adjusted_without_raw(tmp_path):
         out = Path("outputs/astock/research_adj_unconfirmed")
     meta = json.loads((out / "run_meta.json").read_text(encoding="utf-8"))
     assert meta["status"] == "research_unconfirmed_formula"
-    assert meta["repro"]["price_mode"] == "dual_price_v1"
+    assert meta["repro"]["price_mode"] == "standard_qfq_signal_raw_execution_v2"
     assert meta["repro"].get("execution_price_mode") == "raw"
     assert meta["repro"].get("valuation_price_mode") == "raw"
-    assert meta["repro"].get("signal_price_mode") in ("causal_qfq", "raw")
+    assert meta["repro"].get("signal_price_mode") in ("standard_qfq", "raw")
     assert meta["repro"].get("corporate_action_policy") == "fail_closed"
 
 
@@ -212,10 +212,10 @@ def test_confirmed_formal_ok_meta_fields(tmp_path):
     meta = json.loads((out / "run_meta.json").read_text(encoding="utf-8"))
     repro = meta["repro"]
     assert meta["status"] == "ok"
-    assert repro["price_mode"] == "dual_price_v1"
+    assert repro["price_mode"] == "standard_qfq_signal_raw_execution_v2"
     assert repro.get("execution_price_mode") == "raw"
     assert repro.get("valuation_price_mode") == "raw"
-    assert repro.get("signal_price_mode") == "causal_qfq"
+    assert repro.get("signal_price_mode") == "standard_qfq"
     assert repro.get("corporate_action_policy") == "fail_closed"
     assert repro["formula_provenance"] == "user_provided_human_formula"
     assert repro["source_pair_status"] == "paired_confirmed"

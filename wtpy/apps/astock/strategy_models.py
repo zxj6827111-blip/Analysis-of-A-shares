@@ -53,6 +53,9 @@ class Position:
     time_exit_kind: str = "time_exit"  # time_exit | weekday_exit
     # Dual-price audit: optional adjusted reference at entry (not used for PnL).
     entry_adjusted_reference_price: Optional[float] = None
+    entry_raw_price: Optional[float] = None
+    entry_signal_reference_price: Optional[float] = None
+    true_cash_cost: Optional[float] = None
     entry_factor: Optional[float] = None  # factor snapshot at entry for CA fail-closed
 
 
@@ -61,7 +64,7 @@ class Fill:
     date: int
     std_code: str
     side: str
-    price: float  # execution price (RAW session * slippage)
+    price: float  # execution price (RAW session * slippage) — real fill
     shares: int
     amount: float
     commission: float
@@ -73,13 +76,24 @@ class Fill:
     holiday_policy: Optional[str] = None
     # RAW session open/close before slippage (market tape); equals execution basis.
     raw_price: Optional[float] = None
-    # Optional causal-qfq (or other adj) session price same date for audit only.
+    execution_price: Optional[float] = None  # alias of price (raw+slippage)
+    # Optional 起点锚定复权研究价 session price same date for audit only.
     adjusted_reference_price: Optional[float] = None
+    point_in_time_reference_price: Optional[float] = None  # same as adjusted_reference
+    standard_qfq_reference_price: Optional[float] = None
     adjustment_factor: Optional[float] = None
-    adjustment_base: Optional[float] = None
-    adjustment_scale: Optional[float] = None
+    adjustment_base: Optional[float] = None  # point anchor / base_factor
+    adjustment_scale: Optional[float] = None  # point_scale
+    qfq_anchor_factor: Optional[float] = None
+    point_anchor_factor: Optional[float] = None
+    qfq_scale: Optional[float] = None
+    point_scale: Optional[float] = None
+    slippage_amount: Optional[float] = None
     price_session: Optional[str] = None  # open | close
     price_source: Optional[str] = None  # "raw" | "adjusted_reference"
+    signal_price_mode: Optional[str] = None
+    execution_price_mode: Optional[str] = None
+    valuation_price_mode: Optional[str] = None
 
 
 @dataclass

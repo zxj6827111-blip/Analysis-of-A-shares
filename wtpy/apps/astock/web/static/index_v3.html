@@ -5238,8 +5238,8 @@ function renderForecastPage() {
     ];
     const note =
       '<div class="muted" style="grid-column:1/-1;margin-top:8px;line-height:1.5">' +
-      "价格说明：技术指标/信号使用因果前复权；实际成交、股数、费用与权益使用未复权真实价格。" +
-      "trades/fills 中「买入价/卖出价」(price) 为真实成交价；「买入价_复权参考/卖出价_复权参考」为同日因果前复权审计价。" +
+      "价格说明：技术指标/信号使用普通前复权；实际成交、股数、费用与权益使用未复权真实价格。" +
+      "trades/fills 中「买入价/卖出价」(price) 为真实成交价；「买入价_复权参考/卖出价_复权参考」为同日普通前复权审计价。" +
       "详见 trades.csv / fills.csv / summary.xlsx。" +
       "</div>";
     box.innerHTML =
@@ -5286,9 +5286,9 @@ function renderForecastPage() {
       [
         "信号价格",
         src.legacy_adjusted_execution || src.price_mode === "adjusted"
-          ? "历史未知/可能为因果前复权(成交也用了复权)"
+          ? "历史未知/可能为普通前复权(成交也用了复权)"
           : src.signal_price_mode ||
-            (src.research_unadjusted ? "raw" : "causal_qfq"),
+            (src.research_unadjusted ? "raw" : "standard_qfq"),
       ],
       [
         "成交/估值价格",
@@ -5301,8 +5301,8 @@ function renderForecastPage() {
       [
         "价格说明",
         src.legacy_adjusted_execution || src.price_mode === "adjusted"
-          ? "历史任务：成交使用了复权OHLC，勿与 dual_price_v1 混淆。请用新引擎重跑。"
-          : "技术指标：因果前复权；实际成交：未复权真实价格。",
+          ? "历史任务：旧版复权成交或 standard_qfq_signal_raw_execution_v2/因果信号口径，勿与 standard_qfq信号+raw成交(v2) 混淆。请用新引擎重跑。"
+          : "技术指标：普通前复权；实际成交：未复权真实价格。",
       ],
       ["止损", src.stop_loss != null ? src.stop_loss : "—"],
       ["止盈", src.take_profit != null ? src.take_profit : "—"],

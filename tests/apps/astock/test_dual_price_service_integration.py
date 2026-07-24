@@ -96,7 +96,7 @@ def test_service_style_wiring_300040_raw_exec_and_adj_ref():
     assert b.price_source == "raw"
     trips = pair_round_trips(res.fills)
     assert abs(float(trips[0]["买入价"]) - 7.79) < 1e-6
-    assert abs(float(trips[0]["买入价_复权参考"]) - 11.7572) < 1e-3
+    assert abs(float(trips[0]["买入价_起点锚定研究参考"]) - 11.7572) < 1e-3
     # meta contract
     assert res.metrics.get("corporate_action_policy") == "fail_closed"
     assert res.metrics.get("eod_forced_exit") is True
@@ -154,12 +154,12 @@ def test_service_meta_dual_price_fields_on_repro_path(tmp_path):
         res,
         meta={
             "repro": {
-                "price_mode": "dual_price_v1",
-                "signal_price_mode": "causal_qfq",
+                "price_mode": "standard_qfq_signal_raw_execution_v2",
+                "signal_price_mode": "standard_qfq",
                 "execution_price_mode": "raw",
                 "valuation_price_mode": "raw",
                 "corporate_action_policy": "ledger_factor_ratio",
-                "engine_result_version": "dual_price_v1",
+                "engine_result_version": "standard_qfq_signal_raw_execution_v2",
                 "start": 20240101,
                 "end": 20260701,
             }

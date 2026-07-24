@@ -25,9 +25,21 @@ def classify_price_execution_legacy(meta_or_repro):
     val_m = repro.get("valuation_price_mode") or src.get("valuation_price_mode")
     legacy = False
     tag = None
-    if price_mode == "adjusted" and eng_ver != "dual_price_v1":
+    if price_mode == "adjusted" and eng_ver not in ("standard_qfq_signal_raw_execution_v2", "dual_price_v1"):
         legacy = True
         tag = "legacy_adjusted_execution"
+    elif eng_ver == "standard_qfq_signal_raw_execution_v2" or price_mode == "standard_qfq_signal_raw_execution_v2":
+        tag = "standard_qfq_signal_raw_execution_v2"
+        if not exec_m:
+            exec_m = "raw"
+        if not sig_m:
+            sig_m = (
+                "raw"
+                if (repro.get("research_unadjusted") or src.get("research_unadjusted"))
+                else "standard_qfq"
+            )
+        if not val_m:
+            val_m = "raw"
     elif eng_ver == "dual_price_v1" or price_mode == "dual_price_v1":
         tag = "dual_price_v1"
         if not exec_m:

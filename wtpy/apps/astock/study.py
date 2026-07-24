@@ -43,23 +43,13 @@ def bars_dict_from_period(bars: Sequence[PeriodBar]) -> Dict[str, np.ndarray]:
     return period_bars_to_arrays(bars)
 
 
-def day_bars_to_adj(
+def _scale_day_bars(
     bars: Sequence[DayBar],
-    factor: np.ndarray,
-    *,
-    base_factor=None,
+    scale: np.ndarray,
 ) -> List[DayBar]:
-    """Return causally adjusted DayBar list. Raw input unchanged.
-
-    Delegates scale to ``adjustments.causal_qfq_scale`` so CLI/study/store share
-    one semantics: scale_t = factor_t / first_finite_factor (never factor[-1]).
-    """
+    """Apply per-bar scale to OHLC; leave volume/amount unchanged."""
     if not bars:
         return []
-    from .data.adjustments import causal_qfq_scale
-
-    factor = np.asarray(factor, dtype=np.float64)
-    scale = causal_qfq_scale(factor, base_factor=base_factor)
     out = []
     for i, b in enumerate(bars):
         s = float(scale[i]) if i < len(scale) else 1.0
@@ -76,6 +66,60 @@ def day_bars_to_adj(
             )
         )
     return out
+
+
+def day_bars_to_standard_qfq(
+    bars: Sequence[DayBar],
+    factor: np.ndarray,
+    *,
+    snapshot_end_factor=None,
+) -> List[DayBar]:
+    """Standard ordinary qfq DayBars: scale_t = factor_t / factor_snapshot_end.
+
+    For technical signals / chart display only — not execution.
+    """
+    if not bars:
+        return []
+    from .data.adjustments import standard_qfq_scale
+
+    factor = np.asarray(factor, dtype=np.float64)
+    scale = standard_qfq_scale(factor, snapshot_end_factor=snapshot_end_factor)
+    return _scale_day_bars(bars, scale)
+
+
+def day_bars_to_point_in_time_adjusted(
+    bars: Sequence[DayBar],
+    factor: np.ndarray,
+    *,
+    base_factor=None,
+) -> List[DayBar]:
+    """起点锚定复权研究价 DayBars: scale_t = factor_t / base_factor.
+
+    Research / audit reference only — never cash or shares.
+    """
+    if not bars:
+        return []
+    from .data.adjustments import causal_qfq_scale
+
+    factor = np.asarray(factor, dtype=np.float64)
+    scale = causal_qfq_scale(factor, base_factor=base_factor)
+    return _scale_day_bars(bars, scale)
+
+
+def day_bars_to_adj(
+    bars: Sequence[DayBar],
+    factor: np.ndarray,
+    *,
+    base_factor=None,
+) -> List[DayBar]:
+    """Backward-compat alias for point_in_time_adjusted (legacy causal_qfq).
+
+    Prefer ``day_bars_to_standard_qfq`` for signals and
+    ``day_bars_to_point_in_time_adjusted`` for research references.
+    """
+    return day_bars_to_point_in_time_adjusted(
+        bars, factor, base_factor=base_factor
+    )
 
 
 def compute_indicator_signal(

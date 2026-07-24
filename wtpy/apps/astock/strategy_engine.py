@@ -73,7 +73,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
     ):
         self.cfg = cfg
         self.calendar = calendar
-        # dual_price_v1: execution+valuation ALWAYS on bars_by_code (RAW formal);
+        # four-lane: execution+valuation ALWAYS on bars_by_code (RAW formal);
         # adj_bars_by_code is fill audit only — never trading index.
         trade_bars = bars_by_code or {}
         self.bars_by_code = trade_bars
@@ -438,6 +438,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                         actual_date=d,
                         shift_days=int(pos.exit_shift_days or 0),
                         holiday_policy=pos.holiday_policy,
+                        execution_price=px,
                         **self._fill_price_audit(
                             code, d, sell_session, session_raw=raw_px
                         ),
@@ -616,6 +617,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                         actual_date=d,
                         shift_days=entry_shift,
                         holiday_policy=order_hp,
+                        execution_price=px,
                         **self._fill_price_audit(code, d, buy_on, session_raw=raw_buy),
                     )
                 )

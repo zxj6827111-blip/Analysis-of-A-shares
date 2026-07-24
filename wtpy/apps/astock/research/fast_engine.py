@@ -3,7 +3,7 @@
 
 Used for large grid screening. Final candidates should re-run full PortfolioBacktester.
 
-dual_price_v1:
+standard_qfq_signal_raw_execution_v2:
 - ``bars_by_code`` must be RAW execution bars.
 - ``entry_price`` / ``exit_price`` are always RAW session prices.
 - Optional ``adj_bars_by_code`` only fills adjusted reference fields on FastTrade.
@@ -261,7 +261,7 @@ def run_fast_backtest(
         "holiday_policy=%s" % holiday_policy,
         "execution_price_mode=raw",
         "supports_true_cash_simulation=False",
-        "engine_result_version=dual_price_v1",
+        "engine_result_version=standard_qfq_signal_raw_execution_v2",
         "corporate_action_policy=%s" % ca_policy,
     ]
     if not has_any_factor:
@@ -421,7 +421,7 @@ def run_fast_backtest(
             "engine": "fast",
             "execution_price_mode": "raw",
             "supports_true_cash_simulation": False,
-            "engine_result_version": "dual_price_v1",
+            "engine_result_version": "standard_qfq_signal_raw_execution_v2",
             "corporate_action_policy": ca_policy,
             "status": status,
             "factor_map_provided": bool(has_any_factor),

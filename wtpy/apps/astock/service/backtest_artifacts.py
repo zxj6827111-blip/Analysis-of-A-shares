@@ -83,10 +83,15 @@ def build_repro_meta(
         "corporate_action_policy": corporate_action_policy,
         "engine_result_version": engine_result_version,
         "price_mode_note": (
-            "dual_price_v1: signals use causal_qfq (or raw if research_unadjusted); "
-            "fills/equity use unadjusted market prices. "
-            "Legacy price_mode=adjusted meant fills on adj bars — obsolete."
+            "standard_qfq_signal_raw_execution_v2: signals use standard_qfq "
+            "(factor_t/snapshot_end; or raw if research_unadjusted); "
+            "fills/equity use unadjusted market prices; "
+            "point_in_time_adjusted is research/audit reference only. "
+            "Legacy price_mode=adjusted / dual_price_v1+causal_qfq signal: obsolete."
         ),
+        "research_price_mode": "point_in_time_adjusted",
+        "display_price_mode": "standard_qfq",
+        "result_semantics_tag": "standard_qfq_signal_raw_execution_v2",
         "risk_conflict_policy": "stop_first",
         "risk_trigger_policy": "daily_high_low",
         "risk_execution_policy": "next_trading_day_open",

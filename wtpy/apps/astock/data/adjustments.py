@@ -1,12 +1,14 @@
 """Corporate action / adjustment factors for A-share bars.
 
-Rules:
-- Raw (unadjusted) OHLC is always retained for bagua.
-- Indicators / signals / portfolio returns must use adjusted OHLC in formal mode.
-- Factors must not leak future information: on date t only use factor
-  events with event_date <= t (forward-filled).
+Four-lane price architecture (formal):
+- raw: unadjusted market OHLC — execution, valuation, limits, bagua OHLC.
+- standard_qfq: factor_t / factor_snapshot_end — default technical signals
+  (reproducible only with frozen factor snapshot for the run).
+- point_in_time_adjusted (alias causal_qfq): factor_t / base_factor (first
+  finite) — advanced research / audit reference only; never cash or shares.
+- Factors on date t use only events with event_date <= t (forward-filled).
 - When Baostock is unavailable, formal backtest is No-Go unless the user
-  explicitly enables research_unadjusted mode.
+  explicitly enables research_unadjusted mode (signals also raw; exec still raw).
 
 foreAdjustFactor interval semantics (Baostock):
 - Each event records the cumulative forward-adjustment factor *effective on
@@ -190,15 +192,85 @@ def causal_qfq_scale(
     return np.where(np.isfinite(scale), scale, 1.0).astype(np.float64)
 
 
+
+def standard_qfq_scale(
+    factor: np.ndarray,
+    *,
+    snapshot_end_factor: Optional[float] = None,
+) -> np.ndarray:
+    """Standard ordinary forward-adjustment (通达信/东财风格锚点).
+
+    scale_t = factor_t / factor_snapshot_end
+
+    ``factor_snapshot_end`` is the cumulative factor at the **data snapshot
+    cutoff** for this load (default: last finite non-zero factor in the
+    aligned series). Absolute levels re-anchor when the snapshot gains a
+    later corporate action — callers must record factor_manifest_sha /
+    market_data_cutoff for reproducibility. Never use this series for
+    shares, cash, commission, or account equity.
+    """
+    factor = np.asarray(factor, dtype=np.float64)
+    if factor.size == 0:
+        return factor.copy()
+    if snapshot_end_factor is None:
+        end = np.nan
+        for v in factor[::-1]:
+            if np.isfinite(v) and float(v) != 0.0:
+                end = float(v)
+                break
+        if not np.isfinite(end) or end == 0.0:
+            return np.ones_like(factor, dtype=np.float64)
+    else:
+        end = float(snapshot_end_factor)
+        if not np.isfinite(end) or end == 0.0:
+            return np.ones_like(factor, dtype=np.float64)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        scale = factor / end
+    return np.where(np.isfinite(scale), scale, 1.0).astype(np.float64)
+
+
+def point_in_time_adjusted_scale(
+    factor: np.ndarray,
+    *,
+    base_factor: Optional[float] = None,
+) -> np.ndarray:
+    """起点锚定复权研究价 scale: factor_t / base_factor (first finite).
+
+    Alias of historical ``causal_qfq_scale``. Research / audit only.
+    """
+    return causal_qfq_scale(factor, base_factor=base_factor)
+
+
+def apply_standard_qfq(
+    raw: Dict[str, np.ndarray],
+    factor: np.ndarray,
+    *,
+    snapshot_end_factor: Optional[float] = None,
+) -> Dict[str, np.ndarray]:
+    """Apply standard ordinary qfq: price * standard_qfq_scale(factor)."""
+    factor = np.asarray(factor, dtype=np.float64)
+    if len(factor) == 0:
+        return {k: np.asarray(v).copy() for k, v in raw.items()}
+    scale = standard_qfq_scale(factor, snapshot_end_factor=snapshot_end_factor)
+    out = {k: np.asarray(v).copy() for k, v in raw.items()}
+    for key in ("open", "high", "low", "close"):
+        if key in out:
+            out[key] = out[key].astype(np.float64) * scale
+    out["adj_factor"] = factor
+    out["adj_scale"] = scale
+    return out
+
+
 def apply_qfq(
     raw: Dict[str, np.ndarray],
     factor: np.ndarray,
     *,
     base_factor: Optional[float] = None,
 ) -> Dict[str, np.ndarray]:
-    """Apply causal forward adjustment: price * causal_qfq_scale(factor).
+    """Apply 起点锚定复权研究价: price * causal_qfq_scale(factor).
 
-    Never uses factor[-1]. Volume/amount left unchanged.
+    Never uses factor[-1] (that is standard_qfq). Volume/amount unchanged.
+    Research/audit only — not for execution cash.
     """
     factor = np.asarray(factor, dtype=np.float64)
     if len(factor) == 0:

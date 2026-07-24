@@ -355,10 +355,16 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
         factor_series.append(series)
         import numpy as np
         fac = np.array(series.factors, dtype=float)
-        day_adj = day_bars_to_adj(day_raw, fac)
+        day_adj = day_bars_to_adj(day_raw, fac)  # PIT research
+        # CLI study path: prefer standard_qfq for indicators when available
+        try:
+            from .study import day_bars_to_standard_qfq as _to_qfq
+            day_qfq = _to_qfq(day_raw, fac)
+        except Exception:
+            day_qfq = day_adj
         day_adj_map[code] = day_adj
         # indicator bars: raw if research-unadjusted else adjusted
-        day_for_ind = day_raw if research_unadj else day_adj
+        day_for_ind = day_raw if research_unadj else day_qfq
 
         asof = day_raw[-1].date if day_raw else None
         # bagua always uses period raw OHLC

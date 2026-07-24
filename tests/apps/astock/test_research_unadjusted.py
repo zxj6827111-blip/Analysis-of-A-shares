@@ -39,7 +39,7 @@ def test_research_unadjusted_uses_raw_not_adj_fills():
     events = [SignalEvent(code, 20240103, "DAY", "t")]
     cal = TradeCalendar(dates)
 
-    # dual_price_v1: bars_by_code is always RAW execution; adj is audit only.
+    # standard_qfq_signal_raw_execution_v2: bars_by_code is always RAW execution; adj is audit only.
     # Formal and research_unadjusted both fill at raw open=20 on buy day.
     bt_formal = PortfolioBacktester(cfg, cal, {code: raw}, adj_bars_by_code={code: adj})
     res_formal = bt_formal.run(
