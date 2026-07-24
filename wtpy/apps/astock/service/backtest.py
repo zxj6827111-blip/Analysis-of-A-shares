@@ -960,13 +960,18 @@ def run_backtest(
             notes=list(fast_res.notes)
             + [
                 "engine=fast: screening only; no true cash simulation.",
-                "corporate_action_policy=fail_closed (block trades spanning factor jumps).",
             ],
             status=_fast_status,
         )
+        # Prefer engine-reported CA policy (fail_closed | not_checked | unsupported path)
+        _engine_ca = (
+            (fast_res.metrics or {}).get("corporate_action_policy")
+            or (fast_res.config or {}).get("corporate_action_policy")
+            or corporate_action_policy
+        )
         result.metrics["engine"] = "fast"
         result.metrics["supports_true_cash_simulation"] = False
-        result.metrics["corporate_action_policy"] = corporate_action_policy
+        result.metrics["corporate_action_policy"] = _engine_ca
         result.metrics["n_signals_fast"] = fast_res.n_signals
         result.metrics["n_events"] = len(events)
         result.metrics["n_events_raw_signals"] = int(n_events_raw_signals)
@@ -977,8 +982,10 @@ def run_backtest(
         result.config["engine"] = "fast"
         result.config["holiday_policy"] = holiday_policy
         result.config["artifact_level"] = artifact_level
-        result.config["corporate_action_policy"] = corporate_action_policy
+        result.config["corporate_action_policy"] = _engine_ca
         result.config["supports_true_cash_simulation"] = False
+        # repro still records intended service policy for formal full; fast engine may report not_checked
+        corporate_action_policy = str(_engine_ca)
     else:
         # factor maps for corporate-action fail-closed (entry factor vs later factor)
         factor_by_code = {}
