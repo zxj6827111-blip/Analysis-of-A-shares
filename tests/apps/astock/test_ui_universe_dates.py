@@ -50,6 +50,10 @@ def test_frontend_has_full_market_and_date_dropdowns():
     legacy = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     assert "全市场" in v3 or "全部 A 股" in v3 or "use_full_market" in v3 or "full" in v3
     assert "use_full_market" in legacy or "全市场" in legacy
+    # V3 date parts
+    assert "btStartYear" in v3 and "btStartMonth" in v3 and "btStartDay" in v3
+    assert "btEndYear" in v3 or "btEndMonth" in v3
+    # Legacy date parts
     assert "startYear" in legacy and "endYear" in legacy
     assert "startMonth" in legacy and "endMonth" in legacy
     assert "startDay" in legacy and "endDay" in legacy
@@ -102,12 +106,9 @@ def test_api_calendar_and_full_market_flag(tmp_path: Path):
     page = client.get("/")
     assert page.status_code == 200
     assert "全部 A 股" in page.text or "全市场" in page.text or "AStock" in page.text
-    # Main page is V3; date parts remain on legacy HTML
-    leg = client.get("/legacy")
-    if leg.status_code == 200 and leg.text:
-        assert "startYear" in leg.text
-    else:
-        # static file still has controls even if route name differs
-        from wtpy.apps.astock.api import STATIC_DIR
+    # Main page is V3 — date controls use btStartYear*
+    assert "btStartYear" in page.text or "btStartMonth" in page.text
+    # Legacy static still has startYear
+    from wtpy.apps.astock.api import STATIC_DIR
 
-        assert "startYear" in (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    assert "startYear" in (STATIC_DIR / "index.html").read_text(encoding="utf-8")

@@ -972,7 +972,9 @@ def write_excel_summary(
         "「交易明细」：按 FIFO 将买入与卖出配对；信号日期取不晚于买入日的最近信号。",
         "【价格口径】dual_price_v1：信号=因果前复权；成交/估值=未复权真实价格。买入价/卖出价为真实成交价（含滑点）；",
         "买入价_复权参考/卖出价_复权参考为同日因果前复权参考价（审计用，不参与股数/费用/权益）。",
-        "无公司行为区间内，复权参考收益率应与真实成交收益率接近；持仓跨越复权因子变化时正式模式使用 factor-ratio 股数重述（ledger_factor_ratio），或 fail_closed 拒绝正式精确收益；现金分红不入账。",
+        "无公司行为区间内，复权参考收益率应与真实成交收益率接近。"
+        "正式默认 corporate_action_policy=fail_closed：持仓跨越累计复权因子变化时标记 unsupported_corporate_action，"
+        "不虚构送转/分红账本；仅显式 opt-in ledger_factor_ratio 时才做因子比例股数重述（仍无现金分红入账）。",
         "【交易日程 · 双层模型】前台用「信号星期 / 买入日星期 / 平仓日星期 / 开盘·收盘」配置；",
         "后台一律在 A 股交易日日历上求解（T+N 体系）：有 buy_weekday 时用 next_weekday_trading_day（覆盖 entry_lag 步进），",
         "有 exit_weekday 时同理覆盖 hold；未设星期时仍用 entry_lag + hold。节假日自动顺延到之后第一个可交易日。",
