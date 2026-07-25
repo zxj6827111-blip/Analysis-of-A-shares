@@ -68,6 +68,33 @@ def _scale_day_bars(
     return out
 
 
+def _affine_day_bars(
+    bars: Sequence[DayBar],
+    cum_a: np.ndarray,
+    cum_b: np.ndarray,
+) -> List[DayBar]:
+    """Apply per-bar affine transform: adj = a*raw + b; leave volume/amount unchanged."""
+    if not bars:
+        return []
+    out = []
+    for i, b in enumerate(bars):
+        a = float(cum_a[i]) if i < len(cum_a) else 1.0
+        bb = float(cum_b[i]) if i < len(cum_b) else 0.0
+        out.append(
+            DayBar(
+                date=b.date,
+                open=round(b.open * a + bb, 4),
+                high=round(b.high * a + bb, 4),
+                low=round(b.low * a + bb, 4),
+                close=round(b.close * a + bb, 4),
+                amount=b.amount,
+                volume=b.volume,
+                reserved=b.reserved,
+            )
+        )
+    return out
+
+
 def day_bars_to_standard_qfq(
     bars: Sequence[DayBar],
     factor: np.ndarray,
@@ -141,6 +168,28 @@ def day_bars_to_asof_forward_adjusted(
     return _scale_day_bars(bars, scale)
 
 
+def day_bars_to_affine_standard_qfq(
+    bars: Sequence[DayBar],
+    cum_a: np.ndarray,
+    cum_b: np.ndarray,
+) -> List[DayBar]:
+    """Standard qfq via affine model: adj = a*raw + b (anchor = snapshot end)."""
+    return _affine_day_bars(bars, cum_a, cum_b)
+
+
+def day_bars_to_affine_asof(
+    bars: Sequence[DayBar],
+    events: Sequence,
+    dates: Sequence[int],
+    asof_date: int,
+) -> List[DayBar]:
+    """Asof forward qfq via affine model: only events <= asof_date."""
+    from .data.affine_adjust import compute_affine_params_asof
+
+    cum_a, cum_b = compute_affine_params_asof(events, dates, asof_date)
+    return _affine_day_bars(bars, cum_a, cum_b)
+
+
 def day_bars_for_signals(
     bars: Sequence[DayBar],
     factor: np.ndarray,
@@ -188,6 +237,40 @@ def day_bars_for_signals(
     return day_bars_to_asof_forward_adjusted(
         bars, factor, asof_factor=asof_factor, asof_index=None
     )
+
+
+def day_bars_for_signals_affine(
+    bars: Sequence[DayBar],
+    affine_series,
+    *,
+    research_unadjusted: bool = False,
+    signal_adjust: str = "asof_forward_qfq",
+    asof_date: Optional[int] = None,
+) -> List[DayBar]:
+    """Bars for L1 signals using affine model (1:1 TDX match).
+
+    affine_series: AffineSeries from build_affine_series().
+    """
+    if research_unadjusted:
+        return list(bars)
+    if not bars:
+        return []
+
+    from .data.affine_adjust import DividendEvent, compute_affine_params, compute_affine_params_asof
+
+    dates = [int(b.date) for b in bars]
+    events = [DividendEvent(**ev) for ev in (affine_series.events or [])]
+
+    mode = (signal_adjust or "asof_forward_qfq").strip().lower()
+
+    if mode in ("standard_qfq", "ordinary_qfq", "qfq"):
+        cum_a, cum_b = compute_affine_params(events, dates)
+    else:
+        if asof_date is None:
+            asof_date = dates[-1] if dates else 0
+        cum_a, cum_b = compute_affine_params_asof(events, dates, int(asof_date))
+
+    return _affine_day_bars(bars, cum_a, cum_b)
 
 
 
@@ -304,23 +387,111 @@ def period_bar_map(bars: Sequence) -> Dict[int, object]:
     return {int(b.date): b for b in bars}
 
 
+def _looks_like_week_or_month_bars(bars: Sequence) -> bool:
+    if not bars:
+        return False
+    b0 = bars[0]
+    return hasattr(b0, "start_date") and hasattr(b0, "end_date")
+
+
+def find_bar_covering_date(bars: Sequence, asof: int):
+    """Pick period/day bar for asof: covering [start,end], else exact date, else last end<=asof."""
+    if not bars:
+        return None
+    asof = int(asof)
+    covering = []
+    exact = None
+    before = None
+    for b in bars:
+        d = int(getattr(b, "date", 0) or 0)
+        start_d = int(getattr(b, "start_date", d) or d)
+        end_d = int(getattr(b, "end_date", d) or d)
+        if start_d <= asof <= end_d:
+            covering.append(b)
+        if d == asof or end_d == asof:
+            exact = b
+        if end_d <= asof or d <= asof:
+            if before is None:
+                before = b
+            else:
+                prev_end = int(getattr(before, "end_date", before.date) or before.date)
+                if end_d >= prev_end:
+                    before = b
+    if covering:
+        return covering[-1]
+    if exact is not None:
+        return exact
+    return before
+
+
+def prepare_bars_for_bagua(
+    bars_by_code: Dict[str, Sequence],
+    *,
+    bagua_period: str = "WEEK",
+) -> Dict[str, list]:
+    """Build per-code bars used for bagua OHLC (default: weekly L1 bars).
+
+    If input bars are daily and bagua_period=WEEK, aggregate with include_open=True
+    so a Friday (or mid-week) signal maps to that stock's week bar.
+    """
+    bp = (bagua_period or "WEEK").strip().upper()
+    if bp in ("D", "1D"):
+        bp = "DAY"
+    if bp in ("W", "1W"):
+        bp = "WEEK"
+    if bp in ("M", "1M"):
+        bp = "MONTH"
+    out: Dict[str, list] = {}
+    for code, bars in (bars_by_code or {}).items():
+        seq = list(bars or [])
+        if not seq:
+            continue
+        if bp == "DAY":
+            out[code] = seq
+            continue
+        # Already aggregated week/month bars: keep when requesting WEEK/MONTH
+        if bp in ("WEEK", "MONTH") and _looks_like_week_or_month_bars(seq):
+            out[code] = seq
+            continue
+        if bp in ("WEEK", "MONTH"):
+            try:
+                out[code] = build_period_bars(seq, bp, asof=None, include_open=True)
+            except Exception:
+                out[code] = seq
+        else:
+            out[code] = seq
+    return out
+
+
 def attach_bagua(
     events: List[SignalEvent],
     bars_by_code_period: Dict[str, Sequence],
     calculator: BaguaCalculator,
+    *,
+    bagua_period: str = "WEEK",
+    price_plane: str = "raw",
 ) -> List[SignalEvent]:
-    """Attach bagua using period K-line OHLC for the event date (L1 signal plane).
+    """Attach bagua from OHLC digit-sum (default: weekly unadjusted bars).
 
-    ``bars_by_code_period`` must be the **same** period bars used for technical
-    signals (standard_qfq or research raw via ``day_bars_for_signals``), not L2
-    raw execution bars. Day/DWM use day signal bars; WEEK/MONTH use aggregated
-    signal-period bars. MIN60 has no factor scale today — bars are as loaded.
+    Product default:
+    - bagua_period=WEEK: signal day (e.g. Friday) maps to that stock's week bar
+      covering the signal date (week open/high/low/close = full week picture).
+    - price_plane=raw (L2): unadjusted market OHLC for digit-sum / 卦 / 变卦.
+      Formal bagua must NOT use L1 asof_forward_qfq or standard_qfq prices —
+      adjusted OHLC changes digit sums and hexagrams.
+
+    Pass raw day bars (or pre-aggregated raw week bars). WEEK aggregation uses
+    include_open=True.
     """
-    by_code_date: Dict[str, Dict[int, object]] = {}
-    for code, bars in bars_by_code_period.items():
-        by_code_date[code] = {int(b.date): b for b in bars}
+    bp = (bagua_period or "WEEK").strip().upper()
+    if bp in ("W", "1W"):
+        bp = "WEEK"
+    if bp in ("D", "1D"):
+        bp = "DAY"
+    prepared = prepare_bars_for_bagua(bars_by_code_period, bagua_period=bp)
     for ev in events:
-        bar = by_code_date.get(ev.std_code, {}).get(ev.date)
+        bars = prepared.get(ev.std_code) or []
+        bar = find_bar_covering_date(bars, int(ev.date))
         if not bar:
             continue
         res = calculator.calculate(
@@ -329,7 +500,17 @@ def attach_bagua(
             low_price=bar.low,
             close_price=bar.close,
         )
-        ev.bagua = res.to_dict()
+        d = res.to_dict()
+        d["bagua_period"] = bp
+        d["bagua_price_plane"] = (price_plane or "raw").strip().lower()
+        d["bagua_bar_date"] = int(getattr(bar, "date", ev.date) or ev.date)
+        if hasattr(bar, "start_date"):
+            d["bagua_bar_start"] = int(bar.start_date)
+        if hasattr(bar, "end_date"):
+            d["bagua_bar_end"] = int(bar.end_date)
+        if not d.get("biangua") and d.get("changed_hexagram_name"):
+            d["biangua"] = d.get("changed_hexagram_name")
+        ev.bagua = d
     return events
 
 

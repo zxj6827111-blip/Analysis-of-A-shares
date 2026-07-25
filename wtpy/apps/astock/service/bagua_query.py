@@ -27,8 +27,10 @@ from ..data.universe import to_std_code
 from ..study import (
     build_period_bars,
     day_bars_for_signals,
+    day_bars_for_signals_affine,
     day_bars_to_standard_qfq,
 )
+from ..data.affine_adjust import build_affine_series
 from .stock_names import display_code_with_name, resolve_stock_name
 
 
@@ -175,6 +177,29 @@ def _adjust_day_bars(
         return list(day_raw), meta
 
     dates = [int(b.date) for b in day_raw]
+
+    affine = build_affine_series(std_code, dates, adj_root=cfg.adj_root)
+    if affine.quality == "complete" and not affine.is_identity:
+        out = day_bars_for_signals_affine(
+            day_raw,
+            affine,
+            research_unadjusted=False,
+            signal_adjust=adjust,
+            asof_date=asof,
+        )
+        meta["factor_source"] = affine.source
+        meta["factor_quality"] = affine.quality
+        meta["factor_manifest_sha"] = affine.sha256
+        meta["model"] = "affine"
+        if adjust == "standard_qfq":
+            meta["price_format"] = "standard_qfq affine (a*raw+b), 2 decimal places"
+            meta["signal_adjust"] = "standard_qfq"
+        else:
+            meta["price_format"] = "asof_forward_qfq affine (a*raw+b), 2 decimal places"
+            meta["signal_adjust"] = "asof_forward_qfq"
+            meta["asof_date"] = asof
+        return out, meta
+
     series = build_factor_series(
         std_code, dates, adj_root=cfg.adj_root, prefer_baostock=True
     )
@@ -182,6 +207,7 @@ def _adjust_day_bars(
     meta["factor_source"] = series.source
     meta["factor_quality"] = series.quality
     meta["factor_manifest_sha"] = series.sha256
+    meta["model"] = "multiplicative_fallback"
 
     if adjust == "standard_qfq":
         out = day_bars_to_standard_qfq(day_raw, fac)

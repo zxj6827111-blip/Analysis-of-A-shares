@@ -15,8 +15,8 @@ PLANE_TRADE = "L2_trade_price"
 PLANE_CORPORATE_ACTION = "L3_corporate_action_ledger"
 
 # bagua OHLC source after P1
-BAGUA_OHLC_PLANE = PLANE_SIGNAL
-BAGUA_OHLC_SOURCE = "signal_period_bars"  # same OHLC world as technical indicators
+BAGUA_OHLC_PLANE = PLANE_TRADE  # 卦象位和用未复权周K，与信号L1分离
+BAGUA_OHLC_SOURCE = "week_bars_from_raw_days"
 
 # Formal defaults (must match backtest_context.apply_standard_qfq_raw_execution_v2)
 DEFAULT_SIGNAL_PRICE_MODE = "asof_forward_qfq"
@@ -48,8 +48,7 @@ def three_plane_repro_fields(
                     "patterns",
                     "trend",
                     "technical_signals",
-                    "bagua_ohlc_features",
-                ],
+                                    ],
                 "note": (
                     "Continuous adjusted OHLC for signal generation only. "
                     "Formal default: asof_forward_qfq = factor_t / factor_asof. "
@@ -70,6 +69,7 @@ def three_plane_repro_fields(
                     "fees",
                     "position_mark_to_market",
                     "cash_ledger",
+                    "bagua_ohlc_features",
                 ],
                 "note": (
                     "Unadjusted market OHLC only. Buy/sell price columns and equity use this plane."
@@ -105,9 +105,8 @@ def three_plane_repro_fields(
         "bagua_ohlc_plane": bagua_ohlc_plane,
         "bagua_ohlc_source": bagua_ohlc_source,
         "bagua_ohlc_note": (
-            "Bagua OHLC features use the same period bars as technical signals "
-            "(L1 asof_forward_qfq, or raw if research_unadjusted). "
-            "Not L2 raw execution bars. Missing signal bars must not fall back to raw."
+            "Bagua (week gua / 变卦) uses L2 unadjusted week OHLC covering the signal date. "
+            "Technical signals still use L1 asof_forward_qfq. Planes are intentionally split."
         ),
         "signal_anchor": signal_anchor,
     }

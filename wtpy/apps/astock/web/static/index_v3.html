@@ -1222,13 +1222,15 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
         <div class="field-grid" style="margin-top:13px">
           <div class="field"><label>买入星期</label>
             <select class="select" id="btBuyWd">
+              <option value="" selected>不限（信号触发即买）</option>
               <option value="1">周一</option><option value="2">周二</option><option value="3">周三</option>
-              <option value="4">周四</option><option value="5" selected>周五</option>
+              <option value="4">周四</option><option value="5">周五</option>
             </select>
           </div>
           <div class="field"><label>卖出/平仓星期</label>
             <select class="select" id="btExitWd">
-              <option value="1" selected>周一</option><option value="2">周二</option><option value="3">周三</option>
+              <option value="" selected>不限（按持仓周期卖）</option>
+              <option value="1">周一</option><option value="2">周二</option><option value="3">周三</option>
               <option value="4">周四</option><option value="5">周五</option>
             </select>
           </div>
@@ -1243,6 +1245,12 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
               <option value="open">开盘价</option>
               <option value="close" selected>收盘价</option>
             </select>
+          </div>
+          <div class="field"><label>买入延迟（信号后第N天）</label>
+            <input type="number" class="select" id="btEntryLag" value="1" min="1" max="30" step="1" style="width:70px">
+          </div>
+          <div class="field"><label>持仓周期（天）</label>
+            <input type="number" class="select" id="btHold" value="1" min="1" max="120" step="1" style="width:70px">
           </div>
           <div class="field"><label>周期</label>
             <select class="select" id="btPeriod">
@@ -1612,10 +1620,10 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
           <p class="section-desc">选择实验类型，系统将为你推荐合适的参数维度与默认设置。</p>
           <div class="option-grid cols-6" id="experimentOptions" style="margin-top:14px">
             <div class="option-card active" data-type="规则效果对比"><span class="check">✓</span><div class="option-icon">▥</div><div class="option-name">规则效果对比</div><div class="option-desc">对比多条规则在相同市场环境下的表现差异。</div></div>
+            <div class="option-card" data-type="持仓周期寻优"><span class="check">✓</span><div class="option-icon">⏱</div><div class="option-name">持仓周期寻优</div><div class="option-desc">穷举所有持仓天数×买卖会话，找最优持仓周期。</div></div>
             <div class="option-card" data-type="止盈止损寻优"><span class="check">✓</span><div class="option-icon">◎</div><div class="option-name">止盈止损寻优</div><div class="option-desc">寻找更合适的止盈止损参数组合。</div></div>
             <div class="option-card" data-type="买卖日程对比"><span class="check">✓</span><div class="option-icon">▦</div><div class="option-name">买卖日程对比</div><div class="option-desc">比较不同信号执行日程的影响。</div></div>
             <div class="option-card" data-type="组合条件验证"><span class="check">✓</span><div class="option-icon">⌘</div><div class="option-name">组合条件验证</div><div class="option-desc">验证多条件组合的有效性与稳定性。</div></div>
-            <div class="option-card" data-type="市场阶段验证"><span class="check">✓</span><div class="option-icon">⌁</div><div class="option-name">市场阶段验证</div><div class="option-desc">检验规则在不同市场阶段的适应性。</div></div>
             <div class="option-card" data-type="自定义多参数实验"><span class="check">✓</span><div class="option-icon">▦</div><div class="option-name">自定义多参数实验</div><div class="option-desc">自定义参数维度进行多维度探索。</div></div>
           </div>
         </div>
@@ -1729,17 +1737,19 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
           <div class="divider" style="margin:16px 0;border-top:1px solid var(--line)"></div>
 
           <div class="field-grid cols-3" style="margin-top:4px">
-            <div class="field"><label>卖出会话</label>
-              <select class="select" id="expSellOn">
-                <option value="close">收盘卖出</option>
-                <option value="open">开盘卖出</option>
-              </select>
+            <div class="field"><label>卖出会话（可多选同时对比）</label>
+              <div style="display:flex;gap:12px;margin-top:6px">
+                <label style="font-size:13px;cursor:pointer"><input type="checkbox" class="exp-sell-on" value="open" checked style="margin-right:4px" />开盘卖</label>
+                <label style="font-size:13px;cursor:pointer"><input type="checkbox" class="exp-sell-on" value="close" checked style="margin-right:4px" />收盘卖</label>
+              </div>
+              <div class="muted" style="font-size:11px;margin-top:4px">多选会与持仓天数笛卡尔积；组合数=天数×会话×买入节奏×止损×止盈</div>
             </div>
-            <div class="field"><label>买入节奏</label>
-              <select class="select" id="expBuyMode">
-                <option value="lag1open">信号后 T+1 开盘买</option>
-                <option value="lag1close">信号后 T+1 收盘买</option>
-              </select>
+            <div class="field"><label>买入节奏（可多选同时对比）</label>
+              <div style="display:flex;gap:12px;margin-top:6px">
+                <label style="font-size:13px;cursor:pointer"><input type="checkbox" class="exp-buy-mode" value="lag1open" checked style="margin-right:4px" />T+1 开盘买</label>
+                <label style="font-size:13px;cursor:pointer"><input type="checkbox" class="exp-buy-mode" value="lag1close" style="margin-right:4px" />T+1 收盘买</label>
+                <label style="font-size:13px;cursor:pointer"><input type="checkbox" class="exp-buy-mode" value="lag2open" style="margin-right:4px" />T+2 开盘买</label>
+              </div>
             </div>
             <div class="field"><label>允许 force（&gt;50 组）</label>
               <select class="select" id="expForce">
@@ -1783,6 +1793,17 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
           <div class="field-grid cols-3" style="margin-top:13px">
             <div class="field"><label>实验名称</label><input class="input" id="expName" placeholder="例如：止盈止损网格对比" /></div>
             <div class="field"><label>组合上限</label><input class="input" id="expMaxVariants" value="50" /></div>
+            <div class="field"><label>并行数（线程）</label>
+              <select class="select" id="expConcurrency">
+                <option value="1">1（串行）</option>
+                <option value="2">2</option>
+                <option value="4" selected>4</option>
+                <option value="6">6</option>
+                <option value="8">8</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-grid cols-3" style="margin-top:13px">
             <div class="field"><label>备注</label><input class="input" id="expNote" placeholder="可选" /></div>
           </div>
         </div>
@@ -3014,22 +3035,26 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
     const nSl = Math.max(1, sl.length || 1);
     const nTp = Math.max(1, tp.length || 1);
     const nHold = Math.max(1, hold.length || 1);
+    let nSell = document.querySelectorAll(".exp-sell-on:checked").length;
+    if (!nSell) nSell = 1;
+    let nBuy = document.querySelectorAll(".exp-buy-mode:checked").length;
+    if (!nBuy) nBuy = 1;
     const rules = (AppState.expRuleIds && AppState.expRuleIds.length) || 0;
-    const nGua = 1; // single preset select
     const _eg = (typeof buildExpGuaPayload === "function") ? buildExpGuaPayload() : null;
     const nYao = (_eg && _eg.enabled) ? 1 : 0;
-    const nGuaAll = 1; // single filter axis (none or one active filter via gua_filters)
+    const nGuaAll = 1;
     const nPer = document.querySelectorAll("#expPeriodChips input.exp-period:checked").length || 1;
-    const paramCombos = nSl * nTp * nHold * nGuaAll * nPer;
+    // free axes: buy_options × sell_options(hold × sell_on) × sl × tp × period
+    const paramCombos = nSl * nTp * nHold * nSell * nBuy * nGuaAll * nPer;
     return {
-      nSl, nTp, nHold, nYao, nPer, nGuaAll,
+      nSl, nTp, nHold, nSell, nBuy, nYao, nPer, nGuaAll,
       paramCombos,
       rules,
       tasks: paramCombos * Math.max(1, rules),
     };
   }
 
-    // Experiment gua filter (parallel to backtest GuaUI; default OFF, no preset dropdown)
+  // Experiment gua filter (parallel to backtest GuaUI; default OFF, no preset dropdown)
   AppState.expGuaUsage = AppState.expGuaUsage || "action";
   AppState.expGuaAdvanced = AppState.expGuaAdvanced || {
     selected_state_ids: [],
@@ -3180,32 +3205,34 @@ function collectPeriods() {
     const range = parseRange($("expRange").value);
     const slRaw = parseNumList($("expStopLoss") ? $("expStopLoss").value : "");
     const tpRaw = parseNumList($("expTakeProfit") ? $("expTakeProfit").value : "");
-    // empty stop/take -> [null] (no risk exit)
     const sl = slRaw.length ? slRaw.map((x) => x / 100) : [null];
     const tp = tpRaw.length ? tpRaw.map((x) => x / 100) : [null];
     const holds = parseNumList($("expHoldDays") ? $("expHoldDays").value : "5");
     const holdList = holds.length ? holds : [5];
-    const sellOn = ($("expSellOn") && $("expSellOn").value) || "close";
-    const buyMode = ($("expBuyMode") && $("expBuyMode").value) || "lag1open";
-    const buy_options =
-      buyMode === "lag1close"
-        ? [{ entry_lag: 1, buy_on: "close", buy_weekday: null }]
-        : [{ entry_lag: 1, buy_on: "open", buy_weekday: null }];
-    const sell_options = holdList.map((h) => ({
-      hold: Number(h),
-      sell_on: sellOn,
-      exit_weekday: null,
-    }));
+    const sellOns = [];
+    document.querySelectorAll(".exp-sell-on:checked").forEach((el) => sellOns.push(el.value));
+    if (!sellOns.length) sellOns.push("close");
+    const buyModes = [];
+    document.querySelectorAll(".exp-buy-mode:checked").forEach((el) => buyModes.push(el.value));
+    if (!buyModes.length) buyModes.push("lag1open");
+    const buy_options = buyModes.map((m) => {
+      if (m === "lag1close") return { entry_lag: 1, buy_on: "close", buy_weekday: null };
+      if (m === "lag2open") return { entry_lag: 2, buy_on: "open", buy_weekday: null };
+      if (m === "lag2close") return { entry_lag: 2, buy_on: "close", buy_weekday: null };
+      return { entry_lag: 1, buy_on: "open", buy_weekday: null };
+    });
+    const sell_options = [];
+    holdList.forEach((h) => {
+      sellOns.forEach((so) => {
+        sell_options.push({ hold: Number(h), sell_on: so, exit_weekday: null });
+      });
+    });
     const univ = ($("expUniverse") && $("expUniverse").value) || "demo";
     const universe = univ === "full" || univ === "ALL" ? "full" : "demo";
     const codes = universe === "full" ? null : ["SSE.STK.600000", "SZSE.STK.000001"];
     const periods = collectPeriods();
     const yaoFilters = collectYaoFilters();
-    // No default gua presets (none/best3 dropdown removed). Off => gua_keys none only.
     const gua_keys = yaoFilters.length ? ["none"] : ["none"];
-    // When filter active, pass inline gua_filters; backend resolves dict options.
-    // Use empty gua_keys product companion: still need one axis entry — "none" means
-    // no *preset*, while gua_filters carries the real filter.
     const force = ($("expForce") && $("expForce").value === "1") || false;
     return {
       name:
@@ -3224,14 +3251,13 @@ function collectPeriods() {
       end: range.end,
       account_mode: ($("expAccount") && $("expAccount").value) || "portfolio",
       max_variants: Number($("expMaxVariants").value) || 50,
-      concurrency: 1,
+      concurrency: Math.max(1, parseInt(($("expConcurrency") && $("expConcurrency").value) || "4", 10) || 4),
       force: !!force,
       note: (($("expNote") && $("expNote").value) || "") + " | type=" + AppState.expType,
       engine: ($("expEngine") && $("expEngine").value) || "fast",
       artifact_level: "summary",
       use_signal_cache: true,
       preview_only: true,
-      // free axes — multi-day hold templates
       signal_weekdays_options: [null],
       buy_options: buy_options,
       sell_options: sell_options,
@@ -3275,7 +3301,7 @@ function renderExpRuleChips() {
     $("expRuleCountLabel").textContent = String(AppState.expRuleIds.length);
     const local = localComboCount();
     $("expComboText").textContent =
-      local.nSl + " × " + local.nTp + " × " + local.nHold + " = " + local.tasks + "（本地粗算）";
+      local.nSl + " × " + local.nTp + " × " + local.nHold + "×" + local.nSell + "卖×" + local.nBuy + "买 = " + local.tasks + "（本地粗算）";
     $("expTaskCount").textContent = String(local.tasks);
     $("sumCombos").textContent = local.paramCombos + " 组";
     $("sumTasks").textContent = local.tasks + " 个任务";
@@ -3298,7 +3324,7 @@ function renderExpRuleChips() {
     const st = $("expEstimateStatus");
     if (VISUAL_TEST) {
       const local = localComboCount();
-      $("expComboText").textContent = local.nSl + " × " + local.nTp + " × " + local.nHold + " = " + local.paramCombos + " 组组合";
+      $("expComboText").textContent = local.nSl + " × " + local.nTp + " × " + local.nHold + "×" + local.nSell + "卖×" + local.nBuy + "买 = " + local.paramCombos + " 组组合";
       $("expTaskCount").textContent = String(local.tasks);
       $("sumCombos").textContent = local.paramCombos + " 组";
       $("sumTasks").textContent = local.tasks + " 个任务";
@@ -3518,23 +3544,121 @@ async function expCreateAndStart() {
         return;
       }
       body.className = "";
-      const cols = Object.keys(rows[0]).slice(0, 10);
-      let html = '<div class="table-wrap"><table class="exp-results-table"><thead><tr>' +
-        cols.map((c) => "<th>" + esc(c) + "</th>").join("") + "</tr></thead><tbody>";
-      rows.slice(0, 100).forEach((row) => {
-        html += "<tr>" + cols.map((c) => {
-          let v = row[c];
-          if (v && typeof v === "object") v = JSON.stringify(v).slice(0, 80);
-          return "<td>" + esc(v) + "</td>";
-        }).join("") + "</tr>";
-      });
-      html += "</tbody></table></div>";
-      if (rows.length > 100) html += '<div class="muted" style="margin-top:8px">仅显示前 100 行，完整数据请导出 Excel。</div>';
-      body.innerHTML = html;
+      body.innerHTML = buildOptimalPanel(rows) + buildResultsTable(rows);
     } catch (e) {
       body.className = "exp-empty";
       body.textContent = "加载失败：" + e.message;
     }
+  }
+
+  function _fmtPct(v) {
+    if (v == null || isNaN(v)) return "—";
+    const p = (Number(v) * 100).toFixed(2);
+    return (Number(v) >= 0 ? "+" : "") + p + "%";
+  }
+
+  function _variantLabel(p) {
+    const bits = [];
+    if (p.hold != null) bits.push("持有" + p.hold + "天");
+    if (p.sell_on) bits.push(p.sell_on === "open" ? "开盘卖" : "收盘卖");
+    if (p.entry_lag != null) bits.push("T+" + p.entry_lag);
+    if (p.buy_on) bits.push(p.buy_on === "open" ? "开盘买" : "收盘买");
+    if (p.stop_loss != null) bits.push("止损" + (Number(p.stop_loss) * 100).toFixed(1) + "%");
+    if (p.take_profit != null) bits.push("止盈" + (Number(p.take_profit) * 100).toFixed(1) + "%");
+    if (p.period) bits.push(p.period === "DAY" ? "日线" : p.period === "WEEK" ? "周线" : p.period);
+    return bits.join(" · ") || "—";
+  }
+
+  function buildOptimalPanel(rows) {
+    const ok = rows.filter((r) => r.status === "succeeded" && r.metrics && r.metrics.total_return != null);
+    if (ok.length < 2) return "";
+    const scored = ok.map((r) => {
+      const m = r.metrics || {};
+      const ret = Number(m.total_return) || 0;
+      const dd = Math.abs(Number(m.max_drawdown) || 0);
+      const sharpe = m.sharpe != null ? Number(m.sharpe) : null;
+      const wr = m.win_rate != null ? Number(m.win_rate) : null;
+      const nTrades = Number(m.n_round_trips) || 0;
+      const calmar = dd > 1e-9 ? ret / dd : ret * 100;
+      const score = sharpe != null ? sharpe : calmar;
+      return { r, m, ret, dd, sharpe, wr, nTrades, calmar, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    const top3 = scored.slice(0, 3);
+    const bestRet = scored.slice().sort((a, b) => b.ret - a.ret)[0];
+    const minDD = scored.slice().sort((a, b) => a.dd - b.dd)[0];
+
+    let html = '<div class="card" style="margin-bottom:16px;border:1px solid var(--accent-dim, #2a5a8a);background:linear-gradient(135deg, rgba(30,80,140,0.12) 0%, rgba(20,40,70,0.06) 100%)">';
+    html += '<h3 class="section-title" style="margin-bottom:12px">★ 最优路线推荐 <small style="font-weight:400;color:var(--muted)">（按风险调整收益排序）</small></h3>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">';
+    const medals = ["🥇", "🥈", "🥉"];
+    top3.forEach((s, i) => {
+      const p = s.r.params || {};
+      html += '<div style="border:1px solid var(--line);border-radius:8px;padding:14px;background:var(--card,#1a2332);transition:transform .15s" ' +
+        'onmouseover="this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.transform=\'\'">' +
+        '<div style="font-size:15px;font-weight:800;margin-bottom:8px">' + medals[i] + ' 第' + (i + 1) + '名</div>' +
+        '<div style="font-size:13px;color:var(--accent,#5aa2ff);font-weight:700;margin-bottom:10px">' + esc(_variantLabel(p)) + '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;font-size:12px">' +
+        '<span style="color:var(--muted)">总收益</span><b class="' + (s.ret >= 0 ? 'up' : 'down') + '">' + _fmtPct(s.ret) + '</b>' +
+        '<span style="color:var(--muted)">最大回撤</span><b>' + _fmtPct(-s.dd) + '</b>' +
+        '<span style="color:var(--muted)">夏普比率</span><b>' + (s.sharpe != null ? s.sharpe.toFixed(2) : "—") + '</b>' +
+        '<span style="color:var(--muted)">胜率</span><b>' + (s.wr != null ? (s.wr * 100).toFixed(1) + "%" : "—") + '</b>' +
+        '<span style="color:var(--muted)">交易次数</span><b>' + s.nTrades + '</b>' +
+        '<span style="color:var(--muted)">收益回撤比</span><b>' + s.calmar.toFixed(2) + '</b>' +
+        '</div></div>';
+    });
+    html += '</div>';
+
+    const holdMap = {};
+    scored.forEach((s) => {
+      const h = (s.r.params || {}).hold;
+      if (h == null) return;
+      const k = Number(h);
+      if (!holdMap[k]) holdMap[k] = { rets: [], dds: [], n: 0 };
+      holdMap[k].rets.push(s.ret);
+      holdMap[k].dds.push(s.dd);
+      holdMap[k].n += 1;
+    });
+    const holdKeys = Object.keys(holdMap).map(Number).sort((a, b) => a - b);
+    if (holdKeys.length >= 2) {
+      const maxAvg = Math.max(...holdKeys.map((k) => holdMap[k].rets.reduce((a, b) => a + b, 0) / holdMap[k].rets.length));
+      html += '<div style="margin-top:16px"><div style="font-size:13px;font-weight:700;margin-bottom:10px">持仓天数 × 平均收益分布</div>';
+      html += '<div style="display:flex;align-items:flex-end;gap:6px;height:120px;padding:0 4px">';
+      holdKeys.forEach((k) => {
+        const avg = holdMap[k].rets.reduce((a, b) => a + b, 0) / holdMap[k].rets.length;
+        const hPct = maxAvg > 0 ? Math.max(4, Math.abs(avg) / maxAvg * 100) : 4;
+        const color = avg >= 0 ? "var(--green,#3fbf7f)" : "var(--red,#e05555)";
+        const isBest = avg === maxAvg;
+        html += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%" title="持有' + k + '天：平均收益 ' + _fmtPct(avg) + '（' + holdMap[k].n + '组）">' +
+          '<div style="font-size:10px;color:' + color + ';margin-bottom:3px;font-weight:' + (isBest ? "800" : "400") + '">' + (isBest ? "★" : "") + _fmtPct(avg) + '</div>' +
+          '<div style="width:70%;max-width:40px;height:' + hPct + '%;background:' + color + ';border-radius:3px 3px 0 0;opacity:' + (isBest ? "1" : "0.7") + ';transition:opacity .15s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=' + (isBest ? "1" : "0.7") + '"></div>' +
+          '<div style="font-size:11px;margin-top:4px;color:var(--muted)">' + k + '天</div></div>';
+      });
+      html += '</div></div>';
+    }
+
+    html += '<div style="margin-top:14px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px">' +
+      '共 ' + scored.length + ' 组有效结果 · 最高收益：' + _fmtPct(bestRet.ret) + '（' + esc(_variantLabel(bestRet.r.params || {})) + '）' +
+      ' · 最小回撤：' + _fmtPct(-minDD.dd) + '（' + esc(_variantLabel(minDD.r.params || {})) + '）' +
+      ' · 排序依据：' + (top3[0].sharpe != null ? "夏普比率" : "收益回撤比（Calmar）") + '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  function buildResultsTable(rows) {
+    const cols = Object.keys(rows[0]).slice(0, 10);
+    let html = '<div class="table-wrap"><table class="exp-results-table"><thead><tr>' +
+      cols.map((c) => "<th>" + esc(c) + "</th>").join("") + "</tr></thead><tbody>";
+    rows.slice(0, 100).forEach((row) => {
+      html += "<tr>" + cols.map((c) => {
+        let v = row[c];
+        if (v && typeof v === "object") v = JSON.stringify(v).slice(0, 80);
+        return "<td>" + esc(v) + "</td>";
+      }).join("") + "</tr>";
+    });
+    html += "</tbody></table></div>";
+    if (rows.length > 100) html += '<div class="muted" style="margin-top:8px">仅显示前 100 行，完整数据请导出 Excel。</div>';
+    return html;
   }
 
   async function renderExperimentTemplates() {
@@ -5326,7 +5450,7 @@ function renderForecastPage() {
         "价格说明",
         src.legacy_adjusted_execution || src.price_mode === "adjusted"
           ? "历史任务：旧版复权成交或 dual_price_v1(信号=起点锚定) 口径，勿与 standard_qfq信号+raw成交(v2) 混淆。请用新引擎重跑。"
-          : "L1信号(+卦象)：asof_forward_qfq（批回测锚截止日）；L2成交/估值：未复权；L3：fail_closed；高级研究：起点锚定复权研究价。",
+          : "L1信号：asof_forward_qfq；卦象默认周卦(信号日所在周)；L2成交/估值：未复权；L3：fail_closed；高级研究：起点锚定复权研究价。",
       ],
       ["止损", src.stop_loss != null ? src.stop_loss : "—"],
       ["止盈", src.take_profit != null ? src.take_profit : "—"],
@@ -6442,7 +6566,11 @@ function renderForecastPage() {
     if (r.start || repro.start) setDateParts("btStart", r.start || repro.start);
     if (r.end || repro.end) setDateParts("btEnd", r.end || repro.end);
     if ((r.buy_weekday != null || repro.buy_weekday != null) && $("btBuyWd")) $("btBuyWd").value = String(r.buy_weekday != null ? r.buy_weekday : repro.buy_weekday);
+    else if ($("btBuyWd")) $("btBuyWd").value = "";
     if ((r.exit_weekday != null || repro.exit_weekday != null) && $("btExitWd")) $("btExitWd").value = String(r.exit_weekday != null ? r.exit_weekday : repro.exit_weekday);
+    else if ($("btExitWd")) $("btExitWd").value = "";
+    if ($("btEntryLag")) $("btEntryLag").value = String(r.entry_lag != null ? r.entry_lag : (repro.entry_lag != null ? repro.entry_lag : 1));
+    if ($("btHold")) $("btHold").value = String(r.hold != null ? r.hold : (repro.hold != null ? repro.hold : 1));
     if ((r.buy_on || repro.buy_on) && $("btBuyOn")) $("btBuyOn").value = r.buy_on || repro.buy_on;
     if ((r.sell_on || repro.sell_on) && $("btSellOn")) $("btSellOn").value = r.sell_on || repro.sell_on;
     if ((r.account_mode || repro.account_mode) && $("btAccount")) $("btAccount").value = r.account_mode || repro.account_mode;
@@ -8438,10 +8566,10 @@ function renderBtRuleList() {
       rule_ids: tradeIds,
       period: ($("btPeriod") && $("btPeriod").value) || "DAY",
       account_mode: ($("btAccount") && $("btAccount").value) || "portfolio",
-      entry_lag: 1,
-      hold: 1,
-      buy_weekday: parseInt(($("btBuyWd") && $("btBuyWd").value) || "5", 10),
-      exit_weekday: parseInt(($("btExitWd") && $("btExitWd").value) || "1", 10),
+      entry_lag: Math.max(1, parseInt(($("btEntryLag") && $("btEntryLag").value) || "1", 10) || 1),
+      hold: Math.max(1, parseInt(($("btHold") && $("btHold").value) || "1", 10) || 1),
+      buy_weekday: ($("btBuyWd") && $("btBuyWd").value) ? parseInt($("btBuyWd").value, 10) : null,
+      exit_weekday: ($("btExitWd") && $("btExitWd").value) ? parseInt($("btExitWd").value, 10) : null,
       signal_weekdays: swd.length ? swd : null,
       buy_on: ($("btBuyOn") && $("btBuyOn").value) || "open",
       sell_on: ($("btSellOn") && $("btSellOn").value) || "close",
@@ -8548,7 +8676,7 @@ function renderBtRuleList() {
     if ($("btnBtGoTasks")) $("btnBtGoTasks").onclick = () => switchModule("tasks");
     if ($("btnBtRefreshSum")) $("btnBtRefreshSum").onclick = () => renderBacktestSummary();
     if ($("btnBtRun")) $("btnBtRun").onclick = () => runBacktestV3();
-    ["btPeriod", "btAccount", "btPool", "btCombine", "btBuyWd", "btExitWd", "btBuyOn", "btSellOn"].forEach((id) => {
+    ["btPeriod", "btAccount", "btPool", "btCombine", "btBuyWd", "btExitWd", "btBuyOn", "btSellOn", "btEntryLag", "btHold"].forEach((id) => {
       const el = $(id);
       if (el) el.addEventListener("change", () => renderBacktestSummary());
     });
@@ -8634,7 +8762,14 @@ function renderBtRuleList() {
         AppState.expType = card.dataset.type;
         $("experimentSummaryType").textContent = AppState.expType;
         // preset params by type
-        if (AppState.expType === "止盈止损寻优") {
+        if (AppState.expType === "持仓周期寻优") {
+          $("expStopLoss").value = "";
+          $("expTakeProfit").value = "";
+          $("expHoldDays").value = "1, 2, 3, 5, 8, 10, 15, 20, 30, 60";
+          document.querySelectorAll(".exp-sell-on").forEach((el) => { el.checked = true; });
+          document.querySelectorAll(".exp-buy-mode").forEach((el) => { el.checked = (el.value === "lag1open"); });
+          if ($("expName") && !$("expName").value.trim()) $("expName").value = "持仓周期寻优";
+        } else if (AppState.expType === "止盈止损寻优") {
           $("expStopLoss").value = "1, 2, 3";
           $("expTakeProfit").value = "5, 8, 10";
         } else if (AppState.expType === "规则效果对比") {
@@ -8799,16 +8934,19 @@ function renderBtRuleList() {
 
     if ($("btnExpHoldPreset")) {
       if ($("btnExpHoldPreset")) $("btnExpHoldPreset").onclick = () => {
-        if ($("expHoldDays")) $("expHoldDays").value = "3, 5, 7, 10, 20, 40, 60, 120";
+        if ($("expHoldDays")) $("expHoldDays").value = "1, 2, 3, 5, 8, 10, 15, 20, 30, 40, 60, 120";
         try { expEstimate(); } catch (e) {}
       };
     }
     document.querySelectorAll("#expPeriodChips input.exp-period").forEach((el) => {
       el.addEventListener("change", () => { try { expEstimate(); } catch (e) {} });
     });
-    ["expHoldDays", "expSellOn", "expBuyMode", "expForce", "expGua", "expPeriod"].forEach((id) => {
+    ["expHoldDays", "expForce", "expGua", "expPeriod"].forEach((id) => {
       const el = $(id);
       if (el) el.addEventListener("change", () => { try { expEstimate(); } catch (e) {} });
+    });
+    document.querySelectorAll(".exp-sell-on, .exp-buy-mode").forEach((el) => {
+      el.addEventListener("change", () => { try { expEstimate(); } catch (e) {} });
     });
     loadYaoRulesForExp();
 

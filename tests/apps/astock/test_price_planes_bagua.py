@@ -38,7 +38,7 @@ def test_three_plane_repro_fields():
         valuation_price_mode="raw",
         corporate_action_policy="fail_closed",
     )
-    assert d["bagua_ohlc_plane"] == BAGUA_OHLC_PLANE == "L1_signal_price"
+    assert d["bagua_ohlc_plane"] == BAGUA_OHLC_PLANE == "L2_trade_price"
     assert d["bagua_ohlc_source"] == BAGUA_OHLC_SOURCE
     planes = d["price_planes"]
     assert "L1_signal_price" in planes

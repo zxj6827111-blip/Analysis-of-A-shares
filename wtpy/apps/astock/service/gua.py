@@ -280,6 +280,7 @@ def collect_indicator_signals_with_bagua(
         build_period_bars,
         compute_indicator_signal,
         day_bars_for_signals,
+        day_bars_for_signals_affine,
     )
     from .backtest import DEMO_CODES, select_universe
     from .rules import RuleService
@@ -343,20 +344,31 @@ def collect_indicator_signals_with_bagua(
             day_for_ind = day_raw
         else:
             try:
-                series = build_factor_series(
-                    code, dates, adj_root=cfg.adj_root, prefer_baostock=True
-                )
-                import numpy as np
+                from ..data.affine_adjust import build_affine_series
+                affine = build_affine_series(code, dates, adj_root=cfg.adj_root)
+                if affine.quality == "complete" and not affine.is_identity:
+                    day_for_ind = day_bars_for_signals_affine(
+                        day_raw,
+                        affine,
+                        research_unadjusted=False,
+                        signal_adjust="asof_forward_qfq",
+                        asof_date=end if end else (day_raw[-1].date if day_raw else None),
+                    )
+                else:
+                    series = build_factor_series(
+                        code, dates, adj_root=cfg.adj_root, prefer_baostock=True
+                    )
+                    import numpy as np
 
-                fac = np.array(series.factors, dtype=float)
-                day_for_ind = day_bars_for_signals(
-                    day_raw,
-                    fac,
-                    research_unadjusted=False,
-                    signal_adjust="asof_forward_qfq",
-                    asof_date=end if end else (day_raw[-1].date if day_raw else None),
-                    dates=dates,
-                )
+                    fac = np.array(series.factors, dtype=float)
+                    day_for_ind = day_bars_for_signals(
+                        day_raw,
+                        fac,
+                        research_unadjusted=False,
+                        signal_adjust="asof_forward_qfq",
+                        asof_date=end if end else (day_raw[-1].date if day_raw else None),
+                        dates=dates,
+                    )
             except Exception:
                 day_for_ind = day_raw
         asof = day_raw[-1].date if day_raw else None
@@ -396,7 +408,7 @@ def collect_indicator_signals_with_bagua(
                 events.append(SignalEvent(code, d_out, period, spec.id))
 
     calc = BaguaCalculator.from_json(cfg.bagua_json)
-    attach_bagua(events, period_signal_map, calc)
+    attach_bagua(events, period_raw_map, calc, bagua_period="WEEK", price_plane="raw")
     n_with_bagua = sum(1 for e in events if getattr(e, "bagua", None))
     return {
         "events": events,
@@ -411,8 +423,10 @@ def collect_indicator_signals_with_bagua(
         "errors_sample": errors[:20],
         "n_errors": len(errors),
         "research_unadjusted": research_unadjusted,
-        "bagua_ohlc_plane": "L1_signal_price",
-        "bagua_ohlc_source": "signal_period_bars",
+        "bagua_ohlc_plane": "L2_trade_price",
+        "bagua_ohlc_source": "week_bars_from_raw_days",
+        "bagua_period": "WEEK",
+        "bagua_price_plane": "raw",
     }
 
 

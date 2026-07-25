@@ -40,6 +40,7 @@ from .study import (
     compute_indicator_signal,
     compute_v5_dwm_resonance,
     day_bars_for_signals,
+    day_bars_for_signals_affine,
     day_bars_to_standard_qfq,
     day_bars_to_point_in_time_adjusted,
     signal_dates,
@@ -336,6 +337,7 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
     all_events: List[SignalEvent] = []
     errors = []
     period_bars_map = {}
+    period_raw_bars_map = {}
     day_raw_map = {}
     day_adj_map = {}
     factor_series = []
@@ -360,14 +362,26 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
         # PIT research map (audit only); signals use day_bars_for_signals (standard_qfq|raw)
         day_adj = day_bars_to_point_in_time_adjusted(day_raw, fac)
         day_adj_map[code] = day_adj
-        day_for_ind = day_bars_for_signals(
-            day_raw,
-            fac,
-            research_unadjusted=research_unadj,
-            signal_adjust="asof_forward_qfq",
-            asof_date=end if end else (day_raw[-1].date if day_raw else None),
-            dates=dates,
-        )
+
+        from .data.affine_adjust import build_affine_series
+        affine = build_affine_series(code, dates, adj_root=cfg.adj_root)
+        if affine.quality == "complete" and not affine.is_identity:
+            day_for_ind = day_bars_for_signals_affine(
+                day_raw,
+                affine,
+                research_unadjusted=research_unadj,
+                signal_adjust="asof_forward_qfq",
+                asof_date=end if end else (day_raw[-1].date if day_raw else None),
+            )
+        else:
+            day_for_ind = day_bars_for_signals(
+                day_raw,
+                fac,
+                research_unadjusted=research_unadj,
+                signal_adjust="asof_forward_qfq",
+                asof_date=end if end else (day_raw[-1].date if day_raw else None),
+                dates=dates,
+            )
 
         asof = day_raw[-1].date if day_raw else None
         # bagua uses L1 signal period OHLC (same as indicators), not L2 raw
@@ -378,6 +392,7 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
         p_bars_ind = build_period_bars(day_for_ind, trade_period, asof=asof, include_open=False)
         p_bars_raw = build_period_bars(day_raw, trade_period, asof=asof, include_open=False)
         period_bars_map[code] = p_bars_ind
+        period_raw_bars_map[code] = p_bars_raw
         if trade_period == "DAY":
             bars = bars_dict_from_day(p_bars_ind)
         else:
@@ -444,7 +459,7 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
         # still write events but mark
         if args.with_bagua:
             calc = BaguaCalculator.from_json(cfg.bagua_json)
-            attach_bagua(all_events, period_bars_map, calc)
+            attach_bagua(all_events, period_raw_bars_map or period_bars_map, calc, bagua_period="WEEK", price_plane="raw")
         sig_path = write_signals_csv(out_dir / "signals.csv", all_events)
         meta["signals_csv"] = str(sig_path)
         (out_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -453,7 +468,7 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
 
     if args.with_bagua:
         calc = BaguaCalculator.from_json(cfg.bagua_json)
-        attach_bagua(all_events, period_bars_map, calc)
+        attach_bagua(all_events, period_raw_bars_map or period_bars_map, calc, bagua_period="WEEK", price_plane="raw")
 
     sig_path = write_signals_csv(out_dir / "signals.csv", all_events)
     meta = {
@@ -467,8 +482,10 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
         "adjustment_status": adj_msg,
         "factor_manifest_sha": factor_manifest_sha(factor_series),
         "research_unadjusted": research_unadj,
-        "bagua_ohlc_plane": "L1_signal_price",
-        "bagua_ohlc_source": "signal_period_bars",
+        "bagua_ohlc_plane": "L2_trade_price",
+        "bagua_ohlc_source": "week_bars_from_raw_days",
+        "bagua_period": "WEEK",
+        "bagua_price_plane": "raw",
         "start": start,
         "end": end,
     }

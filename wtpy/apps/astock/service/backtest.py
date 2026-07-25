@@ -46,6 +46,7 @@ from ..study import (
     day_bars_to_standard_qfq,
     day_bars_to_point_in_time_adjusted,
     day_bars_for_signals,
+    day_bars_for_signals_affine,
     signal_dates,
 )
 from .rules import RuleService
@@ -211,17 +212,33 @@ def run_backtest(
             # signal bars: formal = standard_qfq; research_unadj = raw (single build)
             # L1 formal: asof_forward_qfq (anchor = run end or last bar; no CA after asof)
             _asof_sig = end if end else (day_raw[-1].date if day_raw else None)
-            day_for_ind = day_bars_for_signals(
-                day_raw,
-                fac,
-                research_unadjusted=research_unadj,
-                signal_adjust="asof_forward_qfq",
-                asof_date=_asof_sig,
-                dates=dates,
-            )
-            # audit map: ordinary snapshot-end qfq (column 普通前复权参考)
-            # signals use day_for_ind (asof_forward_qfq formal default)
-            standard_qfq_map[code] = day_bars_to_standard_qfq(day_raw, fac)
+
+            from ..data.affine_adjust import build_affine_series
+            affine = build_affine_series(code, dates, adj_root=cfg.adj_root)
+            if affine.quality == "complete" and not affine.is_identity:
+                day_for_ind = day_bars_for_signals_affine(
+                    day_raw,
+                    affine,
+                    research_unadjusted=research_unadj,
+                    signal_adjust="asof_forward_qfq",
+                    asof_date=_asof_sig,
+                )
+                standard_qfq_map[code] = day_bars_for_signals_affine(
+                    day_raw,
+                    affine,
+                    research_unadjusted=False,
+                    signal_adjust="standard_qfq",
+                )
+            else:
+                day_for_ind = day_bars_for_signals(
+                    day_raw,
+                    fac,
+                    research_unadjusted=research_unadj,
+                    signal_adjust="asof_forward_qfq",
+                    asof_date=_asof_sig,
+                    dates=dates,
+                )
+                standard_qfq_map[code] = day_bars_to_standard_qfq(day_raw, fac)
             asof = day_raw[-1].date if day_raw else None
 
             if not compute_signals:
@@ -610,7 +627,14 @@ def run_backtest(
             evs = list(src_events)
             calc = BaguaCalculator.from_json(cfg.bagua_json)
             # L1: bagua OHLC must match technical signal bars (not L2 raw).
-            attach_bagua(evs, period_signal_map, calc)
+            # Week gua / 变卦: L2 raw week OHLC (未复权), not L1 signal qfq.
+            attach_bagua(
+                evs,
+                period_raw_map,
+                calc,
+                bagua_period="WEEK",
+                price_plane="raw",
+            )
             bagua_n_before = len(evs)
             if gf.is_active():
                 try:
