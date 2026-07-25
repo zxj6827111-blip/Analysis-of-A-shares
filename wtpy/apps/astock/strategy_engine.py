@@ -17,6 +17,12 @@ from .corporate_action import (
     normalize_corporate_action_policy,
     risk_exit_session,
 )
+
+from .ca_ledger import (
+    POLICY_EVENT_LEDGER,
+    apply_day_events_to_open_positions,
+    build_events_by_code,
+)
 from .data.calendar import (
     DEFAULT_HOLIDAY_POLICY,
     TradeCalendar,
@@ -68,18 +74,23 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
         *,
         limit_rules: Optional[LimitRuleProvider] = None,
         adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
+        standard_qfq_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
         factor_by_code: Optional[Dict[str, Dict[int, float]]] = None,
+        ca_events_by_code: Optional[Dict[str, list]] = None,
         corporate_action_policy: str = "fail_closed",
     ):
         self.cfg = cfg
         self.calendar = calendar
-        # dual_price_v1: execution+valuation ALWAYS on bars_by_code (RAW formal);
-        # adj_bars_by_code is fill audit only — never trading index.
+        # four-lane: execution+valuation ALWAYS on bars_by_code (RAW formal);
+        # adj_bars_by_code = point_in_time research audit; standard_qfq_bars = signal-level audit.
+        # Neither is a trading index.
         trade_bars = bars_by_code or {}
         self.bars_by_code = trade_bars
         self.raw_bars_by_code = trade_bars
         self.adj_bars_by_code = adj_bars_by_code
+        self.standard_qfq_bars_by_code = standard_qfq_bars_by_code
         self.factor_by_code: Dict[str, Dict[int, float]] = factor_by_code or {}
+        self.ca_events_by_code: Dict[str, list] = ca_events_by_code or {}
         self.corporate_action_policy = str(
             corporate_action_policy or "fail_closed"
         ).strip().lower()
@@ -104,6 +115,9 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
 
         for code, bars in (adj_bars_by_code or {}).items():
             self._adj_index[code] = {b.date: b for b in bars}
+        self._qfq_index: Dict[str, Dict[int, DayBar]] = {}
+        for code, bars in (standard_qfq_bars_by_code or {}).items():
+            self._qfq_index[code] = {b.date: b for b in bars}
 
         # prev close map for limit rules (RAW execution bars only)
         self._prev_close: Dict[str, Dict[int, float]] = {}
@@ -165,12 +179,13 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
         schedule_mode = (
             "weekday" if (buy_weekday is not None or exit_weekday is not None) else "tn"
         )
+        self._research_unadjusted = bool(research_unadjusted)
         notes = [
             "Example costs only; not user real trading costs.",
             "Survivor bias possible: local TDX may lack delisted stocks.",
             DefaultAShareLimitRule.BOUNDARY_NOTE,
-            "Price dual-mode: signal may use causal qfq outside; execution/valuation ALWAYS on "
-            "bars_by_code (RAW in formal). adj_bars_by_code is fill audit only.",
+            "Price dual-mode: signal may use standard_qfq outside; execution/valuation ALWAYS on "
+            "bars_by_code (RAW in formal). adj=PIT research audit; qfq=signal-level audit.",
             "Schedule engine: all entry/exit dates are solved on the A-share trading-day calendar "
             "(T+N family); weekday anchors use planned civil date + holiday_policy=%s."
             % holiday_policy,
@@ -323,8 +338,35 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
         month_ends = self._period_end_dates("MONTH")
 
         for d in sim_dates:
-            # Factor change while open → unsupported (no share restatement)
+            # L3: optional explicit CA apply (factor_jump share apply disabled in ca_ledger);
+            # residual / all factor jumps use fail_closed check (not_checked skips).
+            if (
+                ca_policy == POLICY_EVENT_LEDGER
+                and positions
+                and self.ca_events_by_code
+            ):
+                if not hasattr(self, "_ca_last_applied") or self._ca_last_applied is None:
+                    self._ca_last_applied = {}
+                cash, ca_notes, n_ca = apply_day_events_to_open_positions(
+                    positions=positions,
+                    cash=cash,
+                    day=d,
+                    events_by_code=self.ca_events_by_code,
+                    last_applied=self._ca_last_applied,
+                    lot_size=int(getattr(self.cfg, "lot_size", 100) or 100),
+                )
+                if n_ca:
+                    self._n_corporate_actions = int(
+                        getattr(self, "_n_corporate_actions", 0) or 0
+                    ) + n_ca
             if self.factor_by_code and positions:
+                # Use fail_closed semantics for residual jumps even under event_ledger
+                # until explicit events re-base entry_factor (factor_jump apply off).
+                check_policy = (
+                    "fail_closed"
+                    if ca_policy == POLICY_EVENT_LEDGER
+                    else ca_policy
+                )
                 for code, pos in list(positions.items()):
                     if pos.entry_factor is None:
                         continue
@@ -335,7 +377,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                         entry_factor=pos.entry_factor,
                         day=d,
                         fac_now=fac_now,
-                        policy=ca_policy,
+                        policy=check_policy,
                     )
                     if msg:
                         ca_fail = True
@@ -438,6 +480,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                         actual_date=d,
                         shift_days=int(pos.exit_shift_days or 0),
                         holiday_policy=pos.holiday_policy,
+                        execution_price=px,
                         **self._fill_price_audit(
                             code, d, sell_session, session_raw=raw_px
                         ),
@@ -599,6 +642,9 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                     holiday_policy=order_hp,
                     time_exit_kind=time_exit_kind,
                     entry_adjusted_reference_price=self._adj_session_price(code, d, buy_on),
+                    entry_raw_price=float(raw_buy) if raw_buy is not None else None,
+                    entry_signal_reference_price=self._qfq_session_price(code, d, buy_on),
+                    true_cash_cost=float(amount + comm),
                     entry_factor=self._factor_on(code, d),
                 )
                 fills.append(
@@ -616,6 +662,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                         actual_date=d,
                         shift_days=entry_shift,
                         holiday_policy=order_hp,
+                        execution_price=px,
                         **self._fill_price_audit(code, d, buy_on, session_raw=raw_buy),
                     )
                 )
@@ -762,7 +809,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                 "(policy=%s). No share restatement from cumulative factors."
                 % ca_policy
             )
-        metrics["n_corporate_actions"] = 0
+        metrics["n_corporate_actions"] = int(getattr(self, "_n_corporate_actions", 0) or 0)
         metrics["corporate_action_policy"] = ca_policy
 
         return BacktestResult(

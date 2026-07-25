@@ -7,7 +7,13 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 def _cell_key(exit_weekday: Any, sell_on: Any) -> Tuple[int, str]:
-    return (int(exit_weekday), str(sell_on))
+    try:
+        ew = int(exit_weekday)
+    except (TypeError, ValueError) as e:
+        raise ValueError(
+            f"exit_weekday must be int-compatible, got {exit_weekday!r}"
+        ) from e
+    return (ew, str(sell_on))
 
 
 def build_result_matrix(
@@ -60,7 +66,11 @@ def build_result_matrix(
         if rk0 not in r or rk1 not in r:
             missing.append({"row": dict(r), "reason": "missing_row_keys"})
             continue
-        key = _cell_key(r[rk0], r[rk1])
+        try:
+            key = _cell_key(r[rk0], r[rk1])
+        except ValueError as e:
+            missing.append({"row": dict(r), "reason": str(e)})
+            continue
         if key not in cells:
             cells[key] = {c: None for c in cols}
             row_order.append(key)

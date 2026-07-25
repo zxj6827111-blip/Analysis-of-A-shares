@@ -29,13 +29,13 @@ class ScheduleParams:
 
 @dataclass
 class PriceModes:
-    """dual_price_v1: signal causal_qfq (or raw), exec/valuation always raw."""
+    """Four-lane: signal standard_qfq (or raw), exec/valuation raw; PIT audit only."""
 
-    price_mode: str = "dual_price_v1"
-    signal_price_mode: str = "causal_qfq"
+    price_mode: str = "asof_qfq_signal_raw_execution_v3"
+    signal_price_mode: str = "asof_forward_qfq"
     execution_price_mode: str = "raw"
     valuation_price_mode: str = "raw"
-    engine_result_version: str = "dual_price_v1"
+    engine_result_version: str = "asof_qfq_signal_raw_execution_v3"
     research_unadj: bool = False
     formal_ok: bool = True
     use_research: bool = False
@@ -91,20 +91,41 @@ class BacktestRunContext:
         return len(self.codes)
 
     def apply_dual_price_v1(self) -> None:
-        """Set dual_price_v1 modes from research_unadj / formal_ok."""
+        """Alias: apply four-lane standard_qfq signal + raw execution modes."""
+        self.apply_standard_qfq_raw_execution_v2()
+
+    def apply_standard_qfq_raw_execution_v2(self) -> None:
+        """Set four-lane / three-plane modes from research_unadj / formal_ok.
+
+        L1 formal default: asof_forward_qfq (时点动态前复权, anchor=run end).
+        L2: raw execution/valuation.
+        L3: fail_closed (no factor-jump share restatement); req may override for research.
+        """
         p = self.price
-        p.signal_price_mode = "raw" if p.research_unadj else "causal_qfq"
+        p.signal_price_mode = "raw" if p.research_unadj else "asof_forward_qfq"
         p.execution_price_mode = "raw"
         p.valuation_price_mode = "raw"
-        p.engine_result_version = "dual_price_v1"
-        p.price_mode = "dual_price_v1"
+        p.engine_result_version = "asof_qfq_signal_raw_execution_v3"
+        p.price_mode = "asof_qfq_signal_raw_execution_v3"
         if p.research_unadj:
             p.use_research = True
             p.use_formal_ok = True
         else:
             p.use_research = False
             p.use_formal_ok = p.formal_ok
-        p.corporate_action_policy = "fail_closed"
+        # L3 formal default: fail_closed; request may override (aliases normalized)
+        from ..corporate_action import normalize_corporate_action_policy
+
+        req_ca = None
+        try:
+            req_ca = getattr(self.req, "corporate_action_policy", None)
+        except Exception:
+            req_ca = None
+        if req_ca:
+            pol, _notes, _force = normalize_corporate_action_policy(req_ca)
+            p.corporate_action_policy = pol
+        else:
+            p.corporate_action_policy = "fail_closed"
 
 
 def run_engine_with_ctx(
@@ -114,6 +135,7 @@ def run_engine_with_ctx(
     events: Sequence[Any],
     execution_bars: Dict[str, Any],
     adj_map: Dict[str, Any],
+    standard_qfq_map: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """Dispatch fast/full engine using schedule + price bundles on ctx."""
     from .backtest_engines import run_fast_or_full_engine
@@ -126,6 +148,7 @@ def run_engine_with_ctx(
         events=events,
         execution_bars=execution_bars,
         adj_map=adj_map,
+        standard_qfq_map=standard_qfq_map,
         factor_series=ctx.factor_series or [],
         research_unadj=p.research_unadj,
         use_research=p.use_research,
@@ -202,7 +225,7 @@ def apply_execution_cache(
             "adjust": (
                 "research_unadjusted"
                 if p.research_unadj
-                else "signal_causal_qfq_exec_raw"
+                else "signal_standard_qfq_exec_raw"
             ),
             "gua": (b.gf.to_dict() if b.gf else None),
             "with_bagua": b.enabled,
@@ -340,9 +363,10 @@ def run_portfolio_and_finalize(
     raw_map: Dict[str, Any],
     adj_map: Dict[str, Any],
     progress: Callable[[dict], None],
+    standard_qfq_map: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """dual_price portfolio phase + execution cache + artifact write."""
-    ctx.apply_dual_price_v1()
+    """Four-lane portfolio phase + execution cache + artifact write."""
+    ctx.apply_standard_qfq_raw_execution_v2()
     execution_bars = raw_map  # always raw for cash ledger
 
     progress(
@@ -363,6 +387,7 @@ def run_portfolio_and_finalize(
         events=events,
         execution_bars=execution_bars,
         adj_map=adj_map,
+        standard_qfq_map=standard_qfq_map,
     )
     # Keep service-level policy in sync with engine resolution (esp. fast not_checked)
     ctx.price.corporate_action_policy = str(

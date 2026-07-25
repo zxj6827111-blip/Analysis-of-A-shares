@@ -97,7 +97,9 @@ class TrialStore:
         tid = trial_id or _new_id()
         now = _now()
         params_json = (
-            json.dumps(params, ensure_ascii=False, sort_keys=True) if params is not None else None
+            json.dumps(params, ensure_ascii=False, sort_keys=True, default=str)
+            if params is not None
+            else None
         )
         try:
             self._db.execute(

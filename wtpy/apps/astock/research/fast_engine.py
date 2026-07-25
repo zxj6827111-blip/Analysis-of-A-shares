@@ -3,7 +3,7 @@
 
 Used for large grid screening. Final candidates should re-run full PortfolioBacktester.
 
-dual_price_v1:
+standard_qfq_signal_raw_execution_v2:
 - ``bars_by_code`` must be RAW execution bars.
 - ``entry_price`` / ``exit_price`` are always RAW session prices.
 - Optional ``adj_bars_by_code`` only fills adjusted reference fields on FastTrade.
@@ -55,6 +55,10 @@ class FastTrade:
     exit_shift_days: int = 0
     entry_adjusted_reference_price: Optional[float] = None
     exit_adjusted_reference_price: Optional[float] = None
+    entry_point_in_time_reference_price: Optional[float] = None
+    exit_point_in_time_reference_price: Optional[float] = None
+    entry_standard_qfq_reference_price: Optional[float] = None
+    exit_standard_qfq_reference_price: Optional[float] = None
 
 
 @dataclass
@@ -212,13 +216,15 @@ def run_fast_backtest(
     start: Optional[int] = None,
     end: Optional[int] = None,
     adj_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
+    standard_qfq_bars_by_code: Optional[Dict[str, Sequence[DayBar]]] = None,
     factor_by_code: Optional[Dict[str, Dict[int, float]]] = None,
     require_factor_map: bool = False,
 ) -> FastBacktestResult:
     """Equal-weight per-signal trades; no cash / max_weight / concurrent position limits.
 
-    ``bars_by_code`` must be RAW execution bars. Optional ``adj_bars_by_code`` only
-    populates adjusted reference prices on each FastTrade.
+    ``bars_by_code`` must be RAW execution bars.
+    Optional ``adj_bars_by_code`` = point_in_time research refs;
+    ``standard_qfq_bars_by_code`` = ordinary qfq signal-level refs (audit only).
 
     Corporate-action policy:
     - When ``factor_by_code`` is provided and hold spans a factor change → trade blocked,
@@ -247,6 +253,10 @@ def run_fast_backtest(
     adj_index: Dict[str, Dict[int, DayBar]] = {
         code: _bar_index(bars) for code, bars in (adj_bars_by_code or {}).items()
     }
+    qfq_index: Dict[str, Dict[int, DayBar]] = {
+        code: _bar_index(bars)
+        for code, bars in (standard_qfq_bars_by_code or {}).items()
+    }
     factors_provided = factor_by_code is not None
     factor_by_code = dict(factor_by_code or {})
     has_any_factor = any(bool(v) for v in factor_by_code.values())
@@ -261,7 +271,7 @@ def run_fast_backtest(
         "holiday_policy=%s" % holiday_policy,
         "execution_price_mode=raw",
         "supports_true_cash_simulation=False",
-        "engine_result_version=dual_price_v1",
+        "engine_result_version=standard_qfq_signal_raw_execution_v2",
         "corporate_action_policy=%s" % ca_policy,
     ]
     if not has_any_factor:
@@ -350,6 +360,8 @@ def run_fast_backtest(
 
         entry_adj_ref = None
         exit_adj_ref = None
+        entry_qfq_ref = None
+        exit_qfq_ref = None
         adj_idx = adj_index.get(code)
         if adj_idx:
             ab = adj_idx.get(entry_date)
@@ -364,6 +376,20 @@ def run_fast_backtest(
                     exit_adj_ref = float(bar_session_price(xb, sell_on))
                 except Exception:
                     exit_adj_ref = None
+        qfq_idx = qfq_index.get(code)
+        if qfq_idx:
+            qb = qfq_idx.get(entry_date)
+            if qb:
+                try:
+                    entry_qfq_ref = float(bar_session_price(qb, buy_on))
+                except Exception:
+                    entry_qfq_ref = None
+            xe = qfq_idx.get(exit_date)
+            if xe:
+                try:
+                    exit_qfq_ref = float(bar_session_price(xe, sell_on))
+                except Exception:
+                    exit_qfq_ref = None
 
         trades.append(
             FastTrade(
@@ -383,6 +409,10 @@ def run_fast_backtest(
                 exit_shift_days=int(x_shift or 0),
                 entry_adjusted_reference_price=entry_adj_ref,
                 exit_adjusted_reference_price=exit_adj_ref,
+                entry_point_in_time_reference_price=entry_adj_ref,
+                exit_point_in_time_reference_price=exit_adj_ref,
+                entry_standard_qfq_reference_price=entry_qfq_ref,
+                exit_standard_qfq_reference_price=exit_qfq_ref,
             )
         )
 
@@ -421,7 +451,7 @@ def run_fast_backtest(
             "engine": "fast",
             "execution_price_mode": "raw",
             "supports_true_cash_simulation": False,
-            "engine_result_version": "dual_price_v1",
+            "engine_result_version": "standard_qfq_signal_raw_execution_v2",
             "corporate_action_policy": ca_policy,
             "status": status,
             "factor_map_provided": bool(has_any_factor),

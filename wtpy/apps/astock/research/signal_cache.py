@@ -33,11 +33,13 @@ def signal_cache_key(
     end: Optional[int],
     universe_hash: Optional[str],
     adjust_mode: str,
+    factor_manifest_sha: Optional[str] = None,
     market_data_version: Optional[str] = None,
     calendar_version: Optional[str] = None,
     combine: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> str:
+    # factor_manifest_sha isolates cache when cumulative factors change (CA).
     payload = {
         "schema": CACHE_SCHEMA,
         "indicator_ids": list(indicator_ids or []),
@@ -47,6 +49,7 @@ def signal_cache_key(
         "end": end,
         "universe_hash": universe_hash,
         "adjust_mode": adjust_mode,
+        "factor_manifest_sha": factor_manifest_sha or "",
         "market_data_version": market_data_version,
         "calendar_version": calendar_version,
         "combine": combine,
@@ -81,9 +84,18 @@ def events_to_records(events: Sequence[SignalEvent]) -> List[dict]:
 def records_to_events(rows: Sequence[dict]) -> List[SignalEvent]:
     events: List[SignalEvent] = []
     for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        raw_date = r.get("date")
+        if raw_date is None:
+            continue
+        try:
+            date_i = int(raw_date)
+        except (TypeError, ValueError):
+            continue
         ev = SignalEvent(
             std_code=str(r.get("std_code") or r.get("code") or ""),
-            date=int(r["date"]),
+            date=date_i,
             period=str(r.get("period") or "DAY"),
             indicator_id=str(
                 r.get("indicator_id") or r.get("source") or r.get("indicator") or ""

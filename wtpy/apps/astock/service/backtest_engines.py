@@ -5,7 +5,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
 
-from ..corporate_action import build_factor_by_code
+from ..corporate_action import build_factor_by_code, normalize_corporate_action_policy
+from ..ca_ledger import build_events_by_code
 from ..research.fast_engine import run_fast_backtest
 from ..strategy import PortfolioBacktester
 
@@ -18,6 +19,7 @@ def run_fast_or_full_engine(
     events: Sequence[Any],
     execution_bars: Dict[str, Any],
     adj_map: Dict[str, Any],
+    standard_qfq_map: Optional[Dict[str, Any]] = None,
     factor_series: Sequence[Any],
     research_unadj: bool,
     use_research: bool,
@@ -55,6 +57,10 @@ def run_fast_or_full_engine(
     from ..strategy import BacktestResult as _BTR
 
     eng = (engine or "full").strip().lower()
+    # Canonical policy for gates, repro, and PortfolioBacktester
+    corporate_action_policy, _ca_pol_notes, _ca_pol_force = (
+        normalize_corporate_action_policy(corporate_action_policy)
+    )
     if eng in ("fast", "quick", "research_fast"):
         factor_by_code_fast, _factor_errs_fast = build_factor_by_code(factor_series)
         fast_res = run_fast_backtest(
@@ -72,6 +78,9 @@ def run_fast_or_full_engine(
             start=start,
             end=end,
             adj_bars_by_code=adj_map if not research_unadj else None,
+            standard_qfq_bars_by_code=(
+                standard_qfq_map if not research_unadj else None
+            ),
             factor_by_code=factor_by_code_fast or None,
             require_factor_map=True,
         )
@@ -120,10 +129,11 @@ def run_fast_or_full_engine(
         return result
 
     factor_by_code, factor_map_errors = build_factor_by_code(factor_series)
+    ca_events_by_code = build_events_by_code(factor_series, for_apply=True)
     if (
         not use_research
         and use_formal_ok
-        and corporate_action_policy in ("fail_closed", "fail", "unsupported")
+        and corporate_action_policy in ("fail_closed", "event_ledger")
         and not factor_by_code
     ):
         result = _BTR(
@@ -157,7 +167,11 @@ def run_fast_or_full_engine(
         cal,
         execution_bars,
         adj_bars_by_code=adj_map if not research_unadj else None,
+        standard_qfq_bars_by_code=(
+            standard_qfq_map if not research_unadj else None
+        ),
         factor_by_code=factor_by_code or None,
+        ca_events_by_code=ca_events_by_code or None,
         corporate_action_policy=corporate_action_policy,
     )
     result = bt.run(
