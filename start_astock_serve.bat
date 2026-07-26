@@ -4,6 +4,18 @@ cd /d "%~dp0"
 set "PYTHONPATH=%CD%"
 title AStock Serve 8765
 
+REM ---- load machine-local config from .env (KEY=VALUE lines, # = comment) ----
+if exist ".env" (
+  for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
+    if not "%%a"=="" set "%%a=%%b"
+  )
+  echo [env] loaded .env
+) else (
+  echo [env] WARNING: .env not found. Copy .env.example to .env and set
+  echo [env]          MARKET_DATA_ROOT before formal use.
+)
+if not defined ASTOCK_ENV set "ASTOCK_ENV=production"
+
 echo.
 echo ============================================
 echo   A-stock console: http://127.0.0.1:8765/
@@ -13,6 +25,8 @@ echo ============================================
 echo.
 echo Working directory: %CD%
 echo PYTHONPATH=%PYTHONPATH%
+echo ASTOCK_ENV=%ASTOCK_ENV%
+echo MARKET_DATA_ROOT=%MARKET_DATA_ROOT%
 where python
 python --version
 echo.

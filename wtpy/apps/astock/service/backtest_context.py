@@ -232,6 +232,11 @@ def apply_execution_cache(
             "bagua_filter_mode": b.filter_mode,
             "n_events": len(events),
             "costs": _asdict_c(ctx.cfg.costs),
+            "signal_data_source": getattr(ctx.req, "signal_data_source", None) or "",
+            "signal_dataset_id": getattr(ctx.req, "dataset_id", None) or "",
+            "execution_data_source": getattr(ctx.req, "execution_data_source", None) or "tdx_local",
+            "execution_dataset_id": getattr(ctx.req, "execution_dataset_id", None) or "",
+            "weekly_bar_mode": getattr(ctx.req, "weekly_bar_mode", None) or "local_aggregate",
         }
         _ex_key = execution_cache_key(_ex_payload)
         if (

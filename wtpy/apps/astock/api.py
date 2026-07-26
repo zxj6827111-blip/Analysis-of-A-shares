@@ -71,6 +71,12 @@ class BacktestBody(BaseModel):
     account_mode: str = "portfolio"  # portfolio | per_symbol
     run_id: Optional[str] = None
     async_mode: bool = False
+    signal_data_source: Optional[str] = None
+    signal_adjustment: Optional[str] = None
+    dataset_id: Optional[str] = None
+    weekly_bar_mode: str = "local_aggregate"
+    execution_data_source: str = "tdx_local"
+    execution_dataset_id: Optional[str] = None
 
 
 class ForecastBatchBody(BaseModel):
@@ -96,7 +102,102 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             "output_root": str(cfg.output_root),
             "registry_path": str(cfg.registry_path),
             "registry_exists": Path(cfg.registry_path).exists(),
+            "market_data_root": str(cfg.market_data_root),
+            "market_data_root_is_external": cfg.market_data_root_is_external,
         }
+
+    @app.get("/api/v1/market-data/status")
+    def market_data_status() -> dict:
+        from .data.dataset_store import DatasetStore
+        from .data.repository import MarketDataRepository
+        md_root = cfg.market_data_root
+        is_test = not cfg.market_data_root_is_external
+        result = {
+            "data_root": str(md_root),
+            "is_test_root": is_test,
+            "astock_env": cfg.astock_env,
+            "exists": md_root.exists(),
+        }
+        if not md_root.exists():
+            result.update({
+                "manifest_count": 0, "ready_dataset_count": 0,
+                "datasets": [], "latest_local_vendor": None,
+            })
+            return result
+        store = DatasetStore(md_root)
+        repo = MarketDataRepository(store)
+        all_ds = repo.list_datasets()
+        ready = [d for d in all_ds if d.status == "ready"]
+        partial = [d for d in all_ds if d.status == "partial"]
+        failed = [d for d in all_ds if d.status == "failed"]
+        total_bars = sum(d.row_count for d in all_ds)
+        total_symbols = sum(d.symbol_count for d in all_ds)
+        blob_dir = md_root / "blobs"
+        total_size = 0
+        blob_count = 0
+        if blob_dir.exists():
+            for f in blob_dir.iterdir():
+                if f.is_file():
+                    total_size += f.stat().st_size
+                    blob_count += 1
+
+        def _date_range(d):
+            firsts = [s.first_date for s in d.symbols if s.first_date]
+            lasts = [s.last_date for s in d.symbols if s.last_date]
+            return (min(firsts) if firsts else None, max(lasts) if lasts else None)
+
+        datasets_info = []
+        for d in all_ds:
+            earliest, latest = _date_range(d)
+            datasets_info.append({
+                "dataset_id": d.dataset_id,
+                "source": d.source,
+                "adjustment": d.adjustment,
+                "status": d.status,
+                "symbol_count": d.symbol_count,
+                "row_count": d.row_count,
+                "created_at": d.created_at,
+                "earliest_date": earliest,
+                "latest_date": latest,
+                "survivorship_bias": d.survivorship_bias,
+                "universe_type": d.universe_type,
+                "warning_text": d.warning_text,
+            })
+
+        latest_lv = None
+        lv_ready = sorted(
+            (d for d in ready if d.source == "local_vendor"),
+            key=lambda d: d.created_at or "",
+        )
+        if lv_ready:
+            d = lv_ready[-1]
+            earliest, latest = _date_range(d)
+            latest_lv = {
+                "dataset_id": d.dataset_id,
+                "status": d.status,
+                "symbol_count": d.symbol_count,
+                "row_count": d.row_count,
+                "earliest_date": earliest,
+                "latest_date": latest,
+                "coverage_start_year": d.coverage_start_year,
+                "coverage_end_year": d.coverage_end_year,
+                "survivorship_bias": d.survivorship_bias,
+                "warning_text": d.warning_text,
+            }
+
+        result.update({
+            "manifest_count": len(all_ds),
+            "blob_count": blob_count,
+            "total_size_bytes": total_size,
+            "ready_dataset_count": len(ready),
+            "partial_dataset_count": len(partial),
+            "failed_dataset_count": len(failed),
+            "total_bar_count": total_bars,
+            "total_symbol_count": total_symbols,
+            "datasets": datasets_info,
+            "latest_local_vendor": latest_lv,
+        })
+        return result
 
     @app.get("/api/v1/rules")
     def api_list_rules(include_archived: bool = False) -> List[dict]:
@@ -287,6 +388,12 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             take_profit=payload.take_profit,
             account_mode=payload.account_mode or "portfolio",
             run_id=payload.run_id,
+            signal_data_source=payload.signal_data_source,
+            signal_adjustment=payload.signal_adjustment,
+            dataset_id=payload.dataset_id,
+            weekly_bar_mode=payload.weekly_bar_mode or "local_aggregate",
+            execution_data_source=payload.execution_data_source or "tdx_local",
+            execution_dataset_id=payload.execution_dataset_id,
         )
         if payload.async_mode:
             rec = jobs.submit(req)
@@ -522,6 +629,13 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
                 ),
                 promote_top_n=int(payload.get("promote_top_n") if payload.get("promote_top_n") is not None else 3),
                 promote_metric=str(payload.get("promote_metric") or "total_return"),
+                signal_data_source=payload.get("signal_data_source"),
+                signal_adjustment=payload.get("signal_adjustment"),
+                dataset_id=payload.get("dataset_id"),
+                weekly_bar_mode=str(payload.get("weekly_bar_mode") or "local_aggregate"),
+                execution_data_source=str(payload.get("execution_data_source") or "tdx_local"),
+                execution_dataset_id=payload.get("execution_dataset_id"),
+                dual_source_compare=bool(payload.get("dual_source_compare")),
             )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
@@ -1201,6 +1315,55 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
 
 def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig] = None) -> None:
     import uvicorn
+
+    from .config import load_env_file, market_data_root_guard
+
+    # Machine-local settings (MARKET_DATA_ROOT, ASTOCK_ENV, ...) live in .env
+    # at the project root; existing environment variables always win.
+    load_env_file()
+
+    cfg = cfg or get_default_config()
+    guard = market_data_root_guard(cfg)
+
+    ready_count = None
+    latest_lv = None
+    try:
+        from .data.dataset_store import DatasetStore
+        from .data.repository import MarketDataRepository
+
+        if cfg.market_data_root.exists():
+            repo = MarketDataRepository(DatasetStore(cfg.market_data_root))
+            all_ds = repo.list_datasets()
+            ready_count = sum(1 for d in all_ds if d.status == "ready")
+            lv = sorted(
+                (d for d in all_ds if d.source == "local_vendor" and d.status == "ready"),
+                key=lambda d: d.created_at or "",
+            )
+            latest_lv = lv[-1].dataset_id if lv else None
+        else:
+            ready_count = 0
+    except Exception as e:  # pragma: no cover - startup banner must never crash
+        ready_count = f"unavailable ({e})"
+
+    print("=" * 64)
+    print("AStock Console startup")
+    print(f"  ASTOCK_ENV        : {guard['astock_env']}")
+    print(f"  MARKET_DATA_ROOT  : {guard['market_data_root']}"
+          + ("  [INTERNAL TEST ROOT]" if guard["is_internal"] else "  [external]"))
+    print(f"  env var set       : {guard['market_data_root_env_set']}")
+    print(f"  ready datasets    : {ready_count}")
+    print(f"  latest local_vendor ready dataset: {latest_lv or '—'}")
+    print("=" * 64)
+
+    if guard["blocked"]:
+        print("!! STARTUP BLOCKED (production data-root guard)")
+        print(f"!! reason  : {guard['reason']}")
+        print("!! fix     : set MARKET_DATA_ROOT to the production data root in .env")
+        print(f"!! override: {guard['override_allowed_by']} (NOT recommended)")
+        raise SystemExit(2)
+    if guard["is_internal"] and guard["astock_env"] != "production":
+        print("WARNING: using INTERNAL project test data root "
+              "(set MARKET_DATA_ROOT / ASTOCK_ENV=production for formal use)")
 
     app = create_app(cfg)
     uvicorn.run(app, host=host, port=port)

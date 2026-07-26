@@ -424,6 +424,12 @@ def finalize_run_outputs(
                 "end": end,
                 "selected_codes_count": len(codes),
                 "metrics": result.metrics,
+                "signal_data_source": getattr(req, "signal_data_source", None),
+                "signal_adjustment": getattr(req, "signal_adjustment", None),
+                "dataset_id": getattr(req, "dataset_id", None),
+                "weekly_bar_mode": getattr(req, "weekly_bar_mode", None) or "local_aggregate",
+                "execution_data_source": getattr(req, "execution_data_source", None) or "tdx_local",
+                "execution_dataset_id": getattr(req, "execution_dataset_id", None),
                 **(_fp_fields if isinstance(_fp_fields, dict) else {}),
             },
         )

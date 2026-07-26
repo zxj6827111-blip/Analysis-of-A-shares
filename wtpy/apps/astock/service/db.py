@@ -18,7 +18,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from ..config import AStockConfig, get_default_config
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _LOCK = threading.RLock()
 
@@ -61,7 +61,13 @@ CREATE TABLE IF NOT EXISTS runs (
   n_signals_before_bagua INTEGER,
   n_signals_after_bagua INTEGER,
   error TEXT,
-  extra_json TEXT
+  extra_json TEXT,
+  signal_data_source TEXT,
+  signal_adjustment TEXT,
+  dataset_id TEXT,
+  weekly_bar_mode TEXT,
+  execution_data_source TEXT,
+  execution_dataset_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS parameters (
@@ -162,10 +168,47 @@ def init_db(cfg: Optional[AStockConfig] = None) -> Path:
                     "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?)",
                     (str(_SCHEMA_VERSION),),
                 )
+            else:
+                current = int(row[0])
+                if current < 2:
+                    _migrate_v1_to_v2(conn)
+                    conn.execute(
+                        "UPDATE schema_meta SET value=? WHERE key='schema_version'",
+                        (str(_SCHEMA_VERSION),),
+                    )
             conn.commit()
         finally:
             conn.close()
         return path
+
+
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """Add multi-source market data columns to runs table."""
+    _new_cols = [
+        ("signal_data_source", "TEXT"),
+        ("signal_adjustment", "TEXT"),
+        ("dataset_id", "TEXT"),
+        ("weekly_bar_mode", "TEXT"),
+        ("execution_data_source", "TEXT"),
+        ("execution_dataset_id", "TEXT"),
+    ]
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    for col_name, col_type in _new_cols:
+        if col_name not in existing:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {col_name} {col_type}")
+    conn.execute(
+        "UPDATE runs SET signal_data_source='legacy_tdx_local_asof' "
+        "WHERE signal_data_source IS NULL"
+    )
+    conn.execute(
+        "UPDATE runs SET signal_adjustment='asof_qfq' WHERE signal_adjustment IS NULL"
+    )
+    conn.execute(
+        "UPDATE runs SET weekly_bar_mode='local_aggregate' WHERE weekly_bar_mode IS NULL"
+    )
+    conn.execute(
+        "UPDATE runs SET execution_data_source='tdx_local' WHERE execution_data_source IS NULL"
+    )
 
 
 def _json_dumps(obj: Any) -> str:
@@ -291,8 +334,10 @@ def upsert_run_from_index_row(
                   indicator_ids_json, indicator_names_json, param_hash,
                   experiment_id, variant_id, code_version, bagua_rule_version,
                   selected_codes_count, n_signals_before_bagua, n_signals_after_bagua,
-                  error, extra_json
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                  error, extra_json,
+                  signal_data_source, signal_adjustment, dataset_id,
+                  weekly_bar_mode, execution_data_source, execution_dataset_id
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(run_id) DO UPDATE SET
                   title=excluded.title,
                   status=excluded.status,
@@ -319,7 +364,13 @@ def upsert_run_from_index_row(
                   n_signals_before_bagua=excluded.n_signals_before_bagua,
                   n_signals_after_bagua=excluded.n_signals_after_bagua,
                   error=excluded.error,
-                  extra_json=excluded.extra_json
+                  extra_json=excluded.extra_json,
+                  signal_data_source=COALESCE(excluded.signal_data_source, runs.signal_data_source),
+                  signal_adjustment=COALESCE(excluded.signal_adjustment, runs.signal_adjustment),
+                  dataset_id=COALESCE(excluded.dataset_id, runs.dataset_id),
+                  weekly_bar_mode=COALESCE(excluded.weekly_bar_mode, runs.weekly_bar_mode),
+                  execution_data_source=COALESCE(excluded.execution_data_source, runs.execution_data_source),
+                  execution_dataset_id=COALESCE(excluded.execution_dataset_id, runs.execution_dataset_id)
                 """,
                 (
                     rid,
@@ -359,6 +410,12 @@ def upsert_run_from_index_row(
                         "filter_fp",
                         "execution_fp",
                     ) if k in row and row.get(k) is not None}),
+                    row.get("signal_data_source"),
+                    row.get("signal_adjustment"),
+                    row.get("dataset_id"),
+                    row.get("weekly_bar_mode"),
+                    row.get("execution_data_source"),
+                    row.get("execution_dataset_id"),
                 ),
             )
             conn.execute(
@@ -489,6 +546,12 @@ def _row_to_history(r: sqlite3.Row) -> dict:
         "selected_codes_count": d.get("selected_codes_count"),
         "error": d.get("error"),
         "metrics": metrics if metrics else None,
+        "signal_data_source": d.get("signal_data_source"),
+        "signal_adjustment": d.get("signal_adjustment"),
+        "dataset_id": d.get("dataset_id"),
+        "weekly_bar_mode": d.get("weekly_bar_mode"),
+        "execution_data_source": d.get("execution_data_source"),
+        "execution_dataset_id": d.get("execution_dataset_id"),
         "source": "sqlite",
     }
     return out

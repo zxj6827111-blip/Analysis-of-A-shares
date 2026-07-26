@@ -341,11 +341,21 @@ def build_period_bars(
     *,
     asof: Optional[int] = None,
     include_open: bool = False,
+    weekly_bar_mode: str = "local_aggregate",
+    vendor_weekly_bars: Optional[Sequence] = None,
 ) -> List:
     period = period.upper()
     if period in ("DAY", "D", "1D"):
         return list(day_bars)
     if period in ("WEEK", "W", "1W"):
+        if weekly_bar_mode == "vendor_native":
+            if vendor_weekly_bars is not None:
+                return list(vendor_weekly_bars)
+            raise ValueError(
+                "weekly_bar_mode=vendor_native but no vendor_weekly_bars provided. "
+                "The selected source/dataset does not support native weekly bars. "
+                "Use weekly_bar_mode=local_aggregate instead."
+            )
         return aggregate_week(day_bars, asof=asof, include_open=include_open)
     if period in ("MONTH", "M", "1M"):
         return aggregate_month(day_bars, asof=asof, include_open=include_open)

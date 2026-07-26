@@ -162,6 +162,71 @@ def run_backtest(
     adj_map: Dict[str, Any] = {}  # point_in_time_adjusted research refs (legacy name)
     standard_qfq_map: Dict[str, Any] = {}  # default signal bars
     period_raw_map: Dict[str, Any] = {}  # L2 period bars (audit / future use)
+
+    _signal_data_source = getattr(req, "signal_data_source", None)
+    _signal_adjustment = getattr(req, "signal_adjustment", None)
+    _dataset_id = getattr(req, "dataset_id", None)
+    _weekly_bar_mode = getattr(req, "weekly_bar_mode", None) or "local_aggregate"
+    _use_repository_l1 = _signal_data_source in ("tdxquant", "tushare")
+
+    if _use_repository_l1 and not _signal_adjustment:
+        from ..data.providers.base import DataSource, SIGNAL_SOURCE_ADJUSTMENT
+        _src_enum = {"tdxquant": DataSource.TDXQUANT, "tushare": DataSource.TUSHARE}.get(_signal_data_source)
+        if _src_enum and _src_enum in SIGNAL_SOURCE_ADJUSTMENT:
+            _signal_adjustment = SIGNAL_SOURCE_ADJUSTMENT[_src_enum].value
+            req.signal_adjustment = _signal_adjustment
+
+    _repo = None
+    _resolved_dataset_id = None
+    _execution_dataset_id = getattr(req, "execution_dataset_id", None)
+    if _use_repository_l1:
+        from ..data.dataset_store import DatasetStore
+        from ..data.repository import MarketDataRepository, DatasetNotFoundError, DatasetNotReadyError
+        _md_root = cfg.market_data_root
+        _repo = MarketDataRepository(DatasetStore(_md_root))
+        if _dataset_id:
+            _ds = _repo.get_dataset(_dataset_id)
+            if _ds.status != "ready":
+                raise ValueError(
+                    f"Dataset {_dataset_id} status={_ds.status}; only ready datasets can be used for backtest"
+                )
+            _resolved_dataset_id = _dataset_id
+        else:
+            try:
+                _ds = _repo.resolve_latest_ready(
+                    source=_signal_data_source,
+                    adjustment=_signal_adjustment or "",
+                    period="1d",
+                )
+                _resolved_dataset_id = _ds.dataset_id
+            except DatasetNotFoundError:
+                raise ValueError(
+                    f"No ready dataset for source={_signal_data_source} "
+                    f"adjustment={_signal_adjustment}. Run sync first."
+                )
+        req.dataset_id = _resolved_dataset_id
+        if _execution_dataset_id:
+            _exec_ds = _repo.get_dataset(_execution_dataset_id)
+            if _exec_ds.status != "ready":
+                raise ValueError(
+                    f"Execution dataset {_execution_dataset_id} status={_exec_ds.status}; "
+                    f"only ready datasets can be used for backtest"
+                )
+        else:
+            _exec_source = getattr(req, "execution_data_source", None) or "tdx_local"
+            try:
+                _exec_ds = _repo.resolve_latest_ready(
+                    source=_exec_source,
+                    adjustment="none",
+                    period="1d",
+                )
+                _execution_dataset_id = _exec_ds.dataset_id
+            except DatasetNotFoundError:
+                raise ValueError(
+                    f"No ready {_exec_source}/none execution dataset. "
+                    f"Run: python scripts/sync_market_data.py --source {_exec_source} --mode full"
+                )
+        req.execution_dataset_id = _execution_dataset_id
     period_signal_map: Dict[str, Any] = {}  # L1 period bars for indicators + bagua
     factor_series = []
     errors: List[dict] = []
@@ -193,52 +258,96 @@ def run_backtest(
                     ),
                     "code": code,
                 })
-            try:
-                day_raw = store.load_symbol(code)
-            except FileNotFoundError:
-                reader = TdxDayReader(cfg.tdx_root)
-                raw = ("sh" if code.startswith("SSE") else "sz") + code.split(".")[-1]
-                day_raw, _ = reader.read(raw)
+            if _use_repository_l1 and _repo is not None and _execution_dataset_id:
+                from ..data.tdx_reader import DayBar as _ExecDayBar
+                from ..data.repository import DatasetNotFoundError as _ExecDSNotFound
+                exec_bars = _repo.load_bars(
+                    dataset_id=_execution_dataset_id,
+                    symbol=code,
+                    start_date=start,
+                    end_date=end,
+                )
+                day_raw = [
+                    _ExecDayBar(
+                        date=b.trade_date,
+                        open=b.open,
+                        high=b.high,
+                        low=b.low,
+                        close=b.close,
+                        amount=b.amount,
+                        volume=b.volume,
+                    )
+                    for b in exec_bars
+                ]
+            else:
+                try:
+                    day_raw = store.load_symbol(code)
+                except FileNotFoundError:
+                    reader = TdxDayReader(cfg.tdx_root)
+                    raw = ("sh" if code.startswith("SSE") else "sz") + code.split(".")[-1]
+                    day_raw, _ = reader.read(raw)
             raw_map[code] = day_raw
             dates = [b.date for b in day_raw]
-            series = build_factor_series(code, dates, adj_root=cfg.adj_root, prefer_baostock=True)
-            factor_series.append(series)
-            import numpy as np
 
-            fac = np.array(series.factors, dtype=float)
-            # research/audit: 起点锚定复权 (factor_t / base_factor)
-            day_pit = day_bars_to_point_in_time_adjusted(day_raw, fac)
-            adj_map[code] = day_pit
-            # signal bars: formal = standard_qfq; research_unadj = raw (single build)
-            # L1 formal: asof_forward_qfq (anchor = run end or last bar; no CA after asof)
-            _asof_sig = end if end else (day_raw[-1].date if day_raw else None)
-
-            from ..data.affine_adjust import build_affine_series
-            affine = build_affine_series(code, dates, adj_root=cfg.adj_root)
-            if affine.quality == "complete" and not affine.is_identity:
-                day_for_ind = day_bars_for_signals_affine(
-                    day_raw,
-                    affine,
-                    research_unadjusted=research_unadj,
-                    signal_adjust="asof_forward_qfq",
-                    asof_date=_asof_sig,
+            if _use_repository_l1 and _repo is not None and _resolved_dataset_id:
+                from ..data.tdx_reader import DayBar as _DayBar
+                repo_bars = _repo.load_bars(
+                    dataset_id=_resolved_dataset_id,
+                    symbol=code,
+                    start_date=start,
+                    end_date=end,
                 )
-                standard_qfq_map[code] = day_bars_for_signals_affine(
-                    day_raw,
-                    affine,
-                    research_unadjusted=False,
-                    signal_adjust="standard_qfq",
-                )
+                day_for_ind = [
+                    _DayBar(
+                        date=b.trade_date,
+                        open=b.open,
+                        high=b.high,
+                        low=b.low,
+                        close=b.close,
+                        amount=b.amount,
+                        volume=b.volume,
+                    )
+                    for b in repo_bars
+                ]
+                standard_qfq_map[code] = day_for_ind
+                series = build_factor_series(code, dates, adj_root=cfg.adj_root, prefer_baostock=True)
+                factor_series.append(series)
             else:
-                day_for_ind = day_bars_for_signals(
-                    day_raw,
-                    fac,
-                    research_unadjusted=research_unadj,
-                    signal_adjust="asof_forward_qfq",
-                    asof_date=_asof_sig,
-                    dates=dates,
-                )
-                standard_qfq_map[code] = day_bars_to_standard_qfq(day_raw, fac)
+                series = build_factor_series(code, dates, adj_root=cfg.adj_root, prefer_baostock=True)
+                factor_series.append(series)
+                import numpy as np
+
+                fac = np.array(series.factors, dtype=float)
+                day_pit = day_bars_to_point_in_time_adjusted(day_raw, fac)
+                adj_map[code] = day_pit
+                _asof_sig = end if end else (day_raw[-1].date if day_raw else None)
+
+                from ..data.affine_adjust import build_affine_series
+                affine = build_affine_series(code, dates, adj_root=cfg.adj_root)
+                if affine.quality == "complete" and not affine.is_identity:
+                    day_for_ind = day_bars_for_signals_affine(
+                        day_raw,
+                        affine,
+                        research_unadjusted=research_unadj,
+                        signal_adjust="asof_forward_qfq",
+                        asof_date=_asof_sig,
+                    )
+                    standard_qfq_map[code] = day_bars_for_signals_affine(
+                        day_raw,
+                        affine,
+                        research_unadjusted=False,
+                        signal_adjust="standard_qfq",
+                    )
+                else:
+                    day_for_ind = day_bars_for_signals(
+                        day_raw,
+                        fac,
+                        research_unadjusted=research_unadj,
+                        signal_adjust="asof_forward_qfq",
+                        asof_date=_asof_sig,
+                        dates=dates,
+                    )
+                    standard_qfq_map[code] = day_bars_to_standard_qfq(day_raw, fac)
             asof = day_raw[-1].date if day_raw else None
 
             if not compute_signals:
@@ -251,9 +360,9 @@ def run_backtest(
                     period_raw_map[code] = m60 or []
                     period_signal_map[code] = m60 or []
                 else:
-                    period_raw_map[code] = build_period_bars(day_raw, period, asof=asof)
+                    period_raw_map[code] = build_period_bars(day_raw, period, asof=asof, weekly_bar_mode=_weekly_bar_mode)
                     period_signal_map[code] = build_period_bars(
-                        day_for_ind, period, asof=asof
+                        day_for_ind, period, asof=asof, weekly_bar_mode=_weekly_bar_mode
                     )
                 continue
 
@@ -267,7 +376,7 @@ def run_backtest(
         local_events: List[SignalEvent] = []
         if period == "DWM":
             base = trade_specs[0]
-            w_bars = build_period_bars(day_for_ind, "WEEK", asof=asof)
+            w_bars = build_period_bars(day_for_ind, "WEEK", asof=asof, weekly_bar_mode=_weekly_bar_mode)
             m_bars = build_period_bars(day_for_ind, "MONTH", asof=asof)
             d_dict = bars_dict_from_day(day_for_ind)
             w_dict = bars_dict_from_period(w_bars)
@@ -308,8 +417,8 @@ def run_backtest(
             bars = min60_bars_to_arrays(m60)
             trade_dates = bars.get("trade_date")
         else:
-            p_bars_ind = build_period_bars(day_for_ind, period, asof=asof)
-            p_bars_raw = build_period_bars(day_raw, period, asof=asof)
+            p_bars_ind = build_period_bars(day_for_ind, period, asof=asof, weekly_bar_mode=_weekly_bar_mode)
+            p_bars_raw = build_period_bars(day_raw, period, asof=asof, weekly_bar_mode=_weekly_bar_mode)
             period_raw_map[code] = p_bars_raw
             period_signal_map[code] = p_bars_ind
             bars = bars_dict_from_day(p_bars_ind) if period == "DAY" else bars_dict_from_period(p_bars_ind)
@@ -407,6 +516,13 @@ def run_backtest(
             adjust_mode=("research_unadjusted" if research_unadj else "asof_forward_qfq"),
             factor_manifest_sha=factor_manifest or "",
             combine=combine,
+            data_source=getattr(req, "signal_data_source", None) or "",
+            adjustment=getattr(req, "signal_adjustment", None) or "",
+            dataset_id=getattr(req, "dataset_id", None) or "",
+            weekly_bar_mode=getattr(req, "weekly_bar_mode", None) or "local_aggregate",
+            anchor_date=getattr(req, "end", None),
+            execution_data_source=getattr(req, "execution_data_source", None) or "tdx_local",
+            execution_dataset_id=getattr(req, "execution_dataset_id", None) or "",
         )
 
     if use_signal_cache:
@@ -532,6 +648,12 @@ def run_backtest(
                     "period": period,
                     "metrics": None,
                     "error": adj_msg[:500],
+                    "signal_data_source": getattr(req, "signal_data_source", None),
+                    "signal_adjustment": getattr(req, "signal_adjustment", None),
+                    "dataset_id": getattr(req, "dataset_id", None),
+                    "weekly_bar_mode": getattr(req, "weekly_bar_mode", None) or "local_aggregate",
+                    "execution_data_source": getattr(req, "execution_data_source", None) or "tdx_local",
+                    "execution_dataset_id": getattr(req, "execution_dataset_id", None),
                 },
             )
         except Exception:

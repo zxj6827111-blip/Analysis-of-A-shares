@@ -855,6 +855,13 @@ def create_experiment_from_grid(
     use_signal_cache: bool = True,
     promote_top_n: int = 3,
     promote_metric: str = "total_return",
+    signal_data_source: Optional[str] = None,
+    signal_adjustment: Optional[str] = None,
+    dataset_id: Optional[str] = None,
+    weekly_bar_mode: str = "local_aggregate",
+    execution_data_source: str = "tdx_local",
+    execution_dataset_id: Optional[str] = None,
+    dual_source_compare: bool = False,
 ) -> Dict[str, Any]:
     """Create experiment from legacy weekday_keys templates OR free axes.
 
@@ -981,6 +988,57 @@ def create_experiment_from_grid(
         if n > HARD_MAX_VARIANTS:
             raise ValueError("组合数 %s 超过硬顶 %s" % (n, HARD_MAX_VARIANTS))
 
+    _ms_fields = {
+        "signal_data_source": signal_data_source,
+        "signal_adjustment": signal_adjustment,
+        "dataset_id": dataset_id,
+        "weekly_bar_mode": weekly_bar_mode,
+        "execution_data_source": execution_data_source,
+        "execution_dataset_id": execution_dataset_id,
+    }
+    for v in variants:
+        v.update({k: val for k, val in _ms_fields.items() if val is not None})
+
+    if dual_source_compare:
+        from ..data.providers.base import DataSource, AdjustmentMode
+        from pathlib import Path as _Path
+        _resolved_ds = {}
+        _missing_sources = []
+        from ..data.dataset_store import DatasetStore
+        from ..data.repository import MarketDataRepository, DatasetNotFoundError
+        _md_root = cfg.market_data_root if cfg else None
+        if _md_root and _md_root.exists():
+            _repo = MarketDataRepository(DatasetStore(_md_root))
+            for src, adj in [(DataSource.TDXQUANT, AdjustmentMode.FRONT), (DataSource.TUSHARE, AdjustmentMode.QFQ)]:
+                try:
+                    _ds = _repo.resolve_latest_ready(source=src.value, adjustment=adj.value, period="1d")
+                    _resolved_ds[src.value] = _ds.dataset_id
+                except (DatasetNotFoundError, Exception):
+                    _missing_sources.append(src.value)
+        else:
+            _missing_sources = ["tdxquant", "tushare"]
+        if _missing_sources:
+            raise ValueError(
+                f"双源对照实验需要 ready 数据集，但以下来源缺少 ready dataset: "
+                f"{', '.join(_missing_sources)}。请先运行 sync_market_data.py 同步。"
+            )
+        dual_variants = []
+        for src, adj in [
+            (DataSource.TDXQUANT, AdjustmentMode.FRONT),
+            (DataSource.TUSHARE, AdjustmentMode.QFQ),
+        ]:
+            for v in variants:
+                dv = dict(v)
+                dv["signal_data_source"] = src.value
+                dv["signal_adjustment"] = adj.value
+                dv["dataset_id"] = _resolved_ds[src.value]
+                dv.setdefault("_meta", {})
+                dv["_meta"] = dict(dv.get("_meta") or {})
+                dv["_meta"]["signal_data_source"] = src.value
+                dual_variants.append(dv)
+        variants = dual_variants
+        n = len(variants)
+
     warning = None
     if n > 20:
         warning = "组合数 %s 较大，建议先用演示池试跑" % n
@@ -1029,6 +1087,13 @@ def create_experiment_from_grid(
         "end": end,
         "account_mode": account_mode,
         "research_unadjusted": research_unadjusted,
+        "signal_data_source": signal_data_source,
+        "signal_adjustment": signal_adjustment,
+        "dataset_id": dataset_id,
+        "weekly_bar_mode": weekly_bar_mode,
+        "execution_data_source": execution_data_source,
+        "execution_dataset_id": execution_dataset_id,
+        "dual_source_compare": dual_source_compare,
         "estimated": n,
         "theoretical": theoretical,
         "rejected": rejected,
@@ -1184,6 +1249,20 @@ class ExperimentRunner:
                 holiday_policy=params.get("holiday_policy")
                 or exp_cfg.get("holiday_policy")
                 or "next_trading_day",
+                signal_data_source=params.get("signal_data_source")
+                or exp_cfg.get("signal_data_source"),
+                signal_adjustment=params.get("signal_adjustment")
+                or exp_cfg.get("signal_adjustment"),
+                dataset_id=params.get("dataset_id")
+                or exp_cfg.get("dataset_id"),
+                weekly_bar_mode=params.get("weekly_bar_mode")
+                or exp_cfg.get("weekly_bar_mode")
+                or "local_aggregate",
+                execution_data_source=params.get("execution_data_source")
+                or exp_cfg.get("execution_data_source")
+                or "tdx_local",
+                execution_dataset_id=params.get("execution_dataset_id")
+                or exp_cfg.get("execution_dataset_id"),
             )
             svc = BacktestService(self.cfg)
             summary = svc.run(req)
@@ -1219,6 +1298,12 @@ class ExperimentRunner:
                             or (summary.get("research_fingerprint") if isinstance(summary, dict) else None),
                             "experiment_id": experiment_id,
                             "variant_id": vid,
+                            "signal_data_source": getattr(req, "signal_data_source", None),
+                            "signal_adjustment": getattr(req, "signal_adjustment", None),
+                            "dataset_id": getattr(req, "dataset_id", None),
+                            "weekly_bar_mode": getattr(req, "weekly_bar_mode", None) or "local_aggregate",
+                            "execution_data_source": getattr(req, "execution_data_source", None) or "tdx_local",
+                            "execution_dataset_id": getattr(req, "execution_dataset_id", None),
                         },
                     )
                 except Exception:

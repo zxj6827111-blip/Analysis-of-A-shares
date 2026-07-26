@@ -1141,6 +1141,7 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
     <button type="button" class="nav-btn" data-view="rules"><span class="nav-icon">▣</span>规则中心</button>
     <button type="button" class="nav-btn" data-view="experiment"><span class="nav-icon">⚗</span>实验中心</button>
     <button type="button" class="nav-btn" data-view="tasks"><span class="nav-icon">▤</span>任务中心</button>
+    <button type="button" class="nav-btn" data-view="datastore"><span class="nav-icon">◈</span>数据仓库</button>
   </nav>
   <div class="header-right">
     <div class="api-ok" id="apiStatus"><span class="api-dot pending" id="apiDot"></span><span id="apiStatusText">连接中</span></div>
@@ -1265,6 +1266,14 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
             <select class="select" id="btEngine">
               <option value="fast">fast</option>
               <option value="full">full</option>
+            </select>
+          </div>
+          <div class="field"><label>信号数据源</label>
+            <select class="select" id="btSignalSource">
+              <option value="">默认（旧版 legacy）</option>
+              <option value="tdxquant">通达信前复权</option>
+              <option value="tushare">Tushare前复权</option>
+              <option value="internal">内部因果前复权（高级）</option>
             </select>
           </div>
           <div class="field"><label>研究未复权</label>
@@ -1526,6 +1535,12 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
             <option value="raw" selected>未复权</option>
             <option value="standard_qfq">普通前复权</option>
             <option value="asof_forward_qfq">时点前复权(L1)</option>
+          </select>
+          <select class="select" id="bqSignalSource" style="min-width:150px" title="信号数据源（选择后自动使用对应前复权价格）">
+            <option value="">信号源：跟随复权选项</option>
+            <option value="tdxquant">通达信前复权</option>
+            <option value="tushare">Tushare前复权</option>
+            <option value="internal">内部因果前复权</option>
           </select>
           <button type="button" class="btn btn-primary" id="bqSearchBtn">查询卦象</button>
         </div>
@@ -1805,6 +1820,25 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
           </div>
           <div class="field-grid cols-3" style="margin-top:13px">
             <div class="field"><label>备注</label><input class="input" id="expNote" placeholder="可选" /></div>
+          </div>
+          <div class="field-grid cols-3" style="margin-top:13px">
+            <div class="field"><label>信号数据源</label>
+              <select class="select" id="expSignalSource">
+                <option value="">默认（旧版 legacy）</option>
+                <option value="tdxquant">通达信前复权</option>
+                <option value="tushare">Tushare前复权</option>
+                <option value="internal">内部因果前复权（高级）</option>
+              </select>
+            </div>
+            <div class="field"><label>周线生成方式</label>
+              <select class="select" id="expWeeklyMode">
+                <option value="local_aggregate">本地统一聚合</option>
+                <option value="vendor_native">来源原生周线</option>
+              </select>
+            </div>
+            <div class="field"><label>双源对照实验</label>
+              <label class="exp-chip"><input type="checkbox" id="expDualSource" /> 开启（通达信 vs Tushare）</label>
+            </div>
           </div>
         </div>
       </div>
@@ -2088,8 +2122,45 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
     </div>
 </section>
 
-
-
+<!-- 数据仓库 -->
+<section class="view" id="view-datastore">
+  <div class="page-title-row">
+    <div>
+      <h1 class="page-title">数据仓库</h1>
+      <p class="page-sub">行情数据集状态、存储根目录与可用性概览。</p>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button type="button" class="btn" id="btnDsRefresh">↻ 刷新</button>
+    </div>
+  </div>
+  <div class="card section-pad" id="dsStatusCard">
+    <div class="muted" id="dsLoading">加载中…</div>
+    <div id="dsContent" style="display:none">
+      <div id="dsBiasBanner" style="display:none;margin-bottom:16px;padding:10px 14px;border-radius:8px;background:rgba(255,79,123,.12);border:1px solid rgba(255,79,123,.45);color:#ff8aa7;font-weight:700;font-size:13px;line-height:1.6"></div>
+      <div class="field-grid cols-3" style="margin-bottom:16px">
+        <div><b>数据根目录</b> <span id="dsAstockEnv" style="margin-left:4px;vertical-align:1px"></span><div class="muted" id="dsRoot" style="word-break:break-all">—</div></div>
+        <div><b>环境</b><div id="dsEnvTag">—</div></div>
+        <div><b>占用空间</b><div id="dsSize">—</div></div>
+      </div>
+      <div style="margin-bottom:16px">
+        <b>最新 local_vendor 数据集</b>
+        <div id="dsLatestLv" class="muted" style="margin-top:4px;word-break:break-all">—</div>
+      </div>
+      <div class="field-grid cols-4" style="margin-bottom:16px">
+        <div><b>Ready</b><div style="font-size:22px;font-weight:800;color:#7dcea0" id="dsReady">0</div></div>
+        <div><b>Partial</b><div style="font-size:22px;font-weight:800;color:var(--orange)" id="dsPartial">0</div></div>
+        <div><b>Failed</b><div style="font-size:22px;font-weight:800;color:var(--red)" id="dsFailed">0</div></div>
+        <div><b>Blobs</b><div style="font-size:22px;font-weight:800" id="dsBlobs">0</div></div>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="mini-table" id="dsTable" style="width:100%;font-size:12px">
+          <thead><tr><th>Dataset ID</th><th>Source</th><th>Adjustment</th><th>Status</th><th>Symbols</th><th>Bars</th><th>日期范围</th><th>Created</th></tr></thead>
+          <tbody id="dsTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
 
 
 <!-- 卦象抽屉 + 规则选择/新建弹层（顶层 sibling，勿嵌套） -->
@@ -2367,6 +2438,9 @@ input[type=file].fc-file{font-size:12px;color:var(--muted);width:100%;margin-top
     }
     if (name === "bagua-query") {
       initBaguaQueryPage();
+    }
+    if (name === "datastore") {
+      loadDataStoreStatus();
     }
     if (name === "tasks") {
       bindTaskUi();
@@ -3262,6 +3336,9 @@ function collectPeriods() {
       buy_options: buy_options,
       sell_options: sell_options,
       holiday_policy: "next_trading_day",
+      signal_data_source: ($("expSignalSource") && $("expSignalSource").value) || undefined,
+      weekly_bar_mode: ($("expWeeklyMode") && $("expWeeklyMode").value) || "local_aggregate",
+      dual_source_compare: !!( $("expDualSource") && $("expDualSource").checked),
     };
   }
 
@@ -4084,6 +4161,124 @@ async function expCreateAndStart() {
     AppState.forecast.results = [data];
   }
   
+  /* ---------- 数据仓库 ---------- */
+  function dsFmtYmd(v) {
+    if (v === null || v === undefined || v === "" || v === 0) return "";
+    return String(v);
+  }
+  function dsDateRange(a, b) {
+    const s = dsFmtYmd(a), t = dsFmtYmd(b);
+    if (!s && !t) return "";
+    return (s || "—") + "~" + (t || "—");
+  }
+  function dsNum(v) {
+    if (v === null || v === undefined || v === "") return "—";
+    const n = Number(v);
+    return isFinite(n) ? n.toLocaleString() : "—";
+  }
+  async function loadDataStoreStatus() {
+    const loading = $("dsLoading");
+    const content = $("dsContent");
+    if (loading) loading.style.display = "";
+    if (content) content.style.display = "none";
+    try {
+      const data = await api("/api/v1/market-data/status");
+      if (loading) loading.style.display = "none";
+      if (content) content.style.display = "";
+      if ($("dsRoot")) $("dsRoot").textContent = data.data_root || "—";
+      if ($("dsEnvTag")) {
+        const isTest = data.is_test_root;
+        $("dsEnvTag").innerHTML = isTest
+          ? '<span class="tag tag-orange">测试目录</span>'
+          : '<span class="tag tag-green">正式目录</span>';
+      }
+      if ($("dsAstockEnv")) {
+        const env = data.astock_env;
+        let envHtml;
+        if (env === "production") envHtml = '<span class="tag tag-green">生产</span>';
+        else if (env === "development") envHtml = '<span class="tag tag-orange">开发</span>';
+        else if (env === "test") envHtml = '<span class="tag tag-orange">测试</span>';
+        else if (env) envHtml = '<span class="tag tag-orange">' + esc(env) + '</span>';
+        else envHtml = '<span class="muted">—</span>';
+        $("dsAstockEnv").innerHTML = envHtml;
+      }
+      const sizeBytes = data.total_size_bytes || 0;
+      const sizeStr = sizeBytes > 1024*1024*1024
+        ? (sizeBytes/1024/1024/1024).toFixed(2) + " GB"
+        : (sizeBytes/1024/1024).toFixed(1) + " MB";
+      if ($("dsSize")) $("dsSize").textContent = sizeStr;
+      if ($("dsReady")) $("dsReady").textContent = data.ready_dataset_count || 0;
+      if ($("dsPartial")) $("dsPartial").textContent = data.partial_dataset_count || 0;
+      if ($("dsFailed")) $("dsFailed").textContent = data.failed_dataset_count || 0;
+      if ($("dsBlobs")) $("dsBlobs").textContent = data.blob_count || 0;
+      const dsAll = Array.isArray(data.datasets) ? data.datasets : [];
+      const dsLv = (data.latest_local_vendor && typeof data.latest_local_vendor === "object") ? data.latest_local_vendor : null;
+      if ($("dsLatestLv")) {
+        if (dsLv) {
+          const lvStatus = dsLv.status == null ? "" : String(dsLv.status);
+          const lvStatusHtml = lvStatus
+            ? "<span class='tag " + (lvStatus === "ready" ? "tag-green" : lvStatus === "partial" ? "tag-orange" : "tag-red") + "'>" + esc(lvStatus) + "</span>"
+            : "—";
+          let lvRange = dsDateRange(dsLv.earliest_date, dsLv.latest_date);
+          if (!lvRange && (dsLv.coverage_start_year != null || dsLv.coverage_end_year != null)) {
+            lvRange = (dsLv.coverage_start_year == null ? "—" : esc(dsLv.coverage_start_year)) + "-" +
+              (dsLv.coverage_end_year == null ? "—" : esc(dsLv.coverage_end_year));
+          } else {
+            lvRange = esc(lvRange);
+          }
+          $("dsLatestLv").innerHTML =
+            "<span style='font-size:11px'>" + (esc(dsLv.dataset_id) || "—") + "</span> " + lvStatusHtml +
+            " · 股票数 " + dsNum(dsLv.symbol_count) +
+            " · K线数 " + dsNum(dsLv.row_count) +
+            " · 覆盖 " + (lvRange || "—");
+        } else {
+          $("dsLatestLv").textContent = "—";
+        }
+      }
+      if ($("dsBiasBanner")) {
+        const dsBiased = dsAll.filter(function(d) { return d && d.survivorship_bias === true; });
+        const dsHasBias = (dsLv && dsLv.survivorship_bias === true) || dsBiased.length > 0;
+        if (dsHasBias) {
+          let warnTxt = "";
+          if (dsLv && dsLv.survivorship_bias === true && typeof dsLv.warning_text === "string" && dsLv.warning_text) {
+            warnTxt = dsLv.warning_text;
+          }
+          if (!warnTxt) {
+            for (let i = 0; i < dsBiased.length; i++) {
+              const w = dsBiased[i].warning_text;
+              if (typeof w === "string" && w) { warnTxt = w; break; }
+            }
+          }
+          $("dsBiasBanner").textContent = warnTxt || "⚠ 该数据集缺少部分历史退市股票,长期全市场回测存在幸存者偏差。";
+          $("dsBiasBanner").style.display = "";
+        } else {
+          $("dsBiasBanner").style.display = "none";
+        }
+      }
+      const tbody = $("dsTableBody");
+      if (tbody) {
+        const datasets = dsAll;
+        tbody.innerHTML = datasets.map(function(d) {
+          if (!d) return "";
+          const statusCls = d.status === "ready" ? "tag-green" : d.status === "partial" ? "tag-orange" : "tag-red";
+          const biasTitle = (typeof d.warning_text === "string" && d.warning_text)
+            ? " title=\"" + esc(d.warning_text) + "\"" : "";
+          const biasTag = d.survivorship_bias === true
+            ? " <span class='tag tag-orange' style='font-size:10px;padding:1px 5px'" + biasTitle + ">偏差</span>"
+            : "";
+          const dateRange = dsDateRange(d.earliest_date, d.latest_date) || "—";
+          return "<tr><td style='font-size:11px'>" + esc(d.dataset_id) + biasTag + "</td><td>" + esc(d.source) +
+            "</td><td>" + esc(d.adjustment) + "</td><td><span class='tag " + statusCls + "'>" + esc(d.status) +
+            "</span></td><td>" + (d.symbol_count||0) + "</td><td>" + (d.row_count||0).toLocaleString() +
+            "</td><td>" + esc(dateRange) + "</td><td>" + esc(d.created_at||"—") + "</td></tr>";
+        }).join("");
+      }
+    } catch (e) {
+      if (loading) loading.textContent = "加载失败: " + e.message;
+    }
+  }
+  if ($("btnDsRefresh")) $("btnDsRefresh").onclick = loadDataStoreStatus;
+
   /* ---------- 查询卦象 ---------- */
   function initBaguaQueryPage() {
     const d = $("bqDate");
@@ -4129,7 +4324,8 @@ async function expCreateAndStart() {
     if (card) card.style.display = "none";
     try {
       const adjust = (($("bqAdjust") && $("bqAdjust").value) || "raw");
-      const url =
+      const bqSrc = ($("bqSignalSource") && $("bqSignalSource").value) || "";
+      let url =
         "/api/v1/bagua/query?code=" +
         encodeURIComponent(code) +
         "&date=" +
@@ -4138,6 +4334,7 @@ async function expCreateAndStart() {
         encodeURIComponent(period) +
         "&adjust=" +
         encodeURIComponent(adjust);
+      if (bqSrc) url += "&signal_data_source=" + encodeURIComponent(bqSrc);
       const data = await api(url);
       renderBaguaQueryResult(data);
       if (hint) {
@@ -8587,6 +8784,8 @@ function renderBtRuleList() {
     };
     if (slRaw !== "") body.stop_loss = Number(slRaw);
     if (tpRaw !== "") body.take_profit = Number(tpRaw);
+    const btSrc = ($("btSignalSource") && $("btSignalSource").value) || "";
+    if (btSrc) body.signal_data_source = btSrc;
     return body;
   }
   async function runBacktestV3() {

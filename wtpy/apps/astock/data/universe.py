@@ -18,7 +18,7 @@ def is_ashare_code(raw: str) -> bool:
       - SSE STAR: 688/689
       - SZSE main: 000/001
       - SZSE SME: 002/003
-      - SZSE ChiNext: 300/301
+      - SZSE ChiNext: 300-309 (generic 30x segment, covers 302/305/... additions)
     Rejected:
       - BJ 8xxxxx / 4xxxxx
       - B shares 900/200
@@ -46,17 +46,20 @@ def is_ashare_code(raw: str) -> bool:
     if num.startswith(("900", "200")):
         return False
     # funds / ETFs / LOF
-    if num.startswith(("5", "15", "16", "18", "1")) and not num.startswith(
-        ("000", "001", "002", "003", "300", "301", "600", "601", "603", "605", "688", "689")
+    if num.startswith(("5", "15", "16", "18", "1")) and not (
+        num[:2] == "30"
+        or num.startswith(
+            ("000", "001", "002", "003", "600", "601", "603", "605", "688", "689")
+        )
     ):
         # careful: sz1xxxxx may be funds; sz000 is main board
         if num.startswith(("15", "16", "18", "50", "51", "52", "56", "58")):
             return False
         if prefix == "sh" and num.startswith("5"):
             return False
-    # positive allow-list
-    if num.startswith(
-        ("600", "601", "603", "605", "688", "689", "000", "001", "002", "003", "300", "301")
+    # positive allow-list (ChiNext is the generic 30x segment: 300-309)
+    if num[:2] == "30" or num.startswith(
+        ("600", "601", "603", "605", "688", "689", "000", "001", "002", "003")
     ):
         # sh000 is index already excluded
         if prefix == "sh" and num.startswith("000"):
@@ -65,8 +68,20 @@ def is_ashare_code(raw: str) -> bool:
     return False
 
 
+def is_bse_code(raw: str) -> bool:
+    """Return True if code is a Beijing Stock Exchange A-share (4xxxxx / 8xxxxx)."""
+    code = raw.lower().replace(".day", "")
+    if code.startswith("bj"):
+        num = code[2:]
+    else:
+        num = code
+    if not re.fullmatch(r"\d{6}", num):
+        return False
+    return num.startswith(("4", "8"))
+
+
 def to_std_code(raw: str) -> str:
-    """Convert sh600000 / sz000001 to SSE.STK.600000 / SZSE.STK.000001."""
+    """Convert sh600000 / sz000001 / bj430047 to SSE.STK.600000 / SZSE.STK.000001 / BSE.STK.430047."""
     code = raw.lower().replace(".day", "")
     if code.startswith("sh"):
         num = code[2:]
@@ -74,9 +89,14 @@ def to_std_code(raw: str) -> str:
     if code.startswith("sz"):
         num = code[2:]
         return f"SZSE.STK.{num}"
+    if code.startswith("bj"):
+        num = code[2:]
+        return f"BSE.STK.{num}"
     if code.isdigit() and len(code) == 6:
         if code.startswith(("5", "6", "9")):
             return f"SSE.STK.{code}"
+        if code.startswith(("4", "8")):
+            return f"BSE.STK.{code}"
         return f"SZSE.STK.{code}"
     raise ValueError(f"bad code: {raw}")
 
@@ -97,6 +117,12 @@ class SymbolInfo:
     code: str
     name: str = ""
     product: str = "STK"
+    list_date: Optional[int] = None
+    delist_date: Optional[int] = None
+    status: str = "listed"
+    source: str = "tdx_local"
+    first_market_date: Optional[int] = None
+    last_market_date: Optional[int] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -125,6 +151,7 @@ class AShareUniverse:
         include_bj: bool = False,
         bj_dir: Optional[Path] = None,
         names: Optional[Dict[str, str]] = None,
+        include_delisted: bool = False,
     ) -> "AShareUniverse":
         names = names or {}
         symbols: List[SymbolInfo] = []
@@ -147,26 +174,80 @@ class AShareUniverse:
                     )
                 )
         if include_bj and bj_dir and Path(bj_dir).exists():
-            # intentionally unused in v1; kept for completeness
-            pass
+            for p in sorted(Path(bj_dir).glob("*.day")):
+                raw = p.stem
+                if not is_bse_code(raw):
+                    continue
+                std = to_std_code(raw)
+                exch, _, code = std.split(".")
+                symbols.append(
+                    SymbolInfo(
+                        raw=raw,
+                        std_code=std,
+                        exchange=exch,
+                        code=code,
+                        name=names.get(std, names.get(code, "")),
+                    )
+                )
+        return cls(symbols)
+
+    @classmethod
+    def from_tushare_basic(
+        cls,
+        entries: List,
+        *,
+        include_bse: bool = False,
+        include_delisted: bool = False,
+    ) -> "AShareUniverse":
+        """Build universe from Tushare stock_basic entries (UniverseEntry list)."""
+        symbols: List[SymbolInfo] = []
+        for e in entries:
+            if not include_bse and getattr(e, "exchange", "") == "BSE":
+                continue
+            if not include_delisted and getattr(e, "status", "listed") == "delisted":
+                continue
+            std_code = getattr(e, "symbol", "")
+            parts = std_code.split(".")
+            exch = parts[0] if len(parts) >= 1 else ""
+            code = parts[-1] if parts else ""
+            symbols.append(
+                SymbolInfo(
+                    raw=code,
+                    std_code=std_code,
+                    exchange=exch,
+                    code=code,
+                    name=getattr(e, "name", ""),
+                    list_date=getattr(e, "list_date", None),
+                    delist_date=getattr(e, "delist_date", None),
+                    status=getattr(e, "status", "listed"),
+                    source=getattr(e, "source", "tushare"),
+                )
+            )
         return cls(symbols)
 
     def save(self, path: Path) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        has_bse = any(s.exchange == "BSE" for s in self.symbols)
+        has_delisted = any(s.status == "delisted" for s in self.symbols)
         data = {
             "count": len(self.symbols),
-            "exclude_bj": True,
+            "exclude_bj": not has_bse,
+            "include_delisted": has_delisted,
             "symbols": [s.to_dict() for s in self.symbols],
             "survivor_bias_warning": (
+                "" if has_delisted else
                 "Local TDX pool may lack delisted names; results have survivor bias."
             ),
-            "schema_version": 2,
+            "schema_version": 3,
         }
         atomic_write_json(path, data)
 
     @classmethod
     def load(cls, path: Path) -> "AShareUniverse":
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-        symbols = [SymbolInfo(**s) for s in data.get("symbols", [])]
+        symbols = []
+        allowed = set(SymbolInfo.__dataclass_fields__.keys())
+        for s in data.get("symbols", []):
+            symbols.append(SymbolInfo(**{k: v for k, v in s.items() if k in allowed}))
         return cls(symbols)
