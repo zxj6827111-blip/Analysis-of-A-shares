@@ -222,8 +222,109 @@ def rebuild_knowledge_from_excel(
         "empty_biangua_count": empty_bg,
         "headers": headers,
     }
+    # Auto-fill missing 变卦 (Excel left 35 gua blank); keep Excel when present.
+    fill_missing_biangua(kb, only_empty=True)
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(kb, ensure_ascii=False, indent=2), encoding="utf-8")
+    return kb
+
+
+# Trigram lines bottom→top: 1=yang —, 0=yin - -
+# 乾YYY 兑YYN 离YNY 震YNN 巽NYY 坎NYN 艮NNY 坤NNN
+_TRIGRAM_LINES: Dict[int, Tuple[int, int, int]] = {
+    1: (1, 1, 1),  # 乾
+    2: (1, 1, 0),  # 兑
+    3: (1, 0, 1),  # 离
+    4: (1, 0, 0),  # 震
+    5: (0, 1, 1),  # 巽
+    6: (0, 1, 0),  # 坎
+    7: (0, 0, 1),  # 艮
+    8: (0, 0, 0),  # 坤
+}
+_LINES_TO_TRIGRAM: Dict[Tuple[int, int, int], int] = {v: k for k, v in _TRIGRAM_LINES.items()}
+
+
+def short_gua_name(gua_name: str) -> str:
+    """Excel-style short biangua label: 乾为天→乾, 天火同人→同人, 风天小畜→小畜."""
+    name = str(gua_name or "").strip()
+    if not name:
+        return ""
+    if "为" in name:
+        return name.split("为", 1)[0]
+    elements = set("天地水火雷风山泽")
+    if len(name) >= 3 and name[0] in elements and name[1] in elements:
+        return name[2:]
+    return name
+
+
+def changed_hexagram_ul(upper: int, lower: int, yao_order: int) -> Tuple[int, int]:
+    """Flip the moving line (1=初 … 6=上) → (new_upper, new_lower)."""
+    yo = int(yao_order)
+    if yo < 1 or yo > 6:
+        raise ValueError(f"yao_order out of range: {yao_order}")
+    lo = list(_TRIGRAM_LINES[int(lower)])
+    up = list(_TRIGRAM_LINES[int(upper)])
+    lines = lo + up  # index 0 = 初爻
+    i = yo - 1
+    lines[i] = 1 - lines[i]
+    new_lo = _LINES_TO_TRIGRAM[tuple(lines[0:3])]
+    new_up = _LINES_TO_TRIGRAM[tuple(lines[3:6])]
+    return int(new_up), int(new_lo)
+
+
+def fill_missing_biangua(kb: dict, *, only_empty: bool = True) -> Dict[str, Any]:
+    """Fill empty biangua via I Ching line-flip; keep Excel values when present.
+
+    Validated against Excel-filled rows: ~172/174 match; 2 Excel cells look wrong
+    (乾九四写「中孚」应为「小畜」; 噬嗑上九写「雷」解析歧义).
+    """
+    entries: List[dict] = list(kb.get("entries") or [])
+    ul_to_meta: Dict[Tuple[int, int], dict] = {}
+    for e in entries:
+        ul = (int(e["upper"]), int(e["lower"]))
+        if ul not in ul_to_meta:
+            ul_to_meta[ul] = {
+                "gua_order": e.get("gua_order"),
+                "gua_name": e.get("gua_name") or "",
+                "full_name": e.get("full_name") or "",
+            }
+
+    filled = 0
+    kept = 0
+    failed = 0
+    for e in entries:
+        existing = str(e.get("biangua") or e.get("changed_hexagram_name") or "").strip()
+        if only_empty and existing:
+            e["biangua_source"] = e.get("biangua_source") or "excel"
+            kept += 1
+            continue
+        try:
+            nu, nl = changed_hexagram_ul(int(e["upper"]), int(e["lower"]), int(e["yao_order"]))
+        except Exception:
+            failed += 1
+            continue
+        meta = ul_to_meta.get((nu, nl))
+        if not meta:
+            failed += 1
+            continue
+        short = short_gua_name(str(meta["gua_name"]))
+        e["biangua"] = short
+        e["changed_hexagram_name"] = short
+        e["changed_hexagram_id"] = meta.get("gua_order")
+        e["biangua_source"] = "computed"
+        e["biangua_full_name"] = meta.get("full_name") or meta.get("gua_name") or short
+        filled += 1
+
+    empty_left = sum(1 for e in entries if not str(e.get("biangua") or "").strip())
+    kb["entries"] = entries
+    kb["empty_biangua_count"] = empty_left
+    kb["biangua_fill"] = {
+        "filled_computed": filled,
+        "kept_excel": kept,
+        "failed": failed,
+        "empty_left": empty_left,
+        "method": "line_flip_bottom_to_top",
+    }
     return kb
 
 

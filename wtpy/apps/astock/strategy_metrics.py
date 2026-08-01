@@ -56,7 +56,25 @@ def compute_metrics(
         else:
             if lots[f.std_code]:
                 b = lots[f.std_code].popleft()
-                pnl = (f.price - b.price) * f.shares - f.commission - f.stamp_tax - b.commission
+                position_basis = getattr(f, "position_cost_basis", None)
+                ca_cash = float(
+                    getattr(f, "corporate_action_cash_received", 0.0) or 0.0
+                )
+                if position_basis is not None:
+                    pnl = (
+                        float(f.amount)
+                        - f.commission
+                        - f.stamp_tax
+                        - float(position_basis)
+                        + ca_cash
+                    )
+                else:
+                    pnl = (
+                        (f.price - b.price) * f.shares
+                        - f.commission
+                        - f.stamp_tax
+                        - b.commission
+                    )
                 closed += 1
                 if pnl > 0:
                     wins += 1

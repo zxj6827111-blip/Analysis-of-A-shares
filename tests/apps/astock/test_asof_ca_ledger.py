@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 import tests.apps.astock.conftest  # noqa: F401
 
@@ -126,6 +127,25 @@ def test_explicit_share_ratio_still_applies():
     assert abs(res.cost_basis_scale - 0.5) < 1e-9
 
 
+def test_explicit_share_ratio_preserves_odd_lot_result():
+    res = apply_events_to_position(
+        shares=9600,
+        cash=0.0,
+        entry_price=10.0,
+        events=[
+            CorporateActionEvent(
+                std_code="X",
+                date=20240103,
+                event_type="share_ratio",
+                share_multiplier=1.2,
+                source="explicit",
+            )
+        ],
+        lot_size=100,
+    )
+    assert res.shares == 11520
+
+
 def test_policy_defaults_and_aliases():
     p, notes, force = normalize_corporate_action_policy(None)
     assert p == "fail_closed"
@@ -139,7 +159,7 @@ def test_policy_defaults_and_aliases():
 def test_three_plane_repro_l3_not_implemented():
     fields = three_plane_repro_fields(signal_price_mode="asof_forward_qfq")
     l3 = fields["price_planes"]["L3_corporate_action_ledger"]
-    assert l3["implemented"] is False
+    assert l3["implemented"] is True
     assert l3["factor_jump_share_apply"] is False
     assert fields["price_planes"]["L1_signal_price"]["default_formal"] == "asof_forward_qfq"
 
@@ -150,6 +170,16 @@ def test_bagua_normalize_adjust():
     assert normalize_adjust_mode("前复权") == "standard_qfq"
     assert normalize_adjust_mode("未复权") == "raw"
     assert normalize_adjust_mode("时点前复权") == "asof_forward_qfq"
+
+
+def test_bagua_normalize_adjust_error_lists_all_accepted():
+    from wtpy.apps.astock.service.bagua_query import normalize_adjust_mode
+
+    with pytest.raises(ValueError) as ei:
+        normalize_adjust_mode("不存在的复权")
+    msg = str(ei.value)
+    for accepted in ("raw", "tdx_front", "tushare_qfq", "standard_qfq", "asof_forward_qfq"):
+        assert accepted in msg
 
 
 def test_build_events_by_code_audit_vs_apply():

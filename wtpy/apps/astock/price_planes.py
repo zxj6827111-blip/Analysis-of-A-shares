@@ -89,16 +89,17 @@ def three_plane_repro_fields(
                     "delist",
                     "suspension",
                 ],
-                # Factor-jump share apply is NOT formal: cash div also moves factors.
-                "implemented": False,
+                # Cumulative factor jumps remain audit-only. Economic changes are
+                # applied only from typed external events (cash/share payloads).
+                "implemented": True,
+                "implementation_scope": "explicit_events_only",
                 "factor_jump_share_apply": False,
                 "explicit_events_required": True,
                 "note": (
-                    "Formal default fail_closed: open position across a cumulative "
-                    "factor jump → unsupported_corporate_action (no silent restatement). "
-                    "event_ledger is opt-in research only and still does not invent "
-                    "cash dividends from factors alone; do not treat factor jumps as "
-                    "share multipliers for formal P&L."
+                    "When selected cached explicit events exist, event_ledger applies "
+                    "cash dividends and typed share changes, then re-bases the held "
+                    "factor snapshot. Missing/unmatched factor jumps still fail closed; "
+                    "cumulative factors are never treated as share multipliers."
                 ),
             },
         },

@@ -21,6 +21,7 @@ def run_fast_or_full_engine(
     adj_map: Dict[str, Any],
     standard_qfq_map: Optional[Dict[str, Any]] = None,
     factor_series: Sequence[Any],
+    explicit_ca_events: Optional[Sequence[Any]] = None,
     research_unadj: bool,
     use_research: bool,
     use_formal_ok: bool,
@@ -49,6 +50,8 @@ def run_fast_or_full_engine(
     bagua_enabled: bool,
     bagua_n_before: Any,
     bagua_n_after: Any,
+    delist_policy: Any = None,
+    delist_terminal_dates: Optional[Dict[str, int]] = None,
 ) -> Any:
     """Run fast or full PortfolioBacktester; return BacktestResult-like object.
 
@@ -112,9 +115,33 @@ def run_fast_or_full_engine(
         )
         result.metrics["engine"] = "fast"
         result.metrics["supports_true_cash_simulation"] = False
+        if explicit_ca_events:
+            result.metrics["ca_events_not_simulated"] = True
+            result.notes = list(result.notes) + [
+                "engine=fast: explicit corporate-action cash/share events are not "
+                "simulated; use engine=full for event-ledger accounting.",
+            ]
+        if delist_policy is not None:
+            # screening engine has no cash simulation; delist terminal exits
+            # only apply in the full engine — surfaced, never silent
+            result.metrics["delist_policy_not_simulated"] = True
+            result.metrics["survivorship_safe_claim"] = "partial_fast_screen"
+            result.notes = list(result.notes) + [
+                "engine=fast: delist terminal exits not simulated (no cash sim); "
+                "use engine=full for delist-aware / survivorship-safe comparable results.",
+            ]
+            # Do not let SS baseline_generation be read as full cash+delist SS.
+            if str(result.config.get("baseline_generation") or "") == "survivorship_safe":
+                result.config["baseline_generation"] = "survivorship_safe_fast_screen"
+                result.metrics["baseline_generation"] = "survivorship_safe_fast_screen"
+            elif not result.config.get("baseline_generation"):
+                result.metrics["baseline_generation_note"] = (
+                    "delist_policy_bound_but_engine_fast"
+                )
         result.metrics["corporate_action_policy"] = _engine_ca
         result.metrics["n_signals_fast"] = fast_res.n_signals
         result.metrics["n_events"] = len(events)
+        result.metrics["ca_event_count"] = len(explicit_ca_events or [])
         result.metrics["n_events_raw_signals"] = int(n_events_raw_signals)
         result.metrics["n_events_after_weekday"] = int(n_events_after_weekday)
         if bagua_enabled:
@@ -129,7 +156,11 @@ def run_fast_or_full_engine(
         return result
 
     factor_by_code, factor_map_errors = build_factor_by_code(factor_series)
-    ca_events_by_code = build_events_by_code(factor_series, for_apply=True)
+    ca_events_by_code = build_events_by_code(
+        factor_series,
+        extra_events=explicit_ca_events,
+        for_apply=True,
+    )
     if (
         not use_research
         and use_formal_ok
@@ -173,6 +204,8 @@ def run_fast_or_full_engine(
         factor_by_code=factor_by_code or None,
         ca_events_by_code=ca_events_by_code or None,
         corporate_action_policy=corporate_action_policy,
+        delist_policy=delist_policy,
+        delist_terminal_dates=delist_terminal_dates,
     )
     result = bt.run(
         events,
@@ -199,6 +232,7 @@ def run_fast_or_full_engine(
     result.config["corporate_action_policy"] = corporate_action_policy
     result.metrics["corporate_action_policy"] = corporate_action_policy
     result.metrics["n_events"] = len(events)
+    result.metrics["ca_event_count"] = len(explicit_ca_events or [])
     result.metrics["n_events_raw_signals"] = int(n_events_raw_signals)
     result.metrics["n_events_after_weekday"] = int(n_events_after_weekday)
     if bagua_enabled:

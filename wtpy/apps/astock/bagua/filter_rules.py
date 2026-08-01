@@ -461,16 +461,29 @@ def gua_filter_history_summary(
         if sids:
             count = len(sids)
             lines = [state_labels.get(s, s) for s in sids]
-            short = f"卦象{count}项"
+            # Prefer concrete names over bare "卦象N项" (compare UI / task titles).
+            if count == 1:
+                short = str(lines[0]) if lines else "卦象1项"
+            elif count <= 3:
+                joined = "、".join(str(x) for x in lines)
+                short = joined if len(joined) <= 36 else ("卦象" + str(count) + "项：" + "、".join(str(x) for x in lines[:2]) + "…")
+            else:
+                short = "卦象" + str(count) + "项：" + "、".join(str(x) for x in lines[:2]) + "…"
         elif gf.selected_main_hexagram_ids:
             ids = list(gf.selected_main_hexagram_ids)
             count = len(ids)
             lines = [hexagram_names.get(int(i), f"第{int(i):02d}卦") for i in ids]
-            short = f"卦象{count}项"
+            if count == 1:
+                short = str(lines[0]) if lines else "卦象1项"
+            elif count <= 3:
+                joined = "、".join(str(x) for x in lines)
+                short = joined if len(joined) <= 36 else ("卦象" + str(count) + "项")
+            else:
+                short = "卦象" + str(count) + "项：" + "、".join(str(x) for x in lines[:2]) + "…"
         elif gf.selected_action_signals:
             acts = list(gf.selected_action_signals)
             count = len(acts)
-            short = "卦象信号：" + "、".join(acts[:3])
+            short = "操作信号：" + "、".join(acts[:3]) + ("…" if len(acts) > 3 else "")
             lines = acts
         else:
             short = "卦象过滤"

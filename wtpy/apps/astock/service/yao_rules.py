@@ -12,8 +12,8 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 # Fixed hold templates (trading days) used by 爻辞 plan T3..T120
 HOLD_TEMPLATE_DAYS: List[int] = [3, 5, 7, 10, 20, 40, 60, 120]
 
-# Demo pool used by experiment center smoke runs
-DEMO_CODES: List[str] = ["sh600000", "sz000001"]
+# Demo pool used by experiment center smoke runs (canonical warehouse format)
+DEMO_CODES: List[str] = ["SSE.STK.600000", "SZSE.STK.000001"]
 
 # Default manifest path (repo-relative); overridable via AStockConfig later if needed
 DEFAULT_MANIFEST_PATH = (

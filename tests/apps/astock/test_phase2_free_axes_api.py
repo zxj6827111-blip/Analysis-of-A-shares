@@ -12,6 +12,7 @@ from wtpy.apps.astock.config import AStockConfig
 from wtpy.apps.astock.service.experiments import (
     HARD_MAX_VARIANTS,
     DEFAULT_MAX_VARIANTS,
+    _resolve_hard_max_variants,
     estimate_grid_from_payload,
     expand_param_grid,
     create_experiment_from_grid,
@@ -29,9 +30,16 @@ def cfg(tmp_path: Path) -> AStockConfig:
     return c
 
 
-def test_hard_max_is_phase2():
+def test_hard_max_is_configurable(monkeypatch):
     assert DEFAULT_MAX_VARIANTS == 50
-    assert HARD_MAX_VARIANTS == 500
+    assert 500 <= HARD_MAX_VARIANTS <= 20000
+
+    monkeypatch.delenv("ASTOCK_EXP_HARD_MAX_VARIANTS", raising=False)
+    assert _resolve_hard_max_variants() == 2000
+    monkeypatch.setenv("ASTOCK_EXP_HARD_MAX_VARIANTS", "100")
+    assert _resolve_hard_max_variants() == 500
+    monkeypatch.setenv("ASTOCK_EXP_HARD_MAX_VARIANTS", "50000")
+    assert _resolve_hard_max_variants() == 20000
 
 
 def test_free_axes_estimate_preview_shape():

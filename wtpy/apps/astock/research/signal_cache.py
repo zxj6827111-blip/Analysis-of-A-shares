@@ -38,8 +38,22 @@ def signal_cache_key(
     calendar_version: Optional[str] = None,
     combine: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
+    data_source: Optional[str] = None,
+    adjustment: Optional[str] = None,
+    dataset_id: Optional[str] = None,
+    weekly_bar_mode: Optional[str] = None,
+    anchor_date: Optional[int] = None,
+    execution_data_source: Optional[str] = None,
+    execution_dataset_id: Optional[str] = None,
+    universe_version: Optional[str] = None,
+    raw_parent_dataset_id: Optional[str] = None,
+    factor_parent_dataset_id: Optional[str] = None,
+    formula_version: Optional[str] = None,
+    anchor_policy: Optional[str] = None,
 ) -> str:
     # factor_manifest_sha isolates cache when cumulative factors change (CA).
+    # data_source/dataset_id isolate cache across different market data sources.
+    # execution_dataset_id isolates cache across different L2 execution datasets.
     payload = {
         "schema": CACHE_SCHEMA,
         "indicator_ids": list(indicator_ids or []),
@@ -54,6 +68,20 @@ def signal_cache_key(
         "calendar_version": calendar_version,
         "combine": combine,
         "extra": extra or {},
+        "data_source": data_source or "",
+        "adjustment": adjustment or "",
+        "dataset_id": dataset_id or "",
+        "weekly_bar_mode": weekly_bar_mode or "local_aggregate",
+        "anchor_date": anchor_date,
+        "execution_data_source": execution_data_source or "local_vendor",
+        "execution_dataset_id": execution_dataset_id or "",
+        "universe_version": universe_version or "",
+        # Gate C: derived-signal lineage isolates cache when the factor parent
+        # (or derivation formula/anchor) changes even if dataset naming aligns.
+        "raw_parent_dataset_id": raw_parent_dataset_id or "",
+        "factor_parent_dataset_id": factor_parent_dataset_id or "",
+        "formula_version": formula_version or "",
+        "anchor_policy": anchor_policy or "",
     }
     return short_fingerprint(payload, n=32)
 

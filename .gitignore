@@ -43,6 +43,7 @@ __pycache__/
 .ruff_cache/
 .env
 .env.*
+!.env.example
 *.xls
 *.xlsx
 *.tmp
@@ -66,4 +67,14 @@ _render_history_fn.js
 /_tracked.txt
 /_hist_out.txt
 /_render_history_fn.js
+
+# ---- Local scratch / tool artifacts (do not publish) ----
+/tmp/
+/audit-*/
+.playwright-cli/
+.workbuddy/
+/_*.py
+/SZSE.*.csv
+/A股回测系统_*.png
+/2026年7月*.xls
 

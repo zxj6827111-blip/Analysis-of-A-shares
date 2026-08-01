@@ -14,6 +14,73 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def load_env_file(path: Optional[Path] = None, *, override: bool = False) -> Dict[str, str]:
+    """Load KEY=VALUE lines from a .env file into os.environ.
+
+    Existing environment variables win unless override=True. Lines starting
+    with '#' and blank lines are ignored. Returns the parsed mapping.
+    Machine-local paths (e.g. the production MARKET_DATA_ROOT) belong in
+    this file, which must stay out of Git.
+    """
+    path = Path(path) if path else (_project_root() / ".env")
+    parsed: Dict[str, str] = {}
+    if not path.exists():
+        return parsed
+    try:
+        for line in path.read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if not key:
+                continue
+            parsed[key] = val
+            if override or key not in os.environ:
+                os.environ[key] = val
+    except Exception:
+        return parsed
+    return parsed
+
+
+def market_data_root_guard(cfg: "AStockConfig") -> Dict[str, Any]:
+    """Production-mode guard for the market data root (Gate A 防呆).
+
+    Rules:
+      - ASTOCK_ENV=production and root resolves inside the project storage
+        (internal test repository) -> blocked, unless
+        ASTOCK_ALLOW_INTERNAL_DATA_ROOT=1 is set explicitly.
+      - ASTOCK_ENV=production and MARKET_DATA_ROOT env missing -> blocked
+        (silent internal fallback is forbidden in production).
+      - development/test -> never blocked, but is_internal is reported so
+        callers can warn.
+    """
+    env = cfg.astock_env
+    env_val = os.environ.get("MARKET_DATA_ROOT", "").strip()
+    root = cfg.market_data_root
+    is_internal = not cfg.market_data_root_is_external
+    allow = os.environ.get("ASTOCK_ALLOW_INTERNAL_DATA_ROOT", "").strip() in ("1", "true", "yes")
+    blocked = False
+    reason = ""
+    if env == "production":
+        if not env_val:
+            blocked = not allow
+            reason = "MARKET_DATA_ROOT env is not set (production refuses silent internal fallback)"
+        elif is_internal:
+            blocked = not allow
+            reason = f"MARKET_DATA_ROOT resolves inside project storage: {root}"
+    return {
+        "astock_env": env,
+        "market_data_root": str(root),
+        "market_data_root_env_set": bool(env_val),
+        "is_internal": is_internal,
+        "blocked": blocked,
+        "reason": reason,
+        "override_allowed_by": "ASTOCK_ALLOW_INTERNAL_DATA_ROOT=1" if blocked else "",
+    }
+
+
 @dataclass
 class CostConfig:
     commission_rate: float = 0.0003
@@ -136,6 +203,26 @@ class AStockConfig:
     @property
     def adj_root(self) -> Path:
         return self.storage_root / "adjustments"
+
+    @property
+    def astock_env(self) -> str:
+        """Deployment environment: production | development | test."""
+        return os.environ.get("ASTOCK_ENV", "development").strip().lower() or "development"
+
+    @property
+    def market_data_root(self) -> Path:
+        """Resolve market data root: env MARKET_DATA_ROOT > storage_root/market_data."""
+        env_val = os.environ.get("MARKET_DATA_ROOT", "").strip()
+        if env_val:
+            return Path(env_val)
+        return self.storage_root / "market_data"
+
+    @property
+    def market_data_root_is_external(self) -> bool:
+        """True if market_data_root points outside the project storage directory."""
+        md = self.market_data_root.resolve()
+        sr = self.storage_root.resolve()
+        return not str(md).startswith(str(sr))
 
     def ensure_dirs(self) -> None:
         for p in [

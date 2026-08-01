@@ -16,7 +16,20 @@ from . import db as exp_db
 
 # Soft cap — UI must warn; hard refuse above this unless force=True
 DEFAULT_MAX_VARIANTS = 50
-HARD_MAX_VARIANTS = 500  # Phase2: soft DEFAULT=50; force required above max_variants; hard refuse >500
+# Soft default 50; force=true to exceed max_variants; hard refuse above HARD_MAX.
+# Env ASTOCK_EXP_HARD_MAX_VARIANTS can raise the hard ceiling for long-running grids
+# (clamped to [500, 20000]). Aligns with research.planner spirit (2000).
+def _resolve_hard_max_variants() -> int:
+    import os
+    raw = (os.environ.get("ASTOCK_EXP_HARD_MAX_VARIANTS") or "").strip()
+    try:
+        n = int(raw) if raw else 2000
+    except ValueError:
+        n = 2000
+    return max(500, min(int(n or 2000), 20000))
+
+
+HARD_MAX_VARIANTS = _resolve_hard_max_variants()
 
 # Weekday schedule templates (UI labels → engine fields)
 WEEKDAY_TEMPLATES = {
@@ -712,9 +725,70 @@ def estimate_grid_from_payload(payload: dict) -> dict:
     elif actual > 20:
         msg = msg or ("组合数 %s 较大，建议先用演示池试跑" % actual)
 
+    # Multi signal sources + bagua planes expand like create_experiment.
+    n_src = 1
+    try:
+        sv = payload.get("signal_variants") or []
+        if isinstance(sv, (list, tuple)) and len(sv) > 0:
+            n_src = len(sv)
+        elif bool(payload.get("dual_source_compare")):
+            n_src = 2
+    except Exception:
+        n_src = 1
+
+    n_plane = 1
+    try:
+        planes = payload.get("bagua_price_planes") or []
+        if isinstance(planes, (list, tuple)) and len(planes) > 0:
+            n_plane = len(planes)
+        # only multiply when bagua filter is enabled
+        gua_on = False
+        for gf in list(payload.get("gua_filters") or []):
+            if isinstance(gf, dict) and gf.get("enabled"):
+                gua_on = True
+                break
+        if not gua_on:
+            # single gua_filter object or with_bagua flag
+            gf1 = payload.get("gua_filter")
+            if isinstance(gf1, dict) and gf1.get("enabled"):
+                gua_on = True
+            elif bool(payload.get("with_bagua")):
+                gua_on = True
+        if not gua_on:
+            n_plane = 1
+    except Exception:
+        n_plane = 1
+
+    if n_src > 1:
+        theoretical *= n_src
+        actual *= n_src
+    if n_plane > 1:
+        theoretical *= n_plane
+        actual *= n_plane
+
     if rejected and theoretical:
         soft = "理论 %s，过滤 %s，实际 %s" % (theoretical, rejected, actual)
         msg = ("%s；%s" % (msg, soft)) if msg else soft
+    extra_notes = []
+    if n_src > 1:
+        extra_notes.append("信号源 ×%s" % n_src)
+    if n_plane > 1:
+        extra_notes.append("周卦口径 ×%s" % n_plane)
+    if extra_notes:
+        note = "、".join(extra_notes)
+        msg = ("%s；%s" % (msg, note)) if msg else note
+
+    # re-check caps after multiplies
+    ok = True
+    if actual > hard:
+        ok = False
+        msg = msg or ("组合数 %s 超过硬顶 %s" % (actual, hard))
+    elif actual > max_v and not force:
+        ok = False
+        msg = msg or (
+            "组合数 %s 超过上限 max_variants=%s；请缩小空间或提高 max_variants，或 force=true（硬顶 %s）"
+            % (actual, max_v, hard)
+        )
 
     return {
         "theoretical": theoretical,
@@ -733,6 +807,8 @@ def estimate_grid_from_payload(payload: dict) -> dict:
         "warning": msg if actual > max_v or (actual > 20) else None,
         "force": force,
         "mode": "free_axes" if _has_free_axes(payload) else "legacy_templates",
+        "signal_source_count": n_src,
+        "bagua_plane_count": n_plane,
     }
 
 
@@ -824,6 +900,381 @@ def expand_param_grid(
 
 
 
+# Formal dual-source comparison template (Gate C D2). This is a TEMPLATE,
+# not a hardcoded special case: the create path treats it exactly like a
+# user-supplied signal_variants list, and explicit signal_variants always
+# override it. Legacy is never auto-added as a fallback variant.
+DUAL_SOURCE_COMPARE_TEMPLATE: List[Dict[str, Any]] = [
+    {"signal_data_source": "tdxquant", "signal_adjustment": "front"},
+    {
+        "signal_data_source": "internal",
+        "signal_adjustment": "tushare_factor_qfq",
+    },
+]
+
+_REPO_SIGNAL_SOURCES = ("tdxquant", "tushare", "internal", "raw")
+
+
+def _signal_resolve_candidates(src: str, adj: Optional[str]) -> List[tuple]:
+    """Ordered (source, adjustment) pairs for product signal sources."""
+    if src == "raw":
+        return [
+            ("local_vendor", "none"),
+            ("tushare", "none"),
+            ("tdxquant", "none"),
+            ("tdx_local", "none"),
+            ("internal", "composite_none"),
+        ]
+    if src == "tushare":
+        return [
+            ("tushare", "qfq"),
+            ("internal", "tushare_factor_qfq"),
+            ("internal", "composite_tushare_factor_qfq"),
+        ]
+    if src == "tdxquant":
+        return [("tdxquant", adj or "front")]
+    if src == "internal":
+        return [
+            ("internal", adj or "tushare_factor_qfq"),
+            ("internal", "composite_tushare_factor_qfq"),
+        ]
+    return [(src, adj or "")]
+
+
+def _normalize_signal_variants(
+    signal_variants: Optional[Sequence[dict]],
+) -> List[Dict[str, Any]]:
+    """Validate the user-supplied signal_variants list (Gate C D2)."""
+    if not signal_variants:
+        return []
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for i, sv in enumerate(signal_variants):
+        if not isinstance(sv, dict):
+            raise ValueError(f"signal_variants[{i}] must be an object")
+        src = str(sv.get("signal_data_source") or "").strip()
+        adj = str(sv.get("signal_adjustment") or "").strip() or None
+        ds = sv.get("dataset_id") or sv.get("signal_dataset_id") or None
+        if src not in _REPO_SIGNAL_SOURCES:
+            raise ValueError(
+                f"signal_variants[{i}].signal_data_source must be one of "
+                f"{_REPO_SIGNAL_SOURCES}, got {src!r} (legacy is not allowed "
+                f"as an experiment variant)"
+            )
+        if not adj:
+            if src == "raw":
+                adj = "none"
+            elif src == "tushare":
+                adj = "qfq"
+            elif src == "internal":
+                adj = "tushare_factor_qfq"
+            elif src == "tdxquant":
+                adj = "front"
+            else:
+                from ..data.providers.base import DataSource, SIGNAL_SOURCE_ADJUSTMENT
+
+                _enum = {
+                    "tdxquant": DataSource.TDXQUANT,
+                    "tushare": DataSource.TUSHARE,
+                }.get(src)
+                if _enum and _enum in SIGNAL_SOURCE_ADJUSTMENT:
+                    adj = SIGNAL_SOURCE_ADJUSTMENT[_enum].value
+        if not adj:
+            raise ValueError(
+                f"signal_variants[{i}].signal_adjustment is required for source {src}"
+            )
+        key = (src, adj, ds or "")
+        if key in seen:
+            raise ValueError(f"signal_variants[{i}] duplicates {key}")
+        seen.add(key)
+        out.append(
+            {"signal_data_source": src, "signal_adjustment": adj, "dataset_id": ds}
+        )
+    if len(out) > 4:
+        raise ValueError("signal_variants supports at most 4 signal sources")
+    return out
+
+
+def _resolve_variant_datasets_and_common_universe(
+    cfg: AStockConfig,
+    descriptors: List[Dict[str, Any]],
+    *,
+    requested_codes: Sequence[str],
+    execution_data_source: str,
+    execution_dataset_id: Optional[str],
+    requested_end: Optional[int],
+    universe_dataset_id: Optional[str] = None,
+):
+    """Resolve + bind every signal variant dataset and the shared execution
+    dataset; compute the dynamic common universe and common cutoff (Gate C
+    D2 §八). Nothing here is hardcoded to specific counts or dates."""
+    from ..data.dataset_store import DatasetStore
+    from ..data.repository import MarketDataRepository, DatasetNotFoundError
+    from ..data.dataset_binding import (
+        DatasetBindingError,
+        classify_symbol_coverage,
+        manifest_symbol_index,
+        validate_execution_dataset_binding,
+        validate_signal_dataset_binding,
+    )
+
+    repo = MarketDataRepository(DatasetStore(cfg.market_data_root))
+
+    resolved: List[Dict[str, Any]] = []
+    for desc in descriptors:
+        src = desc["signal_data_source"]
+        adj = desc.get("signal_adjustment")
+        ds_id = desc.get("dataset_id")
+        if ds_id:
+            manifest = validate_signal_dataset_binding(
+                repo,
+                ds_id,
+                source=src if src != "raw" else None,
+                adjustment=adj,
+                period="1d",
+                allow_raw_signal=(src == "raw") or (adj in ("none", "composite_none")),
+            )
+        else:
+            manifest = None
+            _last = None
+            for _cs, _ca in _signal_resolve_candidates(src, adj):
+                try:
+                    manifest = repo.resolve_latest_ready(
+                        source=_cs, adjustment=_ca, period="1d"
+                    )
+                    break
+                except DatasetNotFoundError as _e:
+                    _last = _e
+            if manifest is None:
+                raise DatasetBindingError(
+                    "DATASET_NOT_FOUND",
+                    f"No ready dataset for signal variant source={src} "
+                    f"adjustment={adj}. Run sync first.",
+                    http_status=404,
+                    requested_source=src,
+                    requested_adjustment=adj,
+                    remediation="先同步该信号源的 ready 数据集，或从 variant 列表移除",
+                ) from _last
+            ds_id = manifest.dataset_id
+        label = f"{src}/{manifest.adjustment}"
+        resolved.append(
+            {
+                "signal_data_source": src,
+                "signal_adjustment": manifest.adjustment,
+                "dataset_id": ds_id,
+                "manifest": manifest,
+                "label": label,
+            }
+        )
+    if len({r["dataset_id"] for r in resolved}) != len(resolved):
+        raise ValueError("signal variants must use distinct signal datasets")
+
+    exec_src = (execution_data_source or "local_vendor").strip()
+    if execution_dataset_id:
+        exec_manifest = validate_execution_dataset_binding(
+            repo, execution_dataset_id, source=exec_src, period="1d"
+        )
+        exec_id = execution_dataset_id
+    else:
+        try:
+            exec_manifest = repo.resolve_latest_ready(
+                source=exec_src, adjustment="none", period="1d"
+            )
+            exec_id = exec_manifest.dataset_id
+        except DatasetNotFoundError:
+            raise DatasetBindingError(
+                "DATASET_NOT_FOUND",
+                f"No ready {exec_src}/none execution dataset for experiment.",
+                http_status=404,
+                requested_source=exec_src,
+                requested_adjustment="none",
+                remediation="先同步执行数据集（如 local_vendor/none），或显式指定 execution_dataset_id",
+            ) from None
+
+    # ---- dynamic common universe (requested ∩ every signal set ∩ execution) ----
+    sig_indexes = [(r["label"], manifest_symbol_index(r["manifest"])) for r in resolved]
+    exec_index = manifest_symbol_index(exec_manifest)
+    # Gate C D7: corporate-action factor coverage is part of eligibility
+    # (per-symbol explicit exclusion — never whole-board silent exclusion).
+    # Gate B8: coverage mirrors factor_resolution_v1 — a symbol is covered if
+    # the main factor set, the supplement factor set (delisted stocks), or
+    # the PIT-universe alias canonical in either of them has it.
+    _factor_cache: Dict[str, Any] = {}
+    _pit_for_alias = None
+    if universe_dataset_id:
+        from ..data.pit_universe import PointInTimeUniverse
+
+        try:
+            _pit_for_alias = PointInTimeUniverse.from_root(
+                cfg.market_data_root, universe_dataset_id
+            )
+        except FileNotFoundError:
+            raise DatasetBindingError(
+                "UNIVERSE_NOT_FOUND",
+                f"point-in-time universe not found: {universe_dataset_id}",
+                http_status=404,
+                dataset_id=universe_dataset_id,
+                remediation="检查 universe_dataset_id 拼写，或先构建点时宇宙",
+            ) from None
+        except ValueError as _ue:
+            raise DatasetBindingError(
+                "UNIVERSE_CORRUPT",
+                f"point-in-time universe unreadable: {universe_dataset_id}: {_ue}",
+                http_status=422,
+                dataset_id=universe_dataset_id,
+                remediation="universe 文件内容哈希不一致（损坏）；禁止继续，请检查数据根",
+            ) from None
+
+    def _index_for_id(fid: str) -> Optional[Dict[str, Any]]:
+        if not fid:
+            return None
+        if fid not in _factor_cache:
+            try:
+                fm = repo.get_dataset(fid)
+            except DatasetNotFoundError:
+                _factor_cache[fid] = None
+                return None
+            _factor_cache[fid] = manifest_symbol_index(fm)
+        return _factor_cache[fid]
+
+    def _factor_indexes_for(r) -> List[Dict[str, Any]]:
+        """Ordered coverage tiers: main factor set, then supplement.
+
+        CA-factor eligibility is only required for **derived** QFQ signal
+        sets that pin a factor parent (or internal/*qfq). Native vendor
+        signals (tdxquant/front, tushare/qfq, raw/none) do not gate the
+        common pool on adj_factor coverage — otherwise a tiny incomplete
+        factor snapshot can empty the entire experiment pool.
+        """
+        m = r["manifest"]
+        fid = getattr(m, "factor_dataset_id", "") or ""
+        adj = (getattr(m, "adjustment", None) or "").strip()
+        src = (getattr(m, "source", None) or "").strip()
+        derived = bool(fid) or (
+            src == "internal"
+            and adj in ("tushare_factor_qfq", "composite_tushare_factor_qfq", "asof_qfq")
+        )
+        if not derived:
+            return []
+        if not fid:
+            # Prefer fullest ready adj_factor (symbol_count), then cutoff/created.
+            cands = repo.list_datasets(
+                source="tushare", adjustment="adj_factor", period="1d", status="ready",
+            )
+            if cands:
+                cands.sort(
+                    key=lambda x: (
+                        int(x.data_cutoff_date or 0),
+                        int(x.symbol_count or 0),
+                        x.created_at or "",
+                    ),
+                    reverse=True,
+                )
+                fid = cands[0].dataset_id
+            else:
+                fid = ""
+        _prov = getattr(m, "provenance", None) or {}
+        sup_fid = str(_prov.get("supplement_factor_dataset_id") or "")
+        return [i for i in (_index_for_id(fid), _index_for_id(sup_fid))
+                if i is not None]
+
+    def _ca_factor_covered(fidxs: List[Dict[str, Any]], code: str) -> Optional[str]:
+        """None when covered; else the coverage failure class of tier 1."""
+        if not fidxs:
+            return None  # no factor dataset at all -> legacy behavior
+        lookups = [code]
+        if _pit_for_alias is not None:
+            _w = _pit_for_alias.resolve(code)
+            _canon = getattr(_w, "canonical_symbol", None) if _w else None
+            if _canon and _canon != code:
+                lookups.append(_canon)
+        first_fail = None
+        for fidx in fidxs:
+            for lk in lookups:
+                fcov = classify_symbol_coverage(fidx, lk)
+                if fcov == "ok":
+                    return None
+                if first_fail is None:
+                    first_fail = fcov
+        return first_fail or "missing"
+
+    factor_indexes = [(r["label"], _factor_indexes_for(r)) for r in resolved]
+    eligible: List[str] = []
+    exclusions: List[Dict[str, Any]] = []
+    excluded_by_signal: Dict[str, int] = {r["label"]: 0 for r in resolved}
+    excluded_by_execution = 0
+    for code in requested_codes:
+        reasons = []
+        for (label, idx), (_, fidxs) in zip(sig_indexes, factor_indexes):
+            cov = classify_symbol_coverage(idx, code)
+            if cov != "ok":
+                reasons.append(f"signal[{label}]:{cov}")
+                excluded_by_signal[label] += 1
+                continue
+            _ffail = _ca_factor_covered(fidxs, code)
+            if _ffail is not None:
+                reasons.append(f"signal[{label}]:ca_factor_{_ffail}")
+                excluded_by_signal[label] += 1
+        cov_e = classify_symbol_coverage(exec_index, code)
+        if cov_e != "ok":
+            reasons.append(f"execution:{cov_e}")
+            excluded_by_execution += 1
+        if reasons:
+            exclusions.append({"symbol": code, "reason": ";".join(reasons)})
+        else:
+            eligible.append(code)
+
+    # ---- dynamic common cutoff ----
+    def _max_last_date(m) -> Optional[int]:
+        lasts = [s.last_date for s in m.symbols if s.last_date]
+        return max(lasts) if lasts else None
+
+    cutoffs = [c for c in (
+        [_max_last_date(r["manifest"]) for r in resolved]
+        + [_max_last_date(exec_manifest)]
+    ) if c]
+    dataset_cutoff = min(cutoffs) if cutoffs else None
+    effective_end = dataset_cutoff
+    if requested_end and dataset_cutoff:
+        effective_end = min(int(requested_end), int(dataset_cutoff))
+    elif requested_end:
+        effective_end = int(requested_end)
+
+    info = {
+        "signal_variants": [
+            {
+                "signal_data_source": r["signal_data_source"],
+                "signal_adjustment": r["signal_adjustment"],
+                "dataset_id": r["dataset_id"],
+                "label": r["label"],
+                "signal_raw_dataset_id": getattr(r["manifest"], "raw_dataset_id", "") or "",
+                "signal_factor_dataset_id": getattr(r["manifest"], "factor_dataset_id", "") or "",
+                "formula_version": getattr(r["manifest"], "formula_version", "") or "",
+                "data_cutoff": _max_last_date(r["manifest"]),
+            }
+            for r in resolved
+        ],
+        "execution": {
+            "source": exec_manifest.source,
+            "adjustment": exec_manifest.adjustment,
+            "dataset_id": exec_id,
+            "data_cutoff": _max_last_date(exec_manifest),
+        },
+        "requested_universe_count": len(requested_codes),
+        "common_universe_count": len(eligible),
+        "excluded_by_signal_counts": excluded_by_signal,
+        "excluded_by_execution_count": excluded_by_execution,
+        "excluded_total": len(exclusions),
+        "exclusions": exclusions[:500],
+        "requested_end_date": requested_end,
+        "dataset_common_cutoff": dataset_cutoff,
+        "effective_end_date": effective_end,
+        "eligible_codes": eligible,
+    }
+    exec_resolved = {"source": exec_manifest.source, "dataset_id": exec_id}
+    return resolved, exec_resolved, info
+
+
 def create_experiment_from_grid(
     cfg: Optional[AStockConfig],
     *,
@@ -855,6 +1306,21 @@ def create_experiment_from_grid(
     use_signal_cache: bool = True,
     promote_top_n: int = 3,
     promote_metric: str = "total_return",
+    signal_data_source: Optional[str] = None,
+    signal_adjustment: Optional[str] = None,
+    dataset_id: Optional[str] = None,
+    weekly_bar_mode: str = "local_aggregate",
+    execution_data_source: str = "local_vendor",
+    execution_dataset_id: Optional[str] = None,
+    dual_source_compare: bool = False,
+    signal_variants: Optional[Sequence[dict]] = None,
+    bagua_period: str = "WEEK",
+    bagua_price_plane: Optional[str] = None,
+    bagua_price_planes: Optional[Sequence[str]] = None,
+    baseline: Optional[str] = None,
+    universe_dataset_id: Optional[str] = None,
+    delist_exit_scenario: Optional[str] = None,
+    delist_recovery_discount: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Create experiment from legacy weekday_keys templates OR free axes.
 
@@ -862,8 +1328,9 @@ def create_experiment_from_grid(
     so large grids screen quickly; promote winners with engine=full later.
 
     Templates are presets only: when any free axis is provided, weekday_keys
-    are ignored. Caps: DEFAULT_MAX_VARIANTS=50 soft; HARD_MAX_VARIANTS=500.
-    force=True required to exceed max_variants; hard max always refuses.
+    are ignored.     Caps: DEFAULT_MAX_VARIANTS=50 soft (UI often raises); HARD_MAX_VARIANTS
+    default 2000 (env ASTOCK_EXP_HARD_MAX_VARIANTS). force=True required to
+    exceed max_variants; hard max always refuses.
 
     Extra (爻辞回测):
       - gua_filters: inline exact_line filters (or mix dicts into gua_keys)
@@ -872,6 +1339,35 @@ def create_experiment_from_grid(
     """
     cfg = cfg or get_default_config()
     from .yao_rules import resolve_universe_codes, normalize_periods
+
+    # Gate B7: survivorship-safe baseline selector. Explicit user fields win;
+    # the baseline fills whatever is unset. Fail-closed: missing baseline
+    # datasets raise BaselineUnavailableError (mapped to 4xx) — never a
+    # silent fallback to legacy datasets.
+    if baseline:
+        if baseline != "survivorship_safe":
+            raise ValueError(
+                f"unknown baseline: {baseline!r}; expected 'survivorship_safe' "
+                f"(omit for legacy explicit dataset selection)"
+            )
+        from .baseline import resolve_survivorship_safe_baseline
+
+        _bl = resolve_survivorship_safe_baseline(
+            cfg,
+            delist_exit_scenario=delist_exit_scenario,
+            delist_recovery_discount=delist_recovery_discount,
+        )
+        signal_data_source = signal_data_source or _bl["signal_data_source"]
+        signal_adjustment = signal_adjustment or _bl["signal_adjustment"]
+        dataset_id = dataset_id or _bl["dataset_id"]
+        # Unset / product-default exec → baseline pins; explicit source+id kept.
+        if not execution_dataset_id and execution_data_source in (
+            None, "", "tdx_local", "local_vendor"
+        ):
+            execution_data_source = _bl["execution_data_source"]
+        execution_dataset_id = execution_dataset_id or _bl["execution_dataset_id"]
+        universe_dataset_id = universe_dataset_id or _bl["universe_dataset_id"]
+        delist_exit_scenario = delist_exit_scenario or _bl["delist_exit_scenario"]
 
     resolved_codes = resolve_universe_codes(
         cfg, universe=universe, codes=codes
@@ -981,6 +1477,154 @@ def create_experiment_from_grid(
         if n > HARD_MAX_VARIANTS:
             raise ValueError("组合数 %s 超过硬顶 %s" % (n, HARD_MAX_VARIANTS))
 
+    _ms_fields = {
+        "signal_data_source": signal_data_source,
+        "signal_adjustment": signal_adjustment,
+        "dataset_id": dataset_id,
+        "weekly_bar_mode": weekly_bar_mode,
+        "execution_data_source": execution_data_source,
+        "execution_dataset_id": execution_dataset_id,
+        # Gate B7: survivorship-safe chain fields on every variant
+        "universe_dataset_id": universe_dataset_id,
+        "delist_exit_scenario": delist_exit_scenario,
+        "delist_recovery_discount": delist_recovery_discount,
+    }
+    for v in variants:
+        v.update({k: val for k, val in _ms_fields.items() if val is not None})
+
+    # ---- Gate C D2: configurable signal-variant list (no hardcoded pairs) ----
+    # dual_source_compare is now just an alias for the formal template below;
+    # explicit signal_variants always wins. Legacy is NEVER auto-added.
+    _descriptors = _normalize_signal_variants(signal_variants)
+    if not _descriptors and dual_source_compare:
+        _descriptors = [dict(d) for d in DUAL_SOURCE_COMPARE_TEMPLATE]
+    _repo_mode_single = (
+        not _descriptors
+        and signal_data_source in ("tdxquant", "tushare", "internal", "raw")
+    )
+    if _repo_mode_single:
+        _descriptors = [
+            {
+                "signal_data_source": signal_data_source,
+                "signal_adjustment": signal_adjustment,
+                "dataset_id": dataset_id,
+            }
+        ]
+    common_universe_info = None
+    if _descriptors:
+        (
+            _resolved_descriptors,
+            _exec_resolved,
+            common_universe_info,
+        ) = _resolve_variant_datasets_and_common_universe(
+            cfg,
+            _descriptors,
+            requested_codes=resolved_codes,
+            execution_data_source=execution_data_source,
+            execution_dataset_id=execution_dataset_id,
+            requested_end=end,
+            universe_dataset_id=universe_dataset_id,
+        )
+        eligible_codes = common_universe_info["eligible_codes"]
+        if not eligible_codes:
+            raise ValueError(
+                "共同股票池为空：请求的股票均不被所选信号/执行数据集覆盖"
+            )
+        effective_end = common_universe_info["effective_end_date"]
+        multi = len(_resolved_descriptors) > 1
+        new_variants = []
+        for di, desc in enumerate(_resolved_descriptors):
+            for v in variants:
+                dv = dict(v)
+                dv["signal_data_source"] = desc["signal_data_source"]
+                dv["signal_adjustment"] = desc["signal_adjustment"]
+                dv["dataset_id"] = desc["dataset_id"]
+                dv["execution_data_source"] = _exec_resolved["source"]
+                dv["execution_dataset_id"] = _exec_resolved["dataset_id"]
+                # raw signal plane = research_unadjusted for that variant only
+                if desc["signal_data_source"] == "raw" or (
+                    desc.get("signal_adjustment") in ("none", "composite_none")
+                ):
+                    dv["research_unadjusted"] = True
+                dv["codes"] = list(eligible_codes)
+                if effective_end:
+                    dv["end"] = effective_end
+                dv["_meta"] = dict(dv.get("_meta") or {})
+                dv["_meta"]["signal_data_source"] = desc["signal_data_source"]
+                dv["_meta"]["signal_dataset_id"] = desc["dataset_id"]
+                dv["_meta"]["signal_variant_label"] = desc["label"]
+                new_variants.append(dv)
+        variants = new_variants
+        n = len(variants)
+        if multi and n > HARD_MAX_VARIANTS:
+            raise ValueError("组合数 %s 超过硬顶 %s" % (n, HARD_MAX_VARIANTS))
+        # experiment-level fields now describe the shared execution config
+        execution_data_source = _exec_resolved["source"]
+        execution_dataset_id = _exec_resolved["dataset_id"]
+        resolved_codes = list(eligible_codes)
+        if effective_end:
+            end = effective_end
+        if _repo_mode_single:
+            signal_data_source = _resolved_descriptors[0]["signal_data_source"]
+            signal_adjustment = _resolved_descriptors[0]["signal_adjustment"]
+            dataset_id = _resolved_descriptors[0]["dataset_id"]
+
+    # ---- Weekly bagua price-plane axis (raw / tdx_front / tushare_qfq) ----
+    # Multi-select expands only variants that enable bagua filter; others keep
+    # a single default plane for repro without multiplying the grid.
+    _planes: List[str] = []
+    _seen_pl = set()
+    for p in list(bagua_price_planes or []):
+        s = str(p or "").strip().lower()
+        if not s or s in _seen_pl:
+            continue
+        if s in ("tdxquant_front", "front", "通达信前复权"):
+            s = "tdx_front"
+        elif s in ("ts_qfq", "qfq", "tushare前复权"):
+            s = "tushare_qfq"
+        elif s in ("none", "unadjusted", "未复权"):
+            s = "raw"
+        if s not in ("raw", "tdx_front", "tushare_qfq"):
+            continue
+        _seen_pl.add(s)
+        _planes.append(s)
+    if not _planes:
+        s0 = str(bagua_price_plane or "raw").strip().lower() or "raw"
+        if s0 in ("tdxquant_front", "front"):
+            s0 = "tdx_front"
+        elif s0 in ("ts_qfq", "qfq"):
+            s0 = "tushare_qfq"
+        elif s0 in ("none", "unadjusted"):
+            s0 = "raw"
+        if s0 not in ("raw", "tdx_front", "tushare_qfq"):
+            s0 = "raw"
+        _planes = [s0]
+    _bp = (bagua_period or "WEEK").strip().upper() or "WEEK"
+    if _bp not in ("WEEK", "DAY", "MONTH"):
+        _bp = "WEEK"
+    _plane_expanded: List[Dict[str, Any]] = []
+    for v in variants:
+        _gf = v.get("gua_filter") if isinstance(v.get("gua_filter"), dict) else {}
+        _gua_on = bool(v.get("with_bagua")) or bool(_gf.get("enabled"))
+        _use_planes = _planes if _gua_on else [_planes[0]]
+        for plane in _use_planes:
+            dv = dict(v)
+            dv["bagua_period"] = _bp
+            dv["bagua_price_plane"] = plane
+            dv["_meta"] = dict(dv.get("_meta") or {})
+            dv["_meta"]["bagua_period"] = _bp
+            dv["_meta"]["bagua_price_plane"] = plane
+            _plane_expanded.append(dv)
+    variants = _plane_expanded
+    n = len(variants)
+    if n > HARD_MAX_VARIANTS:
+        raise ValueError("组合数 %s 超过硬顶 %s（含周卦口径展开）" % (n, HARD_MAX_VARIANTS))
+    if n > max_variants and not force:
+        raise ValueError(
+            "组合数 %s 超过上限 max_variants=%s；请少选周卦口径/信号源，或 force=true（硬顶 %s）"
+            % (n, max_variants, HARD_MAX_VARIANTS)
+        )
+
     warning = None
     if n > 20:
         warning = "组合数 %s 较大，建议先用演示池试跑" % n
@@ -1029,6 +1673,34 @@ def create_experiment_from_grid(
         "end": end,
         "account_mode": account_mode,
         "research_unadjusted": research_unadjusted,
+        "signal_data_source": signal_data_source,
+        "signal_adjustment": signal_adjustment,
+        "dataset_id": dataset_id,
+        "weekly_bar_mode": weekly_bar_mode,
+        "execution_data_source": execution_data_source,
+        "execution_dataset_id": execution_dataset_id,
+        # Gate B7: survivorship-safe chain configuration
+        "baseline": baseline,
+        "universe_dataset_id": universe_dataset_id,
+        "delist_exit_scenario": delist_exit_scenario,
+        "delist_recovery_discount": delist_recovery_discount,
+        "dual_source_compare": dual_source_compare,
+        "signal_variants": (
+            [
+                {k: v for k, v in d.items() if k != "manifest"}
+                for d in (common_universe_info or {}).get("signal_variants", [])
+            ]
+            if common_universe_info
+            else None
+        ),
+        "bagua_period": _bp,
+        "bagua_price_plane": _planes[0],
+        "bagua_price_planes": list(_planes),
+        "common_universe": (
+            {k: v for k, v in common_universe_info.items() if k != "eligible_codes"}
+            if common_universe_info
+            else None
+        ),
         "estimated": n,
         "theoretical": theoretical,
         "rejected": rejected,
@@ -1174,6 +1846,12 @@ class ExperimentRunner:
                 end=params.get("end"),
                 with_bagua=bool(params.get("with_bagua")),
                 gua_filter=params.get("gua_filter"),
+                bagua_period=params.get("bagua_period")
+                or exp_cfg.get("bagua_period")
+                or "WEEK",
+                bagua_price_plane=params.get("bagua_price_plane")
+                or exp_cfg.get("bagua_price_plane")
+                or "raw",
                 research_unadjusted=bool(params.get("research_unadjusted")),
                 stop_loss=params.get("stop_loss"),
                 take_profit=params.get("take_profit"),
@@ -1184,13 +1862,36 @@ class ExperimentRunner:
                 holiday_policy=params.get("holiday_policy")
                 or exp_cfg.get("holiday_policy")
                 or "next_trading_day",
+                signal_data_source=params.get("signal_data_source")
+                or exp_cfg.get("signal_data_source"),
+                signal_adjustment=params.get("signal_adjustment")
+                or exp_cfg.get("signal_adjustment"),
+                dataset_id=params.get("dataset_id")
+                or exp_cfg.get("dataset_id"),
+                weekly_bar_mode=params.get("weekly_bar_mode")
+                or exp_cfg.get("weekly_bar_mode")
+                or "local_aggregate",
+                execution_data_source=params.get("execution_data_source")
+                or exp_cfg.get("execution_data_source")
+                or "local_vendor",
+                execution_dataset_id=params.get("execution_dataset_id")
+                or exp_cfg.get("execution_dataset_id"),
+                universe_dataset_id=params.get("universe_dataset_id")
+                or exp_cfg.get("universe_dataset_id"),
+                delist_exit_scenario=params.get("delist_exit_scenario")
+                or exp_cfg.get("delist_exit_scenario"),
+                delist_recovery_discount=(
+                    params.get("delist_recovery_discount")
+                    if params.get("delist_recovery_discount") is not None
+                    else exp_cfg.get("delist_recovery_discount")
+                ),
             )
             svc = BacktestService(self.cfg)
             summary = svc.run(req)
             rid = summary.get("run_id")
-            # link experiment on run row
+            # link experiment on run row (Gate C D5: upsert failures are NOT
+            # swallowed — the variant is marked failed by the outer handler)
             if rid:
-                try:
                     exp_db.upsert_run_from_index_row(
                         self.cfg,
                         {
@@ -1219,10 +1920,27 @@ class ExperimentRunner:
                             or (summary.get("research_fingerprint") if isinstance(summary, dict) else None),
                             "experiment_id": experiment_id,
                             "variant_id": vid,
+                            "signal_data_source": getattr(req, "signal_data_source", None),
+                            "signal_adjustment": getattr(req, "signal_adjustment", None),
+                            "dataset_id": getattr(req, "dataset_id", None),
+                            "weekly_bar_mode": getattr(req, "weekly_bar_mode", None) or "local_aggregate",
+                            "execution_data_source": getattr(req, "execution_data_source", None) or "local_vendor",
+                            "execution_dataset_id": getattr(req, "execution_dataset_id", None),
+                            "execution_adjustment": getattr(req, "execution_adjustment", None),
+                            "raw_dataset_id": getattr(req, "signal_raw_parent_dataset_id", None),
+                            "factor_dataset_id": getattr(req, "signal_factor_parent_dataset_id", None),
+                            "signal_formula_version": getattr(req, "signal_formula_version", None),
+                            "universe_dataset_id": getattr(req, "universe_dataset_id", None),
+                            "universe_rule_version": getattr(req, "universe_rule_version", None),
+                            "delist_exit_rule_version": getattr(req, "delist_exit_rule_version", None),
+                            "delist_exit_scenario": getattr(req, "delist_exit_scenario", None),
+                            "delist_recovery_discount": getattr(req, "delist_recovery_discount", None),
+                            "signal_supplement_factor_dataset_id": getattr(
+                                req, "signal_supplement_factor_dataset_id", None),
+                            "baseline_generation": getattr(req, "baseline_generation", None),
+                            "data_cutoff_date": getattr(req, "data_cutoff_date", None),
                         },
                     )
-                except Exception:
-                    pass
             st = "succeeded"
             if (summary.get("status") or "").startswith("no_go") or summary.get("status") == "failed":
                 st = "failed"
@@ -1275,7 +1993,14 @@ class ExperimentRunner:
                         skipped_variants=skipped,
                     )
 
-            final = "cancelled" if self.is_cancelled(experiment_id) else "completed"
+            # Gate C D2 §7: an experiment with ANY failed variant must not be
+            # reported as completed/succeeded.
+            if self.is_cancelled(experiment_id):
+                final = "cancelled"
+            elif failed > 0:
+                final = "failed"
+            else:
+                final = "completed"
             exp_db.update_experiment_status(
                 self.cfg,
                 experiment_id,

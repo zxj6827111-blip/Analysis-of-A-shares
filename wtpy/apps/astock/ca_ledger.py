@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -265,9 +265,9 @@ def apply_events_to_position(
                 )
                 continue
             if abs(mult - 1.0) > 1e-12 and mult > 0:
-                new_sh = int(sh * mult)
-                if lot_size > 1:
-                    new_sh = (new_sh // lot_size) * lot_size
+                # Corporate actions can create odd-lot holdings. The board-lot
+                # constraint applies to buys, not to bonus/split allocations.
+                new_sh = int(sh * mult + 1e-9)
                 if new_sh < 0:
                     new_sh = 0
                 notes.append(
@@ -295,6 +295,9 @@ def apply_day_events_to_open_positions(
     events_by_code: Dict[str, List[CorporateActionEvent]],
     last_applied: Dict[str, int],
     lot_size: int = 100,
+    account_mode: str = "portfolio",
+    cash_by_code: Optional[Dict[str, float]] = None,
+    applied_codes: Optional[Set[str]] = None,
 ) -> Tuple[float, List[str], int]:
     """Apply applyable events for ``day``; factor_jump audit events are skipped.
 
@@ -333,16 +336,24 @@ def apply_day_events_to_open_positions(
         if res.shares != sh0:
             pos.shares = res.shares
         if abs(res.cost_basis_scale - 1.0) > 1e-15 and px0:
+            # Per-share entry basis changes after bonus/split events; total
+            # historical cash cost remains unchanged.
             pos.entry_price = px0 * res.cost_basis_scale
-            if hasattr(pos, "cost") and pos.cost is not None:
-                try:
-                    pos.cost = float(pos.cost) * res.cost_basis_scale
-                except (TypeError, ValueError):
-                    pass
         if res.cash_delta:
-            c += res.cash_delta
+            if account_mode == "per_symbol" and cash_by_code is not None:
+                cash_by_code[code] = (
+                    float(cash_by_code.get(code, 0.0)) + res.cash_delta
+                )
+            else:
+                c += res.cash_delta
+            if hasattr(pos, "corporate_action_cash_received"):
+                pos.corporate_action_cash_received = float(
+                    getattr(pos, "corporate_action_cash_received", 0.0) or 0.0
+                ) + float(res.cash_delta)
         if res.events_applied:
             last_applied[code] = int(day)
+            if applied_codes is not None:
+                applied_codes.add(code)
             n += len(res.events_applied)
         notes.extend(res.notes)
     return c, notes, n

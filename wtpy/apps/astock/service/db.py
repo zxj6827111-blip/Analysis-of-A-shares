@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -18,9 +19,16 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from ..config import AStockConfig, get_default_config
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 4
 
 _LOCK = threading.RLock()
+
+logger = logging.getLogger("astock.db")
+
+
+class SchemaMigrationError(RuntimeError):
+    """Raised when a schema migration fails; the DB is rolled back to the
+    pre-migration version and callers must NOT continue writing."""
 
 SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
@@ -61,7 +69,25 @@ CREATE TABLE IF NOT EXISTS runs (
   n_signals_before_bagua INTEGER,
   n_signals_after_bagua INTEGER,
   error TEXT,
-  extra_json TEXT
+  extra_json TEXT,
+  signal_data_source TEXT,
+  signal_adjustment TEXT,
+  dataset_id TEXT,
+  weekly_bar_mode TEXT,
+  execution_data_source TEXT,
+  execution_dataset_id TEXT,
+  signal_raw_dataset_id TEXT,
+  signal_factor_dataset_id TEXT,
+  signal_formula_version TEXT,
+  execution_adjustment TEXT,
+  universe_dataset_id TEXT,
+  universe_rule_version TEXT,
+  delist_exit_rule_version TEXT,
+  delist_exit_scenario TEXT,
+  delist_recovery_discount REAL,
+  signal_supplement_factor_dataset_id TEXT,
+  baseline_generation TEXT,
+  data_cutoff_date INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS parameters (
@@ -147,25 +173,206 @@ def connect(cfg: Optional[AStockConfig] = None) -> sqlite3.Connection:
     return conn
 
 
+def _runs_columns(conn: sqlite3.Connection) -> set:
+    return {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+
+
+def _detect_schema_version(conn: sqlite3.Connection) -> int:
+    """Infer schema version from runs-table columns (legacy DBs without a
+    schema_meta row, or freshly created DBs where SCHEMA_SQL already built
+    the latest layout)."""
+    cols = _runs_columns(conn)
+    if _V4_COLUMNS.issubset(cols):
+        return _SCHEMA_VERSION
+    if _V3_COLUMNS.issubset(cols):
+        return 3
+    if "signal_data_source" in cols:
+        return 2
+    return 1
+
+
 def init_db(cfg: Optional[AStockConfig] = None) -> Path:
-    """Create schema if needed. Thread-safe."""
+    """Create schema if needed and run pending migrations. Thread-safe.
+
+    Migration contract (Gate C remediation, D5):
+    - every step runs inside a transaction and is rolled back on failure;
+    - failures raise SchemaMigrationError (callers must not swallow it);
+    - each step logs old_schema_version / target_schema_version /
+      migration_name / success|failure;
+    - steps are idempotent (guarded ALTERs), so partial-schema databases
+      migrate cleanly without duplicate-column errors.
+    """
     with _LOCK:
         path = db_path(cfg)
         conn = connect(cfg)
         try:
             conn.executescript(SCHEMA_SQL)
+            conn.commit()
             row = conn.execute(
                 "SELECT value FROM schema_meta WHERE key='schema_version'"
             ).fetchone()
             if not row:
+                # No version row: either a fresh DB (SCHEMA_SQL just created
+                # the latest layout) or a legacy pre-versioning DB. Detect by
+                # actual column presence — never assume latest.
+                current = _detect_schema_version(conn)
                 conn.execute(
                     "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?)",
-                    (str(_SCHEMA_VERSION),),
+                    (str(current),),
                 )
-            conn.commit()
+                conn.commit()
+            else:
+                current = int(row[0])
+            if current > _SCHEMA_VERSION:
+                raise SchemaMigrationError(
+                    f"database schema_version={current} is newer than code "
+                    f"supports ({_SCHEMA_VERSION}); refusing to write"
+                )
+            while current < _SCHEMA_VERSION:
+                target, name, fn = _MIGRATIONS[current]
+                logger.info(
+                    "schema migration start: old_schema_version=%s "
+                    "target_schema_version=%s migration_name=%s db=%s",
+                    current, target, name, path,
+                )
+                try:
+                    fn(conn)
+                    conn.execute(
+                        "UPDATE schema_meta SET value=? WHERE key='schema_version'",
+                        (str(target),),
+                    )
+                    conn.commit()
+                except Exception as e:
+                    conn.rollback()
+                    logger.error(
+                        "schema migration FAILURE: old_schema_version=%s "
+                        "target_schema_version=%s migration_name=%s error=%s",
+                        current, target, name, e,
+                    )
+                    raise SchemaMigrationError(
+                        f"migration {name} (v{current}->v{target}) failed: {e}"
+                    ) from e
+                logger.info(
+                    "schema migration success: old_schema_version=%s "
+                    "target_schema_version=%s migration_name=%s",
+                    current, target, name,
+                )
+                current = target
         finally:
             conn.close()
         return path
+
+
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """Add multi-source market data columns to runs table."""
+    _new_cols = [
+        ("signal_data_source", "TEXT"),
+        ("signal_adjustment", "TEXT"),
+        ("dataset_id", "TEXT"),
+        ("weekly_bar_mode", "TEXT"),
+        ("execution_data_source", "TEXT"),
+        ("execution_dataset_id", "TEXT"),
+        ("signal_raw_dataset_id", "TEXT"),
+        ("signal_factor_dataset_id", "TEXT"),
+    ]
+    existing = _runs_columns(conn)
+    for col_name, col_type in _new_cols:
+        if col_name not in existing:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {col_name} {col_type}")
+    conn.execute(
+        "UPDATE runs SET signal_data_source='legacy_tdx_local_asof' "
+        "WHERE signal_data_source IS NULL"
+    )
+    conn.execute(
+        "UPDATE runs SET signal_adjustment='asof_qfq' WHERE signal_adjustment IS NULL"
+    )
+    conn.execute(
+        "UPDATE runs SET weekly_bar_mode='local_aggregate' WHERE weekly_bar_mode IS NULL"
+    )
+    conn.execute(
+        "UPDATE runs SET execution_data_source='tdx_local' WHERE execution_data_source IS NULL"
+    )
+
+
+# Columns that define schema v3 (Gate C lineage completion). Existing v2
+# production DBs never migrated because the version was not bumped (defect D5).
+_V3_COLUMNS = frozenset(
+    {
+        "signal_raw_dataset_id",
+        "signal_factor_dataset_id",
+        "signal_formula_version",
+        "execution_adjustment",
+    }
+)
+
+
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """Add derived-dataset lineage columns to runs table (idempotent).
+
+    Handles partial-schema DBs where some of these columns were already
+    created by running newer code against an un-bumped v2 database.
+    """
+    existing = _runs_columns(conn)
+    for col_name in sorted(_V3_COLUMNS):
+        if col_name not in existing:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {col_name} TEXT")
+
+
+# Columns that define schema v4 (Gate B7: survivorship-safe chain lineage).
+_V4_COLUMNS = frozenset(
+    {
+        "universe_dataset_id",
+        "universe_rule_version",
+        "delist_exit_rule_version",
+        "delist_exit_scenario",
+        "delist_recovery_discount",
+        "signal_supplement_factor_dataset_id",
+        "baseline_generation",
+        "data_cutoff_date",
+    }
+)
+
+_V4_COLUMN_TYPES = {
+    "delist_recovery_discount": "REAL",
+    "data_cutoff_date": "INTEGER",
+}
+
+
+def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
+    """Add survivorship-safe chain columns to runs table (idempotent).
+
+    Handles partial-schema DBs (some v4 columns already present) with
+    guarded ALTERs, mirroring the v2->v3 contract.
+    """
+    existing = _runs_columns(conn)
+    for col_name in sorted(_V4_COLUMNS):
+        if col_name not in existing:
+            col_type = _V4_COLUMN_TYPES.get(col_name, "TEXT")
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {col_name} {col_type}")
+
+
+# current_version -> (target_version, migration_name, fn)
+_MIGRATIONS = {
+    1: (2, "v1_to_v2_multi_source_columns", _migrate_v1_to_v2),
+    2: (3, "v2_to_v3_lineage_columns", _migrate_v2_to_v3),
+    3: (4, "v3_to_v4_survivorship_safe_columns", _migrate_v3_to_v4),
+}
+
+
+def get_schema_version(cfg: Optional[AStockConfig] = None) -> int:
+    """Read stored schema version without migrating (0 = no schema_meta)."""
+    with _LOCK:
+        conn = connect(cfg)
+        try:
+            try:
+                row = conn.execute(
+                    "SELECT value FROM schema_meta WHERE key='schema_version'"
+                ).fetchone()
+            except sqlite3.OperationalError:
+                return 0
+            return int(row[0]) if row else 0
+        finally:
+            conn.close()
 
 
 def _json_dumps(obj: Any) -> str:
@@ -291,8 +498,16 @@ def upsert_run_from_index_row(
                   indicator_ids_json, indicator_names_json, param_hash,
                   experiment_id, variant_id, code_version, bagua_rule_version,
                   selected_codes_count, n_signals_before_bagua, n_signals_after_bagua,
-                  error, extra_json
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                  error, extra_json,
+                  signal_data_source, signal_adjustment, dataset_id,
+                  weekly_bar_mode, execution_data_source, execution_dataset_id,
+                  signal_raw_dataset_id, signal_factor_dataset_id,
+                  signal_formula_version, execution_adjustment,
+                  universe_dataset_id, universe_rule_version,
+                  delist_exit_rule_version, delist_exit_scenario,
+                  delist_recovery_discount, signal_supplement_factor_dataset_id,
+                  baseline_generation, data_cutoff_date
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(run_id) DO UPDATE SET
                   title=excluded.title,
                   status=excluded.status,
@@ -319,7 +534,25 @@ def upsert_run_from_index_row(
                   n_signals_before_bagua=excluded.n_signals_before_bagua,
                   n_signals_after_bagua=excluded.n_signals_after_bagua,
                   error=excluded.error,
-                  extra_json=excluded.extra_json
+                  extra_json=excluded.extra_json,
+                  signal_data_source=COALESCE(excluded.signal_data_source, runs.signal_data_source),
+                  signal_adjustment=COALESCE(excluded.signal_adjustment, runs.signal_adjustment),
+                  dataset_id=COALESCE(excluded.dataset_id, runs.dataset_id),
+                  weekly_bar_mode=COALESCE(excluded.weekly_bar_mode, runs.weekly_bar_mode),
+                  execution_data_source=COALESCE(excluded.execution_data_source, runs.execution_data_source),
+                  execution_dataset_id=COALESCE(excluded.execution_dataset_id, runs.execution_dataset_id),
+                  signal_raw_dataset_id=COALESCE(excluded.signal_raw_dataset_id, runs.signal_raw_dataset_id),
+                  signal_factor_dataset_id=COALESCE(excluded.signal_factor_dataset_id, runs.signal_factor_dataset_id),
+                  signal_formula_version=COALESCE(excluded.signal_formula_version, runs.signal_formula_version),
+                  execution_adjustment=COALESCE(excluded.execution_adjustment, runs.execution_adjustment),
+                  universe_dataset_id=COALESCE(excluded.universe_dataset_id, runs.universe_dataset_id),
+                  universe_rule_version=COALESCE(excluded.universe_rule_version, runs.universe_rule_version),
+                  delist_exit_rule_version=COALESCE(excluded.delist_exit_rule_version, runs.delist_exit_rule_version),
+                  delist_exit_scenario=COALESCE(excluded.delist_exit_scenario, runs.delist_exit_scenario),
+                  delist_recovery_discount=COALESCE(excluded.delist_recovery_discount, runs.delist_recovery_discount),
+                  signal_supplement_factor_dataset_id=COALESCE(excluded.signal_supplement_factor_dataset_id, runs.signal_supplement_factor_dataset_id),
+                  baseline_generation=COALESCE(excluded.baseline_generation, runs.baseline_generation),
+                  data_cutoff_date=COALESCE(excluded.data_cutoff_date, runs.data_cutoff_date)
                 """,
                 (
                     rid,
@@ -359,6 +592,24 @@ def upsert_run_from_index_row(
                         "filter_fp",
                         "execution_fp",
                     ) if k in row and row.get(k) is not None}),
+                    row.get("signal_data_source"),
+                    row.get("signal_adjustment"),
+                    row.get("dataset_id"),
+                    row.get("weekly_bar_mode"),
+                    row.get("execution_data_source"),
+                    row.get("execution_dataset_id"),
+                    row.get("raw_dataset_id") or row.get("signal_raw_dataset_id"),
+                    row.get("factor_dataset_id") or row.get("signal_factor_dataset_id"),
+                    row.get("signal_formula_version") or row.get("formula_version"),
+                    row.get("execution_adjustment"),
+                    row.get("universe_dataset_id"),
+                    row.get("universe_rule_version"),
+                    row.get("delist_exit_rule_version"),
+                    row.get("delist_exit_scenario"),
+                    row.get("delist_recovery_discount"),
+                    row.get("signal_supplement_factor_dataset_id"),
+                    row.get("baseline_generation"),
+                    row.get("data_cutoff_date"),
                 ),
             )
             conn.execute(
@@ -419,6 +670,9 @@ def upsert_run_from_index_row(
                     (rid, name, f"{rid}/{name}"),
                 )
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -489,6 +743,25 @@ def _row_to_history(r: sqlite3.Row) -> dict:
         "selected_codes_count": d.get("selected_codes_count"),
         "error": d.get("error"),
         "metrics": metrics if metrics else None,
+        "signal_data_source": d.get("signal_data_source"),
+        "signal_adjustment": d.get("signal_adjustment"),
+        "dataset_id": d.get("dataset_id"),
+        "weekly_bar_mode": d.get("weekly_bar_mode"),
+        "execution_data_source": d.get("execution_data_source"),
+        "execution_dataset_id": d.get("execution_dataset_id"),
+        "signal_raw_dataset_id": d.get("signal_raw_dataset_id"),
+        "signal_factor_dataset_id": d.get("signal_factor_dataset_id"),
+        "signal_formula_version": d.get("signal_formula_version"),
+        "execution_adjustment": d.get("execution_adjustment"),
+        # Gate B7: survivorship-safe chain lineage
+        "universe_dataset_id": d.get("universe_dataset_id"),
+        "universe_rule_version": d.get("universe_rule_version"),
+        "delist_exit_rule_version": d.get("delist_exit_rule_version"),
+        "delist_exit_scenario": d.get("delist_exit_scenario"),
+        "delist_recovery_discount": d.get("delist_recovery_discount"),
+        "signal_supplement_factor_dataset_id": d.get("signal_supplement_factor_dataset_id"),
+        "baseline_generation": d.get("baseline_generation"),
+        "data_cutoff_date": d.get("data_cutoff_date"),
         "source": "sqlite",
     }
     return out
@@ -542,6 +815,7 @@ def migrate_runs_index_to_sqlite(cfg: AStockConfig) -> Dict[str, Any]:
             rows = []
     except Exception as e:
         return {"imported": 0, "skipped": 0, "error": str(e), "ok": False}
+    errors: List[Dict[str, str]] = []
     for row in rows:
         rid = (row or {}).get("run_id")
         if not rid:
@@ -550,14 +824,151 @@ def migrate_runs_index_to_sqlite(cfg: AStockConfig) -> Dict[str, Any]:
         try:
             upsert_run_from_index_row(cfg, row, out_dir=Path(cfg.output_root) / rid)
             imported += 1
-        except Exception:
+        except SchemaMigrationError:
+            raise
+        except Exception as e:
             skipped += 1
+            errors.append({"run_id": str(rid), "error": str(e)[:300]})
+            logger.error("runs_index import failed for run %s: %s", rid, e)
     return {
         "imported": imported,
         "skipped": skipped,
+        "errors": errors,
         "path": str(index_path),
         "db": str(db_path(cfg)),
-        "ok": True,
+        "ok": not errors,
+    }
+
+
+def reconcile_runs_from_disk(
+    cfg: AStockConfig, *, dry_run: bool = False
+) -> Dict[str, Any]:
+    """Backfill SQLite runs missing vs on-disk artifacts (D5 remediation).
+
+    Sources of truth per run: runs_index.json row (if present) merged with the
+    run directory's run_meta.json (status / metrics / lineage from
+    repro.request). Only fields actually present in those artifacts are
+    written — nothing is guessed. Idempotent: runs already in SQLite are
+    reported as already_present and not rewritten.
+    """
+    init_db(cfg)
+    out_root = Path(cfg.output_root)
+    index_path = out_root / "runs_index.json"
+    index_rows: Dict[str, dict] = {}
+    if index_path.exists():
+        try:
+            for r in json.loads(index_path.read_text(encoding="utf-8")) or []:
+                if isinstance(r, dict) and r.get("run_id"):
+                    index_rows[str(r["run_id"])] = r
+        except Exception as e:
+            return {"ok": False, "error": f"runs_index.json unreadable: {e}"}
+
+    disk_runs: Dict[str, Path] = {}
+    if out_root.exists():
+        for d in out_root.iterdir():
+            if d.is_dir() and (d / "run_meta.json").exists():
+                disk_runs[d.name] = d
+
+    with _LOCK:
+        conn = connect(cfg)
+        try:
+            in_db = {r[0] for r in conn.execute("SELECT run_id FROM runs").fetchall()}
+        finally:
+            conn.close()
+
+    candidates = sorted(set(index_rows) | set(disk_runs))
+    inserted: List[str] = []
+    already_present: List[str] = []
+    failed: List[Dict[str, str]] = []
+    skipped_unverifiable: List[str] = []
+    for rid in candidates:
+        if rid in in_db:
+            already_present.append(rid)
+            continue
+        row = dict(index_rows.get(rid) or {})
+        out_dir = disk_runs.get(rid)
+        meta: dict = {}
+        if out_dir is not None:
+            try:
+                meta = json.loads((out_dir / "run_meta.json").read_text(encoding="utf-8"))
+            except Exception as e:
+                failed.append({"run_id": rid, "error": f"run_meta.json unreadable: {e}"})
+                continue
+        if not row and not meta:
+            skipped_unverifiable.append(rid)
+            continue
+        # merge verifiable fields from run_meta (index row wins where set)
+        req = {}
+        repro = meta.get("repro") if isinstance(meta.get("repro"), dict) else {}
+        if isinstance(repro.get("request"), dict):
+            req = repro["request"]
+        merged = {
+            "run_id": rid,
+            "status": row.get("status") or meta.get("status"),
+            "created_at": row.get("created_at"),
+            "title": row.get("title") or meta.get("title"),
+            "metrics": row.get("metrics") or meta.get("metrics"),
+            "indicator_ids": row.get("indicator_ids") or meta.get("indicator_ids"),
+            "period": row.get("period") or meta.get("period") or req.get("period"),
+            "hold": row.get("hold") if row.get("hold") is not None else meta.get("hold"),
+            "entry_lag": row.get("entry_lag") if row.get("entry_lag") is not None else meta.get("entry_lag"),
+            "start": row.get("start") if row.get("start") is not None else meta.get("start"),
+            "end": row.get("end") if row.get("end") is not None else meta.get("end"),
+            "buy_on": row.get("buy_on") or meta.get("buy_on"),
+            "sell_on": row.get("sell_on") or meta.get("sell_on"),
+            "buy_weekday": row.get("buy_weekday") if row.get("buy_weekday") is not None else meta.get("buy_weekday"),
+            "exit_weekday": row.get("exit_weekday") if row.get("exit_weekday") is not None else meta.get("exit_weekday"),
+            "signal_weekdays": row.get("signal_weekdays") or meta.get("signal_weekdays"),
+            "schedule_mode": row.get("schedule_mode") or meta.get("schedule_mode"),
+            "account_mode": row.get("account_mode") or meta.get("account_mode") or req.get("account_mode"),
+            "error": row.get("error") or meta.get("error"),
+            "experiment_id": row.get("experiment_id"),
+            "variant_id": row.get("variant_id"),
+            "param_hash": row.get("param_hash"),
+            "signal_data_source": row.get("signal_data_source") or req.get("signal_data_source"),
+            "signal_adjustment": row.get("signal_adjustment") or req.get("signal_adjustment"),
+            "dataset_id": row.get("dataset_id") or req.get("dataset_id"),
+            "weekly_bar_mode": row.get("weekly_bar_mode") or req.get("weekly_bar_mode"),
+            "execution_data_source": row.get("execution_data_source") or req.get("execution_data_source"),
+            "execution_dataset_id": row.get("execution_dataset_id") or req.get("execution_dataset_id"),
+            "execution_adjustment": row.get("execution_adjustment") or req.get("execution_adjustment"),
+            "signal_raw_dataset_id": row.get("raw_dataset_id") or row.get("signal_raw_dataset_id") or req.get("signal_raw_parent_dataset_id"),
+            "signal_factor_dataset_id": row.get("factor_dataset_id") or row.get("signal_factor_dataset_id") or req.get("signal_factor_parent_dataset_id"),
+            "signal_formula_version": row.get("signal_formula_version") or req.get("signal_formula_version"),
+            # Gate B7: survivorship-safe chain lineage
+            "universe_dataset_id": row.get("universe_dataset_id") or req.get("universe_dataset_id"),
+            "universe_rule_version": row.get("universe_rule_version") or req.get("universe_rule_version"),
+            "delist_exit_rule_version": row.get("delist_exit_rule_version") or req.get("delist_exit_rule_version"),
+            "delist_exit_scenario": row.get("delist_exit_scenario") or req.get("delist_exit_scenario"),
+            "delist_recovery_discount": row.get("delist_recovery_discount") if row.get("delist_recovery_discount") is not None else req.get("delist_recovery_discount"),
+            "signal_supplement_factor_dataset_id": row.get("signal_supplement_factor_dataset_id") or meta.get("signal_supplement_factor_dataset_id"),
+            "baseline_generation": row.get("baseline_generation") or meta.get("baseline_generation"),
+            "data_cutoff_date": row.get("data_cutoff_date") or meta.get("data_cutoff_date"),
+        }
+        merged = {k: v for k, v in merged.items() if v is not None}
+        merged["run_id"] = rid
+        if dry_run:
+            inserted.append(rid)
+            continue
+        try:
+            upsert_run_from_index_row(cfg, merged, out_dir=out_dir)
+            inserted.append(rid)
+        except SchemaMigrationError:
+            raise
+        except Exception as e:
+            failed.append({"run_id": rid, "error": str(e)[:300]})
+    return {
+        "ok": not failed,
+        "dry_run": dry_run,
+        "db": str(db_path(cfg)),
+        "schema_version": get_schema_version(cfg),
+        "checked": len(candidates),
+        "in_db_before": len(in_db),
+        "inserted": len(inserted),
+        "inserted_run_ids": inserted,
+        "already_present": len(already_present),
+        "skipped_unverifiable": skipped_unverifiable,
+        "failed": failed,
     }
 
 
@@ -705,6 +1116,131 @@ def list_experiments(cfg: AStockConfig, *, limit: int = 50) -> List[dict]:
             conn.close()
 
 
+def delete_experiment(
+    cfg: AStockConfig,
+    experiment_id: str,
+    *,
+    remove_runs: bool = True,
+) -> Dict[str, Any]:
+    """Delete experiment row + variants; optionally delete linked backtest runs."""
+    experiment_id = str(experiment_id or "").strip()
+    if not experiment_id or experiment_id in {".", ".."} or "/" in experiment_id or "\\" in experiment_id:
+        raise ValueError("invalid experiment_id")
+    if Path(experiment_id).name != experiment_id:
+        raise ValueError("invalid experiment_id")
+
+    exp = get_experiment(cfg, experiment_id)
+    st = str(exp.get("status") or "").lower()
+    # pending/draft/failed 可删；仅拦截真正在跑的状态
+    if st in ("running", "starting"):
+        raise ValueError("运行中实验禁止删除，请先取消")
+
+    run_ids = []
+    for v in exp.get("variants") or []:
+        rid = v.get("run_id")
+        if rid:
+            run_ids.append(str(rid))
+
+    deleted_runs: List[str] = []
+    run_errors: List[str] = []
+    if remove_runs and run_ids:
+        from .runs import delete_run
+
+        for rid in run_ids:
+            try:
+                delete_run(cfg, rid, remove_files=True)
+                deleted_runs.append(rid)
+            except Exception as e:
+                run_errors.append(f"{rid}: {e}")
+
+    with _LOCK:
+        conn = connect(cfg)
+        try:
+            conn.execute(
+                "DELETE FROM experiment_variants WHERE experiment_id=?",
+                (experiment_id,),
+            )
+            cur = conn.execute(
+                "DELETE FROM experiments WHERE experiment_id=?",
+                (experiment_id,),
+            )
+            if cur.rowcount <= 0:
+                raise FileNotFoundError(experiment_id)
+            conn.commit()
+        finally:
+            conn.close()
+
+    return {
+        "experiment_id": experiment_id,
+        "deleted": True,
+        "variants_removed": len(exp.get("variants") or []),
+        "runs_removed": deleted_runs,
+        "run_errors": run_errors,
+    }
+
+
+def delete_experiment_variant(
+    cfg: AStockConfig,
+    variant_id: str,
+    *,
+    remove_runs: bool = True,
+) -> Dict[str, Any]:
+    """Delete one experiment variant row; optionally delete its linked run."""
+    variant_id = str(variant_id or "").strip()
+    if not variant_id or variant_id in {".", ".."} or "/" in variant_id or "\\" in variant_id:
+        raise ValueError("invalid variant_id")
+    if Path(variant_id).name != variant_id:
+        raise ValueError("invalid variant_id")
+
+    init_db(cfg)
+    with _LOCK:
+        conn = connect(cfg)
+        try:
+            row = conn.execute(
+                "SELECT * FROM experiment_variants WHERE variant_id=?",
+                (variant_id,),
+            ).fetchone()
+            if not row:
+                raise FileNotFoundError(variant_id)
+            run_id = row["run_id"]
+            exp_id = row["experiment_id"]
+            st = str(row["status"] or "").lower()
+        finally:
+            conn.close()
+
+    if st in ("running",):
+        raise ValueError("运行中变体禁止删除")
+
+    run_removed = False
+    if remove_runs and run_id:
+        from .runs import delete_run
+
+        try:
+            delete_run(cfg, str(run_id), remove_files=True)
+            run_removed = True
+        except Exception:
+            run_removed = False
+
+    with _LOCK:
+        conn = connect(cfg)
+        try:
+            conn.execute(
+                "DELETE FROM experiment_variants WHERE variant_id=?",
+                (variant_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    return {
+        "variant_id": variant_id,
+        "experiment_id": exp_id,
+        "deleted": True,
+        "run_id": run_id,
+        "run_removed": run_removed,
+    }
+
+
 def update_experiment_status(
     cfg: AStockConfig, experiment_id: str, status: str, **counters
 ) -> None:
@@ -820,6 +1356,7 @@ def experiment_results_table(cfg: AStockConfig, experiment_id: str) -> Dict[str,
                         title = r["title"]
                 finally:
                     conn.close()
+        _p = v.get("params") or {}
         rows.append(
             {
                 "variant_id": v.get("variant_id"),
@@ -830,6 +1367,10 @@ def experiment_results_table(cfg: AStockConfig, experiment_id: str) -> Dict[str,
                 "title": title,
                 "error": v.get("error"),
                 "metrics": metrics,
+                "signal_data_source": _p.get("signal_data_source"),
+                "signal_adjustment": _p.get("signal_adjustment"),
+                "signal_dataset_id": _p.get("dataset_id"),
+                "execution_dataset_id": _p.get("execution_dataset_id"),
             }
         )
     return {

@@ -1,17 +1,16 @@
-"""In-process job store for async backtests with a true FIFO queue.
+"""In-process job store for async backtests with a FIFO multi-worker queue.
 
 Design:
 - Submit always returns immediately with status ``queued``.
-- A single dedicated worker thread pulls jobs in order and runs them one by one
-  (max_workers currently fixed to 1 for backtests).
-- Additional submits while one is running stay queued until the worker is free.
-
-This avoids ThreadPoolExecutor edge-cases under pytest and matches the product
-requirement: create task A, then B — B waits until A finishes, then auto-starts.
+- Up to ``max_workers`` dedicated worker threads pull jobs in order and run
+  them concurrently (default 6, hard cap 8; override via ASTOCK_BT_MAX_WORKERS).
+- Additional submits beyond capacity stay queued until a worker is free.
+- Queue order is FIFO by submit sequence; parallel slots fill from the head.
 """
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import time
@@ -22,6 +21,36 @@ from typing import Any, Dict, List, Optional
 
 from ..config import AStockConfig, get_default_config
 from .backtest import BacktestRequest, BacktestService
+
+# Product defaults: parallel backtests (6 mid-point on 8-core+ machines; hard cap 8).
+DEFAULT_BT_MAX_WORKERS = 6
+HARD_MAX_BT_WORKERS = 8
+
+
+def resolve_bt_max_workers(explicit: Optional[int] = None) -> int:
+    """Resolve worker count: explicit arg > env ASTOCK_BT_MAX_WORKERS > default.
+
+    An explicit non-integer raises ValueError naming the parameter and the
+    valid range (the env var stays tolerant and falls back to the default).
+    """
+    if explicit is not None:
+        try:
+            n = int(explicit)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "invalid max_workers=%r: must be an integer in [1, %d]"
+                % (explicit, HARD_MAX_BT_WORKERS)
+            ) from None
+    else:
+        raw = (os.environ.get("ASTOCK_BT_MAX_WORKERS") or "").strip()
+        if raw:
+            try:
+                n = int(raw)
+            except ValueError:
+                n = DEFAULT_BT_MAX_WORKERS
+        else:
+            n = DEFAULT_BT_MAX_WORKERS
+    return max(1, min(int(n or 1), HARD_MAX_BT_WORKERS))
 
 
 @dataclass
@@ -42,21 +71,23 @@ class JobRecord:
 
 
 class JobStore:
-    def __init__(self, cfg: Optional[AStockConfig] = None, max_workers: int = 1):
+    def __init__(self, cfg: Optional[AStockConfig] = None, max_workers: Optional[int] = None):
         self.cfg = cfg or get_default_config()
-        # Product: serial backtests. max_workers kept for API compatibility.
-        self.max_workers = max(1, int(max_workers or 1))
+        self.max_workers = resolve_bt_max_workers(max_workers)
         self._jobs: Dict[str, JobRecord] = {}
         self._lock = threading.RLock()
         self._seq = 0
         self._q: "queue.Queue[Optional[str]]" = queue.Queue()
         self._stop = threading.Event()
-        self._worker = threading.Thread(
-            target=self._worker_loop,
-            name="astock-bt-queue-worker",
-            daemon=True,
-        )
-        self._worker.start()
+        self._workers: List[threading.Thread] = []
+        for i in range(self.max_workers):
+            t = threading.Thread(
+                target=self._worker_loop,
+                name=f"astock-bt-queue-worker-{i + 1}",
+                daemon=True,
+            )
+            t.start()
+            self._workers.append(t)
 
     def _title_hint(self, req: BacktestRequest) -> str:
         ids = list(getattr(req, "rule_ids", None) or [])
@@ -87,6 +118,7 @@ class JobStore:
     def _refresh_queue_messages_unlocked(self) -> None:
         n_q = self._count_status_unlocked("queued")
         n_r = self._count_status_unlocked("running")
+        slots = max(0, self.max_workers - n_r)
         for r in self._jobs.values():
             if r.status != "queued":
                 continue
@@ -96,11 +128,17 @@ class JobStore:
             prog["queue_position"] = pos
             prog["n_queued"] = n_q
             prog["n_running"] = n_r
-            prog["message"] = (
-                "排队中（前面还有 %d 个任务）" % (pos - 1)
-                if pos > 1
-                else ("排队中，即将开始" if n_r else "排队中")
-            )
+            prog["max_workers"] = self.max_workers
+            if pos <= slots:
+                prog["message"] = "排队中，即将开始（并行槽位空闲）"
+            elif pos > 1:
+                ahead = pos - 1
+                prog["message"] = (
+                    "排队中（前面还有 %d 个任务，并行 %d/%d）"
+                    % (ahead, n_r, self.max_workers)
+                )
+            else:
+                prog["message"] = "排队中（并行 %d/%d）" % (n_r, self.max_workers)
             prog["updated_at"] = time.time()
             r.progress = prog
 
@@ -117,6 +155,7 @@ class JobStore:
             prog["queue_position"] = 0 if rec.status == "running" else self._queue_position_unlocked(job_id)
             prog["n_queued"] = self._count_status_unlocked("queued")
             prog["n_running"] = self._count_status_unlocked("running")
+            prog["max_workers"] = self.max_workers
             rec.progress = prog
             rec.updated_at = time.time()
 
@@ -126,9 +165,10 @@ class JobStore:
         with self._lock:
             self._seq += 1
             seq = self._seq
-            n_busy = self._count_status_unlocked("queued") + self._count_status_unlocked(
-                "running"
-            )
+            n_q = self._count_status_unlocked("queued")
+            n_r = self._count_status_unlocked("running")
+            free = max(0, self.max_workers - n_r)
+            ahead = max(0, n_q + 1 - free)
             rec = JobRecord(
                 job_id=job_id,
                 status="queued",
@@ -144,14 +184,16 @@ class JobStore:
                     "current": 0,
                     "total": 0,
                     "message": (
-                        "排队中（前面还有 %d 个任务）" % n_busy
-                        if n_busy
-                        else "排队中，即将开始"
+                        "排队中，即将开始（并行槽位空闲）"
+                        if ahead == 0
+                        else "排队中（前面还有 %d 个任务，并行 %d/%d）"
+                        % (ahead, n_r, self.max_workers)
                     ),
                     "code": None,
-                    "queue_position": n_busy + 1,
-                    "n_queued": self._count_status_unlocked("queued") + 1,
-                    "n_running": self._count_status_unlocked("running"),
+                    "queue_position": n_q + 1,
+                    "n_queued": n_q + 1,
+                    "n_running": n_r,
+                    "max_workers": self.max_workers,
                     "updated_at": now,
                 },
             )
@@ -168,6 +210,11 @@ class JobStore:
                 continue
             if job_id is None:
                 self._q.task_done()
+                # re-signal other workers to exit
+                try:
+                    self._q.put_nowait(None)
+                except Exception:
+                    pass
                 break
             try:
                 self._execute_job(job_id)
@@ -181,7 +228,6 @@ class JobStore:
                 return
             req = rec._req_obj
             if req is None:
-                # rebuild from request dict if needed
                 try:
                     req = BacktestRequest(**(rec.request or {}))
                 except Exception as e:  # noqa: BLE001
@@ -196,16 +242,21 @@ class JobStore:
                 "pct": 1.0,
                 "current": 0,
                 "total": 0,
-                "message": "任务启动",
+                "message": "任务启动（并行 %d/%d）"
+                % (self._count_status_unlocked("running"), self.max_workers),
                 "code": None,
                 "queue_position": 0,
                 "n_queued": self._count_status_unlocked("queued"),
                 "n_running": self._count_status_unlocked("running"),
+                "max_workers": self.max_workers,
                 "updated_at": time.time(),
             }
             self._refresh_queue_messages_unlocked()
 
         def _progress(payload: Dict[str, Any]) -> None:
+            # Cooperative cancel: raise so run_backtest unwinds at next progress tick.
+            if self.is_cancelled(job_id):
+                raise InterruptedError("job cancelled by user")
             self._set_progress(job_id, payload)
 
         try:
@@ -239,8 +290,24 @@ class JobStore:
                         "code": None,
                         "run_id": summary.get("run_id"),
                         "queue_position": 0,
+                        "max_workers": self.max_workers,
                         "updated_at": time.time(),
                     }
+                rec.updated_at = time.time()
+                self._refresh_queue_messages_unlocked()
+        except InterruptedError:
+            with self._lock:
+                rec = self._jobs.get(job_id)
+                if not rec:
+                    return
+                rec.status = "cancelled"
+                rec.error = rec.error or "用户取消"
+                rec.progress = {
+                    **(rec.progress or {}),
+                    "phase": "cancelled",
+                    "message": "已取消",
+                    "updated_at": time.time(),
+                }
                 rec.updated_at = time.time()
                 self._refresh_queue_messages_unlocked()
         except Exception as e:  # noqa: BLE001
@@ -258,6 +325,41 @@ class JobStore:
                 }
                 rec.updated_at = time.time()
                 self._refresh_queue_messages_unlocked()
+
+    def cancel(self, job_id: str) -> JobRecord:
+        """Cancel a queued or running job.
+
+        Queued jobs are marked cancelled and skipped by workers.
+        Running jobs are flagged; progress callbacks raise so the worker exits
+        cooperatively (best-effort; may finish current heavy step first).
+        """
+        with self._lock:
+            rec = self._jobs.get(job_id)
+            if not rec:
+                raise KeyError(job_id)
+            st = rec.status
+            if st in ("succeeded", "failed", "cancelled"):
+                return rec
+            was_running = st == "running"
+            rec.status = "cancelled"
+            rec.updated_at = time.time()
+            rec.error = rec.error or ("用户取消（运行中）" if was_running else "用户取消（排队中）")
+            rec.progress = {
+                **(rec.progress or {}),
+                "phase": "cancelled",
+                "message": rec.error,
+                "updated_at": time.time(),
+                "n_queued": self._count_status_unlocked("queued"),
+                "n_running": self._count_status_unlocked("running"),
+                "max_workers": self.max_workers,
+            }
+            self._refresh_queue_messages_unlocked()
+            return rec
+
+    def is_cancelled(self, job_id: str) -> bool:
+        with self._lock:
+            rec = self._jobs.get(job_id)
+            return bool(rec and rec.status == "cancelled")
 
     def get(self, job_id: str) -> JobRecord:
         with self._lock:
@@ -290,6 +392,7 @@ class JobStore:
                 "n_queued": len(queued),
                 "n_running": len(running),
                 "n_total": len(self._jobs),
+                "hard_max_workers": HARD_MAX_BT_WORKERS,
                 "queued": [self.to_public(r) for r in queued],
                 "running": [self.to_public(r) for r in running],
                 "recent": [self.to_public(r) for r in recent],
@@ -308,6 +411,7 @@ class JobStore:
         prog.setdefault("queue_position", qpos)
         prog.setdefault("n_queued", n_q)
         prog.setdefault("n_running", n_r)
+        prog.setdefault("max_workers", self.max_workers)
         return {
             "job_id": rec.job_id,
             "status": rec.status,
@@ -324,8 +428,14 @@ class JobStore:
         }
 
     def shutdown(self, wait: bool = False) -> None:
-        """Stop worker (for tests). Daemon thread also exits with process."""
+        """Stop workers (for tests). Daemon threads also exit with process."""
         self._stop.set()
-        self._q.put(None)
-        if wait and self._worker.is_alive():
-            self._worker.join(timeout=2.0)
+        for _ in self._workers:
+            try:
+                self._q.put_nowait(None)
+            except Exception:
+                self._q.put(None)
+        if wait:
+            for t in self._workers:
+                if t.is_alive():
+                    t.join(timeout=2.0)

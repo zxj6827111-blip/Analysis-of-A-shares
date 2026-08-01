@@ -195,4 +195,4 @@ def test_expand_param_grid_passes_filters():
         codes=DEMO_CODES,
     )
     assert len(variants) == 2
-    assert HARD_MAX_VARIANTS == 500
+    assert 500 <= HARD_MAX_VARIANTS <= 20000

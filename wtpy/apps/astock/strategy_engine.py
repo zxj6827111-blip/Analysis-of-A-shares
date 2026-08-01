@@ -78,9 +78,15 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
         factor_by_code: Optional[Dict[str, Dict[int, float]]] = None,
         ca_events_by_code: Optional[Dict[str, list]] = None,
         corporate_action_policy: str = "fail_closed",
+        delist_policy: Optional[Any] = None,
+        delist_terminal_dates: Optional[Dict[str, int]] = None,
     ):
         self.cfg = cfg
         self.calendar = calendar
+        # Gate B5: delisted-position terminal exit. Both must be provided to
+        # activate; None keeps legacy behavior (old runs stay reproducible).
+        self.delist_policy = delist_policy
+        self.delist_terminal_dates: Dict[str, int] = dict(delist_terminal_dates or {})
         # four-lane: execution+valuation ALWAYS on bars_by_code (RAW formal);
         # adj_bars_by_code = point_in_time research audit; standard_qfq_bars = signal-level audit.
         # Neither is a trading index.
@@ -319,12 +325,19 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
         cash = float(self.cfg.initial_capital)
         cash_by_code: Dict[str, float] = {}
         positions: Dict[str, Position] = {}
+        # Gate B5 accounting
+        _n_delist_exits = 0
+        _delist_realized_loss_total = 0.0
         fills: List[Fill] = []
         equity_curve: List[EquityPoint] = []
         # deferred_sells[code] = {"trigger": optional risk reason, "defer": last defer reason}
         deferred_sells: Dict[str, dict] = {}
         ca_unsupported_notes: List[str] = []
+        ca_applied_notes: List[str] = []
         ca_fail = False
+        # Per-run state: a PortfolioBacktester instance may be reused.
+        self._ca_last_applied = {}
+        self._n_corporate_actions = 0
         ca_policy, _ca_init_notes, _ca_force = normalize_corporate_action_policy(
             getattr(self, "corporate_action_policy", None)
         )
@@ -345,8 +358,7 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                 and positions
                 and self.ca_events_by_code
             ):
-                if not hasattr(self, "_ca_last_applied") or self._ca_last_applied is None:
-                    self._ca_last_applied = {}
+                applied_codes: Set[str] = set()
                 cash, ca_notes, n_ca = apply_day_events_to_open_positions(
                     positions=positions,
                     cash=cash,
@@ -354,11 +366,23 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                     events_by_code=self.ca_events_by_code,
                     last_applied=self._ca_last_applied,
                     lot_size=int(getattr(self.cfg, "lot_size", 100) or 100),
+                    account_mode=account_mode,
+                    cash_by_code=cash_by_code,
+                    applied_codes=applied_codes,
                 )
+                for note in ca_notes:
+                    if note not in ca_applied_notes:
+                        ca_applied_notes.append(note)
                 if n_ca:
-                    self._n_corporate_actions = int(
-                        getattr(self, "_n_corporate_actions", 0) or 0
-                    ) + n_ca
+                    self._n_corporate_actions += int(n_ca)
+                    # The explicit event explains this date's factor step. Reset
+                    # the held-position baseline before the residual fail-closed check.
+                    for code in applied_codes:
+                        pos = positions.get(code)
+                        if pos is not None:
+                            pos.entry_factor = factor_on_or_before(
+                                self.factor_by_code, code, d
+                            )
             if self.factor_by_code and positions:
                 # Use fail_closed semantics for residual jumps even under event_ledger
                 # until explicit events re-base entry_factor (factor_jump apply off).
@@ -383,6 +407,69 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                         ca_fail = True
                         if msg not in ca_unsupported_notes:
                             ca_unsupported_notes.append(msg)
+            # Gate B5: delist terminal exit — on the first simulated trading
+            # day strictly AFTER a held stock's last tradable day, the
+            # position is booked out at the scenario price. This runs before
+            # ordinary sells: the stock has no bar today or ever again, so
+            # the "suspended" defer loop would otherwise hold it forever.
+            if self.delist_policy is not None and positions and self.delist_terminal_dates:
+                from .delist_policy import EXIT_REASON_DELIST_TERMINAL
+
+                for code in list(positions.keys()):
+                    term = self.delist_terminal_dates.get(code)
+                    if term is None or d <= term:
+                        continue
+                    pos = positions.pop(code)
+                    deferred_sells.pop(code, None)
+                    last_close = self._last_px_on_or_before(code, term)
+                    if last_close is None:
+                        last_close = float(pos.entry_price)
+                    t_px = float(self.delist_policy.terminal_price(last_close))
+                    amount = pos.shares * t_px
+                    if self.delist_policy.apply_costs and amount > 0:
+                        comm = _commission(amount, self.cfg.costs)
+                        tax = amount * self.cfg.costs.stamp_tax_rate
+                    else:
+                        comm = 0.0
+                        tax = 0.0
+                    proceeds = amount - comm - tax
+                    if account_mode == "per_symbol":
+                        cash_by_code[code] = (
+                            float(cash_by_code.get(code, 0.0)) + proceeds
+                        )
+                    else:
+                        cash += proceeds
+                    realized = proceeds - float(pos.cost)
+                    _n_delist_exits += 1
+                    _delist_realized_loss_total += realized
+                    fills.append(
+                        Fill(
+                            date=d,
+                            std_code=code,
+                            side="SELL",
+                            price=t_px,
+                            shares=pos.shares,
+                            amount=amount,
+                            commission=comm,
+                            stamp_tax=tax,
+                            reason=EXIT_REASON_DELIST_TERMINAL,
+                            planned_date=int(term),
+                            actual_date=d,
+                            holiday_policy=pos.holiday_policy,
+                            execution_price=t_px,
+                            delist_exit_scenario=self.delist_policy.scenario,
+                            delist_exit_rule_version=self.delist_policy.rule_version,
+                            delist_terminal_date=int(term),
+                            delist_terminal_price=t_px,
+                            delist_recovery_rate=self.delist_policy.recovery_rate(),
+                            delist_realized_loss=realized,
+                            position_cost_basis=float(pos.cost),
+                            corporate_action_cash_received=float(
+                                pos.corporate_action_cash_received or 0.0
+                            ),
+                        )
+                    )
+
             # 1) process deferred + matured sells at open (never same-day as BUY)
             sell_codes = set(deferred_sells.keys())
             for code, pos in list(positions.items()):
@@ -481,6 +568,10 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                         shift_days=int(pos.exit_shift_days or 0),
                         holiday_policy=pos.holiday_policy,
                         execution_price=px,
+                        position_cost_basis=float(pos.cost),
+                        corporate_action_cash_received=float(
+                            pos.corporate_action_cash_received or 0.0
+                        ),
                         **self._fill_price_audit(
                             code, d, sell_session, session_raw=raw_px
                         ),
@@ -778,6 +869,22 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
         from collections import Counter
         sell_reasons = Counter(f.reason for f in fills if f.side == "SELL")
         metrics["sell_reason_counts"] = dict(sell_reasons)
+        # Gate B5: delist terminal exit accounting (only when policy active)
+        if self.delist_policy is not None:
+            metrics["delist_exit_rule_version"] = self.delist_policy.rule_version
+            metrics["delist_exit_scenario"] = self.delist_policy.scenario
+            metrics["delist_recovery_discount"] = float(
+                self.delist_policy.recovery_discount
+            )
+            metrics["delist_terminal_exit_count"] = int(_n_delist_exits)
+            metrics["delist_realized_loss"] = float(_delist_realized_loss_total)
+            _delisted_codes = set(self.delist_terminal_dates)
+            metrics["delisted_trade_count"] = int(
+                sum(1 for f in fills if f.std_code in _delisted_codes)
+            )
+            metrics["delisted_open_positions_at_end"] = int(
+                sum(1 for c in positions if c in _delisted_codes)
+            )
         metrics = self._maybe_zero_cost_replay(
             metrics=metrics,
             notes=notes,
@@ -809,8 +916,13 @@ class PortfolioBacktester(PortfolioBacktesterHelpers):
                 "(policy=%s). No share restatement from cumulative factors."
                 % ca_policy
             )
-        metrics["n_corporate_actions"] = int(getattr(self, "_n_corporate_actions", 0) or 0)
+        if ca_applied_notes:
+            notes.extend(ca_applied_notes)
+        metrics["n_corporate_actions"] = int(
+            getattr(self, "_n_corporate_actions", 0) or 0
+        )
         metrics["corporate_action_policy"] = ca_policy
+        metrics["ca_event_notes"] = list(ca_applied_notes)
 
         return BacktestResult(
             run_id=run_id,

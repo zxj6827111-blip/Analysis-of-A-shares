@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..config import AStockConfig, get_default_config
+
+logger = logging.getLogger("astock.runs")
+
+
+class RunPersistenceError(RuntimeError):
+    """SQLite persistence of a run failed. The run's on-disk state has been
+    marked failed (sqlite_persist_failed) — callers must surface this, never
+    treat the run as successfully persisted."""
 
 
 
@@ -96,15 +105,57 @@ def append_run_index(cfg: AStockConfig, row: Dict[str, Any]) -> None:
     rows.insert(0, row)
     rows = rows[:200]
     path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
-    # Stage D: dual-write SQLite (best-effort; never break JSON index path)
+    # Stage D / Gate C D5: dual-write SQLite. A failed upsert must NOT be
+    # swallowed — the run's persisted status is flipped to failed and the
+    # error propagates so the task itself fails loudly.
     try:
         from .db import upsert_run_from_index_row
 
         rid = row.get("run_id")
         out_dir = Path(cfg.output_root) / rid if rid else None
         upsert_run_from_index_row(cfg, row, out_dir=out_dir)
-    except Exception:
-        pass
+    except Exception as e:
+        rid = row.get("run_id")
+        logger.error("SQLite upsert failed for run %s: %s", rid, e)
+        _mark_run_persist_failed(cfg, rid, e)
+        raise RunPersistenceError(
+            f"sqlite_persist_failed for run {rid}: {e}"
+        ) from e
+
+
+def _mark_run_persist_failed(cfg: AStockConfig, run_id: Any, err: Exception) -> None:
+    """Flip the run's persisted state to failed after a SQLite upsert error."""
+    if not run_id:
+        return
+    note = f"sqlite_persist_failed: {str(err)[:300]}"
+    path = _index_path(cfg)
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(rows, list):
+            for r in rows:
+                if r.get("run_id") == run_id:
+                    if r.get("status") not in (None, "failed"):
+                        r["original_status"] = r.get("status")
+                    r["status"] = "failed"
+                    r["error"] = note
+            path.write_text(
+                json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+    except Exception as e2:  # index rewrite is best-effort; the raise above is the contract
+        logger.error("failed to mark run %s persist-failed in index: %s", run_id, e2)
+    meta_p = Path(cfg.output_root) / str(run_id) / "run_meta.json"
+    try:
+        if meta_p.exists():
+            meta = json.loads(meta_p.read_text(encoding="utf-8"))
+            if meta.get("status") not in (None, "failed"):
+                meta["original_status"] = meta.get("status")
+            meta["status"] = "failed"
+            meta["persist_error"] = note
+            meta_p.write_text(
+                json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+    except Exception as e2:
+        logger.error("failed to mark run %s persist-failed in run_meta: %s", run_id, e2)
 
 
 def _metrics_brief(metrics: Optional[dict]) -> Optional[dict]:
@@ -271,8 +322,8 @@ def _enrich_row(row: dict, out_dir: Optional[Path] = None) -> dict:
         }.get(str(r.get("period")).upper(), r.get("period"))
     status_map = {
         "ok": "完成",
-        "research_unadjusted": "完成(未复权研究)",
-        "research_unconfirmed_formula": "完成(公式未确认)",
+        "research_unadjusted": "完成 · 未复权",
+        "research_unconfirmed_formula": "完成 · 公式待确认",
         "no_go": "未通过",
         "failed": "失败",
         "succeeded": "完成",
@@ -285,29 +336,28 @@ def _enrich_row(row: dict, out_dir: Optional[Path] = None) -> dict:
 
 def list_runs(cfg: Optional[AStockConfig] = None, *, limit: int = 50) -> List[Dict[str, Any]]:
     cfg = cfg or get_default_config()
-    # Stage D: prefer SQLite when populated (after dual-write / migrate)
-    try:
-        from .db import count_runs_db, list_runs_db, migrate_runs_index_to_sqlite
+    # Stage D: prefer SQLite when populated (after dual-write / migrate).
+    # Gate C D5: database errors (incl. failed migrations) are NOT silently
+    # swallowed into the legacy-JSON fallback — they must surface.
+    from .db import count_runs_db, list_runs_db, migrate_runs_index_to_sqlite
 
+    n_db = count_runs_db(cfg)
+    if n_db == 0:
+        # lazy one-shot migration from legacy JSON index
+        migrate_runs_index_to_sqlite(cfg)
         n_db = count_runs_db(cfg)
-        if n_db == 0:
-            # lazy one-shot migration from legacy JSON index
-            migrate_runs_index_to_sqlite(cfg)
-            n_db = count_runs_db(cfg)
-        if n_db > 0:
-            db_rows = list_runs_db(cfg, limit=limit)
-            # still enrich from filesystem for status_label etc.
-            out_root = Path(cfg.output_root)
-            enriched_db: List[dict] = []
-            for row in db_rows:
-                rid = row.get("run_id")
-                out_dir = (out_root / rid) if rid and out_root.exists() else None
-                if out_dir is not None and not out_dir.is_dir():
-                    out_dir = None
-                enriched_db.append(_enrich_row(row, out_dir))
-            return enriched_db[:limit]
-    except Exception:
-        pass
+    if n_db > 0:
+        db_rows = list_runs_db(cfg, limit=limit)
+        # still enrich from filesystem for status_label etc.
+        out_root = Path(cfg.output_root)
+        enriched_db: List[dict] = []
+        for row in db_rows:
+            rid = row.get("run_id")
+            out_dir = (out_root / rid) if rid and out_root.exists() else None
+            if out_dir is not None and not out_dir.is_dir():
+                out_dir = None
+            enriched_db.append(_enrich_row(row, out_dir))
+        return enriched_db[:limit]
 
     path = _index_path(cfg)
     rows: List[dict] = []
@@ -407,6 +457,30 @@ def load_run_summary(cfg: AStockConfig, run_id: str) -> Dict[str, Any]:
         "account_mode": meta.get("account_mode") or repro.get("account_mode"),
         "repro": repro,
     }
+    # Gate C G2: locked dataset lineage surfaced at top level for the UI —
+    # raw IDs, not just friendly labels. Some writers flatten the repro dict
+    # into run_meta top level, so fall back meta.request / meta.calendar.
+    _req = repro.get("request") if isinstance(repro.get("request"), dict) else (
+        meta.get("request") if isinstance(meta.get("request"), dict) else {}
+    )
+    result["lineage"] = {
+        "signal_data_source": _req.get("signal_data_source"),
+        "signal_adjustment": _req.get("signal_adjustment"),
+        "signal_dataset_id": _req.get("dataset_id"),
+        "signal_raw_dataset_id": _req.get("signal_raw_parent_dataset_id"),
+        "signal_factor_dataset_id": _req.get("signal_factor_parent_dataset_id"),
+        "signal_formula_version": _req.get("signal_formula_version"),
+        "weekly_bar_mode": _req.get("weekly_bar_mode"),
+        "execution_data_source": _req.get("execution_data_source"),
+        "execution_adjustment": _req.get("execution_adjustment"),
+        "execution_dataset_id": _req.get("execution_dataset_id"),
+        "ca_factor_dataset_id": _req.get("ca_factor_dataset_id"),
+        "calendar": (
+            repro.get("calendar")
+            if isinstance(repro.get("calendar"), dict) and repro.get("calendar")
+            else (meta.get("calendar") if isinstance(meta.get("calendar"), dict) else None)
+        ),
+    }
     result.update(classify_price_execution_legacy(meta))
     # Prefer title from runs_index when meta lacks a human title
     if not result.get("title"):
@@ -427,12 +501,31 @@ def load_run_summary(cfg: AStockConfig, run_id: str) -> Dict[str, Any]:
             result["metrics"] = json.loads(mp.read_text(encoding="utf-8"))
         except Exception:
             pass
+    analysis_summary = meta.get("analysis_summary")
+    if not isinstance(analysis_summary, dict):
+        analysis_summary = repro.get("analysis_summary")
+    if not isinstance(analysis_summary, dict):
+        from ..backtest_summary import build_backtest_summary
+
+        analysis_summary = build_backtest_summary(
+            result.get("metrics") or {},
+            status=str(result.get("status") or "ok"),
+            notes=meta.get("notes") if isinstance(meta.get("notes"), list) else None,
+            context={**meta, "repro": repro},
+            reason=meta.get("reason") or meta.get("error"),
+        )
+    result["analysis_summary"] = analysis_summary
     return result
 
 
 def read_artifact(cfg: AStockConfig, run_id: str, name: str) -> Path:
-    out_dir = Path(cfg.output_root) / run_id
     safe = Path(name).name
+    if safe in ("task_record.xlsx", "回测数据记录.xlsx"):
+        from .run_task_export import normalize_export_run_ids, write_run_task_excel
+
+        run_ids = normalize_export_run_ids(str(run_id or "").split(","))
+        return write_run_task_excel(cfg, run_ids)
+    out_dir = Path(cfg.output_root) / run_id
     path = out_dir / safe
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(safe)
@@ -509,14 +602,50 @@ def load_equity_curve(
 
 
 def _gua_short(gf: Any) -> str:
+    """Human-readable bagua filter label for compare / task titles.
+
+    Prefer concrete hexagram/line names over bare counts like「卦象1项」.
+    """
     if not gf or not isinstance(gf, dict):
         return "卦象未启用"
     if not gf.get("enabled"):
         return "卦象未启用"
     hs = gf.get("history_summary") if isinstance(gf.get("history_summary"), dict) else {}
+    tips = hs.get("tooltip_lines") if hs else None
+    if isinstance(tips, list) and tips:
+        labels = [str(x).strip() for x in tips if str(x).strip()]
+        if labels:
+            if len(labels) == 1:
+                return labels[0]
+            if len(labels) <= 3:
+                joined = "、".join(labels)
+                if len(joined) <= 40:
+                    return joined
+            return "、".join(labels[:2]) + "…（共%d项）" % len(labels)
     short = hs.get("short") if hs else None
     if short:
-        return str(short)
+        s0 = str(short)
+        # Expand bare count using state ids when names missing
+        if s0.startswith("卦象") and s0.endswith("项"):
+            sids = gf.get("selected_state_ids") or []
+            if isinstance(sids, list) and len(sids) == 1:
+                return str(sids[0])
+            if isinstance(sids, list) and 1 < len(sids) <= 3:
+                return "、".join(str(x) for x in sids)
+            mains = gf.get("selected_main_hexagram_ids") or []
+            if isinstance(mains, list) and len(mains) == 1:
+                return "第%02d卦" % int(mains[0])
+        return s0
+    acts = gf.get("selected_action_signals") or []
+    if isinstance(acts, list) and acts:
+        return "操作信号：" + "、".join(str(a) for a in acts[:3]) + ("…" if len(acts) > 3 else "")
+    sids = gf.get("selected_state_ids") or []
+    if isinstance(sids, list) and sids:
+        if len(sids) == 1:
+            return str(sids[0])
+        if len(sids) <= 3:
+            return "、".join(str(x) for x in sids)
+        return "、".join(str(x) for x in sids[:2]) + "…（共%d爻）" % len(sids)
     nl = gf.get("natural_language") or gf.get("selection_mode") or "卦象已启用"
     return str(nl)
 
@@ -568,6 +697,7 @@ def _param_snapshot(summary: Dict[str, Any]) -> Dict[str, Any]:
         "gua_filter": gf,
         "gua_short": _gua_short(gf),
         "with_bagua": pick("with_bagua"),
+        "bagua_price_plane": pick("bagua_price_plane") or pick("bagua_adjust"),
         "stop_loss": pick("stop_loss") or pick("stop_loss_pct"),
         "take_profit": pick("take_profit") or pick("take_profit_pct"),
     }
@@ -752,12 +882,9 @@ def delete_run(
             json.dumps(new_rows, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-    try:
-        from .db import delete_run_db
+    from .db import delete_run_db
 
-        delete_run_db(cfg, run_id)
-    except Exception:
-        pass
+    delete_run_db(cfg, run_id)
 
     return {
         "run_id": run_id,

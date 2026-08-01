@@ -14,6 +14,7 @@ Price plane selectable:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -71,10 +72,14 @@ def normalize_period(period: Optional[str]) -> str:
 
 
 def normalize_adjust_mode(mode: Optional[str]) -> str:
-    """Return canonical: raw | standard_qfq | asof_forward_qfq."""
-    m = (mode or "raw").strip().lower()
+    """Return canonical: raw | tdx_front | tushare_qfq | standard_qfq | asof_forward_qfq."""
+    m = (mode or "tdx_front").strip().lower()
     if m in ("raw", "unadjusted", "none", "未复权", "不复权"):
         return "raw"
+    if m in ("tdx_front", "tdxquant_front", "通达信前复权"):
+        return "tdx_front"
+    if m in ("tushare_qfq", "ts_qfq", "tushare前复权"):
+        return "tushare_qfq"
     if m in ("standard_qfq", "qfq", "ordinary_qfq", "forward", "前复权", "普通前复权"):
         return "standard_qfq"
     if m in (
@@ -88,7 +93,8 @@ def normalize_adjust_mode(mode: Optional[str]) -> str:
     ):
         return "asof_forward_qfq"
     raise ValueError(
-        "adjust must be raw | standard_qfq (前复权) | asof_forward_qfq (时点前复权)"
+        "adjust must be raw | tdx_front (通达信前复权) | tushare_qfq (Tushare前复权) "
+        "| standard_qfq (普通前复权) | asof_forward_qfq (时点前复权)"
     )
 
 
@@ -123,6 +129,283 @@ def load_day_bars(cfg: AStockConfig, std_code: str) -> List[DayBar]:
     if not bars:
         raise FileNotFoundError(f"no bars for {std_code}")
     return list(bars)
+
+
+def _symbol_variants(symbol: str) -> List[str]:
+    """SSE.STK.600000 / 600000.SH / sh600000 / 600000 等格式互转。"""
+    from ..data.repository import MarketDataRepository
+
+    return MarketDataRepository._symbol_variants(symbol)
+
+
+def _source_match_pairs(source_key: str) -> List[Tuple[str, str]]:
+    """Map UI adjust key to warehouse (source, adjustment) pairs, priority order."""
+    if source_key == "tdx_front":
+        # 通达信原生前复权（仅 tdxquant/front）
+        return [("tdxquant", "front")]
+    if source_key == "tushare_qfq":
+        # Tushare 官方 QFQ 优先；派生 QFQ 作为同源前复权后备
+        return [
+            ("tushare", "qfq"),
+            ("internal", "tushare_factor_qfq"),
+            ("internal", "composite_tushare_factor_qfq"),
+        ]
+    if source_key == "raw":
+        # 未复权：与回测 L2 一致优先 local_vendor/none，再其它 none 集
+        return [
+            ("local_vendor", "none"),
+            ("tushare", "none"),
+            ("tdxquant", "none"),
+            ("tdx_local", "none"),
+            ("internal", "composite_none"),
+        ]
+    raise ValueError(f"unsupported dataset source_key: {source_key}")
+
+
+def _find_symbol_rec(manifest, std_code: str):
+    """Locate symbol record with a readable blob (ok preferred)."""
+    variants = set(_symbol_variants(std_code))
+    ok_rec = None
+    any_rec = None
+    for r in manifest.symbols:
+        if r.symbol not in variants or not r.blob_sha256:
+            continue
+        if r.quality == "ok":
+            ok_rec = r
+            break
+        if any_rec is None:
+            any_rec = r
+    return ok_rec or any_rec
+
+
+def _bars_from_blob(store, blob_sha256: str) -> List[DayBar]:
+    arr = store.load_bars(blob_sha256)
+    dates = arr["trade_date"]
+    bars: List[DayBar] = []
+    for i in range(len(dates)):
+        bars.append(
+            DayBar(
+                date=int(dates[i]),
+                open=float(arr["open"][i]),
+                high=float(arr["high"][i]),
+                low=float(arr["low"][i]),
+                close=float(arr["close"][i]),
+                amount=float(arr["amount"][i]),
+                volume=float(arr["volume"][i]),
+            )
+        )
+    if len(bars) > 1 and bars[0].date > bars[-1].date:
+        bars.reverse()
+    return bars
+
+
+def load_day_bars_for_plane(
+    cfg: AStockConfig,
+    std_code: str,
+    plane: str,
+    *,
+    asof: Optional[int] = None,
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+    session: Optional["BaguaPlaneSession"] = None,
+) -> Tuple[List[DayBar], Dict[str, Any]]:
+    """Load day bars for bagua price plane (shared by query + backtest).
+
+    plane: raw | tdx_front | tushare_qfq
+    Returns (bars, meta). For raw, prefers warehouse none sets then legacy day files.
+    Optional start/end trim the series after load.
+
+    Pass a shared ``BaguaPlaneSession`` from full-universe backtests so
+    manifests are listed once (avoids per-symbol full-warehouse scans).
+    """
+    key = normalize_adjust_mode(plane)
+    if key not in ("raw", "tdx_front", "tushare_qfq"):
+        raise ValueError(f"unsupported bagua price plane: {plane}")
+    try:
+        if session is not None:
+            bars, meta = session.load_symbol(std_code, asof=asof)
+        else:
+            bars, meta = _load_dataset_bars(cfg, std_code, key, asof=asof)
+    except FileNotFoundError:
+        if key != "raw":
+            raise
+        bars = load_day_bars(cfg, std_code)
+        meta = {
+            "dataset_id": None,
+            "dataset_source": "legacy_tdx_day",
+            "dataset_adjustment": "none",
+            "dataset_status": "legacy",
+            "legacy_fallback": True,
+        }
+    if start is not None or end is not None:
+        lo = int(start) if start is not None else 0
+        hi = int(end) if end is not None else 10**9
+        bars = [b for b in bars if lo <= int(b.date) <= hi]
+    return bars, meta
+
+
+class BaguaPlaneSession:
+    """One-shot warehouse index for multi-symbol bagua plane loads.
+
+    Built once per backtest bagua phase: lists matching manifests, builds
+    per-manifest symbol indexes, and serves per-code blob loads without
+    re-scanning the entire data root for every stock (full-A freeze fix).
+    """
+
+    def __init__(self, cfg: AStockConfig, source_key: str):
+        from ..data.dataset_store import DatasetStore
+
+        self.source_key = normalize_adjust_mode(source_key)
+        if self.source_key not in ("raw", "tdx_front", "tushare_qfq"):
+            raise ValueError(f"unsupported bagua price plane: {source_key}")
+        md_root = getattr(cfg, "market_data_root", None)
+        if not md_root or not Path(md_root).exists():
+            raise FileNotFoundError(f"market data root not found: {md_root}")
+        self.store = DatasetStore(md_root)
+        self.match_pairs = _source_match_pairs(self.source_key)
+        self.pair_rank = {pair: idx for idx, pair in enumerate(self.match_pairs)}
+        self.status_rank = {"ready": 3, "partial": 2, "building": 1, "failed": 0}
+        # list of (manifest, symbol_index dict, pair_priority)
+        self._indexed: List[Tuple[Any, Dict[str, Any], int]] = []
+        self._saw_any_pair = False
+        self._build_index()
+
+    def _build_index(self) -> None:
+        for mid in self.store.list_manifests():
+            m = self.store.load_manifest(mid)
+            if m is None:
+                continue
+            if (m.period or "1d") not in ("1d", "", None):
+                continue
+            if m.status not in ("ready", "partial"):
+                continue
+            pair = (m.source, m.adjustment)
+            if pair not in self.pair_rank:
+                continue
+            self._saw_any_pair = True
+            idx: Dict[str, Any] = {}
+            for r in m.symbols:
+                if not getattr(r, "blob_sha256", None):
+                    continue
+                # index all variants so lookup is O(1)
+                for v in _symbol_variants(r.symbol):
+                    prev = idx.get(v)
+                    if prev is None:
+                        idx[v] = r
+                    elif getattr(r, "quality", None) == "ok" and getattr(prev, "quality", None) != "ok":
+                        idx[v] = r
+            self._indexed.append((m, idx, self.pair_rank[pair]))
+        # Prefer fuller / fresher / ready datasets first for scan order.
+        self._indexed.sort(
+            key=lambda t: (
+                self.status_rank.get(t[0].status or "", -1),
+                int(t[0].data_cutoff_date or 0),
+                int(t[0].symbol_count or 0),
+                int(t[0].row_count or 0),
+                t[0].created_at or "",
+                -t[2],  # official pair before fallback
+            ),
+            reverse=True,
+        )
+
+    def load_symbol(
+        self,
+        std_code: str,
+        *,
+        asof: Optional[int] = None,
+    ) -> Tuple[List[DayBar], Dict[str, Any]]:
+        hits: List[Tuple[Any, Any, int, bool, int, int]] = []
+        variants = _symbol_variants(std_code)
+        for m, idx, pr in self._indexed:
+            rec = None
+            for v in variants:
+                rec = idx.get(v)
+                if rec is not None:
+                    break
+            if rec is None:
+                continue
+            d0 = int(rec.first_date) if rec.first_date else None
+            d1 = int(rec.last_date) if rec.last_date else None
+            if d0 is not None and d1 is not None:
+                first, last = (d0, d1) if d0 <= d1 else (d1, d0)
+            else:
+                first, last = d0, d1
+            covers_asof = False
+            has_on_or_before = True
+            if asof is not None:
+                if first is not None and last is not None:
+                    covers_asof = first <= asof <= last
+                    has_on_or_before = first <= asof
+                elif last is not None:
+                    covers_asof = last >= asof
+                elif first is not None:
+                    has_on_or_before = first <= asof
+            if asof is not None and not has_on_or_before:
+                continue
+            hits.append((m, rec, pr, covers_asof, int(first or 0), int(last or 0)))
+
+        if not hits:
+            if not self._saw_any_pair:
+                raise FileNotFoundError(
+                    f"未找到 {self.source_key} 数据集，请先在数据仓库同步通达信前复权或 Tushare 前复权"
+                )
+            raise FileNotFoundError(
+                f"{std_code} 在 {self.source_key} 全部数据集中均无可用K线"
+                + (f"（查询日 {asof}）" if asof else "")
+            )
+
+        def _score(item):
+            m, rec, pr, covers, _first, latest = item
+            cutoff = int(m.data_cutoff_date or latest or 0)
+            rows = int(rec.row_count or 0)
+            # If every candidate is stale for the query date, freshness wins.
+            # Covered historical queries preserve the existing status/source order.
+            stale_latest = latest if asof is not None and not covers else 0
+            return (
+                1 if covers else 0,
+                stale_latest,
+                self.status_rank.get(m.status or "", -1),
+                -pr,
+                cutoff,
+                latest,
+                rows,
+                m.created_at or "",
+            )
+
+        hits.sort(key=_score, reverse=True)
+        manifest, rec, _, covers_asof, effective_first, effective_last = hits[0]
+        bars = _bars_from_blob(self.store, rec.blob_sha256)
+        if not bars:
+            raise FileNotFoundError(
+                f"{std_code} 数据集 {manifest.dataset_id} blob 为空"
+            )
+        meta: Dict[str, Any] = {
+            "dataset_id": manifest.dataset_id,
+            "dataset_source": manifest.source,
+            "dataset_adjustment": manifest.adjustment,
+            "dataset_status": manifest.status,
+            "dataset_cutoff": manifest.data_cutoff_date,
+            "symbol_first_date": rec.first_date,
+            "symbol_last_date": rec.last_date,
+            "symbol_row_count": rec.row_count,
+            "covers_asof": bool(covers_asof),
+            "symbol_effective_first_date": effective_first,
+            "symbol_effective_last_date": effective_last,
+            "candidate_datasets": len(hits),
+            "session_indexed": True,
+        }
+        return bars, meta
+
+
+def _load_dataset_bars(
+    cfg: AStockConfig,
+    std_code: str,
+    source_key: str,
+    asof: Optional[int] = None,
+) -> Tuple[List[DayBar], Dict[str, Any]]:
+    """Load day bars from warehouse for bagua query (single-shot session)."""
+    session = BaguaPlaneSession(cfg, source_key)
+    return session.load_symbol(std_code, asof=asof)
 
 
 def _find_day_bar(bars: Sequence[DayBar], asof: int) -> Tuple[DayBar, bool]:
@@ -237,25 +520,89 @@ def query_bagua(
     date: Union[str, int],
     period: str = "DAY",
     adjust: str = "raw",
+    session: Optional["BaguaPlaneSession"] = None,
+    calc: Optional[BaguaCalculator] = None,
 ) -> Dict[str, Any]:
     """Query hexagram for one stock at a given date and period.
 
-    adjust: raw | standard_qfq | asof_forward_qfq
+    adjust: raw | tdx_front | tushare_qfq | standard_qfq | asof_forward_qfq
+
+    Optional ``session`` / ``calc`` reuse the warehouse index and knowledge
+    base across multi-stock batch / export (avoids per-symbol full scans).
     """
     std = normalize_query_code(code)
     asof = _parse_ymd(date)
     per = normalize_period(period)
     adj = normalize_adjust_mode(adjust)
 
-    if not cfg.bagua_json:
-        raise FileNotFoundError("bagua knowledge json not configured")
-    calc = BaguaCalculator.from_json(cfg.bagua_json)
+    if calc is None:
+        if not cfg.bagua_json:
+            raise FileNotFoundError("bagua knowledge json not configured")
+        calc = BaguaCalculator.from_json(cfg.bagua_json)
 
-    day_raw = load_day_bars(cfg, std)
-    if not day_raw:
-        raise FileNotFoundError(f"no market data for {display_code(std)}")
-
-    day_bars, adj_meta = _adjust_day_bars(cfg, std, day_raw, adj, asof)
+    if adj in ("tdx_front", "tushare_qfq", "raw"):
+        try:
+            if session is not None:
+                day_bars, ds_meta = session.load_symbol(std, asof=asof)
+            else:
+                day_bars, ds_meta = _load_dataset_bars(cfg, std, adj, asof=asof)
+        except FileNotFoundError:
+            if adj != "raw":
+                raise
+            # 仓库无未复权集时回退旧 DataStore / 通达信 day 文件
+            day_bars = load_day_bars(cfg, std)
+            ds_meta = {
+                "dataset_id": None,
+                "dataset_source": "legacy_tdx_day",
+                "dataset_adjustment": "none",
+                "dataset_status": "legacy",
+                "covers_asof": None,
+                "candidate_datasets": 0,
+                "legacy_fallback": True,
+            }
+        if not day_bars:
+            raise FileNotFoundError(f"no market data for {display_code(std)}")
+        if adj == "tdx_front":
+            src_label = "通达信前复权数据集"
+            price_plane = "L1_signal_price"
+        elif adj == "tushare_qfq":
+            ds_src = ds_meta.get("dataset_source")
+            ds_adj = ds_meta.get("dataset_adjustment")
+            if ds_src == "tushare" and ds_adj == "qfq":
+                src_label = "Tushare官方前复权数据集"
+            elif ds_adj in ("tushare_factor_qfq", "composite_tushare_factor_qfq"):
+                src_label = "派生Tushare因子前复权数据集"
+            else:
+                src_label = "Tushare前复权数据集"
+            price_plane = "L1_signal_price"
+        else:
+            ds_src = ds_meta.get("dataset_source")
+            if ds_src == "local_vendor":
+                src_label = "local_vendor未复权数据集"
+            elif ds_src == "tushare":
+                src_label = "Tushare未复权日线"
+            elif ds_src == "tdxquant":
+                src_label = "通达信未复权日线"
+            elif ds_src == "legacy_tdx_day":
+                src_label = "本地通达信day文件(未复权后备)"
+            else:
+                src_label = "未复权数据集"
+            price_plane = "L2_trade_price"
+        adj_meta: Dict[str, Any] = {
+            "adjust": adj,
+            "price_plane": price_plane,
+            "price_format": f"{src_label}（仓库直接读取，两位小数）"
+            if not ds_meta.get("legacy_fallback")
+            else f"{src_label}（两位小数）",
+            "signal_adjust": adj,
+            "model": "dataset_precomputed" if not ds_meta.get("legacy_fallback") else "legacy_day_file",
+            **ds_meta,
+        }
+    else:
+        day_raw = load_day_bars(cfg, std)
+        if not day_raw:
+            raise FileNotFoundError(f"no market data for {display_code(std)}")
+        day_bars, adj_meta = _adjust_day_bars(cfg, std, day_raw, adj, asof)
 
     if per == "DAY":
         bar, exact = _find_day_bar(day_bars, asof)
@@ -291,8 +638,31 @@ def query_bagua(
 
     notes: List[str] = []
     if adj == "raw":
+        ds_id = adj_meta.get("dataset_id") or ""
+        ds_pair = f"{adj_meta.get('dataset_source')}/{adj_meta.get('dataset_adjustment')}"
+        if adj_meta.get("legacy_fallback"):
+            notes.append(
+                "算法：开盘定上卦(mod8)、收盘定下卦(mod8)、最高+最低定动爻(mod6)；"
+                "价格未复权，来自本地通达信day文件后备路径。"
+            )
+        else:
+            notes.append(
+                "算法：开盘定上卦(mod8)、收盘定下卦(mod8)、最高+最低定动爻(mod6)；"
+                "价格未复权，直接读取仓库原始数据集"
+                + (f"：{ds_pair} @ {ds_id}" if ds_id else "。")
+            )
+    elif adj == "tdx_front":
+        ds_id = adj_meta.get("dataset_id") or ""
         notes.append(
-            "算法：开盘定上卦(mod8)、收盘定下卦(mod8)、最高+最低定动爻(mod6)；价格未复权两位小数后逐位求和。"
+            "算法同未复权；价格直接读取仓库通达信前复权数据集（与通达信软件一致，不做二次因子计算）"
+            + (f"：{ds_id}" if ds_id else "。")
+        )
+    elif adj == "tushare_qfq":
+        ds_id = adj_meta.get("dataset_id") or ""
+        ds_pair = f"{adj_meta.get('dataset_source')}/{adj_meta.get('dataset_adjustment')}"
+        notes.append(
+            "算法同未复权；价格直接读取仓库 Tushare 前复权数据（不做二次因子计算）"
+            + (f"：{ds_pair} @ {ds_id}" if ds_id else "。")
         )
     elif adj == "standard_qfq":
         notes.append(
@@ -348,3 +718,727 @@ def query_bagua(
             "yao_order": bagua.get("yao_order"),
         },
     }
+
+
+def _resolve_batch_codes(
+    cfg: AStockConfig,
+    codes: Optional[Sequence[str]] = None,
+    *,
+    all_stocks: bool = False,
+) -> List[str]:
+    """Resolve display/std codes for batch query or full-market export."""
+    from .backtest_universe import select_universe
+
+    if all_stocks:
+        return select_universe(cfg, None)
+    raw = [str(c).strip() for c in (codes or []) if str(c).strip()]
+    if not raw:
+        raise ValueError("codes or all_stocks required")
+    # De-dupe while preserving order (by std code)
+    seen: set = set()
+    out: List[str] = []
+    for c in raw:
+        try:
+            std = normalize_query_code(c)
+        except ValueError:
+            continue
+        if std in seen:
+            continue
+        seen.add(std)
+        out.append(c)
+    if not out:
+        raise ValueError("no valid stock codes")
+    return out
+
+
+def batch_query_bagua(
+    cfg: AStockConfig,
+    *,
+    codes: Optional[Sequence[str]] = None,
+    all_stocks: bool = False,
+    date: Union[str, int],
+    period: str = "DAY",
+    adjust: str = "tdx_front",
+    limit: Optional[int] = None,
+    on_progress: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Multi-stock hexagram query (same algorithm as single-stock).
+
+    Uses a shared ``BaguaPlaneSession`` for warehouse planes so full-market
+    scans do not re-list manifests per symbol.
+
+    Optional ``on_progress(done, total, ok_count, err_count, code)`` callback.
+    """
+    asof = _parse_ymd(date)
+    per = normalize_period(period)
+    adj = normalize_adjust_mode(adjust)
+    code_list = _resolve_batch_codes(cfg, codes, all_stocks=all_stocks)
+    if limit is not None:
+        code_list = code_list[: int(limit)]
+
+    if not cfg.bagua_json:
+        raise FileNotFoundError("bagua knowledge json not configured")
+    calc = BaguaCalculator.from_json(cfg.bagua_json)
+
+    session: Optional[BaguaPlaneSession] = None
+    if adj in ("tdx_front", "tushare_qfq", "raw"):
+        try:
+            session = BaguaPlaneSession(cfg, adj)
+        except FileNotFoundError:
+            session = None
+
+    results: List[Dict[str, Any]] = []
+    ok_count = 0
+    err_count = 0
+    total = len(code_list)
+    for idx, raw_code in enumerate(code_list, 1):
+        try:
+            row = query_bagua(
+                cfg,
+                code=raw_code,
+                date=asof,
+                period=per,
+                adjust=adj,
+                session=session,
+                calc=calc,
+            )
+            results.append(row)
+            ok_count += 1
+        except Exception as e:
+            err_count += 1
+            try:
+                std = normalize_query_code(raw_code)
+                disp = display_code(std)
+            except Exception:
+                std = ""
+                disp = str(raw_code)
+            name = ""
+            try:
+                name = resolve_stock_name(cfg, disp, std_code=std or None) or ""
+            except Exception:
+                pass
+            results.append(
+                {
+                    "ok": False,
+                    "code": disp,
+                    "name": name,
+                    "display": display_code_with_name(disp, name) if name else disp,
+                    "std_code": std,
+                    "query_date": asof,
+                    "period": per,
+                    "adjust": adj,
+                    "error": str(e),
+                }
+            )
+        if on_progress is not None and (idx == total or idx % 25 == 0 or idx == 1):
+            try:
+                on_progress(idx, total, ok_count, err_count, raw_code)
+            except Exception:
+                pass
+
+    return {
+        "ok": True,
+        "query_date": asof,
+        "period": per,
+        "adjust": adj,
+        "all_stocks": bool(all_stocks),
+        "requested": len(code_list),
+        "count": len(results),
+        "ok_count": ok_count,
+        "error_count": err_count,
+        "results": results,
+    }
+
+
+# Weekly-report style single-sheet export (matches stock-all layout).
+_WEEKLY_EXPORT_HEADERS = [
+    "code",
+    "name",
+    "week_end",
+    "open",
+    "high",
+    "low",
+    "close",
+    "日柱",
+    "月卦月线-组合",
+    "爻辞解释",
+    "本周周线-组合",
+    "爻辞解释",
+]
+
+
+def _yao_prefix_digit(yao_order: Any) -> str:
+    """Weekly 变卦 prefix: 1..5 = 初..五, 0 = 上爻 (yao_order 6)."""
+    try:
+        n = int(yao_order)
+    except (TypeError, ValueError):
+        return ""
+    if n == 6:
+        return "0"
+    if 1 <= n <= 5:
+        return str(n)
+    return str(n)
+
+
+_BIANGUA_FULLNAME_CACHE: Dict[str, Any] = {}
+
+
+def _load_biangua_fullname_map() -> Dict[str, str]:
+    """Build short-name → full_name (with 卦符) lookup from bagua_384.json."""
+    global _BIANGUA_FULLNAME_CACHE
+    if _BIANGUA_FULLNAME_CACHE.get("map"):
+        return _BIANGUA_FULLNAME_CACHE["map"]
+    import json
+
+    from ..config import get_default_config
+
+    cfg = get_default_config()
+    path = cfg.bagua_json
+    out: Dict[str, str] = {}
+    if path and Path(path).exists():
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        for e in data.get("entries") or []:
+            go = e.get("gua_order")
+            fn = str(e.get("full_name") or "").strip()
+            gn = str(e.get("gua_name") or "").strip()
+            if not fn:
+                continue
+            if go is not None:
+                out[f"__order_{go}"] = fn
+            if gn:
+                out[gn] = fn
+                # short name: 乾为天→乾, 天火同人→同人
+                if "为" in gn:
+                    out[gn.split("为")[0]] = fn
+                else:
+                    elements = "天地水火雷风山泽"
+                    if len(gn) >= 3 and gn[0] in elements and gn[1] in elements:
+                        out[gn[2:]] = fn
+    _BIANGUA_FULLNAME_CACHE["map"] = out
+    return out
+
+
+def _resolve_biangua_fullname(b: Dict[str, Any]) -> str:
+    """Resolve biangua short name to full name with 卦符 (e.g. 坤→䷁坤为地)."""
+    # Prefer changed_hexagram_id → full name
+    cid = b.get("changed_hexagram_id")
+    if cid is not None:
+        m = _load_biangua_fullname_map()
+        fn = m.get(f"__order_{cid}")
+        if fn:
+            return fn
+    # Fallback: biangua_full_name field (set by fill_missing_biangua)
+    fn = b.get("biangua_full_name") or ""
+    if fn:
+        return str(fn).strip()
+    # Fallback: resolve short name via map
+    short = str(b.get("biangua") or b.get("changed_hexagram_name") or "").strip()
+    if not short:
+        return ""
+    m = _load_biangua_fullname_map()
+    return m.get(short, short)
+
+
+def _bagua_combo(row: Optional[Dict[str, Any]]) -> str:
+    """Build ``本卦|N-变卦`` like weekly_analysis 组合 column (full names with 卦符)."""
+    if not row or row.get("error") or not row.get("ok", True):
+        return ""
+    s = row.get("summary") or {}
+    b = row.get("bagua") or {}
+    ben = (
+        s.get("full_name")
+        or b.get("full_name")
+        or b.get("gua_name")
+        or b.get("main_hexagram_name")
+        or ""
+    )
+    ben = str(ben).strip()
+    bian = _resolve_biangua_fullname(b)
+    yo = s.get("yao_order")
+    if yo is None:
+        yo = b.get("yao_order")
+    prefix = _yao_prefix_digit(yo)
+    if not ben and not bian:
+        return ""
+    if bian and prefix != "":
+        right = f"{prefix}-{bian}"
+    elif bian:
+        right = bian
+    else:
+        right = ""
+    if ben and right:
+        return f"{ben}|{right}"
+    return ben or right
+
+
+def _bagua_yao_explain(row: Optional[Dict[str, Any]]) -> str:
+    if not row or row.get("error") or not row.get("ok", True):
+        return ""
+    s = row.get("summary") or {}
+    b = row.get("bagua") or {}
+    return str(
+        s.get("market_judgement")
+        or b.get("market_judgement")
+        or b.get("market_summary")
+        or b.get("yao_ci")
+        or b.get("line_text")
+        or ""
+    ).strip()
+
+
+def _fmt_ymd_dash(ymd: Any) -> str:
+    try:
+        n = int(ymd)
+    except (TypeError, ValueError):
+        s = str(ymd or "").strip()
+        if len(s) == 8 and s.isdigit():
+            n = int(s)
+        else:
+            return s
+    return f"{n // 10000:04d}-{(n // 100) % 100:02d}-{n % 100:02d}"
+
+
+def _code6_from_any(code: Any) -> str:
+    s = str(code or "").strip().upper()
+    if not s:
+        return ""
+    # 000001.SZ / SH600000 / SSE.STK.600000 / sh600000 / 600000
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) >= 6:
+        return digits[-6:]
+    return digits
+
+
+_RIZHU_CACHE: Dict[str, Any] = {"path": None, "mtime": None, "map": {}}
+
+
+def _default_rizhu_path() -> Optional[Path]:
+    """Locate 日柱(1).xlsx under Desktop/股票+卦象 (or common fallbacks)."""
+    home = Path.home()
+    candidates = [
+        home / "Desktop" / "股票+卦象",
+        home / "桌面" / "股票+卦象",
+        Path(r"C:\Users") / Path.home().name / "Desktop" / "股票+卦象",
+    ]
+    for folder in candidates:
+        if not folder.exists():
+            continue
+        # Prefer name containing 日柱
+        named = sorted(
+            [p for p in folder.glob("*.xlsx") if "日柱" in p.name],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if named:
+            return named[0]
+        # Fallback: largest xlsx in folder (日柱 table is ~30MB)
+        big = sorted(
+            folder.glob("*.xlsx"),
+            key=lambda p: p.stat().st_size,
+            reverse=True,
+        )
+        if big and big[0].stat().st_size > 5_000_000:
+            return big[0]
+    return None
+
+
+def load_rizhu_map(path: Optional[Path] = None) -> Dict[str, str]:
+    """Load code6 -> 日柱 string from 日柱 Excel (总表/SH/SZ/BJ)."""
+    import openpyxl
+
+    p = Path(path) if path else _default_rizhu_path()
+    if p is None or not p.exists():
+        return {}
+    try:
+        mtime = p.stat().st_mtime
+    except OSError:
+        return {}
+    if (
+        _RIZHU_CACHE.get("path") == str(p)
+        and _RIZHU_CACHE.get("mtime") == mtime
+        and _RIZHU_CACHE.get("map")
+    ):
+        return dict(_RIZHU_CACHE["map"])
+
+    out: Dict[str, str] = {}
+    wb = openpyxl.load_workbook(p, read_only=True, data_only=True)
+    try:
+        for sn in wb.sheetnames:
+            ws = wb[sn]
+            it = ws.iter_rows(values_only=True)
+            headers = next(it, None)
+            if not headers:
+                continue
+            hlist = [str(h).strip() if h is not None else "" for h in headers]
+            # Find code + 日柱 columns
+            code_i = None
+            rizhu_i = None
+            for i, h in enumerate(hlist):
+                if not h:
+                    continue
+                if code_i is None and (
+                    h in ("股票代码", "code", "证券代码", "代码") or "代码" in h
+                ):
+                    code_i = i
+                if rizhu_i is None and (h == "日柱" or h.endswith("日柱")):
+                    rizhu_i = i
+            if code_i is None:
+                continue
+            # If no explicit 日柱 header, try common position (col index 8 in sample)
+            if rizhu_i is None:
+                for i, h in enumerate(hlist):
+                    if h and ("日柱" in h or h in ("日干支", "干支")):
+                        rizhu_i = i
+                        break
+            if rizhu_i is None and len(hlist) > 8:
+                rizhu_i = 8
+            if rizhu_i is None:
+                continue
+            for row in it:
+                if not row or code_i >= len(row):
+                    continue
+                c6 = _code6_from_any(row[code_i])
+                if not c6:
+                    continue
+                val = row[rizhu_i] if rizhu_i < len(row) else None
+                if val is None or str(val).strip() == "":
+                    continue
+                # Prefer first non-empty; 总表 first usually
+                if c6 not in out:
+                    out[c6] = str(val).strip()
+    finally:
+        wb.close()
+
+    _RIZHU_CACHE["path"] = str(p)
+    _RIZHU_CACHE["mtime"] = mtime
+    _RIZHU_CACHE["map"] = out
+    return dict(out)
+
+
+def _weekly_style_row(
+    *,
+    week_row: Optional[Dict[str, Any]],
+    month_row: Optional[Dict[str, Any]],
+    rizhu: str = "",
+    fallback_code: str = "",
+) -> List[Any]:
+    """One stock row in weekly_analysis stock-all layout."""
+    base = week_row if (week_row and not week_row.get("error")) else month_row
+    bar = (week_row or {}).get("bar") or (base or {}).get("bar") or {}
+    code = (
+        (week_row or {}).get("code")
+        or (month_row or {}).get("code")
+        or fallback_code
+        or ""
+    )
+    # Prefer 6-digit code like weekly file
+    c6 = _code6_from_any(code) or str(code).replace("sh", "").replace("sz", "").replace("bj", "")
+    name = (
+        (week_row or {}).get("name")
+        or (month_row or {}).get("name")
+        or ""
+    )
+    week_end = bar.get("end_date") or bar.get("date") or (week_row or {}).get("query_date")
+    return [
+        c6,
+        name,
+        _fmt_ymd_dash(week_end) if week_end else "",
+        bar.get("open") if bar else "",
+        bar.get("high") if bar else "",
+        bar.get("low") if bar else "",
+        bar.get("close") if bar else "",
+        rizhu or "",
+        _bagua_combo(month_row),
+        _bagua_yao_explain(month_row),
+        _bagua_combo(week_row),
+        _bagua_yao_explain(week_row),
+    ]
+
+
+def export_bagua_xlsx(
+    cfg: AStockConfig,
+    *,
+    date: Union[str, int],
+    period: str = "DAY",
+    adjust: str = "tdx_front",
+    codes: Optional[Sequence[str]] = None,
+    all_stocks: bool = True,
+    limit: Optional[int] = None,
+    path: Optional[Path] = None,
+) -> Path:
+    """Export multi-stock / full-market hexagrams to xlsx (single period).
+
+    Default is full-market (``all_stocks=True``). Returns the written path.
+    """
+    return export_bagua_multi_period_xlsx(
+        cfg,
+        date=date,
+        periods=[period],
+        adjust=adjust,
+        codes=codes,
+        all_stocks=all_stocks,
+        limit=limit,
+        path=path,
+    )
+
+
+def _query_bagua_periods_for_code(
+    cfg: AStockConfig,
+    *,
+    code: str,
+    asof: int,
+    periods: Sequence[str],
+    adjust: str,
+    session: Optional["BaguaPlaneSession"] = None,
+    calc: Optional[BaguaCalculator] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Compute bagua for one stock across multiple periods (one bar load)."""
+    out: Dict[str, Dict[str, Any]] = {}
+    # First period loads bars via query_bagua; subsequent reuse same session/calc.
+    # Still one warehouse load per period internally — but shared session avoids
+    # re-indexing. For true single-load, call query once per period with session.
+    for per in periods:
+        try:
+            out[per] = query_bagua(
+                cfg,
+                code=code,
+                date=asof,
+                period=per,
+                adjust=adjust,
+                session=session,
+                calc=calc,
+            )
+        except Exception as e:
+            try:
+                std = normalize_query_code(code)
+                disp = display_code(std)
+            except Exception:
+                std = ""
+                disp = str(code)
+            name = ""
+            try:
+                name = resolve_stock_name(cfg, disp, std_code=std or None) or ""
+            except Exception:
+                pass
+            out[per] = {
+                "ok": False,
+                "code": disp,
+                "name": name,
+                "display": display_code_with_name(disp, name) if name else disp,
+                "std_code": std,
+                "query_date": asof,
+                "period": per,
+                "adjust": adjust,
+                "error": str(e),
+            }
+    return out
+
+
+def _display_width(value: Any) -> float:
+    """Approx cell width: CJK / full-width chars count as 2 units."""
+    s = "" if value is None else str(value)
+    w = 0.0
+    for ch in s:
+        code = ord(ch)
+        if (
+            0x4E00 <= code <= 0x9FFF
+            or 0x3000 <= code <= 0x303F
+            or 0xFF00 <= code <= 0xFFEF
+            or 0x2E80 <= code <= 0x4DBF
+        ):
+            w += 2.0
+        else:
+            w += 1.0
+    return w
+
+
+def _autofit_columns(ws: Any, *, max_width: float = 90.0, min_width: float = 8.0) -> None:
+    """Set column widths to fit content (combo columns get generous room)."""
+    from openpyxl.utils import get_column_letter
+
+    max_col = ws.max_column
+    for col_idx in range(1, max_col + 1):
+        letter = get_column_letter(col_idx)
+        best = min_width
+        for row in ws.iter_rows(min_col=col_idx, max_col=col_idx, values_only=True):
+            val = row[0] if row else None
+            w = _display_width(val) + 2
+            if w > best:
+                best = w
+        ws.column_dimensions[letter].width = min(max(best, min_width), max_width)
+
+
+def export_bagua_multi_period_xlsx(
+    cfg: AStockConfig,
+    *,
+    date: Union[str, int],
+    periods: Optional[Sequence[str]] = None,
+    adjust: str = "tdx_front",
+    codes: Optional[Sequence[str]] = None,
+    all_stocks: bool = True,
+    limit: Optional[int] = None,
+    path: Optional[Path] = None,
+    on_progress: Optional[Any] = None,
+    rizhu_path: Optional[Path] = None,
+) -> Path:
+    """Export bagua in weekly_analysis stock-all single-sheet layout.
+
+    Columns:
+      code, name, week_end, open, high, low, close, 日柱,
+      月卦月线-组合, 爻辞解释, 本周周线-组合, 爻辞解释
+
+    Always computes WEEK + MONTH (DAY is ignored for this layout). 日柱 is
+    joined from Desktop ``股票+卦象/日柱(1).xlsx`` when available.
+    """
+    import time
+
+    import openpyxl
+    from openpyxl.styles import Font
+
+    # Layout always needs week + month combos; keep periods only for meta.
+    raw_pers = list(periods or ["WEEK", "MONTH"])
+    pers: List[str] = []
+    seen_p: set = set()
+    for p in raw_pers:
+        try:
+            np = normalize_period(p)
+        except ValueError:
+            continue
+        if np not in seen_p:
+            seen_p.add(np)
+            pers.append(np)
+    # Force week+month for weekly-style sheet
+    need = ["WEEK", "MONTH"]
+    for n in need:
+        if n not in seen_p:
+            pers.append(n)
+            seen_p.add(n)
+
+    asof = _parse_ymd(date)
+    adj = normalize_adjust_mode(adjust)
+    use_all = bool(all_stocks)
+    code_list = _resolve_batch_codes(cfg, codes, all_stocks=use_all)
+    if limit is not None:
+        code_list = code_list[: int(limit)]
+    if not code_list:
+        raise ValueError("codes or all_stocks required")
+
+    if not cfg.bagua_json:
+        raise FileNotFoundError("bagua knowledge json not configured")
+    calc = BaguaCalculator.from_json(cfg.bagua_json)
+    session: Optional[BaguaPlaneSession] = None
+    if adj in ("tdx_front", "tushare_qfq", "raw"):
+        try:
+            session = BaguaPlaneSession(cfg, adj)
+        except FileNotFoundError:
+            session = None
+
+    rizhu_map = load_rizhu_map(rizhu_path)
+    rizhu_src = _RIZHU_CACHE.get("path") or ""
+
+    export_root = Path(cfg.storage_root) / "bagua_exports"
+    export_root.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    scope = "all" if use_all else "batch"
+    out = Path(
+        path
+        or (export_root / f"bagua_weekly_{scope}_{asof}_{adj}_{stamp}.xlsx")
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    sheet_rows: List[List[Any]] = []
+    totals = {"requested": len(code_list), "ok": 0, "error": 0, "rizhu_hit": 0}
+    total = len(code_list)
+    query_pers = ["WEEK", "MONTH"]
+
+    for idx, raw_code in enumerate(code_list, 1):
+        per_rows = _query_bagua_periods_for_code(
+            cfg,
+            code=raw_code,
+            asof=asof,
+            periods=query_pers,
+            adjust=adj,
+            session=session,
+            calc=calc,
+        )
+        week_row = per_rows.get("WEEK")
+        month_row = per_rows.get("MONTH")
+        c6 = _code6_from_any(
+            (week_row or {}).get("code")
+            or (month_row or {}).get("code")
+            or raw_code
+        )
+        rizhu = rizhu_map.get(c6, "") if c6 else ""
+        if rizhu:
+            totals["rizhu_hit"] += 1
+        ok_w = bool(week_row and week_row.get("ok") and not week_row.get("error"))
+        ok_m = bool(month_row and month_row.get("ok") and not month_row.get("error"))
+        if ok_w or ok_m:
+            totals["ok"] += 1
+        else:
+            totals["error"] += 1
+        sheet_rows.append(
+            _weekly_style_row(
+                week_row=week_row,
+                month_row=month_row,
+                rizhu=rizhu,
+                fallback_code=raw_code,
+            )
+        )
+        if on_progress is not None and (idx == total or idx % 25 == 0 or idx == 1):
+            try:
+                on_progress(
+                    {
+                        "phase": "query",
+                        "period": "WEEK+MONTH",
+                        "period_index": 1,
+                        "period_count": 1,
+                        "done": idx,
+                        "total": total,
+                        "ok_count": totals["ok"],
+                        "error_count": totals["error"],
+                        "code": raw_code,
+                    }
+                )
+            except Exception:
+                pass
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "stock-all"
+    ws.append(_WEEKLY_EXPORT_HEADERS)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for row in sheet_rows:
+        ws.append(row)
+    _autofit_columns(ws)
+    # combo columns (月卦月线-组合 / 本周周线-组合) need extra room
+    from openpyxl.utils import get_column_letter
+
+    for i, hdr in enumerate(_WEEKLY_EXPORT_HEADERS, 1):
+        if "组合" in hdr:
+            letter = get_column_letter(i)
+            cur = ws.column_dimensions[letter].width or 0
+            ws.column_dimensions[letter].width = max(cur, 32)
+
+    meta = wb.create_sheet("meta", 0)
+    meta.append(["key", "value"])
+    for cell in meta[1]:
+        cell.font = Font(bold=True)
+    for k, v in [
+        ("layout", "weekly_analysis stock-all"),
+        ("query_date", asof),
+        ("periods", "WEEK,MONTH"),
+        ("adjust", adj),
+        ("all_stocks", use_all),
+        ("requested", totals["requested"]),
+        ("ok_total", totals["ok"]),
+        ("error_total", totals["error"]),
+        ("rizhu_hit", totals["rizhu_hit"]),
+        ("rizhu_source", rizhu_src),
+        ("exported_at", stamp),
+    ]:
+        meta.append([k, v])
+
+    wb.save(out)
+    return out

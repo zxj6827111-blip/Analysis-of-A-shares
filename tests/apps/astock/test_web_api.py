@@ -68,3 +68,133 @@ def test_backtest_request_to_dict_includes_entry_lag():
     assert d["entry_lag"] == 2
     assert d["hold"] == 3
     assert d["rule_ids"] == ["x"]
+    assert d["corporate_action_policy"] is None
+
+
+def test_api_maps_corporate_action_policy_to_request(tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from wtpy.apps.astock.service.backtest import BacktestService
+
+    captured = {}
+
+    def fake_run(self, req, *, progress_cb=None):
+        captured["request"] = req
+        return {"run_id": "bt_ca_api", "status": "ok"}
+
+    monkeypatch.setattr(BacktestService, "run", fake_run)
+    storage = tmp_path / "st"
+    indicators = tmp_path / "ind"
+    storage.mkdir()
+    indicators.mkdir()
+    cfg = get_default_config(storage_root=storage, indicator_dir=indicators)
+    client = TestClient(create_app(cfg))
+
+    response = client.post(
+        "/api/v1/backtests",
+        json={
+            "rule_ids": ["test_rule"],
+            "codes": ["SSE.STK.600000"],
+            "corporate_action_policy": "event_ledger",
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["request"].corporate_action_policy == "event_ledger"
+
+def test_factor_sync_start_adds_universe_file_from_env(tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    monkeypatch.delenv("MARKET_DATA_ROOT", raising=False)
+    universe = tmp_path / "factor_universe.csv"
+    universe.write_text(
+        "canonical_symbol,inclusion_status\nSSE.STK.600000,included\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TUSHARE_FACTOR_UNIVERSE_FILE", str(universe))
+
+    started = {}
+
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            started["args"] = kwargs.get("args", ())
+
+        def start(self):
+            started["started"] = True
+
+    import threading
+
+    monkeypatch.setattr(threading, "Thread", FakeThread)
+    storage = tmp_path / "st"
+    indicators = tmp_path / "ind"
+    storage.mkdir()
+    indicators.mkdir()
+    cfg = get_default_config(storage_root=storage, indicator_dir=indicators)
+    client = TestClient(create_app(cfg))
+
+    response = client.post("/api/v1/data-sync/start", json={"task": "factor"})
+
+    assert response.status_code == 200
+    cmd = started["args"][0]
+    assert "--adjustment" in cmd
+    assert "adj_factor" in cmd
+    assert "--universe-file" in cmd
+    assert cmd[cmd.index("--universe-file") + 1] == str(universe)
+    assert cmd[cmd.index("--end-date") + 1]
+
+
+def test_factor_sync_start_reuses_latest_manifest_universe(tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from wtpy.apps.astock.data.dataset_store import DatasetManifest, DatasetStore
+
+    monkeypatch.delenv("MARKET_DATA_ROOT", raising=False)
+    monkeypatch.delenv("TUSHARE_FACTOR_UNIVERSE_FILE", raising=False)
+    monkeypatch.delenv("ASTOCK_FACTOR_UNIVERSE_FILE", raising=False)
+    universe = tmp_path / "manifest_universe.csv"
+    universe.write_text(
+        "canonical_symbol,inclusion_status\nSSE.STK.600000,included\n",
+        encoding="utf-8",
+    )
+    storage = tmp_path / "st"
+    indicators = tmp_path / "ind"
+    storage.mkdir()
+    indicators.mkdir()
+    cfg = get_default_config(storage_root=storage, indicator_dir=indicators)
+    store = DatasetStore(cfg.market_data_root)
+    store.save_manifest(
+        DatasetManifest(
+            dataset_id="tushare_adjfactor_1d_test",
+            source="tushare",
+            adjustment="adj_factor",
+            period="1d",
+            status="ready",
+            dataset_type="factor",
+            data_cutoff_date=20260729,
+            symbol_count=1,
+            universe_file=str(universe),
+        )
+    )
+
+    started = {}
+
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            started["args"] = kwargs.get("args", ())
+
+        def start(self):
+            started["started"] = True
+
+    import threading
+
+    monkeypatch.setattr(threading, "Thread", FakeThread)
+    client = TestClient(create_app(cfg))
+
+    response = client.post("/api/v1/data-sync/start", json={"task": "factor"})
+
+    assert response.status_code == 200
+    cmd = started["args"][0]
+    assert cmd[cmd.index("--universe-file") + 1] == str(universe)

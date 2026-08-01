@@ -30,8 +30,14 @@ class BacktestRequest:
     bagua_filter_mode: Optional[str] = None
     # Flexible gua filter (UI); when active, takes precedence over bagua_filter_mode.
     gua_filter: Optional[dict] = None
+    # Product: bagua always uses weekly hexagram covering the signal date.
+    bagua_period: str = "WEEK"
+    # raw=未复权周卦 | tdx_front=通达信前复权周卦 | tushare_qfq=Tushare前复权周卦
+    bagua_price_plane: str = "raw"
     research_unadjusted: bool = False
     research_unconfirmed_formula: bool = False
+    # None = auto: explicit cached events -> event_ledger, otherwise fail_closed.
+    corporate_action_policy: Optional[str] = None
     stop_loss: Optional[float] = None
     take_profit: Optional[float] = None
     # portfolio = shared cash; per_symbol = TDX-style independent capital per stock
@@ -42,6 +48,43 @@ class BacktestRequest:
     use_signal_cache: bool = False
     artifact_level: str = "full"  # summary | candidate | full
     holiday_policy: Optional[str] = None
+    # Multi-source market data fields
+    signal_data_source: Optional[str] = None  # tdxquant | tushare | raw | internal | legacy
+    signal_adjustment: Optional[str] = None  # front | qfq | asof_qfq
+    dataset_id: Optional[str] = None  # locked dataset for reproducibility
+    weekly_bar_mode: str = "local_aggregate"  # local_aggregate | vendor_native
+    execution_data_source: str = "local_vendor"  # product L2: warehouse raw
+    execution_dataset_id: Optional[str] = None
+    # execution adjustment (repo mode: from execution manifest, always "none")
+    execution_adjustment: Optional[str] = None
+    # Gate C: lineage of the resolved signal dataset (filled at resolution time
+    # from the signal manifest; used for cache isolation + traceability)
+    signal_raw_parent_dataset_id: Optional[str] = None
+    signal_factor_parent_dataset_id: Optional[str] = None
+    signal_formula_version: Optional[str] = None
+    signal_anchor_policy: Optional[str] = None
+    # Gate C D7: locked adj_factor dataset driving the corporate-action /
+    # adjustment gate in repository mode (no Baostock; BSE covered).
+    ca_factor_dataset_id: Optional[str] = None
+    # Gate B4: point-in-time universe (survivorship-safe). When set, signal
+    # events are filtered to stocks that were listed and still tradable on
+    # the signal date; the universe id + rule version enter the cache key.
+    universe_dataset_id: Optional[str] = None
+    universe_rule_version: Optional[str] = None
+    # Gate B5: delisted-position exit policy. Requires universe_dataset_id
+    # (terminal dates come from the point-in-time universe). None with a
+    # universe active defaults to the standard scenario last_tradable_price.
+    delist_exit_scenario: Optional[str] = None
+    delist_recovery_discount: Optional[float] = None
+    delist_exit_rule_version: Optional[str] = None
+    # Gate B7: survivorship-safe chain lineage (resolved at binding time)
+    signal_supplement_factor_dataset_id: Optional[str] = None
+    execution_parent_dataset_ids: Optional[List[str]] = None
+    baseline_generation: Optional[str] = None  # survivorship_safe | legacy
+    data_cutoff_date: Optional[int] = None
+    # symbols whose execution bars come from the supplement (delisted) parent
+    # of a composite execution dataset — used for per-trade provenance
+    execution_supplement_symbols: Optional[List[str]] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
