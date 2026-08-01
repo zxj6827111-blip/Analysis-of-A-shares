@@ -1,329 +1,493 @@
-![WonderTrader2.png](./logo_qcode_noad.jpg)
-<p align="center">
-    <img src ="https://img.shields.io/badge/version-0.9.9-blueviolet.svg"/>
-    <img src ="https://img.shields.io/badge/platform-windows|linux-yellow.svg"/>
-    <img src ="https://img.shields.io/badge/build-passing-brightgreen"/>
-    <img src ="https://img.shields.io/badge/license-MIT-orange"/>
-</p>
+# A股多周期指标回测系统
 
-# wtpy
-这是**WonderTrader**针对`Python3`适配的子框架
+基于 **wtpy**（WonderTrader Python 子框架）构建的 **A 股全市场回测与研究平台**，支持 TN6 指标导入、多周期（日/周/月）信号生成、参数实验、预测周报等完整工作流。
 
-# wtpy子框架简介
-+ apps子模块
-    > - WtBtAnalyst.py	回测分析模块，主要是利用回测生成的数据，计算各项回测指标，并输出到`excel`文件
-    > - WtCtaOptimizer  `CTA`优化器，主要是利用`multiprocessing`并行回测，并统计各项交易指标，最后将统计结果汇总输出到`csv`文件
-	> - WtHotPicker		国内期货换月规则辅助模块，支持从交易所网站页面爬取数据确定换月规则，也支持解析`datakit`每日收盘生成的snapshot.csv来确定换月规则
-+ wrapper子模块
-	> 该模块主要包含了所有和`C++`底层对接的接口模块
-	> - ContractLoader.py	主要用于通过`CTP`等接口加载基础的`commodities.json`和`contracts.json`文件
-	> - WtBtWrapper.py	主要用于和回测引擎`C++`核心模块对接
-	> - WtDtWrapper.py	主要用于和数据组件`C++`核心模块对接
-	> - WtDtHelper.py	主要提供将用户自己的数据和`WonderTrader`内部数据格式进行转换的功能
-	> - WtDtServoApi.py	主要向用户提供直接通过`python`访问`datakit`落地的数据的接口	
-	> - WtExecApi.py	主要用于和`C++`独立执行模块`WtExecMon`对接
-	> - WtWrapper.py	主要用于和实盘交易引擎`C++`核心模块对接
-	> - WtMQWrapper.py	主要提供直接使用底层WtMsgQue模块的对接
-    > - WtDtHelper.py   主要用于和底层的`WtDtHelper`数据辅助模块对接
-+ monitor子模块
-	> 该模块主要包含了内置的监控服务，提供了`Http`和`websocket`两种连接方式
-	> - DataMgr.py	主要用于读取并缓存组合数据
-	> - EventReceiver.py	主要用于在指定的`udp`端口接收组合转发的各种事件
-	> - PushSvr.py	主要用于向`web`提供`websocket`服务
-	> - WatchDog.py	主要用于自动调度服务端的进程
-	> - WtBtMon.py	主要进行回测的管理
-	> - WtMonSvr.py	监控服务核心服务模块 ，利用`flask`实现了一个`http`服务接口
-	> - static		`webui`静态文件
-+ 其他模块
-	> 主要位于根节点下，包含了各个子模块的入口组件
-	> - WtCoreDefs.py	主要定义的`Python`版本的策略基类，方便用户重写
-	> - CodeHelper.py 品种代码辅助模块，内置了一些方法，方便使用
-	> - ContractMgr.py 合约管理器模块，用于加载`contracts.json`或`stocks.json`文件，并提供查询方法
-	> - CtaContext.py	主要定义了`CTA`策略的上下文，可以理解为单策略的运行环境
-	> - HftContext.py	主要定义了`HFT`策略的上下文，可以理解为单策略的运行环境
-	> - SelContext.py	主要定义了`SEL`策略的上下文，可以理解为单策略的运行环境
-	> - ExtToolDefs.py	扩展模块定义文件，主要定义了一些扩展模块的基础接口
-	> - ProductMgr.py	品种管理器，主要用于`Python`环境中的合约属性、品种属性查询
-	> - SelContext.py	选股策略上下文，即选股策略直接交互的`API`
-	> - SessionMgr.py	交易时间模板管理器，主要用于`Python`环境中的交易时段模板管理
-	> - StrategyDefs.py	各引擎策略基础定义模块，定义了`CTA`、`HFT`、`SEL`三种策略基类
-	> - WtBtEngine.py	回测引擎转换模块，主要封装底层接口调用
-	> - WtDtEngine.py	数据引擎转换模块，主要封装底层接口调用
-	> -	WtEngine.py		交易引擎转换模块，主要封装底层接口调用
+> 本仓库 fork 自 [wondertrader/wtpy](https://github.com/wondertrader/wtpy)，在保留原 wtpy 底层框架（`wtpy/wrapper`、`wtpy/monitor`、`demos`）的基础上，新增了完整的 A 股业务层：`wtpy/apps/astock/`。
 
+---
 
-# 如何让获取
-* `WonderTrader`
-	> - `github`地址：<https://github.com/wondertrader/wondertrader>
-	> - `gitee`地址：<https://gitee.com/wondertrader/wondertrader>
-* `wtpy`
-	> - `github`地址：<https://github.com/wondertrader/wtpy>
-	> - `gitee`地址：<https://gitee.com/wondertrader/wtpy>
+## 目录
 
-* `wtpy`获取地址：<https://pypi.org/project/wtpy/>
-    `wtpy`可以直接在`python3.8`以上的版本安装
+- [核心功能](#核心功能)
+- [目录结构](#目录结构)
+- [安装方法](#安装方法)
+- [外挂数据（E:\AStockData）](#外挂数据eastockdata)
+  - [数据总览](#数据总览)
+  - [数据集仓库格式（market_data）](#数据集仓库格式market_data)
+  - [原始数据目录格式（raw）](#原始数据目录格式raw)
+  - [复权因子目录格式（factors）](#复权因子目录格式factors)
+  - [项目内本地存储（storage/astock）](#项目内本地存储storageastock)
+- [环境变量配置](#环境变量配置)
+- [数据同步](#数据同步)
+- [启动 Web 控制台](#启动-web-控制台)
+- [命令行工具](#命令行工具)
+- [回测功能说明](#回测功能说明)
+- [指标导入与配对](#指标导入与配对)
+- [运行测试](#运行测试)
 
-    ``` shell
-    pip install wtpy --upgrade
-    ```
+---
 
-# 延伸项目
-* 将`wtpy`作为底层回测引擎的强化学习框架`Wt4ElegantRL`
-<https://github.com/drlgistics/Wt4ElegantRL>
+## 核心功能
 
+- **多数据源行情**：TdxQuant（通达信量化终端）、Tushare、通达信本地 `.day` 文件、本地供应商年度 ZIP 包，四种来源统一落入内容寻址数据集仓库
+- **TN6 指标体系**：导入通达信 TN6 公式包并与人工维护的公式源文件显式配对（不逆向破解），支持编译校验、依赖分析、注册表管理
+- **多周期信号**：日线（DAY）、周线（WEEK）、月线（MONTH）、DWM 共振信号，支持 T+1 延迟入场、指定星期买卖
+- **复权体系**：原始价（raw）、通达信前复权（front）、Tushare 官方前复权（qfq）、Tushare 复权因子推导 QFQ（tushare_factor_qfq）、复合数据集（composite_*，退市股补全）、asof 前瞻复权，正式模式默认 fail-closed 防前视偏差
+- **研究平台**：参数实验（自由轴/网格）、任务队列（SQLite 持久化）、漂移监控、截面研究、结果评分与 Excel 导出
+- **预测周报**：每周选股周报导入、搜索、评分与导出
+- **Web 控制台**：FastAPI + 单文件前端（`/v3` 为主界面），回测任务异步执行、进度实时推送
+- **数据治理**：不可变 manifest + SHA256 内容寻址、严格发布策略（no_data 必须显式白名单）、幸存者偏差元数据记录、同步任务锁与断点续传
 
-# 相关资源
-* * *
-* 关注公众号`wondertrader`，可以收到`WonderTrader`的实时资讯
-* 用户交流QQ群上线：`610730738`(加入前请先`star`一下, 然后提供`github`用户名)
-* 更多`WonderTrader`的文档请看<https://wondertrader.github.io/>
-* `WonderTrader`半官方文档 <https://dumengru.github.io/docs_wondertrader/>
+---
 
+## 目录结构
 
-# 更新日志
-### 0.9.9
-* `C++`底层更新到`2023/11/27`发布的`v0.9.9`版本
-* (**重要**)全面将原来的基于DequeueRecord的容器改成新的基于numpy内存直接构建ndarray的容器，数据读写性能很很大提升，目前估算下来差不多10倍左右
-* 合约信息增加了上市日期和下市日期的概念，可以在回测中读取当日可用合约（这个还需要维护大的合约列表）
-* 其他配合底层的优化和调整
-* 细节调增了bug修复
+```
+wtpy-master/
+├── wtpy/                        # wtpy 库本体（底层框架 + A股业务层）
+│   ├── wrapper/                 #   与 C++ 底层对接的接口模块（x64/x86/linux DLL）
+│   ├── monitor/                 #   内置监控服务（web 控制台）
+│   └── apps/
+│       ├── datahelper/          #   数据落地辅助模块（原始 wtpy）
+│       └── astock/              # ★ A股回测系统核心
+│           ├── cli.py           #   命令行入口（python -m wtpy.apps.astock）
+│           ├── api.py           #   FastAPI Web 服务（端口 8765）
+│           ├── config.py        #   运行时配置（路径、环境变量解析）
+│           ├── strategy.py      #   组合回测器
+│           ├── study.py         #   信号研究（DWM 共振、组合信号等）
+│           ├── data/            #   数据层
+│           │   ├── dataset_store.py   # 内容寻址数据集存储（blobs/manifests）
+│           │   ├── repository.py      # 数据集仓库（解析/绑定/派生）
+│           │   ├── data_store.py      # 本地 DataStore（旧格式 csv/npz）
+│           │   ├── adjustments.py     # 复权因子构建（正式/研究模式）
+│           │   ├── affine_adjust.py   # 仿射前复权（TDX 1:1 匹配）
+│           │   ├── providers/         # 数据源适配：tdxquant/tushare/tdx_local/local_vendor
+│           │   └── ...                # 日历、股票池、公司行动、退市股、同步锁等
+│           ├── forecast/        #   预测周报服务（知识库 KB）
+│           ├── indicators/      #   TN6 导入、公式编译、注册表
+│           ├── research/        #   研究平台（实验/队列/评分）
+│           ├── service/         #   业务服务（回测/任务/规则/运行管理等）
+│           └── web/static/      #   前端（index.html / index_v3.html）
+├── scripts/                     # 数据同步脚本
+│   ├── sync_market_data.py      #   ★ 主同步程序（多源多模式）
+│   ├── sync_ca_events.py        #   公司行动事件同步
+│   ├── sync_tushare_delisted.py #   退市股数据同步
+│   └── reconcile_sqlite_runs.py #   运行记录对账
+├── deploy/                      # Linux 部署（install_astock.sh、PM2 配置）
+├── tests/                       # pytest 测试（950 个用例）
+├── demos/                       # 原始 wtpy 官方示例
+├── storage/astock/              # 项目内本地存储（见下文）
+├── 指标/                        # 本地 TN6 包与公式源文件（已 gitignore）
+├── .env                         # 本机环境配置（不入 Git，见 .env.example）
+└── start_astock_serve.bat       # Windows 一键启动
+```
 
-### 0.9.8
-* `C++`底层更新到`2023/08/18`发布的`v0.9.8`版本
-* WtMonSvr增加移动版入口
-* 控制台webui全新改版
-* 内置的数据下载模块wtpy.apps.datahelper新增对天勤数据tqsdk的支持
-* 优化了python部分调用底层日志接口时的编码处理机制，适配不同操作系统
-* WtMonSvr增加了一个token访问模式，主要用于一些跨域访问的场景
-* 完善了PushSvr中处理认证信息的细节
-* 其他配合底层的优化和调整
+---
 
-### 0.9.7
-* `C++`底层更新到`2023/03/21`发布的`v0.9.7`版本
-* 监控服务的DataMgr获取资金的接口增加了对一次性读取全部策略资金数据的机制
-* 控制台webui做了一些优化
-* 其他配合底层的优化和调整
+## 安装方法
 
-### 0.9.6
-* `C++`底层更新到`2022/12/19`发布的`v0.9.6`版本
-* 配合底层调整了WtDtServo的一些接口
-* 完善了WtWrapper中和底层关于图表的接口对接
-* 调整了WtCtaOptimizer和WtBtEngine一些接口，便于在终端中调用
-* WtCtaOptimize新增了一个消息队列的支持，可以发布优化的进度等信息
-* 配合底层扩展接口，完善了对增量回测的支持
-* 控制台webui做了一些优化
-* 其他配合底层的优化和调整
+### 1. 环境要求
 
-### 0.9.5
-* `C++`底层更新到`2022/11/04`发布的`v0.9.5`版本
-* 将flask改成fastapi（因为flask的依赖包版本繁复，直接安装会有一些依赖版本匹配的问题）
-* 其他配合底层的优化和调整
-* 修复了一些已知的bug
-* 更多修改日志请参考[WonderTrader v0.9.5更新日志](https://github.com/wondertrader/wondertrader/blob/master/updatelog.md)
-* 调试资源请查看<https://gitee.com/wondertrader/wtpy_utils/raw/master/pdb_wtpy_v0.9.5.rar>
+- **Python 3.8+**（建议 3.10+，已在本机 Python 3.14 验证）
+- Windows（默认）或 Linux（见 `deploy/`）
+- 外挂数据盘 `E:\AStockData`（见下文"外挂数据"章节）
 
-### 0.9.4
-* `C++`底层更新到`2022/08/29`发布的`v0.9.4`版本
-* 其他配合底层的优化和调整
-* monitor下WtBtSnooper模块进一步完善，支持自定义指标数据处理
-* webui中的回测展示页面，完善了对自定义指标的绘制，以及其他的细节完善
-* 更多修改日志请参考[WonderTrader v0.9.4更新日志](https://github.com/wondertrader/wondertrader/blob/master/updatelog.md)
-* 调试资源请查看<https://gitee.com/wondertrader/wtpy_utils/raw/master/pdb_wtpy_v0.9.4.rar>
+### 2. 安装依赖
 
-### 0.9.3
-* `C++`底层更新到`2022/07/14`发布的`v0.9.3`版本
-* 其他配合底层的优化和调整
-* 绩效分析器去掉对matplotlib的依赖，改成利用excel生成图表
-* 配置文件解析的时候，增加一个编码判断的逻辑
-* WTSTickStruct的买卖队列改成了单项，而不用数组，这样在python中转dataframe的时候便于处理
-* 停用BarList和TickList，全部改成更高效的WtBarRecords和WtTickRecords
-* WtDtServo配合底层新增了一个get_ticks_by_date接口用于按交易日读取tick数据以及一个get_sbars_by_date接口用于按交易日读取秒线数据
-* WtDtServo配合底层新增了一个get_bars_by_date用于按交易日获取分钟线数据
-* WTSBarStruct的to_tuple方法进行了扩展
-* apps.datahelper新增一个dumpBars接口，将要落地的K线数据直接通过回调的方式传出来，方便灵活控制如何保存K线数据
-* WtBtEngine和WtEngine中初始化的时候，把默认的基础文件名改成None，并加入判断，可以兼容配置文件中的配置项
-* 新增一个TraderDumper，调用底层的TraderDumper模块，可以将交易接口的数据转接出来
-* monitor.DataMgr模块读取数据的时候加了一些兼容处理，减少web控制台报错
-* WtBtEngine和WtEngine增加了配置自定义连续合约规则的接口registerCustomRule
-* WtHotPicker的演示demo中增加米筐数据源的支持
-* 绩效分析做了一些优化，主要是把目录改成output目录，后面的策略子目录通过策略id自动生产，这样就不用多次输入了
-* 完善了WtCtaOptimizer的一些细节
-* 遗传算法优化器优化
-* webui控制台发布包做了一个更新，主要增加了一些分页机制，页面可以不用那么卡
-* webui新增一个独立页面backtest.html，该页面主要提供可视化回测查看和分析功能
-* monitor下新增一个WtBtSnooper模块，可以运行一个简单的回测结果提取服务
-* demo进一步完善
-* 更多修改日志请参考[WonderTrader v0.9.3更新日志](https://github.com/wondertrader/wondertrader/blob/master/updatelog.md)
-* 调试资源请查看<https://gitee.com/wondertrader/wtpy_utils/raw/master/pdb_wtpy_v0.9.3.rar>
+```shell
+pip install -r requirements.txt
+```
 
-### 0.9.2
-* `C++`底层更新到`2022/03/28`发布的`v0.9.2`版本
-* demo进一步完善
-* 其他配合底层的优化和调整
-* 更多修改日志请参考[WonderTrader v0.9.2更新日志](https://github.com/wondertrader/wondertrader/blob/master/updatelog.md)
-* 调试资源请查看<https://gitee.com/wondertrader/wtpy_utils/raw/master/pdb_wtpy_v0.9.2.rar>
+依赖列表：`numpy`、`pandas`、`chardet`、`pyyaml`、`xlsxwriter`、`openpyxl`、`pyquery`、`psutil`、`fastapi`、`uvicorn`、`deap`、`websockets>=10.4`、`pypinyin`
 
-### 0.9.0(重大版本)
-* `C++`底层更新到`2022/03/14`发布的`v0.9.0`版本
-* （**重要**）重构了底层数据结构WTSTickStruct和WTSBarStruct，wtpy做了同步修改
-* （**重要**）配置文件全面兼容yaml和json两种格式，并实现了一个WTSCfgLoader模块自动处理
-* （**重要**）底层实现了对7*24小时交易品种的支持
-* （**重要**）完善了监控服务，支持扩展异常事件通知接口
-* 新增一个WtCCLoader模块，用于从网络接口加载合约列表
-* 新增一个遗传算法参数优化模块WtCtaGAOptimizer
-* demo进一步完善
-* 其他配合底层的优化和调整
-* 更多修改日志请参考[WonderTrader v0.9.0更新日志](https://github.com/wondertrader/wondertrader/blob/master/updatelog.md)
-* 调试资源请查看<https://gitee.com/wondertrader/wtpy_utils/raw/master/pdb_wtpy_v0.9.0.rar>
+### 3. 配置 .env
 
+复制 `.env.example` 为 `.env`，按本机修改（`.env` 已 gitignore，不会提交）：
 
-### 0.8.0(大版本)
-* `C++`底层更新到`2021/12/24`发布的`v0.8.0`版本
-* （**重要**）实现了`ExtDataLoder`的机制，实盘和回测框架都可以通过应用层的扩展数据加载器加载历史数据（可参考`demos/test_dataexts`）
-* （**重要**）实现了`ExtDataDumper`的机制，如果向`datakit`注册了`ExtDataDumper`，在收盘作业的时候，就会通过`ExtDataDumper`将实时数据转储（可参考`demos/test_dataexts`）
-* （**重要**）配合`C++`底层完善了对`T+1`交易机制的支持
-* `WatchDog`模块做了调整，增加了对进程使用的内存的监控
-* 新增了一个高性能容器`DequeRecord`（By **ZerounNet**），用于`python`部分的缓存替换原来的`WtKlinData`和`WtHftData`，在数据缓存方面，大致可以提升5%~10%的性能
-* `demos`下新增一个`cta_unit_test`，作为一个基准测试`demo`，以后会逐步完善
-* 其他细节优化和`bug`修正
+```ini
+# 部署环境: production | development | test
+ASTOCK_ENV=production
 
-### 0.7.1
-* `C++`底层更新到`2021/10/24`发布的`v0.7.1`版本
-* 回测框架`C++`底层增加了单步控制机制，用于控制回测进度，主要为了配合强化学习框架的调用习惯
-* `WtDtEngine`支持扩展`Parser`的接入，可以参考`/demos/datakit_fut/testExtParser.py`
-* 其他配合底层的优化和调整
+# 正式行情数据根目录（必须显式设置；production 缺失将拒绝启动）
+MARKET_DATA_ROOT=E:\AStockData\datasets\market_data
 
-### 0.7.0
-* `C++`底层更新到`2021/09/12`发布的`v0.7.0`版本
-* 新增一个`WtDataServo`模块，分为两种实现方式， 一种是调用本地底层`WtDtServo`模块，直接访问数据文件，根据需要可开启`web`接口，另外一种是直接访问第一种实现方式提供的`web`接口拉取数据，详情可以参考`/demos/test_dataservo`
-* 优化了`WtWrapper`和`WtBtWrapper`，将原来的`global`变量全部改成局部变量，可以提升运行效率
-* 通过`singleton`修饰器限定`Wrapper`为单例，和底层统一
-* 新增一个`WtMsgQue`模块，通过`WtMQWrapper`模块调用底层的`WtMsgQue`模块
-* `EventReceiver`模块改成调用`WtMsgQue`来实现，并按照回测和实盘框架分别实现`EventReceiver`
-* `WatchDog`启动和监控进程的机制进行了优化，不再使用`threading`挂载进程句柄的方式，而是利用`cmdline`和`processid`进行检查和监控，这样`WtMonSvr`重启之后，就可以重新根据命令行挂在已经在运行的进程
-* `WtMonSvr`新增回测管理模块`WtBtMon`，用于提供回测相关的接口服务
-* `WtMonSvr`完善了组合配置文件查询和修改的接口
-* `WtMonSvr`完善了组合风控过滤器`filters.json`的读取机制
-* `WtMonSvr`新增了用户修改密码和管理员重设用户密码的接口
-* `PushSvr`根据`EventReceiver`收到的数据，进行了适配，完善了消息推送的机制
-* `WtBtAnalyst`模块新增了`run_simple`接口，用于只进行最简单的每日资金分析，并将结果输出到`summary.json`文件
-* `apps`下新增了一个`WtHotPicker.py`模块，用于确定主力合约和次主力合约
-* 其他配合底层的优化和调整
-* `webui`剥离出来，单独发布到`wtconsole`仓库
+# 供应商原始日K ZIP 根目录（--source local_vendor 使用）
+LOCAL_VENDOR_RAW_ROOT=E:\AStockData\raw\local_vendor\original_files\incoming
 
-### 0.6.5
-* `C++`底层更新到`2021/07/19`发布的`v0.6.5`版本
-* `WtDtHelper`新增一个`resample_bars`接口，用于将制定的`dsb`数据文件重新采样为其他周期的K线
-* `SessionInfo`新增一个`toString`对象，生成`json`格式的字符串
-* 暴力优化器`CTAOptimizer`支持设置多个回测时段
-* 完善了`read_dsb_bars`和`read_dsb_ticks`接口，同时新增`read_dmb_bars`和`read_dmb_ticks`接口调用`WtDtHelper.dll`的同名接口
-* `Context`新增一个`is_backtest`属性，用于判断是否在回测模式
-* 监控服务新增了查看组合文件结构、获取组合下文件内容以及修改组合下文件内容的接口
-* 完善了`webui`控制台针对风控员的权限控制
-* 完善了绩效分析模块的兼容性
-* `webui`完善
-* 其他代码级的优化和完善
+# Tushare adj_factor 原始 CSV 缓存目录（--adjustment adj_factor 使用）
+TUSHARE_FACTOR_RAW_ROOT=E:\AStockData\factors\tushare\adj_factor
 
-### 0.6.4
-* `C++`底层更新到`2021/05/24`发布的`v0.6.4`版本
-* `WtDtHelper`中调用优化，去掉了`global`
-* 修正了一些底层接口调用时参数对应不上的问题
-* `WtDtHelper`新增了直接从`python`里向`C++`底层喂历史数据的接口`trans_bars`和`trans_ticks`
-* 新增了一些`demo`
-* 针对`C++`底层进行适配：1、`CTA`增加一个`stra_get_fund_data`接口，2、回测引擎，支持设置`slippage`
-* `WtEngine`构造函数提供指定数据输出目录的`genDir`参数，以及日志配置文件的`logCfg`参数
-* 其他代码级的优化和完善
+# Tushare API Token（仅在执行 tushare 同步时使用，永不被打印/持久化）
+TUSHARE_TOKEN=your_token_here
+```
 
-### 0.6.3
-* `C++`底层更新到`2021/04/14`发布的`v0.6.3`版本
-* 绩效分析工具`WtBtAnalyst`功能大幅度扩展
+> **注意**：`ASTOCK_ENV=production` 时，若 `MARKET_DATA_ROOT` 未设置或指向项目内部存储，系统会拒绝启动（防呆设计）。仅调试时可设 `ASTOCK_ALLOW_INTERNAL_DATA_ROOT=1` 临时放行。
 
-### 0.6.2
-* `C++`底层更新到`2021/03/17`发布的`v0.6.2`版本
-* 日志信息翻译成英文
-* `webui`的部分表格添加了排序和统计功能
+### 4. 验证安装
 
-### 0.6.1
-* `C++`底层更新到`2021/02/26`发布的`v0.6.1`版本
-* 统一封装了一个`PlatformHelper`模块，用于确定操作系统的各种信息
-* 将绝大部分的函数参数和返回值都增加了类型，方便调用的时候查看
-* 将K线容器类的成员变量做了修改，`size`->`capacity`，`count`->`size`，便于用户理解
-* `WtDtHelper`模块新增两个接口`read_dsb_ticks`和`read_dsb_bars`，同步调用`C++`底层`WtDtHelper`模块的同名接口，用于直接读取`dsb`文件
-* `CTA`策略新增一个`stra_get_last_exittime`用于获取上一个出场信号
-* `WtBeEngine`和`WtCtaOptimizer`两个模块都增加了对`C++`策略的支持
-* 回测框架增加对`session`开始和结束事件的响应接口
-* 监控服务：增加了查看和修改入口脚本的接口`/qrygrpentry`、`/cmtgrpentry`
-* `web-ui`：去掉`vue-json-viewer`库，改用`codemirror`，用于展示和编辑代码
-* `web-ui`：控制台新增入口代码修改的组件，用于修改组合盘下的`run.py`入口文件
-* `web-ui`：优化了一些展示的细节
-* `wtpy.apps`下添加了一个`datahelper`子模块，该模块的主要作用就是将不同数据源的数据按照`WonderTrader`支持的格式保存起来
+```shell
+python -m wtpy.apps.astock list-indicators
+python -m wtpy.apps.astock inspect-data
+```
 
-### 0.6.0
-* `C++`底层更新到`2021/01/26`发布的`v0.6.0`版本
-* `CTA`策略`API`新增一个`stra_get_tdate`，用于获取当前交易日
-* `CTA`策略`API`和`SEL`策略`API`各新增一个`stra_get_all_position`，用于获取全部的持仓数据
-* 完善了`WtBtWrappe`r模块中对`tick`数据的处理
-* 完善了数据辅助模块`WtDtHelper`
-* 完善了跟`C++`底层新增的HFT接口的对接
-* 初步完成了跟`C++`底层新增的股票`Level2`数据访问接口的对接
-* 将`WtDataDefs`模块中的`WtTickData`改成`WtHftData`，作为高频数据的通用容器
+### 5. 启动
 
-### 0.5.4.1
-* `WatchDog`模块中修改了一周星期的序列，因为`Python`从周一到周天标记为0-6，而`WonderTrader`采用周天到周六为0-6
+```shell
+# 方式一：双击（Windows）
+start_astock_serve.bat
 
-### 0.5.4
-* `C++`底层更新到`2020/12/25`发布的`v0.5.4`版本
-* `C++`底层接口针对传递配置文件内容的支持做了修改，同步修改了`wtpy`中的部分关联代码
-* 修正了监控服务中的`WatchDog`模块在`linux`下的启动参数的`bug`，解决了`linux`下无法启动的问题
-* 修正了监控服务的自动调度任务没有检查是否启用标记，从而导致重复启动的`bug`
-* 修改了监控服务的`WebUI`的一些展示细节
-* `wrapper`下新增一个`WtDtHelper`模块，用于对接`C++`底层的`WtDtHelpe`r模块，给`python`调用处理数据转换的任务
-* 将`WtBtAnalyst`模块迁移到`wtpy.apps`下
-* 新增一个`WtOptimizer`，用于遍历优化策略参数
+# 方式二：命令行
+python -m wtpy.apps.astock serve --host 127.0.0.1 --port 8765
+```
 
-### 0.5.3
-* `CTPLoader`增加一个isMini的参数，用于控制底层调用MiniLoader对接CTPMini2进行拉取
-* `WtKlineData`新增一个slice方法，用于对已有K线进行切片
-* `C++`底层更新到2020/12/08发布的`v0.5.3`版本
-* `CtaContext`新增一个`stra_get_sessinfo`接口，用于获取品种的交易时间信息
-* `monitor`模块中的`web-gui`修改了一些bug
-* 修正了绩效分析模块的一些bug
+浏览器访问 <http://127.0.0.1:8765/>（旧版界面为 `/legacy`、`/v2`，主界面为 `/v3`，任务详情 `/v3/task-detail`）。
 
-### 0.5.2
-* 同步`WonderTrader`核心为v0.5.2
-* 监控服务`monitor`增加了一个日志模块`WtLogger.py`，内部使用`logging`模块来记录日志
-* 进一步完善了`web-ui`的部分功能和配色
-* 新增一个`CTPLoader`模块，主要用于调用底层`CTPLoader`执行程序，用于从`CTP`账号加载合约列表
+---
 
-### 0.5.1
-* 同步`WonderTrader`核心为v0.5.1
-* 新增一个`monitor`监控服务模块，其中包含`http`服务、`websocket`服务两种对web端提供的服务，同时新增了组合事件组件，用于接收组合转发出来的实时事件，还新增一个调度模块用于自动调度服务器上的定时任务
-* 新增一个`web-ui`目录，用于管理`wtpy`的`web-ui`项目，暂时实现了PC版的监控界面，位于`web-ui/console`下，`web-ui`采用`vue2+webpack`来实现，前端采用`element-ui`界面库，能够实时提供强大的组合盘监控服务
+## 外挂数据（E:\AStockData）
 
-### 0.5.0
-* 同步`WonderTrader`核心为v0.5.0
-* 引入了`hft`策略以后，策略可以直接调用行情接入模块`Parsers`，所以调整C++底层模块的目录结构，方便策略调用
-* 增加了`HftContext`以及`BaseHftStrategy`两个针对HFT策略的基础模块
-* 回测和实盘都完成了跟C++底层的HFT接口的对接
+行情数据采用**外挂数据盘**方式存放（默认 `E:\AStockData`，路径由 `.env` 的 `MARKET_DATA_ROOT` 等变量指定），与代码仓库分离。删除或重建代码目录**不影响**行情数据；反之，行情数据可独立备份/迁移。
 
-### 0.4.0
-* 新增一个**SEL引擎**，用于调度应用层的选股策略，得到目标组合以后，提供自动执行服务，暂时只支持日级别以上的调度周期，执行会放到第二天
-* 因为新增了选股调度引擎，所以全面重构`WtPorter`和`WtBtPorter`导出的接口函数，以便调用的时候区分
-* 新增一个**独立的执行器模块**`WtExecMon`，并导出C接口提供服务。主要是剥离了策略引擎逻辑，提供单纯的执行服务，方便作为单纯的执行通道，嫁接到其他框架之下
-* `Windows`下的开发环境从`vs2013`升级到`vs2017`，`boost1.72`和`curl`需要同步升级
+```
+E:\AStockData\
+├── datasets\
+│   └── market_data\            # ★ 数据集仓库（主数据）
+│       ├── blobs\              #   内容寻址 K 线数据 {sha256}.npz
+│       ├── manifests\          #   数据集清单（不可变 JSON）
+│       ├── universes\          #   PIT 股票池 JSON（时点口径）
+│       ├── ca_events\          #   公司行动（分红送股除权）事件 {code}.json
+│       ├── sync_logs\          #   每次同步的运行日志 JSON
+│       └── .locks\             #   同步任务锁（防并发）
+├── raw\
+│   ├── local_vendor\
+│   │   ├── original_files\incoming\   # ★ 供应商年度 ZIP（一年一个）
+│   │   ├── extracted\                 #   解压缓存
+│   │   └── metadata\                  #   供应商元数据
+│   └── tushare\
+│       └── delisted_daily\raw\        #   退市股日线原始 CSV
+└── factors\
+    └── tushare\
+        └── adj_factor\                # Tushare 复权因子原始缓存
+            └── {sync_run_id}\         #   每次同步一个子目录，内含 {ts_code}.csv
+```
 
-### 0.3.6
-* 执行器使用线程池，减少对网络线程的时间占用
-* 增加了一个实盘仿真模块`TraderMocker`，可以满足目前已经支持的股票和期货的仿真交易
-* 更多接口支持（飞马、易盛iTap、`CTPMini`）
-* 内置执行算法增加`TWAP`
-* 继续完善文档
+### 数据集仓库格式（market_data）
 
-### 0.3.5
-* 把手数相关的都从整数改成浮点数，主要目的是为了以后兼容虚拟币交易(虚拟币交易数量都是小数单位)
-* 优化手数改成浮点数以后带来的日志输出不简洁的问题(浮点数打印会显示很多“0000”)
-* 逐步完善文档
-* XTP实盘适配，主要是修复`bug`
+这是系统唯一正式读取的行情数据源，由 `scripts/sync_market_data.py` 写入、`wtpy/apps/astock/data/dataset_store.py` 管理。
 
-### 0.3.4
-* 正式开源的第一个版本
+#### blobs/ —— 内容寻址 K 线
+
+```
+blobs/{sha256}.npz
+```
+
+- 每个文件是单只股票、单个（来源 × 复权口径 × 周期）组合的 K 线数组
+- 文件名为内容本身的 **SHA256 摘要**：相同内容只存一份，内容变化必然产生新文件名（天然防篡改、防重复）
+- npz 内部字段为 numpy 数组，K 线字段顺序与 `providers/base.py` 的 `MarketBar` 定义一致
+
+#### manifests/ —— 数据集清单（不可变）
+
+```
+manifests/{dataset_id}.json
+```
+
+- 一个 manifest 描述一个**不可变数据集**（一次同步的产物），发布后只追加不修改
+- `dataset_id` 命名规则：
+
+```
+{source}_{adjustment}_{period}_{cutoff或anchor}_{manifest_sha前12位}
+```
+
+| 字段 | 取值示例 | 说明 |
+|---|---|---|
+| source | `tdxquant` / `tushare` / `tdxlocal` / `localvendor` / `internal` | 数据来源 |
+| adjustment | `none` / `front` / `qfq` / `adj_factor` / `tushare_factor_qfq` / `composite_none` / `composite_tushare_factor_qfq` / `asof_forward_qfq` | 复权口径 |
+| period | `1d`（日）/ `1w`（周） | 周期 |
+| cutoff | 如 `20260717` | 数据截止日期 |
+| sha | manifest 内容摘要前 12 位 | 防碰撞/防混用 |
+
+manifest 关键字段：
+
+| 字段 | 说明 |
+|---|---|
+| `symbols[]` | 每只股票的记录：`symbol`（标准代码）、`blob_sha256`（指向 blobs/）、`first_date`/`last_date`/`row_count`、`quality`（ok/no_data/error） |
+| `status` | `building`（构建中）→ `ready`（发布）/ `partial`（部分失败但按策略发布） |
+| `source`/`adjustment`/`period` | 数据集口径（与 dataset_id 一致） |
+| `dataset_type` | `bars`（K线）/ `factor`（复权因子） |
+| `parent_dataset_id` | 派生数据集（如 composite、tushare_factor_qfq）记录父数据集 |
+| `coverage_*` | 覆盖率统计（预期/导入/缺数/失败股票数） |
+| `survivorship_bias` / `known_missing_delisted_*` | 幸存者偏差元数据与已知缺失退市股清单 |
+| `provenance` / `formula_version` / `anchor_policy` | 派生口径、复权公式版本与锚定策略（可追溯） |
+
+#### universes/ —— PIT 股票池
+
+```
+universes/pit_universe_1d_{date}_{sha}.json
+```
+
+时点（point-in-time）全市场股票池快照，用于按历史日期还原当时真实可交易标的，避免幸存者偏差。
+
+#### ca_events/ —— 公司行动
+
+```
+ca_events/{code}.json        # 如 000001.SZ.json
+```
+
+每股分红、送转等公司行动事件，是复权因子构建和"前瞻复权（asof）"的锚定依据。
+
+#### sync_logs/ —— 同步日志
+
+每次同步运行写入一个 `{sync_run_id}.json`，记录运行 ID、数据集 ID、成功率、耗时、检查点信息等，可用于审计与断点续传。
+
+### 原始数据目录格式（raw）
+
+#### local_vendor（供应商年度 ZIP）
+
+```
+LOCAL_VENDOR_RAW_ROOT\           # 默认 E:\AStockData\raw\local_vendor\original_files\incoming
+├── {year1}.zip                  # 一年一个 ZIP，内含当年全市场日K CSV
+├── {year2}.zip
+└── ...
+```
+
+- ZIP 为供应商原始日线数据（未复权），仅支持 `--source local_vendor --adjustment none --period 1d`
+- 同步时按 500 只股票一个 chunk 分批解压读取，支持断点续传（`--resume`）
+- 由于供应商数据通常缺少部分退市股票，发布时 manifest 会显式标记 `survivorship_bias=true` 并记录已知缺失清单
+
+#### tushare（退市股日线）
+
+```
+E:\AStockData\raw\tushare\delisted_daily\raw\{code}.csv
+```
+
+从 Tushare 下载的退市股票日线原始 CSV，用于构造复合数据集（composite_*）补全 local_vendor 缺失的退市股。
+
+### 复权因子目录格式（factors）
+
+```
+TUSHARE_FACTOR_RAW_ROOT\        # 默认 E:\AStockData\factors\tushare\adj_factor
+└── {sync_run_id}\              # 每次同步一个子目录
+    ├── {ts_code}.csv           # 如 600000.SH.csv，列: trade_date, adj_factor
+    └── ...
+```
+
+- Tushare `pro.adj_factor` 接口的原始缓存（版本化，按 sync_run 隔离）
+- 同步完成后因子数据本身进入数据集仓库的 `blobs/`（`dataset_type=factor` 的 manifest 引用）
+- 原始 CSV 仅作缓存与审计用途
+
+### 项目内本地存储（storage/astock）
+
+以下文件在**项目目录内**（不入 Git），与数据集仓库互补：
+
+| 路径 | 内容 | 可再生性 |
+|---|---|---|
+| `manifest.json` / `universe.json` / `calendar.json` / `config.json` | 全局目录、股票池、交易日历、配置 | 可重新生成，删除影响当前运行 |
+| `indicators/registry.json` | 指标注册表（导入的 TN6/公式） | 从 `指标/` 目录重新导入 |
+| `indicators/tn6_source_map.json` | TN6 包与公式源文件的配对记录 | 需重新执行配对 |
+| `adjustments/` | 复权因子缓存（affine_*.json 等） | 自动重建 |
+| `cache/` | 信号/执行缓存 | 自动重建 |
+| `forecast/` | 预测知识库（KB）与周报数据 | 需重新导入 |
+| `research_platform.db` | 研究平台 SQLite（实验/任务记录） | 不可再生，删除将丢失实验历史 |
+
+---
+
+## 环境变量配置
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `ASTOCK_ENV` | 否 | `production` / `development` / `test`，默认 `development`；production 下有数据根目录防呆 |
+| `MARKET_DATA_ROOT` | **是（production）** | 数据集仓库根目录，如 `E:\AStockData\datasets\market_data` |
+| `LOCAL_VENDOR_RAW_ROOT` | local_vendor 同步时 | 供应商年度 ZIP 目录 |
+| `TUSHARE_FACTOR_RAW_ROOT` | adj_factor 同步时 | 复权因子原始缓存目录 |
+| `TUSHARE_TOKEN` | tushare 同步时 | Tushare API Token（通过 `ts.set_token()` 亦可） |
+| `ASTOCK_ALLOW_INTERNAL_DATA_ROOT` | 否 | 调试用：`1` 允许 production 使用内部测试数据 |
+
+---
+
+## 数据同步
+
+所有行情同步均通过 `scripts/sync_market_data.py` 执行：
+
+```shell
+# 全量同步
+python scripts/sync_market_data.py --source tdxquant --mode full
+python scripts/sync_market_data.py --source tushare --mode full
+python scripts/sync_market_data.py --source tdx_local --mode full
+python scripts/sync_market_data.py --source local_vendor --mode full
+python scripts/sync_market_data.py --source all --mode full
+
+# 增量同步（TdxQuant/Tushare）
+python scripts/sync_market_data.py --source tdxquant --mode incremental
+python scripts/sync_market_data.py --source tushare --mode incremental
+
+# 复权因子同步（需 --universe-file 指定冻结股票池 CSV）
+python scripts/sync_market_data.py --source tushare --adjustment adj_factor --mode full \
+    --universe-file vendor_universe.csv
+
+# 数据审计
+python scripts/sync_market_data.py --source tdxquant --mode audit
+```
+
+常用参数：
+
+| 参数 | 说明 |
+|---|---|
+| `--start-date` / `--end-date` | 日期范围（YYYYMMDD） |
+| `--anchor-date` | 锚定日期（asof 复权） |
+| `--resume` | 断点续传（从检查点继续） |
+| `--fresh` | 丢弃旧检查点重新开始 |
+| `--symbol` | 仅同步指定股票（逗号分隔） |
+| `--universe-file` | 冻结股票池 CSV（local_vendor/adj_factor 全量用） |
+| `--chunk-size` | 分批大小（默认 500） |
+| `--include-delisted` / `--include-bse` | 包含退市股 / 北交所 |
+| `--skip-ca-detect` | 跳过公司行动检测（快速增量） |
+| `--allow-no-data-file` | no_data 白名单 CSV（`symbol,reason`） |
+
+**同步产出**：每个（来源 × 复权 × 周期）组合生成一个 `ready`（或 `partial`）状态的数据集 manifest + 全市场 blob 数据，随后 Web 控制台与回测即可使用。
+
+其他数据脚本：
+
+```shell
+python scripts/sync_ca_events.py          # 同步公司行动事件
+python scripts/sync_tushare_delisted.py   # 同步退市股日线（复合数据集素材）
+python scripts/reconcile_sqlite_runs.py   # 对账研究平台运行记录
+```
+
+---
+
+## 启动 Web 控制台
+
+```shell
+# Windows 一键
+start_astock_serve.bat
+
+# 手动
+python -m wtpy.apps.astock serve --host 127.0.0.1 --port 8765
+```
+
+主要页面与 API 分组：
+
+| 路径 | 说明 |
+|---|---|
+| `/` `/legacy` `/v2` | 旧版控制台 |
+| `/v3` | 主界面（回测、任务、研究平台） |
+| `/v3/task-detail` | 任务详情 |
+| `/api/v1/health` | 健康检查 |
+| `/api/v1/market-data/status` | 数据仓库状态（各数据集就绪度、最新同步） |
+| `/api/v1/rules*` | 指标规则 CRUD 与校验 |
+| `/api/v1/backtests*` | 回测提交、异步任务队列、结果与权益曲线 |
+| `/api/v1/runs*` | 运行记录、对比、产物下载、删除 |
+| `/api/v1/experiments*` | 参数实验（创建/启动/取消/导出 xlsx） |
+| `/api/v1/research/*` | 研究平台（任务、试验、搜索、调度、漂移、截面） |
+| `/api/v1/forecast/*` | 预测知识库、周报上传/激活、搜索、导出 |
+| `/api/v1/data-sync/*` | 后台数据同步任务的启动/停止/状态 |
+| `/api/v1/ca-events/status` | 公司行动覆盖状态 |
+
+---
+
+## 命令行工具
+
+所有命令通过 `python -m wtpy.apps.astock <command>` 调用：
+
+```shell
+# 指标管理
+list-indicators                                        # 列出已注册指标
+import-indicator <xx.tn6> --source <xx.txt> --note "..."   # 导入 TN6 并配对公式源
+validate-indicator <indicator_id>                      # 编译校验
+pair-735 --tn6 <735.tn6> --source <735.txt>            # 配对 735 包（不逆向）
+confirm-indicator-source --tn6 <xx.tn6> --source <xx.txt> --confirmed-by <who> --confirm-user-provided
+prune-source-map                                       # 清理失效配对记录
+
+# 数据
+inspect-data                                           # 检查通达信数据/交易日历
+import-data --codes sh600000,sz000001                  # 从通达信导入（旧格式，一般用同步脚本代替）
+rebuild-catalog                                        # 重建全局目录 manifest/universe
+min60-status                                           # 检查通达信分钟线覆盖
+
+# 信号与回测
+build-signals --indicator <id> --period DAY --codes ...
+backtest --indicator <id> --period DAY --hold 1 --entry-lag 1 \
+         --account-mode portfolio --stop-loss 0.03 --take-profit 0.08
+report <run_id>                                        # 查看一次运行的全部产物
+```
+
+---
+
+## 回测功能说明
+
+### 账户模式
+
+| 模式 | 说明 |
+|---|---|
+| `portfolio`（默认） | 组合共享资金（初始 100 万，单票最大权重 10%） |
+| `per_symbol` | 每只股票独立资金（TDX 风格） |
+| `tdx` | 通达信风格 |
+
+### 交易参数
+
+| 参数 | 说明 |
+|---|---|
+| `--hold` | 持有天数（默认 1） |
+| `--entry-lag` | 信号后第 N 个交易日开盘买入（默认 1 = T+1） |
+| `--buy-on` / `--sell-on` | 开盘/收盘价成交 |
+| `--signal-weekdays` | 仅接受指定星期信号（1=周一 … 7=周日） |
+| `--buy-weekday` / `--exit-weekday` | 指定星期买入/强制平仓（覆盖 entry-lag/hold） |
+| `--combine all/any` | 多指标信号组合（全部满足/任一满足） |
+| `--dwm` | 日周月共振模式 |
+| `--stop-loss` / `--take-profit` | 止损/止盈比例（0<x<1） |
+| `--research-unadjusted` | 研究模式：允许未复权数据跑信号 |
+| `--research-unconfirmed-formula` | 研究模式：允许未确认来源的公式跑回测 |
+
+### 数据口径（fail-closed）
+
+- **正式模式**：信号必须使用已确认来源的公式 + 复权口径数据集（默认 TDX 前复权或 Tushare QFQ），公司行动事件缺失会**拒绝运行**而不是静默降级
+- **研究模式**：可显式放行未复权/未确认公式，产物会标记 `research_*` 状态
+- 回测产物（权益曲线、成交、信号、统计）写入 `outputs/astock/{run_id}/`，可在 Web 界面查看与导出
+
+### 费用模型
+
+佣金 0.03%（最低 5 元）、印花税 0.1%（卖出）、滑点默认 0（可在 `config.py` 的 `CostConfig` 调整）。
+
+---
+
+## 指标导入与配对
+
+系统支持通达信 TN6 公式包，但**不逆向破解 TN6 二进制**——要求与人工维护的公式源文本显式配对：
+
+1. 将 `.tn6` 包和对应公式源 `.txt` 放入 `指标/` 目录（已 gitignore，不会提交）
+2. 配对：
+
+```shell
+python -m wtpy.apps.astock pair-735 --tn6 "指标/735选股.tn6" --source "指标/735选股.txt"
+```
+
+3. 确认公式源确为人工提供（完成后才允许正式回测）：
+
+```shell
+python -m wtpy.apps.astock confirm-indicator-source \
+    --tn6 "指标/735选股.tn6" --source "指标/735选股.txt" \
+    --confirmed-by <你的名字> --confirm-user-provided
+```
+
+4. 验证：
+
+```shell
+python -m wtpy.apps.astock validate-indicator <indicator_id>
+python -m wtpy.apps.astock list-indicators
+```
+
+---
+
+## 运行测试
+
+```shell
+python -m pytest tests/apps/astock -q        # 全量（950 个用例）
+```
+
+---
+
+## 相关资源
+
+- WonderTrader 官方：<https://github.com/wondertrader/wondertrader>
+- wtpy 上游：<https://github.com/wondertrader/wtpy>
+- WonderTrader 文档：<https://wondertrader.github.io/>
