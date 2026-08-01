@@ -57,6 +57,7 @@ class Position:
     entry_signal_reference_price: Optional[float] = None
     true_cash_cost: Optional[float] = None
     entry_factor: Optional[float] = None  # factor snapshot at entry for CA fail-closed
+    corporate_action_cash_received: float = 0.0
 
 
 @dataclass
@@ -91,9 +92,19 @@ class Fill:
     slippage_amount: Optional[float] = None
     price_session: Optional[str] = None  # open | close
     price_source: Optional[str] = None  # "raw" | "adjusted_reference"
+    position_cost_basis: Optional[float] = None
+    corporate_action_cash_received: float = 0.0
     signal_price_mode: Optional[str] = None
     execution_price_mode: Optional[str] = None
     valuation_price_mode: Optional[str] = None
+    # Gate B5: delist terminal exit provenance (set only on
+    # reason=delist_terminal_exit fills)
+    delist_exit_scenario: Optional[str] = None
+    delist_exit_rule_version: Optional[str] = None
+    delist_terminal_date: Optional[int] = None
+    delist_terminal_price: Optional[float] = None
+    delist_recovery_rate: Optional[float] = None
+    delist_realized_loss: Optional[float] = None
 
 
 @dataclass

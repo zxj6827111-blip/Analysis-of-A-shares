@@ -184,6 +184,10 @@ class PortfolioBacktesterHelpers:
                     shift_days=0,
                     holiday_policy=pos.holiday_policy,
                     execution_price=px,
+                    position_cost_basis=float(pos.cost),
+                    corporate_action_cash_received=float(
+                        pos.corporate_action_cash_received or 0.0
+                    ),
                     **self._fill_price_audit(
                         code, last_d, "close", session_raw=session_raw
                     ),

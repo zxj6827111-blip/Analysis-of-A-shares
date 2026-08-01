@@ -44,8 +44,11 @@ def test_three_plane_repro_fields():
     assert "L1_signal_price" in planes
     assert "L2_trade_price" in planes
     assert "L3_corporate_action_ledger" in planes
-    assert planes["L3_corporate_action_ledger"]["implemented"] is False
-    assert planes["L3_corporate_action_ledger"]["factor_jump_share_apply"] is False
+    l3 = planes["L3_corporate_action_ledger"]
+    assert l3["implemented"] is True
+    assert l3["implementation_scope"] == "explicit_events_only"
+    assert l3["factor_jump_share_apply"] is False
+    assert l3["explicit_events_required"] is True
     assert planes["L1_signal_price"]["default_formal"] == "asof_forward_qfq"
     assert "L1" in THREE_PLANE_SUMMARY_ZH and "L2" in THREE_PLANE_SUMMARY_ZH
 

@@ -46,6 +46,10 @@ def signal_cache_key(
     execution_data_source: Optional[str] = None,
     execution_dataset_id: Optional[str] = None,
     universe_version: Optional[str] = None,
+    raw_parent_dataset_id: Optional[str] = None,
+    factor_parent_dataset_id: Optional[str] = None,
+    formula_version: Optional[str] = None,
+    anchor_policy: Optional[str] = None,
 ) -> str:
     # factor_manifest_sha isolates cache when cumulative factors change (CA).
     # data_source/dataset_id isolate cache across different market data sources.
@@ -69,9 +73,15 @@ def signal_cache_key(
         "dataset_id": dataset_id or "",
         "weekly_bar_mode": weekly_bar_mode or "local_aggregate",
         "anchor_date": anchor_date,
-        "execution_data_source": execution_data_source or "tdx_local",
+        "execution_data_source": execution_data_source or "local_vendor",
         "execution_dataset_id": execution_dataset_id or "",
         "universe_version": universe_version or "",
+        # Gate C: derived-signal lineage isolates cache when the factor parent
+        # (or derivation formula/anchor) changes even if dataset naming aligns.
+        "raw_parent_dataset_id": raw_parent_dataset_id or "",
+        "factor_parent_dataset_id": factor_parent_dataset_id or "",
+        "formula_version": formula_version or "",
+        "anchor_policy": anchor_policy or "",
     }
     return short_fingerprint(payload, n=32)
 

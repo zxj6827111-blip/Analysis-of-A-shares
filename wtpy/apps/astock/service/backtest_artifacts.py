@@ -48,6 +48,13 @@ def build_repro_meta(
     filter_cache_hit: bool,
     execution_cache_hit: bool,
     use_signal_cache: bool,
+    calendar_meta: Optional[Dict[str, Any]] = None,
+    pit_meta: Optional[Dict[str, Any]] = None,
+    delist_meta: Optional[Dict[str, Any]] = None,
+    ca_meta: Optional[Dict[str, Any]] = None,
+    bagua_plane_effective: Optional[str] = None,
+    bagua_plane_missing_count: int = 0,
+    bagua_plane_missing_codes: Optional[List[str]] = None,
 ) -> tuple:
     """Build run_meta repro dict and fingerprint fields. Returns (repro, _fp_fields)."""
     from ..bagua.filter_rules import best3_display_pairs, mode_label as bagua_mode_label
@@ -81,6 +88,20 @@ def build_repro_meta(
         primary_audit = formula_audits.get(s.id, {})
         break
     repro = {
+        "calendar": dict(calendar_meta or {}),
+        # Gate B4: point-in-time universe provenance + filter accounting
+        "point_in_time_universe": dict(pit_meta or {}),
+        # Gate B5: delist exit policy provenance
+        "delist_exit_policy": dict(delist_meta or {}),
+        "corporate_action_data": dict(ca_meta or {}),
+        "ca_cache_root": (ca_meta or {}).get("cache_root"),
+        "ca_event_manifest_sha256": (ca_meta or {}).get(
+            "event_manifest_sha256"
+        ),
+        "ca_event_count": int((ca_meta or {}).get("event_count") or 0),
+        "ca_event_symbol_count": int(
+            (ca_meta or {}).get("event_symbol_count") or 0
+        ),
         "price_mode": price_mode,
         "signal_price_mode": signal_price_mode,
         "execution_price_mode": execution_price_mode,
@@ -130,6 +151,10 @@ def build_repro_meta(
         "combine": combine,
         "selected_codes": codes,
         "selected_codes_count": len(codes),
+        "codes_requested_count": getattr(req, "codes_requested_count", None) or len(codes),
+        "codes_kept_count": getattr(req, "codes_kept_count", None) or len(codes),
+        "coverage_excluded_count": int(getattr(req, "coverage_excluded_count", 0) or 0),
+        "coverage_excluded": list(getattr(req, "coverage_excluded", None) or [])[:50],
         "selected_universe_sha": sel_sha,
         "global_manifest_sha": global_manifest_sha,
         "global_universe_sha": global_universe_sha,
@@ -143,6 +168,13 @@ def build_repro_meta(
         "research_unconfirmed_formula": unconfirmed_run,
         "bagua_sha": bagua_sha,
         "with_bagua": bagua_enabled,
+        "bagua_period": getattr(req, "bagua_period", None) or "WEEK",
+        "bagua_price_plane": getattr(req, "bagua_price_plane", None) or "raw",
+        "bagua_price_plane_effective": bagua_plane_effective
+            or getattr(req, "bagua_price_plane", None)
+            or "raw",
+        "bagua_plane_missing_count": int(bagua_plane_missing_count or 0),
+        "bagua_plane_missing_codes": list(bagua_plane_missing_codes or [])[:50],
         "bagua_filter_mode": bagua_filter_mode,
         "bagua_filter_label": (
             (gua_filter_meta or {}).get("natural_language")
@@ -353,6 +385,50 @@ def finalize_run_outputs(
         repro["engine"] = "fast"
     repro["artifact_level"] = artifact_level
     repro["holiday_policy"] = holiday_policy
+    # Gate C: dataset lineage on run_meta so result detail/UI can trace
+    # signal (derived) parents and the locked execution dataset.
+    repro["signal_data_source"] = getattr(req, "signal_data_source", None)
+    repro["signal_adjustment"] = getattr(req, "signal_adjustment", None)
+    repro["dataset_id"] = getattr(req, "dataset_id", None)
+    repro["raw_dataset_id"] = getattr(req, "signal_raw_parent_dataset_id", None)
+    repro["factor_dataset_id"] = getattr(req, "signal_factor_parent_dataset_id", None)
+    repro["signal_formula_version"] = getattr(req, "signal_formula_version", None)
+    repro["signal_anchor_policy"] = getattr(req, "signal_anchor_policy", None)
+    repro["execution_data_source"] = getattr(req, "execution_data_source", None) or "local_vendor"
+    repro["execution_dataset_id"] = getattr(req, "execution_dataset_id", None)
+    # Gate B7: survivorship-safe chain lineage on run_meta
+    repro["universe_dataset_id"] = getattr(req, "universe_dataset_id", None)
+    repro["universe_rule_version"] = getattr(req, "universe_rule_version", None)
+    repro["delist_exit_rule_version"] = getattr(req, "delist_exit_rule_version", None)
+    repro["delist_exit_scenario"] = getattr(req, "delist_exit_scenario", None)
+    repro["delist_recovery_discount"] = getattr(req, "delist_recovery_discount", None)
+    repro["signal_supplement_factor_dataset_id"] = getattr(
+        req, "signal_supplement_factor_dataset_id", None)
+    repro["execution_parent_dataset_ids"] = getattr(
+        req, "execution_parent_dataset_ids", None)
+    repro["baseline_generation"] = getattr(req, "baseline_generation", None)
+    repro["data_cutoff_date"] = getattr(req, "data_cutoff_date", None)
+    _supp_syms = set(getattr(req, "execution_supplement_symbols", None) or [])
+    if _supp_syms:
+        _traded = {getattr(f, "std_code", None) for f in (result.fills or [])}
+        repro["execution_symbol_provenance"] = {
+            "rule": "composite manifest symbol_provenance (per-symbol parent)",
+            "supplement_symbols_traded": sorted(
+                s for s in _traded if s in _supp_syms
+            ),
+            "supplement_symbol_count": len(_supp_syms),
+        }
+
+    from ..backtest_summary import build_backtest_summary
+
+    analysis_summary = build_backtest_summary(
+        result.metrics,
+        status=result.status,
+        notes=result.notes,
+        context=repro,
+    )
+    # Keep the interpretation with the exact metrics used to build it.
+    repro["analysis_summary"] = analysis_summary
 
     out_dir.mkdir(parents=True, exist_ok=True)
     import json as _json
@@ -393,12 +469,14 @@ def finalize_run_outputs(
                 )
             )
 
-    try:
-        from .runs import append_run_index
+    # Gate C D5: run-index/SQLite persistence failures must fail the task —
+    # no try/except-pass here. append_run_index marks the run failed and
+    # raises RunPersistenceError on SQLite errors.
+    from .runs import append_run_index
 
-        append_run_index(
-            cfg,
-            {
+    append_run_index(
+        cfg,
+        {
                 "run_id": run_id,
                 "title": title,
                 "status": result.status,
@@ -428,13 +506,25 @@ def finalize_run_outputs(
                 "signal_adjustment": getattr(req, "signal_adjustment", None),
                 "dataset_id": getattr(req, "dataset_id", None),
                 "weekly_bar_mode": getattr(req, "weekly_bar_mode", None) or "local_aggregate",
-                "execution_data_source": getattr(req, "execution_data_source", None) or "tdx_local",
+                "execution_data_source": getattr(req, "execution_data_source", None) or "local_vendor",
                 "execution_dataset_id": getattr(req, "execution_dataset_id", None),
+                "execution_adjustment": getattr(req, "execution_adjustment", None),
+                "raw_dataset_id": getattr(req, "signal_raw_parent_dataset_id", None),
+                "factor_dataset_id": getattr(req, "signal_factor_parent_dataset_id", None),
+                "signal_formula_version": getattr(req, "signal_formula_version", None),
+                "signal_anchor_policy": getattr(req, "signal_anchor_policy", None),
+                "universe_dataset_id": getattr(req, "universe_dataset_id", None),
+                "universe_rule_version": getattr(req, "universe_rule_version", None),
+                "delist_exit_rule_version": getattr(req, "delist_exit_rule_version", None),
+                "delist_exit_scenario": getattr(req, "delist_exit_scenario", None),
+                "delist_recovery_discount": getattr(req, "delist_recovery_discount", None),
+                "signal_supplement_factor_dataset_id": getattr(
+                    req, "signal_supplement_factor_dataset_id", None),
+                "baseline_generation": getattr(req, "baseline_generation", None),
+                "data_cutoff_date": getattr(req, "data_cutoff_date", None),
                 **(_fp_fields if isinstance(_fp_fields, dict) else {}),
-            },
-        )
-    except Exception:
-        pass
+        },
+    )
 
     progress(
         {
@@ -470,11 +560,18 @@ def finalize_run_outputs(
         "title": title,
         "status": result.status,
         "metrics": result.metrics,
+        "analysis_summary": analysis_summary,
         "costs": _costs,
         "n_events": len(events),
         "n_events_raw_signals": int(n_events_raw_signals),
         "n_events_after_weekday": int(n_events_after_weekday),
         "with_bagua": bagua_enabled,
+        "bagua_period": getattr(req, "bagua_period", None) or "WEEK",
+        "bagua_price_plane": getattr(req, "bagua_price_plane", None) or "raw",
+        "bagua_price_plane_effective": repro.get("bagua_price_plane_effective")
+            or getattr(req, "bagua_price_plane", None)
+            or "raw",
+        "bagua_plane_missing_count": int(repro.get("bagua_plane_missing_count") or 0),
         "bagua_filter_mode": bagua_filter_mode,
         "bagua_filter_label": (
             (gua_filter_meta or {}).get("natural_language")
@@ -508,6 +605,14 @@ def finalize_run_outputs(
         "filter_cache_hit": filter_cache_hit,
         "execution_cache_hit": execution_cache_hit,
         "use_signal_cache": use_signal_cache,
+        "signal_data_source": getattr(req, "signal_data_source", None),
+        "signal_adjustment": getattr(req, "signal_adjustment", None),
+        "dataset_id": getattr(req, "dataset_id", None),
+        "execution_data_source": getattr(req, "execution_data_source", None),
+        "codes_requested_count": getattr(req, "codes_requested_count", None),
+        "codes_kept_count": getattr(req, "codes_kept_count", None) or len(codes),
+        "coverage_excluded_count": int(getattr(req, "coverage_excluded_count", 0) or 0),
+        "coverage_excluded": list(getattr(req, "coverage_excluded", None) or [])[:50],
         "repro": {
             "factor_manifest_sha": repro["factor_manifest_sha"],
             "entry_lag": entry_lag,
@@ -525,6 +630,29 @@ def finalize_run_outputs(
             "signal_fp": repro.get("signal_fp"),
             "filter_fp": repro.get("filter_fp"),
             "execution_fp": repro.get("execution_fp"),
+            "with_bagua": bagua_enabled,
+            "bagua_period": getattr(req, "bagua_period", None) or "WEEK",
+            "bagua_price_plane": getattr(req, "bagua_price_plane", None) or "raw",
+            "bagua_price_plane_effective": repro.get("bagua_price_plane_effective")
+                or getattr(req, "bagua_price_plane", None)
+                or "raw",
+            "bagua_plane_missing_count": int(repro.get("bagua_plane_missing_count") or 0),
+            "bagua_filter_mode": bagua_filter_mode,
+            "bagua_filter_label": (
+                (gua_filter_meta or {}).get("natural_language")
+                if gua_filter_meta
+                else (bagua_mode_label(bagua_filter_mode) if bagua_filter_mode else None)
+            ),
+            "gua_filter": gua_filter_meta or (gf.to_dict() if gf else None),
+            "signal_data_source": getattr(req, "signal_data_source", None),
+            "signal_adjustment": getattr(req, "signal_adjustment", None),
+            "dataset_id": getattr(req, "dataset_id", None),
+            "execution_data_source": getattr(req, "execution_data_source", None),
+            "execution_dataset_id": getattr(req, "execution_dataset_id", None),
+            "codes_requested_count": getattr(req, "codes_requested_count", None),
+            "codes_kept_count": getattr(req, "codes_kept_count", None) or len(codes),
+            "coverage_excluded_count": int(getattr(req, "coverage_excluded_count", 0) or 0),
+            "coverage_excluded": list(getattr(req, "coverage_excluded", None) or [])[:50],
         },
         "research_fingerprint": repro.get("research_fingerprint"),
         "signal_fp": repro.get("signal_fp"),

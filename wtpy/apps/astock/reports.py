@@ -202,6 +202,16 @@ def pair_round_trips(
         sell_shares_total = max(int(f.shares or 0), 1)
         reason = f.reason or ""
         parts: List[Tuple[Fill, int]] = []
+        ca_position_basis = getattr(f, "position_cost_basis", None)
+        ca_cash_received = float(
+            getattr(f, "corporate_action_cash_received", 0.0) or 0.0
+        )
+        if ca_position_basis is not None and open_buys[code]:
+            # Engine positions are single-entry/full-exit. Explicit share events
+            # can make sell shares differ from the original BUY fill shares.
+            b, _left = open_buys[code].popleft()
+            parts.append((b, int(f.shares or 0)))
+            remain = 0
 
         while remain > 0 and open_buys[code]:
             b, left = open_buys[code][0]
@@ -252,6 +262,8 @@ def pair_round_trips(
                     "卖出金额": float(f.amount or 0.0),
                     "买入手续费": "",
                     "卖出手续费及印花税": sell_comm + sell_tax,
+                    "CA现金分红": "",
+                    "持仓成本基数": "",
                     "毛利润": "",
                     "净利润": "",
                     "毛收益率": "",
@@ -275,14 +287,30 @@ def pair_round_trips(
             buy_scale = float(buy_scale) if buy_scale not in (None, "") else ""
             b_sh = max(int(b.shares or 0), 1)
             ratio = take / float(b_sh)
-            buy_amount = float(b.amount or 0.0) * ratio
-            if not buy_amount:
-                buy_amount = buy_price * take
-            buy_fee = float(b.commission or 0.0) * ratio
-            sell_amount = sell_price * take
-            sell_cost = (sell_comm + sell_tax) * (take / float(sell_shares_total))
-            gross = sell_amount - buy_amount
-            net = gross - buy_fee - sell_cost
+            ca_aware = ca_position_basis is not None and len(parts) == 1
+            if ca_aware:
+                buy_amount = float(b.amount or 0.0) or (buy_price * b_sh)
+                buy_fee = float(b.commission or 0.0)
+                sell_amount = float(f.amount or 0.0) or (sell_price * take)
+                sell_cost = sell_comm + sell_tax
+                gross = sell_amount + ca_cash_received - buy_amount
+                net = (
+                    sell_amount
+                    + ca_cash_received
+                    - float(ca_position_basis)
+                    - sell_cost
+                )
+            else:
+                buy_amount = float(b.amount or 0.0) * ratio
+                if not buy_amount:
+                    buy_amount = buy_price * take
+                buy_fee = float(b.commission or 0.0) * ratio
+                sell_amount = sell_price * take
+                sell_cost = (sell_comm + sell_tax) * (
+                    take / float(sell_shares_total)
+                )
+                gross = sell_amount - buy_amount
+                net = gross - buy_fee - sell_cost
             gross_ret = (gross / buy_amount) if buy_amount else None
             net_ret = (net / buy_amount) if buy_amount else None
             sig_row = find_signal(code, buy_date)
@@ -318,6 +346,8 @@ def pair_round_trips(
                     "卖出金额": sell_amount,
                     "买入手续费": buy_fee,
                     "卖出手续费及印花税": sell_cost,
+                    "CA现金分红": float(ca_cash_received) if ca_aware else "",
+                    "持仓成本基数": float(ca_position_basis) if ca_aware else "",
                     "毛利润": gross,
                     "净利润": net,
                     "毛收益率": gross_ret,
@@ -381,6 +411,8 @@ def pair_round_trips(
                     "卖出金额": "",
                     "买入手续费": buy_fee,
                     "卖出手续费及印花税": "",
+                    "CA现金分红": "",
+                    "持仓成本基数": "",
                     "毛利润": "",
                     "净利润": "",
                     "毛收益率": "",
@@ -419,7 +451,7 @@ def write_backtest_csv(
     trades_path = out_dir / "trades.csv"
 
     with open(fills_path, "w", newline="", encoding="utf-8-sig") as f:
-        from .report_price_schema import FILL_CSV_FIELDS
+        from .report_price_schema import FILL_CSV_FIELDS, REPORT_SCHEMA_VERSION
         fields = FILL_CSV_FIELDS
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
@@ -443,6 +475,10 @@ def write_backtest_csv(
                     "price_source": getattr(x, "price_source", None),
                     "shares": x.shares,
                     "amount": x.amount,
+                    "position_cost_basis": getattr(x, "position_cost_basis", None),
+                    "corporate_action_cash_received": getattr(
+                        x, "corporate_action_cash_received", 0.0
+                    ),
                     "commission": x.commission,
                     "stamp_tax": x.stamp_tax,
                     "reason": x.reason,
@@ -472,8 +508,10 @@ def write_backtest_csv(
         for row in trips:
             w.writerow(row)
 
-    atomic_write_json(metrics_path, result.metrics)
-
+    # finalize_run_outputs pre-writes this critical artifact. Keep standalone
+    # write_backtest_csv callers working without replacing an existing file.
+    if not metrics_path.exists():
+        atomic_write_json(metrics_path, result.metrics)
     # Do not embed full fills/equity in run_meta.json (can be tens of MB and block UI at 96%).
     full_meta = {
         "run_id": result.run_id,
@@ -483,6 +521,7 @@ def write_backtest_csv(
         "n_fills": len(result.fills),
         "n_equity_points": len(result.equity_curve),
         "n_trade_rows": len(trips),
+        "report_schema_version": REPORT_SCHEMA_VERSION,
         "fills_path": "fills.csv",
         "equity_path": "equity.csv",
         "trades_path": "trades.csv",
@@ -515,6 +554,27 @@ def write_backtest_csv(
             "start",
             "end",
             "costs",
+            # Gate C: dataset lineage surfaced at run_meta top level
+            "signal_data_source",
+            "signal_adjustment",
+            "dataset_id",
+            "raw_dataset_id",
+            "factor_dataset_id",
+            "signal_formula_version",
+            "signal_anchor_policy",
+            "execution_data_source",
+            "execution_dataset_id",
+            # Gate B7: survivorship-safe chain lineage
+            "universe_dataset_id",
+            "universe_rule_version",
+            "delist_exit_rule_version",
+            "delist_exit_scenario",
+            "delist_recovery_discount",
+            "signal_supplement_factor_dataset_id",
+            "execution_parent_dataset_ids",
+            "baseline_generation",
+            "data_cutoff_date",
+            "execution_symbol_provenance",
         ):
             if k in meta and k not in full_meta:
                 full_meta[k] = meta[k]
@@ -544,7 +604,10 @@ def write_backtest_csv(
     full_meta["fills_sample"] = [
         asdict(f) if is_dataclass(f) else str(f) for f in result.fills[:20]
     ]
-    atomic_write_json(meta_path, full_meta)
+    meta_path.write_text(
+        json.dumps(full_meta, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     if study_stats:
         write_stats_csv(out_dir / "study_stats.csv", study_stats)
@@ -647,6 +710,30 @@ def write_excel_summary(
         ("八卦白名单", ",".join(repro.get("bagua_allowlist") or []) if repro.get("bagua_allowlist") else ""),
         ("卦象规则版本", (repro.get("gua_filter") or {}).get("rule_version") if isinstance(repro.get("gua_filter"), dict) else ""),
         ("卦象选择模式", (repro.get("gua_filter") or {}).get("selection_mode") if isinstance(repro.get("gua_filter"), dict) else ""),
+        ("卦象周期", repro.get("bagua_period") or ("WEEK" if repro.get("with_bagua") else "")),
+        (
+            "周卦价格口径",
+            {
+                "raw": "未复权",
+                "tdx_front": "通达信前复权",
+                "tushare_qfq": "Tushare前复权",
+            }.get(
+                str(repro.get("bagua_price_plane") or "").strip().lower(),
+                (repro.get("bagua_price_plane") or ("未复权" if repro.get("with_bagua") else "")),
+            ),
+        ),
+        ("信号数据源", repro.get("signal_data_source") or ""),
+        ("信号复权口径", repro.get("signal_adjustment") or ""),
+        ("请求股票数", repro.get("codes_requested_count") if repro.get("codes_requested_count") is not None else ""),
+        ("实际回测股票数", repro.get("codes_kept_count") if repro.get("codes_kept_count") is not None else (repro.get("selected_codes_count") or "")),
+        ("覆盖剔除数", repro.get("coverage_excluded_count") if repro.get("coverage_excluded_count") is not None else ""),
+        (
+            "覆盖剔除样例",
+            ", ".join(
+                str(x.get("symbol") or x)
+                for x in (repro.get("coverage_excluded") or [])[:12]
+            ),
+        ),
         ("过滤前信号数", repro.get("n_signals_before_bagua") if repro.get("n_signals_before_bagua") is not None else ""),
         ("过滤后信号数", repro.get("n_signals_after_bagua") if repro.get("n_signals_after_bagua") is not None else ""),
         ("周期", repro.get("period") or ""),
@@ -755,6 +842,8 @@ def write_excel_summary(
             "买卖日程在交易日序列上计算：有买入/平仓星期时，取信号/买入之后第一个该 ISO 星期的可交易日（节假日顺延）；"
             "无星期配置时用 entry_lag（信号后第 N 个交易日入场）与 hold（持有 N 期后强平）。"
             "开盘/收盘由 buy_on/sell_on 决定。净利润=卖出金额-买入金额-买卖费用；"
+            "CA场景（CA现金分红/持仓成本基数列非空）：毛利润=卖出金额+CA现金分红-买入金额，"
+            "净利润=卖出金额+CA现金分红-持仓成本基数-卖出手续费及印花税；"
             "组合收益受仓位/拒单影响，与逐笔简单加总可能不一致。",
         ),
         ("免责", "研究用途，非投资建议；费率/涨跌停/停牌规则为系统近似。"),
@@ -885,6 +974,8 @@ def write_excel_summary(
             return _fmt_num(v, 2)
         if field in ("买入手续费", "卖出手续费及印花税"):
             return _fmt_num(v, 4)
+        if field in ("CA现金分红", "持仓成本基数"):
+            return _fmt_num(v, 2)
         if field in ("毛收益率", "净收益率"):
             return _fmt_pct(v)
         return v
@@ -912,7 +1003,7 @@ def write_excel_summary(
     widths = [
         6, 16, 10, 12, 18, 14, 10, 8, 10, 10, 10, 28,
         12, 10, 14, 14, 12, 12, 12, 10, 14, 14, 12, 12,
-        8, 12, 12, 12, 14, 10, 10, 10, 10, 8, 16, 10,
+        8, 12, 12, 12, 14, 12, 12, 10, 10, 10, 10, 8, 16, 10,
     ]
     for i, w in enumerate(widths, 1):
         if i <= len(headers):
@@ -941,6 +1032,8 @@ def write_excel_summary(
         "启用八卦时默认可按「最佳3爻」等方案过滤；明细列「卦名/爻位/变卦/卦象简判」默认来自该票信号日所在周的周K（L2未复权市价聚合）周卦，反映一周真实开高低收与变卦；非信号日日卦，也非L1前复权价。",
         "交易明细超过 3000 行时，Excel 仅预览前 3000 行；完整明细见同目录 trades.csv。",
         "毛利润 = 卖出金额 - 买入金额；净利润 = 毛利润 - 买入手续费 - 卖出手续费及印花税。",
+        "CA场景（L3公司行为账本生效，明细含「CA现金分红」「持仓成本基数」列）：毛利润 = 卖出金额 + CA现金分红 - 买入金额；净利润 = 卖出金额 + CA现金分红 - 持仓成本基数 - 卖出手续费及印花税。拆股/送转后「数量」为卖出时股数，收益率分母仍为买入金额。",
+        "报告 schema 版本：report_schema_version（run_meta.json），当前 v2（CA现金分红/持仓成本基数列与 CA 口径盈亏）。",
         "收益率分母为买入金额。卖出原因含 time_exit / weekday_exit / stop_loss / take_profit 等（旧版 hold_expired 映射为 time_exit）。",
         "time_exit：持有期/时间止损强制平仓；weekday_exit：指定星期平仓；成交价按 sell_on（开/收盘）。stop_loss / take_profit：触发后下一可交易日开盘价。旧版 hold_expired 映射为 time_exit。",
         "组合层总收益受仓位权重、资金不足拒单等影响，与明细净利润简单加总可能不完全一致。",

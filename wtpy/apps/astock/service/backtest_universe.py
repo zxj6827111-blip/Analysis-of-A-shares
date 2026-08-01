@@ -85,7 +85,7 @@ def select_universe(cfg: AStockConfig, codes: Optional[Union[Sequence[str], str]
         return _full()
     out: List[str] = []
     for c in parts:
-        if c.startswith("SSE.") or c.startswith("SZSE."):
+        if c.startswith("SSE.") or c.startswith("SZSE.") or c.startswith("BSE."):
             out.append(c)
         else:
             out.append(to_std_code(c))

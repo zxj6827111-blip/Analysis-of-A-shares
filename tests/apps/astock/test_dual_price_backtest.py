@@ -478,8 +478,8 @@ def test_i_reports_meta_and_csv_raw_prices(tmp_path):
     assert abs(float(trades_df.iloc[0]["卖出价"]) - 7.98) < 1e-6
 
 
-def test_j_execution_cache_schema_v2_isolates_old():
-    assert CACHE_SCHEMA == "execution_cache_v2"
+def test_j_execution_cache_schema_v3_isolates_old():
+    assert CACHE_SCHEMA == "execution_cache_v3"
     k1 = execution_cache_key(
         {
             "engine": "full",

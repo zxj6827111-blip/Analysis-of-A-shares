@@ -56,6 +56,43 @@ class TestRepositoryResolution:
         latest = repo.resolve_latest_ready(source="tdxquant", adjustment="front", period="1d")
         assert latest.dataset_id == "ds_new"
 
+    def test_resolve_prefers_fuller_same_cutoff(self, store, repo):
+        """Same cutoff: prefer higher symbol_count (full adj_factor over tiny subset)."""
+        _publish_ready(store, "factor_full", "tushare", "adj_factor", "1d", 20260726)
+        _publish_ready(store, "factor_tiny", "tushare", "adj_factor", "1d", 20260726)
+        # rewrite symbol_count after publish (manifests already on disk)
+        for did, n, rows in (("factor_full", 5796, 16000000), ("factor_tiny", 311, 1000)):
+            m = store.load_manifest(did)
+            m.symbol_count = n
+            m.row_count = rows
+            store.save_manifest(m)
+        latest = repo.resolve_latest_ready(
+            source="tushare", adjustment="adj_factor", period="1d"
+        )
+        assert latest.dataset_id == "factor_full"
+        assert latest.symbol_count == 5796
+
+    def test_supersede_dominated_ready(self, store, repo):
+        _publish_ready(store, "factor_full2", "tushare", "adj_factor", "1d", 20260726)
+        _publish_ready(store, "factor_tiny2", "tushare", "adj_factor", "1d", 20260726)
+        full = store.load_manifest("factor_full2")
+        full.symbol_count = 5796
+        full.row_count = 16000000
+        store.save_manifest(full)
+        tiny = store.load_manifest("factor_tiny2")
+        tiny.symbol_count = 311
+        tiny.row_count = 1000
+        store.save_manifest(tiny)
+        full = store.load_manifest("factor_full2")
+        demoted = repo.supersede_dominated_ready(full)
+        assert "factor_tiny2" in demoted
+        tiny2 = store.load_manifest("factor_tiny2")
+        assert tiny2.status == "superseded"
+        latest = repo.resolve_latest_ready(
+            source="tushare", adjustment="adj_factor", period="1d"
+        )
+        assert latest.dataset_id == "factor_full2"
+
     def test_resolve_no_ready_raises(self, repo):
         with pytest.raises(DatasetNotFoundError):
             repo.resolve_latest_ready(source="tdxquant", adjustment="front", period="1d")

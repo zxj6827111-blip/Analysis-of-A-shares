@@ -30,7 +30,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -610,18 +610,258 @@ def load_factor_file(path: Path, dates: Sequence[int]) -> Optional[FactorSeries]
     )
 
 
+# Event-anchored factor snap (Gate C D7 companion).
+#
+# Tushare's pro.adj_factor is not a clean step function: after a real
+# ex-date the published cumulative factor keeps wandering in the 4th decimal
+# for days/weeks (recompute rounding), and occasionally re-settles by a few
+# 1e-4 — on days with NO corporate action (verified against the cached
+# Tushare dividend/split ledger, e.g. 002892 20240625/20240626). The
+# fail-closed CA gate compares factors with ~1e-9 tolerance, so every such
+# phantom step failed the whole run ("unsupported_corporate_action").
+#
+# Observed market-wide (600-symbol sample of tushare_adjfactor_1d_20260729):
+#   real steps on ledger event days: min 3.02e-4, median 1.3e-2 (relative)
+#   phantom steps on non-event days: median ~9e-5, settling tail to ~7e-4
+# So a step only registers when it is anchored to a ledger event (±3 cal
+# days, absorbing Tushare effective-date off-by-one) or big enough (>=1%)
+# to be an unexplained action the ledger genuinely cannot restate
+# (rights issues / share reforms) — those must stay fail-closed.
+FACTOR_SNAP_REL_TOL = 2e-4  # absorb micro drift; below min real action 3.02e-4
+FACTOR_BIG_JUMP_REL_TOL = 1e-2  # unexplained >=1% jump: keep fail-closed
+# Tushare's pro.adj_factor effective date can lag its dividend ex_date by
+# several calendar days (esp. across 端午/中秋/国庆 holidays: ex_date falls
+# the trading day before a holiday, factor steps the trading day after,
+# e.g. 600717 ex_date 20260618 Thu → factor step 20260623 Tue, 5 cal-day
+# gap). The anchor window is one-sided (past events only): ±10 cal-days
+# covers the longest A-share holiday (春节 ~7d) + lag.
+# Wider gains almost nothing (sample: 93%→94% from 10d→30d; the rest are
+# genuine orphan jumps with no nearby event at all — rights issues/reforms).
+FACTOR_EVENT_WINDOW_DAYS = 10
+
+
+def _event_anchor_date(sorted_events: Sequence[int], day: int) -> Optional[int]:
+    """Closest ledger event date on or before ``day`` (one-sided window).
+
+    Tushare's adj_factor step lags the ledger ex-date (see
+    FACTOR_EVENT_WINDOW_DAYS), so only events <= the step date may anchor it.
+    Anchoring to a future event would register the step after the ex-date
+    price drop already happened (unexplained move for the CA residual gate)
+    and can produce non-monotonic step dates.
+    """
+    if not sorted_events:
+        return None
+    from datetime import datetime
+
+    try:
+        base = datetime.strptime(str(int(day)), "%Y%m%d")
+    except ValueError:
+        return None
+    best = None
+    for e in sorted_events:
+        try:
+            ed = datetime.strptime(str(int(e)), "%Y%m%d")
+        except ValueError:
+            continue
+        if ed > base:
+            continue
+        delta = (base - ed).days
+        if delta <= FACTOR_EVENT_WINDOW_DAYS and (best is None or delta < best[0]):
+            best = (delta, int(e))
+    return best[1] if best else None
+
+
+def snap_factor_event_steps(
+    f_dates: Sequence[int],
+    f_vals: Sequence[float],
+    *,
+    known_event_dates: Optional[Iterable[int]] = None,
+) -> Tuple[List[int], List[float]]:
+    """Snap a raw adj_factor series to a clean step function.
+
+    Rules while scanning in date order (baseline = last registered value):
+    - rel change <= FACTOR_SNAP_REL_TOL → absorbed (carry baseline);
+    - a ledger event on or before the step date within FACTOR_EVENT_WINDOW_DAYS
+      → register the step AT the event date (Tushare factor effective date
+      lags the ex-date by 1-5 days; the event-ledger apply re-bases positions
+      on the event date). Future events never anchor a step;
+    - rel change >= FACTOR_BIG_JUMP_REL_TOL → register at the raw date
+      (unexplained big jump; the residual gate stays fail-closed on it);
+    - otherwise (mid-size unexplained) → absorbed.
+
+    Returns (event_dates, event_factors) like the old consecutive-dedupe,
+    but with phantom micro steps removed. Output dates are strictly
+    increasing (asserted).
+    """
+    events_sorted = sorted({int(d) for d in (known_event_dates or [])})
+    event_dates: List[int] = []
+    event_factors: List[float] = []
+    baseline: Optional[float] = None
+    for d, v in zip(f_dates, f_vals):
+        v = float(v)
+        if baseline is None or baseline == 0.0:
+            event_dates.append(int(d))
+            event_factors.append(v)
+            baseline = v
+            continue
+        rel = abs(v - baseline) / abs(baseline)
+        if rel <= FACTOR_SNAP_REL_TOL:
+            continue
+        anchor = _event_anchor_date(events_sorted, int(d))
+        if anchor is not None and anchor > event_dates[-1]:
+            event_dates.append(anchor)
+            event_factors.append(v)
+            baseline = v
+        elif rel >= FACTOR_BIG_JUMP_REL_TOL:
+            event_dates.append(int(d))
+            event_factors.append(v)
+            baseline = v
+        # else: unexplained mid-size step → absorb (carry baseline)
+    assert all(
+        a < b for a, b in zip(event_dates, event_dates[1:])
+    ), "snap_factor_event_steps produced non-monotonic event dates: %r" % (event_dates,)
+    return event_dates, event_factors
+
+
+def build_factor_series_from_dataset(
+    store,
+    factor_manifest,
+    std_code: str,
+    dates: Sequence[int],
+    *,
+    symbol_index: Optional[Dict[str, object]] = None,
+    lookup_symbol: Optional[str] = None,
+    known_event_dates: Optional[Iterable[int]] = None,
+) -> FactorSeries:
+    """Build a FactorSeries from a locked FACTOR dataset (Gate C D7).
+
+    Repository-mode backtests derive corporate-action / adjustment gating
+    from the immutable adj_factor dataset instead of Baostock — fully
+    offline, BSE included. Semantics match the Baostock path where it
+    matters: the factor value asof each bar date (forward-filled), with the
+    earliest factor seeding pre-history dates; corporate-action days are the
+    dates where the factor value changes.
+
+    ``lookup_symbol`` (Gate B8) looks the factors up under a different symbol
+    than the reported ``std_code`` — used for BSE pre-migration codes whose
+    factors live under the post-migration 920 canonical code
+    (factor_resolution_v1 alias tiers).
+
+    ``known_event_dates`` anchors the factor snap to the cached CA ledger:
+    raw Tushare adj_factor micro-drift (4th-decimal wander after ex-dates)
+    is absorbed instead of registering phantom steps; see
+    snap_factor_event_steps. Without it, only the magnitude rules apply.
+
+    Missing coverage returns quality="incomplete" source="dataset_missing"
+    (explicit fail-closed downstream), never a silent identity.
+    """
+    import numpy as np
+
+    from .repository import MarketDataRepository
+
+    dates_i = [int(d) for d in dates]
+    _lookup = lookup_symbol or std_code
+    rec = None
+    if symbol_index is not None:
+        for variant in MarketDataRepository._symbol_variants(_lookup):
+            rec = symbol_index.get(variant)
+            if rec is not None:
+                break
+    else:
+        for variant in MarketDataRepository._symbol_variants(_lookup):
+            for s in factor_manifest.symbols:
+                if s.symbol == variant:
+                    rec = s
+                    break
+            if rec is not None:
+                break
+    ds_id = getattr(factor_manifest, "dataset_id", "")
+    if rec is None or not getattr(rec, "blob_sha256", ""):
+        return FactorSeries(
+            std_code=std_code,
+            dates=dates_i,
+            factors=identity_factors(len(dates_i)).tolist(),
+            source="dataset_missing",
+            source_detail=f"factor_dataset:{ds_id};symbol_not_covered",
+            quality="incomplete",
+            sha256="",
+        )
+    arrays = store.load_bars(rec.blob_sha256)
+    f_dates = [int(x) for x in arrays["trade_date"]]
+    f_vals = [float(x) for x in arrays["adj_factor"]]
+    # event points = snapped change days (event-anchored; phantom Tushare
+    # micro-drift absorbed so the fail-closed gate sees real actions only)
+    event_dates, event_factors = snap_factor_event_steps(
+        f_dates,
+        f_vals,
+        known_event_dates=known_event_dates,
+    )
+    events = dict(zip(event_dates, event_factors))
+    seed = event_factors[0] if event_factors else 1.0
+    arr = align_factors_to_dates(events, dates_i, seed_factor=seed)
+    arr = np.asarray(arr, dtype=np.float64)
+    if np.any(np.isnan(arr)):
+        # forward-fill inside range (align seeds pre-history; interior gaps ffill)
+        last = np.nan
+        for i in range(len(arr)):
+            if np.isfinite(arr[i]):
+                last = float(arr[i])
+            elif np.isfinite(last):
+                arr[i] = last
+        if np.any(np.isnan(arr)):
+            return FactorSeries(
+                std_code=std_code,
+                dates=dates_i,
+                factors=identity_factors(len(dates_i)).tolist(),
+                source="dataset_missing",
+                source_detail=f"factor_dataset:{ds_id};nan_alignment",
+                quality="incomplete",
+                sha256="",
+            )
+    _detail = f"factor_dataset:{ds_id}"
+    _detail += ";snap:event_anchored" if known_event_dates else ";snap:magnitude_only"
+    if lookup_symbol and lookup_symbol != std_code:
+        _detail += f";alias:{lookup_symbol}"
+    series = FactorSeries(
+        std_code=std_code,
+        dates=dates_i,
+        factors=arr.tolist(),
+        source="dataset",
+        source_detail=_detail,
+        event_dates=event_dates,
+        event_factors=event_factors,
+        prehistory_factor=float(seed),
+        quality="complete",
+        sha256="",
+    )
+    series.sha256 = sha256_text(
+        json.dumps(
+            {
+                "std_code": std_code,
+                "factor_dataset": ds_id,
+                "blob": rec.blob_sha256,
+                "dates": dates_i[:1] + dates_i[-1:],
+                "n": len(dates_i),
+            },
+            sort_keys=True,
+        )
+    )
+    return series
+
+
 def formal_adjustment_ready(series_list: Sequence[FactorSeries]) -> Tuple[bool, str]:
     """Formal backtest requires complete factors from a trusted query path.
 
     Accept:
-      - quality=complete and source in {baostock, cached_baostock, file}
+      - quality=complete and source in {baostock, cached_baostock, file,
+        dataset} (dataset = locked immutable adj_factor dataset, Gate C D7)
       - quality=no_events_identity AND source in {identity_no_events, baostock}
         (Baostock query succeeded with an empty event list)
 
     Reject:
       - quality=forced_identity or source_detail containing force_identity
       - source=identity (manual/forced)
-      - identity_missing / incomplete / error
+      - identity_missing / incomplete / error / dataset_missing
     """
     if not series_list:
         return False, "no_factor_series"
@@ -634,7 +874,12 @@ def formal_adjustment_ready(series_list: Sequence[FactorSeries]) -> Tuple[bool, 
         if s.source == "identity":
             bad.append(s)
             continue
-        if s.quality == "complete" and s.source in ("baostock", "file", "cached_baostock"):
+        if s.quality == "complete" and s.source in (
+            "baostock",
+            "file",
+            "cached_baostock",
+            "dataset",
+        ):
             continue
         if s.quality == "no_events_identity" and s.source in (
             "identity_no_events",

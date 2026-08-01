@@ -2,12 +2,18 @@
 """CSV column contracts for price-lane exports (keeps reports.py thinner).
 
 Three planes: L1 signal (asof_forward_qfq / ordinary qfq audit refs),
-L2 trade (price/raw_price), L3 CA ledger not in fill rows (formal fail_closed).
+L2 trade (price/raw_price), L3 CA ledger fields on CA-aware exit fills.
 """
 
 from __future__ import annotations
 
 from typing import List
+
+# Bumped when a report column meaning changes in a way consumers must
+# detect (written to run_meta.json as report_schema_version).
+# v2: CA-aware 毛利润/净利润 (cash dividend added, cost-basis denominator)
+#     plus explicit CA现金分红 / 持仓成本基数 columns.
+REPORT_SCHEMA_VERSION: int = 2
 
 FILL_CSV_FIELDS: List[str] = [
     "date",
@@ -27,6 +33,8 @@ FILL_CSV_FIELDS: List[str] = [
     "price_source",
     "shares",
     "amount",
+    "position_cost_basis",
+    "corporate_action_cash_received",
     "commission",
     "stamp_tax",
     "reason",
@@ -62,6 +70,8 @@ TRADE_TRIP_FIELDS: List[str] = [
     "卖出金额",
     "买入手续费",
     "卖出手续费及印花税",
+    "CA现金分红",
+    "持仓成本基数",
     "毛利润",
     "净利润",
     "毛收益率",

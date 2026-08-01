@@ -208,8 +208,15 @@ class TestExperimentRealDualSourceExpansion:
         )
         cfg.ensure_dirs()
 
+        # Gate C D2: the dual-source template is now
+        # (tdxquant/front) + (internal/tushare_factor_qfq) with a shared
+        # raw execution dataset — not the retired (tushare, qfq) pair.
         md_store = DatasetStore(tmp_path / "storage" / "market_data")
-        for src, adj in [("tdxquant", "front"), ("tushare", "qfq")]:
+        for src, adj in [
+            ("tdxquant", "front"),
+            ("internal", "tushare_factor_qfq"),
+            ("local_vendor", "none"),
+        ]:
             bars = [
                 MarketBar(
                     symbol="SSE.STK.600000", trade_date=20240101, period="1d",
@@ -222,7 +229,7 @@ class TestExperimentRealDualSourceExpansion:
                 dataset_id=f"{src}_{adj}_1d_test",
                 source=src, adjustment=adj, period="1d",
                 status="building", data_cutoff_date=20260724,
-                symbols=[SymbolRecord(symbol="SSE.STK.600000", blob_sha256=sha, row_count=1, quality="ok")],
+                symbols=[SymbolRecord(symbol="SSE.STK.600000", blob_sha256=sha, row_count=1, quality="ok", first_date=20240101, last_date=20240101)],
                 symbol_count=1, row_count=1,
             )
             md_store.publish(m)
@@ -234,6 +241,7 @@ class TestExperimentRealDualSourceExpansion:
             codes=["SSE.STK.600000"],
             start=20200101,
             end=20240701,
+            execution_data_source="local_vendor",
             dual_source_compare=True,
             force=True,
         )
@@ -242,13 +250,16 @@ class TestExperimentRealDualSourceExpansion:
         exp_row = exp_db.get_experiment(cfg, exp_id)
         config = exp_row.get("config") or {}
         assert config.get("dual_source_compare") is True
+        assert (config.get("common_universe") or {}).get("common_universe_count") == 1
         variants = exp_row.get("variants") or []
         params_list = [v.get("params") for v in variants if v.get("params")]
         sources = {p.get("signal_data_source") for p in params_list}
         assert "tdxquant" in sources
-        assert "tushare" in sources
+        assert "internal" in sources
         ds_ids = {p.get("dataset_id") for p in params_list}
         assert None not in ds_ids
+        exec_ids = {p.get("execution_dataset_id") for p in params_list}
+        assert exec_ids == {"local_vendor_none_1d_test"}
 
     def test_dual_source_fails_without_ready_datasets(self, tmp_path):
         from wtpy.apps.astock.config import AStockConfig

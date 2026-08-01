@@ -17,6 +17,7 @@ from wtpy.apps.astock.data.adjustments import (
     causal_qfq_scale,
     formal_adjustment_ready,
     seed_factor_for_dates,
+    snap_factor_event_steps,
     FactorSeries,
 )
 from wtpy.apps.astock.study import day_bars_to_adj
@@ -81,6 +82,54 @@ def test_day_bars_to_adj_shares_causal_scale():
     )[:2]
     assert abs(adj2[0].open - adj3_prefix[0].open) < 1e-9
     assert abs(adj2[0].open - 10.0) < 1e-9  # base=0.5 => scale=1
+
+
+def test_snap_never_anchors_future_event():
+    # Only a future event sits within the window of the step date; the step
+    # must stay at its raw date instead of being registered in the future.
+    dates, factors = snap_factor_event_steps(
+        [20240101, 20240106],
+        [1.0, 1.04],
+        known_event_dates=[20240110],
+    )
+    assert dates == [20240101, 20240106]
+    assert factors == [1.0, 1.04]
+
+
+def test_snap_dense_events_stay_monotonic():
+    # Reproduced regression: a step between two ledger events must anchor to
+    # the past event (or its raw date), never to the future one, keeping the
+    # output strictly increasing.
+    dates, factors = snap_factor_event_steps(
+        [20240101, 20240105, 20240106, 20240110],
+        [1.0, 1.0, 1.04, 1.02],
+        known_event_dates=[20240101, 20240110],
+    )
+    assert dates == sorted(dates)
+    assert len(set(dates)) == len(dates)
+    assert dates[-1] <= 20240110
+    assert dates == [20240101, 20240106, 20240110]
+
+
+def test_snap_anchors_to_past_event_within_window():
+    # Factor step 5 days after a ledger event snaps back to the event date
+    # (Tushare effective-date lag), never to a later event.
+    dates, factors = snap_factor_event_steps(
+        [20240101, 20240106],
+        [1.0, 1.04],
+        known_event_dates=[20240101, 20240105, 20240110],
+    )
+    assert dates == [20240101, 20240105]
+    assert factors == [1.0, 1.04]
+
+
+def test_snap_absorbed_micro_drift_no_events():
+    dates, factors = snap_factor_event_steps(
+        [20240101, 20240102, 20240103],
+        [1.0, 1.00005, 1.0001],
+    )
+    assert dates == [20240101]
+    assert factors == [1.0]
 
 
 def test_qfq_ratio_matches_raw_factor_ratio():

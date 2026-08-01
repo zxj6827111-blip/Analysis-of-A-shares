@@ -66,6 +66,9 @@ class TestUnitDocsConsistent:
             text = p.read_text(encoding="utf-8")
             for i, line in enumerate(text.splitlines(), 1):
                 if "万元" in line and "Do NOT" not in line and "非万元" not in line \
-                        and "万元 unit hypothesis" not in line:
+                        and "万元 unit hypothesis" not in line \
+                        and "x10000" not in line and "×10000" not in line:
+                    # x10000/×10000 marks an explicit documented conversion to
+                    # 元 (e.g. tdxquant Amount) — not a conflicting unit claim.
                     offenders.append(f"{p.name}:{i}: {line.strip()[:80]}")
         assert not offenders, f"conflicting 万元 unit claims: {offenders}"

@@ -155,10 +155,15 @@ def test_compare_runs_param_diff_and_metrics(cfg: AStockConfig):
             "gua_filter": {
                 "enabled": True,
                 "selection_mode": "exact_line",
-                "history_summary": {"short": "卦象3项"},
+                "selected_state_ids": ["24-1", "46-1", "11-1"],
+                "history_summary": {
+                    "short": "卦象3项",
+                    "tooltip_lines": ["复初爻", "升初爻", "泰初爻"],
+                },
                 "natural_language": "最佳3爻",
             },
             "with_bagua": True,
+            "bagua_price_plane": "raw",
         },
     )
 
@@ -192,7 +197,12 @@ def test_compare_runs_param_diff_and_metrics(cfg: AStockConfig):
     assert p0["buy_on"] == "open"
     assert p0["schedule_mode"] == "weekday"
     p1 = out["runs"][1]["params"]
-    assert "卦象" in p1["gua_short"] or p1["gua_short"] != p0["gua_short"]
+    # Prefer concrete names over bare「卦象N项」
+    assert p1["gua_short"] != "卦象3项"
+    assert ("复" in p1["gua_short"] or "升" in p1["gua_short"] or "泰" in p1["gua_short"]
+            or "24-1" in p1["gua_short"] or "爻" in p1["gua_short"]
+            or p1["gua_short"] != p0["gua_short"])
+    assert p1.get("bagua_price_plane") == "raw"
 
 
 def test_compare_runs_rejects_count(cfg: AStockConfig):

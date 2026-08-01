@@ -69,7 +69,12 @@ def is_ashare_code(raw: str) -> bool:
 
 
 def is_bse_code(raw: str) -> bool:
-    """Return True if code is a Beijing Stock Exchange A-share (4xxxxx / 8xxxxx)."""
+    """True for Beijing Stock Exchange A-shares.
+
+    BSE code segments: 43xxxx / 83xxxx / 87xxxx (historical) and 920xxx
+    (post-migration canonical range). SSE 9xxxxx B-shares are 900xxx and do
+    NOT overlap 920xxx.
+    """
     code = raw.lower().replace(".day", "")
     if code.startswith("bj"):
         num = code[2:]
@@ -77,12 +82,23 @@ def is_bse_code(raw: str) -> bool:
         num = code
     if not re.fullmatch(r"\d{6}", num):
         return False
-    return num.startswith(("4", "8"))
+    return num.startswith(("4", "8")) or num.startswith("92")
 
 
 def to_std_code(raw: str) -> str:
-    """Convert sh600000 / sz000001 / bj430047 to SSE.STK.600000 / SZSE.STK.000001 / BSE.STK.430047."""
-    code = raw.lower().replace(".day", "")
+    """Convert sh600000 / sz000001 / bj430047 / 920001 (and canonical
+    SSE.STK.* / SZSE.STK.* / BSE.STK.* passthrough) to canonical form.
+
+    BSE segments: 43/83/87 (historical) and 920 (post-migration). Bare
+    92xxxx maps to BSE — SSE B-shares are 900xxx and never 92xxxx.
+    """
+    s = str(raw).strip()
+    if s.upper().startswith(("SSE.", "SZSE.", "BSE.")):
+        parts = s.split(".")
+        if len(parts) == 3 and parts[2].isdigit():
+            return f"{parts[0].upper()}.{parts[1].upper()}.{parts[2]}"
+        raise ValueError(f"bad code: {raw}")
+    code = s.lower().replace(".day", "")
     if code.startswith("sh"):
         num = code[2:]
         return f"SSE.STK.{num}"
@@ -93,6 +109,8 @@ def to_std_code(raw: str) -> str:
         num = code[2:]
         return f"BSE.STK.{num}"
     if code.isdigit() and len(code) == 6:
+        if code.startswith("92"):
+            return f"BSE.STK.{code}"
         if code.startswith(("5", "6", "9")):
             return f"SSE.STK.{code}"
         if code.startswith(("4", "8")):

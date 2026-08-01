@@ -108,6 +108,27 @@ class DatasetManifest:
     warning_symbol_count: int = 0
     coverage_ratio: Optional[float] = None
     no_data_allowlist: List[Dict] = field(default_factory=list)
+    # ---- Gate C: dataset typing / lineage / derivation (all optional) ----
+    dataset_type: str = "bars"  # bars | factor
+    universe_file: str = ""
+    universe_sha256: str = ""
+    content_hash: str = ""
+    provider_versions: Dict = field(default_factory=dict)
+    provenance: Dict = field(default_factory=dict)
+    token_exposed: Optional[bool] = None
+    incremental_policy_version: str = ""
+    # derived-dataset lineage (internal/tushare_factor_qfq)
+    raw_dataset_id: str = ""
+    raw_dataset_sha256: str = ""
+    raw_source: str = ""
+    factor_dataset_id: str = ""
+    factor_dataset_sha256: str = ""
+    factor_source: str = ""
+    anchor_policy: str = ""
+    formula_version: str = ""
+    price_precision_policy: str = ""
+    volume_policy: str = ""
+    amount_policy: str = ""
     symbols: List[SymbolRecord] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -217,6 +238,66 @@ class DatasetStore:
             raise FileNotFoundError(f"Blob not found: {blob_sha256}")
         data = np.load(blob_path)
         return {k: data[k] for k in data.files}
+
+    def store_bar_arrays(self, symbol: str, arrays: Dict[str, "np.ndarray"]) -> str:
+        """Store OHLCV arrays directly (same blob layout as store_bars).
+
+        Used by derivation pipelines that operate on numpy arrays and would
+        otherwise pay the cost of materializing millions of MarketBar objects.
+        """
+        required = ("trade_date", "open", "high", "low", "close", "volume", "amount")
+        for k in required:
+            if k not in arrays:
+                raise ValueError(f"missing array: {k}")
+        import io
+
+        buf = io.BytesIO()
+        np.savez_compressed(
+            buf,
+            trade_date=np.asarray(arrays["trade_date"], dtype=np.int64),
+            open=np.asarray(arrays["open"], dtype=np.float64),
+            high=np.asarray(arrays["high"], dtype=np.float64),
+            low=np.asarray(arrays["low"], dtype=np.float64),
+            close=np.asarray(arrays["close"], dtype=np.float64),
+            volume=np.asarray(arrays["volume"], dtype=np.float64),
+            amount=np.asarray(arrays["amount"], dtype=np.float64),
+        )
+        data = buf.getvalue()
+        digest = sha256_bytes(data)
+        blob_path = self.blobs_dir / f"{digest}.npz"
+        if not blob_path.exists():
+            tmp_path = blob_path.with_suffix(".npz.tmp")
+            tmp_path.write_bytes(data)
+            tmp_path.replace(blob_path)
+        return digest
+
+    def store_factors(self, symbol: str, dates, factors) -> str:
+        """Store an adjustment-factor series as an NPZ blob (content-addressed).
+
+        Enforced invariants: strictly ascending unique trade_date, adj_factor > 0.
+        Raises ValueError on violation — factor data must be cleaned by the
+        sync layer before storage.
+        """
+        d = np.asarray(dates, dtype=np.int64)
+        f = np.asarray(factors, dtype=np.float64)
+        if len(d) == 0 or len(d) != len(f):
+            raise ValueError("empty or mismatched factor series")
+        if not np.all(np.diff(d) > 0):
+            raise ValueError("factor trade_date must be strictly ascending/unique")
+        if not np.all(f > 0):
+            raise ValueError("adj_factor must be > 0")
+        import io
+
+        buf = io.BytesIO()
+        np.savez_compressed(buf, trade_date=d, adj_factor=f)
+        data = buf.getvalue()
+        digest = sha256_bytes(data)
+        blob_path = self.blobs_dir / f"{digest}.npz"
+        if not blob_path.exists():
+            tmp_path = blob_path.with_suffix(".npz.tmp")
+            tmp_path.write_bytes(data)
+            tmp_path.replace(blob_path)
+        return digest
 
     def blob_exists(self, blob_sha256: str) -> bool:
         return (self.blobs_dir / f"{blob_sha256}.npz").exists()

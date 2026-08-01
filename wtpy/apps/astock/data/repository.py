@@ -75,14 +75,16 @@ class MarketDataRepository:
             variants.append(f"{code}.{suffix_map[pfx]}")
             variants.append(code)
         elif symbol.isdigit() and len(symbol) == 6:
-            if symbol.startswith(("5", "6", "9")):
-                variants.append(f"SSE.STK.{symbol}")
-                variants.append(f"{symbol}.SH")
-                variants.append(f"sh{symbol}")
-            elif symbol.startswith(("4", "8")):
+            # BSE segments: 43/83/87 (historical) + 920 (post-migration).
+            # SSE B-shares are 900xxx — bare 92xxxx is always BSE.
+            if symbol.startswith(("4", "8")) or symbol.startswith("92"):
                 variants.append(f"BSE.STK.{symbol}")
                 variants.append(f"{symbol}.BJ")
                 variants.append(f"bj{symbol}")
+            elif symbol.startswith(("5", "6", "9")):
+                variants.append(f"SSE.STK.{symbol}")
+                variants.append(f"{symbol}.SH")
+                variants.append(f"sh{symbol}")
             else:
                 variants.append(f"SZSE.STK.{symbol}")
                 variants.append(f"{symbol}.SZ")
@@ -127,6 +129,23 @@ class MarketDataRepository:
             raise DatasetNotFoundError(f"Dataset not found: {dataset_id}")
         return m
 
+    @staticmethod
+    def readiness_score(m: DatasetManifest) -> tuple:
+        """Rank datasets for product selection (higher is better).
+
+        Preference order:
+          1. data_cutoff_date — freshest market coverage
+          2. symbol_count — fullest board (blocks tiny subsets)
+          3. row_count — real bar/factor volume (blocks empty shells)
+          4. created_at — tie-break
+        """
+        return (
+            int(getattr(m, "data_cutoff_date", None) or 0),
+            int(getattr(m, "symbol_count", None) or 0),
+            int(getattr(m, "row_count", None) or 0),
+            getattr(m, "created_at", None) or "",
+        )
+
     def resolve_latest_ready(
         self,
         *,
@@ -134,10 +153,12 @@ class MarketDataRepository:
         adjustment: str,
         period: str,
     ) -> DatasetManifest:
-        """Find the latest ready dataset matching criteria.
+        """Find the best ready dataset matching criteria.
+
+        Preference order (desc): cutoff → symbol_count → row_count → created_at.
+        Partial / superseded / failed are never selected.
 
         Raises DatasetNotFoundError if none exists.
-        Partial datasets are never selected.
         """
         candidates = self.list_datasets(
             source=source,
@@ -145,16 +166,78 @@ class MarketDataRepository:
             period=period,
             status="ready",
         )
-        if not candidates:
+        # Drop empty shells and obvious test stubs (no cutoff + tiny board).
+        usable = []
+        for m in candidates:
+            n_sym = int(m.symbol_count or 0)
+            n_row = int(m.row_count or 0)
+            if n_sym <= 0:
+                continue
+            # factor/bar product sets must have real rows once symbol_count is large
+            if n_sym >= 50 and n_row <= 0:
+                continue
+            usable.append(m)
+        if not usable:
+            usable = candidates
+        if not usable:
             raise DatasetNotFoundError(
                 f"No ready dataset for source={source} adjustment={adjustment} "
                 f"period={period}. Run sync first."
             )
-        candidates.sort(
-            key=lambda m: (m.data_cutoff_date or 0, m.created_at or ""),
-            reverse=True,
+        usable.sort(key=self.readiness_score, reverse=True)
+        return usable[0]
+
+    def supersede_dominated_ready(
+        self,
+        winner: DatasetManifest,
+        *,
+        min_symbol_ratio: float = 0.5,
+    ) -> List[str]:
+        """Mark smaller same-family ready sets as superseded after a full publish.
+
+        A candidate is dominated when it shares source/adjustment/period, is
+        ready, has fewer symbols than ``winner * min_symbol_ratio`` (or equal
+        cutoff with strictly fewer symbols / rows). Returns demoted ids.
+        """
+        if not winner or (winner.status or "") != "ready":
+            return []
+        demoted: List[str] = []
+        win_n = int(winner.symbol_count or 0)
+        win_rows = int(winner.row_count or 0)
+        win_cut = int(winner.data_cutoff_date or 0)
+        if win_n <= 0:
+            return []
+        peers = self.list_datasets(
+            source=winner.source,
+            adjustment=winner.adjustment,
+            period=winner.period or "1d",
+            status="ready",
         )
-        return candidates[0]
+        for m in peers:
+            if m.dataset_id == winner.dataset_id:
+                continue
+            n = int(m.symbol_count or 0)
+            rows = int(m.row_count or 0)
+            cut = int(m.data_cutoff_date or 0)
+            tiny = win_n >= 1000 and n < max(50, int(win_n * float(min_symbol_ratio)))
+            empty = n >= 50 and rows <= 0 and win_rows > 0
+            older_smaller = cut <= win_cut and n < win_n and rows < win_rows
+            if not (tiny or empty or older_smaller):
+                continue
+            m.status = "superseded"
+            prov = dict(getattr(m, "provenance", None) or {})
+            prov["superseded_reason"] = (
+                f"dominated_by:{winner.dataset_id};"
+                f"win_sym={win_n};self_sym={n};win_cut={win_cut};self_cut={cut}"
+            )
+            prov["previous_status"] = "ready"
+            m.provenance = prov
+            warn = (getattr(m, "warning_text", None) or "").strip()
+            note = f"superseded by {winner.dataset_id}"
+            m.warning_text = f"{warn} | {note}" if warn else note
+            self._store.save_manifest(m)
+            demoted.append(m.dataset_id)
+        return demoted
 
     def load_bars(
         self,
@@ -235,7 +318,7 @@ class MarketDataRepository:
             start_date=start_date,
             end_date=end_date,
         )
-        return [
+        result = [
             DayBar(
                 date=b.trade_date,
                 open=b.open,
@@ -247,6 +330,9 @@ class MarketDataRepository:
             )
             for b in market_bars
         ]
+        if len(result) > 1 and result[0].date > result[-1].date:
+            result.reverse()
+        return result
 
     def validate_dataset(self, dataset_id: str) -> Dict:
         """Validate dataset integrity: all blobs present, row counts match."""

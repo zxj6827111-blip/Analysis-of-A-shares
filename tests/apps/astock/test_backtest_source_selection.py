@@ -11,7 +11,7 @@ class TestBacktestSourceSelection:
         assert req.signal_adjustment is None
         assert req.dataset_id is None
         assert req.weekly_bar_mode == "local_aggregate"
-        assert req.execution_data_source == "tdx_local"
+        assert req.execution_data_source == "local_vendor"
         assert req.execution_dataset_id is None
 
     def test_tdxquant_source(self):
@@ -44,9 +44,9 @@ class TestBacktestSourceSelection:
         assert req.signal_data_source == "internal"
         assert req.signal_adjustment == "asof_qfq"
 
-    def test_execution_fixed_tdx_local(self):
+    def test_execution_default_local_vendor(self):
         req = BacktestRequest(rule_ids=["rule_a"])
-        assert req.execution_data_source == "tdx_local"
+        assert req.execution_data_source == "local_vendor"
 
     def test_to_dict_includes_new_fields(self):
         req = BacktestRequest(
@@ -59,7 +59,7 @@ class TestBacktestSourceSelection:
         assert d["signal_data_source"] == "tdxquant"
         assert d["dataset_id"] == "ds_123"
         assert d["weekly_bar_mode"] == "vendor_native"
-        assert d["execution_data_source"] == "tdx_local"
+        assert d["execution_data_source"] == "local_vendor"
 
     def test_vendor_native_weekly_mode(self):
         req = BacktestRequest(

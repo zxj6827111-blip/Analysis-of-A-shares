@@ -52,6 +52,10 @@ class BaguaState:
     gf: Any = None
     n_before: Any = None
     n_after: Any = None
+    plane_requested: str = "raw"
+    plane_effective: str = "raw"
+    plane_missing_count: int = 0
+    plane_missing_codes: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -81,10 +85,17 @@ class BacktestRunContext:
     trade_specs: Sequence[Any] = field(default_factory=list)
     formula_audits: Dict[str, Any] = field(default_factory=dict)
     factor_series: Any = None
+    ca_events_by_code: Dict[str, List[Any]] = field(default_factory=dict)
+    ca_meta: Dict[str, Any] = field(default_factory=dict)
     unconfirmed_run: bool = False
     n_events_raw_signals: int = 0
     n_events_after_weekday: int = 0
     errors: List[dict] = field(default_factory=list)
+    calendar_meta: Dict[str, Any] = field(default_factory=dict)
+    pit_meta: Dict[str, Any] = field(default_factory=dict)
+    delist_policy: Any = None
+    delist_terminal_dates: Dict[str, int] = field(default_factory=dict)
+    delist_meta: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def n_codes(self) -> int:
@@ -125,7 +136,11 @@ class BacktestRunContext:
             pol, _notes, _force = normalize_corporate_action_policy(req_ca)
             p.corporate_action_policy = pol
         else:
-            p.corporate_action_policy = "fail_closed"
+            # Automatic formal path: use the explicit ledger when selected
+            # cached events exist; otherwise retain the fail-closed gate.
+            p.corporate_action_policy = (
+                "event_ledger" if self.ca_events_by_code else "fail_closed"
+            )
 
 
 def run_engine_with_ctx(
@@ -150,6 +165,11 @@ def run_engine_with_ctx(
         adj_map=adj_map,
         standard_qfq_map=standard_qfq_map,
         factor_series=ctx.factor_series or [],
+        explicit_ca_events=[
+            event
+            for code in sorted(ctx.ca_events_by_code)
+            for event in (ctx.ca_events_by_code.get(code) or [])
+        ],
         research_unadj=p.research_unadj,
         use_research=p.use_research,
         use_formal_ok=p.use_formal_ok,
@@ -178,6 +198,8 @@ def run_engine_with_ctx(
         bagua_enabled=b.enabled,
         bagua_n_before=b.n_before,
         bagua_n_after=b.n_after,
+        delist_policy=ctx.delist_policy,
+        delist_terminal_dates=ctx.delist_terminal_dates,
     )
 
 
@@ -230,13 +252,47 @@ def apply_execution_cache(
             "gua": (b.gf.to_dict() if b.gf else None),
             "with_bagua": b.enabled,
             "bagua_filter_mode": b.filter_mode,
+            "bagua_price_plane": b.plane_effective,
             "n_events": len(events),
             "costs": _asdict_c(ctx.cfg.costs),
             "signal_data_source": getattr(ctx.req, "signal_data_source", None) or "",
+            "signal_adjustment": getattr(ctx.req, "signal_adjustment", None) or "",
             "signal_dataset_id": getattr(ctx.req, "dataset_id", None) or "",
-            "execution_data_source": getattr(ctx.req, "execution_data_source", None) or "tdx_local",
+            "raw_parent_dataset_id": getattr(
+                ctx.req, "signal_raw_parent_dataset_id", None
+            ) or "",
+            "factor_parent_dataset_id": getattr(
+                ctx.req, "signal_factor_parent_dataset_id", None
+            ) or "",
+            "formula_version": getattr(ctx.req, "signal_formula_version", None) or "",
+            "anchor_policy": getattr(ctx.req, "signal_anchor_policy", None) or "",
+            "ca_factor_dataset_id": getattr(ctx.req, "ca_factor_dataset_id", None) or "",
+            "ca_event_manifest_sha256": ctx.ca_meta.get("event_manifest_sha256") or "",
+            "ca_event_count": int(ctx.ca_meta.get("event_count") or 0),
+            "ca_event_symbol_count": int(
+                ctx.ca_meta.get("event_symbol_count") or 0
+            ),
+            "supplement_factor_dataset_id": getattr(
+                ctx.req, "signal_supplement_factor_dataset_id", None
+            ) or "",
+            "execution_data_source": getattr(ctx.req, "execution_data_source", None) or "local_vendor",
+            "execution_adjustment": getattr(ctx.req, "execution_adjustment", None) or "none",
             "execution_dataset_id": getattr(ctx.req, "execution_dataset_id", None) or "",
+            "execution_parent_dataset_ids": list(
+                getattr(ctx.req, "execution_parent_dataset_ids", None) or []
+            ),
             "weekly_bar_mode": getattr(ctx.req, "weekly_bar_mode", None) or "local_aggregate",
+            "universe_dataset_id": getattr(ctx.req, "universe_dataset_id", None) or "",
+            "universe_rule_version": getattr(ctx.req, "universe_rule_version", None) or "",
+            "delist_exit_scenario": getattr(ctx.req, "delist_exit_scenario", None) or "",
+            "delist_recovery_discount": getattr(
+                ctx.req, "delist_recovery_discount", None
+            ),
+            "delist_exit_rule_version": getattr(
+                ctx.req, "delist_exit_rule_version", None
+            ) or "",
+            "baseline_generation": getattr(ctx.req, "baseline_generation", None) or "",
+            "data_cutoff_date": getattr(ctx.req, "data_cutoff_date", None),
         }
         _ex_key = execution_cache_key(_ex_payload)
         if (
@@ -316,6 +372,13 @@ def finalize_with_ctx(
         filter_cache_hit=c.filter_hit,
         execution_cache_hit=c.execution_hit,
         use_signal_cache=c.use_signal_cache,
+        calendar_meta=ctx.calendar_meta,
+        pit_meta=ctx.pit_meta,
+        delist_meta=ctx.delist_meta,
+        ca_meta=ctx.ca_meta,
+        bagua_plane_effective=b.plane_effective,
+        bagua_plane_missing_count=b.plane_missing_count,
+        bagua_plane_missing_codes=b.plane_missing_codes,
     )
     return finalize_run_outputs(
         cfg=ctx.cfg,
@@ -408,4 +471,15 @@ def run_portfolio_and_finalize(
         ]
 
     result = apply_execution_cache(ctx, result, events)
+    # Surface the selected explicit-event ledger in both metrics and repro.
+    if ctx.ca_meta:
+        result.metrics["ca_cache_root"] = ctx.ca_meta.get("cache_root")
+        result.metrics["ca_event_manifest_sha256"] = ctx.ca_meta.get(
+            "event_manifest_sha256"
+        )
+        result.metrics["ca_event_count"] = int(ctx.ca_meta.get("event_count") or 0)
+        result.metrics["ca_event_symbol_count"] = int(
+            ctx.ca_meta.get("event_symbol_count") or 0
+        )
+        result.metrics["ca_sync_failed"] = ctx.ca_meta.get("sync_failed")
     return finalize_with_ctx(ctx, result=result, events=events, progress=progress)

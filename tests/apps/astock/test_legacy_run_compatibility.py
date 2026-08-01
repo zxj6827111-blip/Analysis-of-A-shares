@@ -14,8 +14,12 @@ def db_cfg(tmp_path):
 
 
 class TestLegacyRunCompatibility:
-    def test_schema_version_is_2(self):
-        assert _SCHEMA_VERSION == 2
+    def test_schema_version_is_4(self):
+        # Gate C D5: v3 adds signal_raw/factor_dataset_id +
+        # signal_formula_version + execution_adjustment lineage columns.
+        # Gate B7: v4 adds survivorship-safe chain columns (universe/delist/
+        # baseline_generation/supplement/cutoff).
+        assert _SCHEMA_VERSION == 4
 
     def test_fresh_db_has_new_columns(self, db_cfg):
         init_db(db_cfg)
