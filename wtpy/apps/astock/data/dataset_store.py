@@ -10,8 +10,10 @@ Directory layout:
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -196,6 +198,12 @@ def evaluate_strict_publish(
 class DatasetStore:
     """Manages content-addressed blobs and immutable dataset manifests."""
 
+    # Manifests are immutable (append-only) files; cache parsed objects keyed
+    # by their stat signature so repeated access (available checks, searches)
+    # doesn't re-read + re-parse the full JSON on every call.
+    _MANIFEST_CACHE = {}
+    _MANIFEST_CACHE_LOCK = threading.Lock()
+
     def __init__(self, root: Path | str):
         self.root = Path(root)
         self.blobs_dir = self.root / "blobs"
@@ -316,8 +324,25 @@ class DatasetStore:
         path = self.manifests_dir / f"{dataset_id}.json"
         if not path.exists():
             return None
+        try:
+            st = path.stat()
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            sig = None
+        cache_key = (str(self.root), dataset_id)
+        with self._MANIFEST_CACHE_LOCK:
+            cached = self._MANIFEST_CACHE.get(cache_key)
+            if cached is not None and cached[0] == sig:
+                # Manifests are mutable dataclasses; hand out a copy so a
+                # caller that mutates a loaded manifest (e.g. demote_stale
+                # setting status/provenance) can't leak into the shared cache.
+                return copy.deepcopy(cached[1])
         data = json.loads(path.read_text(encoding="utf-8"))
-        return DatasetManifest.from_dict(data)
+        manifest = DatasetManifest.from_dict(data)
+        if sig is not None:
+            with self._MANIFEST_CACHE_LOCK:
+                self._MANIFEST_CACHE[cache_key] = (sig, manifest)
+        return copy.deepcopy(manifest)
 
     def list_manifests(self) -> List[str]:
         return sorted(p.stem for p in self.manifests_dir.glob("*.json"))

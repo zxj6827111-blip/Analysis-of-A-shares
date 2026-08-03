@@ -30,6 +30,47 @@ BASE_BACKOFF_SEC = 1.0
 RATE_LIMIT_BACKOFF_SEC = 5.0
 
 
+def _symbol_kind(symbol: str) -> str:
+    """stock / index / etf from any symbol spelling (SSE.IDX.*, sh000001...)."""
+    s = symbol.upper()
+    if ".IDX." in s or "/IDX/" in s:
+        return "index"
+    if ".ETF." in s or "/ETF/" in s:
+        return "etf"
+    lower = symbol.lower()
+    if len(lower) == 8 and lower[:2] in ("sh", "sz") and lower[2:].isdigit():
+        code, pfx = lower[2:], lower[:2]
+        if pfx == "sh":
+            if code.startswith("000"):
+                return "index"
+            if code.startswith(("51", "56", "58")):
+                return "etf"
+        else:
+            if code.startswith("399"):
+                return "index"
+            if code.startswith(("15", "16", "18")):
+                return "etf"
+        return "stock"
+    parts = lower.split(".")
+    if (
+        len(parts) == 2
+        and parts[1] in ("sh", "sz")
+        and len(parts[0]) == 6
+        and parts[0].isdigit()
+    ):
+        if parts[1] == "sh":
+            if parts[0].startswith("000"):
+                return "index"
+            if parts[0].startswith(("51", "56", "58")):
+                return "etf"
+        else:
+            if parts[0].startswith("399"):
+                return "index"
+            if parts[0].startswith(("15", "16", "18")):
+                return "etf"
+    return "stock"
+
+
 class TushareProvider:
     """Fetches bars from Tushare pro API."""
 
@@ -101,15 +142,25 @@ class TushareProvider:
         bars: List[MarketBar] = []
         for symbol in request.symbols:
             ts_code = self._to_ts_code(symbol)
+            kind = _symbol_kind(symbol)
             if request.adjustment == AdjustmentMode.QFQ:
-                sym_bars = self._fetch_qfq(ts_code, request)
+                if kind != "stock":
+                    raise InvalidSymbol(
+                        f"Tushare QFQ not available for {symbol} "
+                        "(indices/ETFs are unadjusted only)"
+                    )
+                sym_bars = self._fetch_qfq(ts_code, request, symbol)
+            elif kind == "index":
+                sym_bars = self._fetch_index_daily(ts_code, request, symbol)
+            elif kind == "etf":
+                sym_bars = self._fetch_fund_daily(ts_code, request, symbol)
             else:
-                sym_bars = self._fetch_raw_daily(ts_code, request)
+                sym_bars = self._fetch_raw_daily(ts_code, request, symbol)
             bars.extend(sym_bars)
         return bars
 
     def _fetch_raw_daily(
-        self, ts_code: str, request: MarketDataRequest
+        self, ts_code: str, request: MarketDataRequest, symbol: str
     ) -> List[MarketBar]:
         df = self._call_with_retry(
             self._pro.daily,
@@ -119,10 +170,36 @@ class TushareProvider:
         )
         if df is None or df.empty:
             raise DataNotDownloaded(f"No daily data for {ts_code}")
-        return self._dataframe_to_bars(df, ts_code, request, AdjustmentMode.NONE)
+        return self._dataframe_to_bars(df, request, AdjustmentMode.NONE, symbol)
+
+    def _fetch_index_daily(
+        self, ts_code: str, request: MarketDataRequest, symbol: str
+    ) -> List[MarketBar]:
+        df = self._call_with_retry(
+            self._pro.index_daily,
+            ts_code=ts_code,
+            start_date=str(request.start_date or ""),
+            end_date=str(request.end_date or ""),
+        )
+        if df is None or df.empty:
+            raise DataNotDownloaded(f"No index_daily data for {ts_code}")
+        return self._dataframe_to_bars(df, request, AdjustmentMode.NONE, symbol)
+
+    def _fetch_fund_daily(
+        self, ts_code: str, request: MarketDataRequest, symbol: str
+    ) -> List[MarketBar]:
+        df = self._call_with_retry(
+            self._pro.fund_daily,
+            ts_code=ts_code,
+            start_date=str(request.start_date or ""),
+            end_date=str(request.end_date or ""),
+        )
+        if df is None or df.empty:
+            raise DataNotDownloaded(f"No fund_daily data for {ts_code}")
+        return self._dataframe_to_bars(df, request, AdjustmentMode.NONE, symbol)
 
     def _fetch_qfq(
-        self, ts_code: str, request: MarketDataRequest
+        self, ts_code: str, request: MarketDataRequest, symbol: str
     ) -> List[MarketBar]:
         assert self._ts is not None
         df = self._call_with_retry(
@@ -134,17 +211,18 @@ class TushareProvider:
         )
         if df is None or df.empty:
             raise IncompleteResponse(f"No qfq data for {ts_code}")
-        return self._dataframe_to_bars(df, ts_code, request, AdjustmentMode.QFQ)
+        return self._dataframe_to_bars(df, request, AdjustmentMode.QFQ, symbol)
 
     def _dataframe_to_bars(
         self,
         df,
-        ts_code: str,
         request: MarketDataRequest,
         adjustment: AdjustmentMode,
+        symbol: Optional[str] = None,
     ) -> List[MarketBar]:
         bars: List[MarketBar] = []
-        symbol = self._from_ts_code(ts_code)
+        if symbol is None:
+            symbol = request.symbols[0]
         for _, row in df.iterrows():
             try:
                 trade_date = int(str(row["trade_date"]))
@@ -245,6 +323,94 @@ class TushareProvider:
 
         return entries
 
+    def fetch_index_etf_universe(self) -> List[UniverseEntry]:
+        """Fetch exchange-listed indices (SSE/SZSE) and ETFs for the warehouse.
+
+        Returns UniverseEntry symbols in SSE.IDX.* / SZSE.IDX.* /
+        SSE.ETF.* / SZSE.ETF.* form so bars land in the same dataset family
+        as stocks (raw/none only — indices/ETFs have no 复权).
+        """
+        self._ensure_initialized()
+        entries: List[UniverseEntry] = []
+        seen: set = set()
+
+        df_idx = self._call_with_retry(self._pro.index_basic)
+        if df_idx is not None and not df_idx.empty:
+            df_idx = df_idx[df_idx.get("market", "").isin(("SSE", "SZSE"))]
+            for _, row in df_idx.iterrows():
+                ts_code = str(row.get("ts_code", ""))
+                symbol = self._index_etf_ts_code_to_symbol(ts_code, "IDX")
+                if not symbol or symbol in seen:
+                    continue
+                seen.add(symbol)
+                entries.append(
+                    UniverseEntry(
+                        symbol=symbol,
+                        name=str(row.get("name", "")),
+                        exchange=symbol.split(".")[0],
+                        list_date=self._parse_date(row.get("list_date")),
+                        status="listed",
+                        source=DataSource.TUSHARE.value,
+                    )
+                )
+
+        # list_status=L alone truncates at 15000 rows (Tushare cap), which can
+        # drop large ETFs; market='E' (exchange-traded funds) returns them all.
+        df_fund = self._call_with_retry(
+            self._pro.fund_basic, market="E", list_status="L"
+        )
+        if df_fund is not None and not df_fund.empty:
+            df_fund = df_fund[df_fund.get("market", "") == "E"]
+            if "fund_type" in df_fund.columns:
+                df_fund = df_fund[df_fund["fund_type"] != "REITs"]
+            for _, row in df_fund.iterrows():
+                ts_code = str(row.get("ts_code", ""))
+                symbol = self._index_etf_ts_code_to_symbol(ts_code, "ETF")
+                if not symbol or symbol in seen:
+                    continue
+                seen.add(symbol)
+                entries.append(
+                    UniverseEntry(
+                        symbol=symbol,
+                        name=str(row.get("name", "")),
+                        exchange=symbol.split(".")[0],
+                        list_date=self._parse_date(row.get("list_date")),
+                        status="listed",
+                        source=DataSource.TUSHARE.value,
+                    )
+                )
+
+        return entries
+
+    @staticmethod
+    def _index_etf_ts_code_to_symbol(ts_code: str, kind: str) -> str:
+        """000001.SH -> SSE.IDX.000001, 510300.SH -> SSE.ETF.510300.
+
+        Only exchange-listed codes with the app's known segments are kept
+        (indices sh000xxx / sz399xxx; ETFs sh51/56/58xxxx / sz15/16/18xxxx).
+        """
+        parts = ts_code.split(".")
+        if len(parts) != 2:
+            return ""
+        code, suffix = parts
+        suffix = suffix.upper()
+        if suffix not in ("SH", "SZ"):
+            return ""
+        exch = "SSE" if suffix == "SH" else "SZSE"
+        if kind == "IDX":
+            ok = (exch == "SSE" and code.startswith("000")) or (
+                exch == "SZSE" and code.startswith("399")
+            )
+        elif kind == "ETF":
+            ok = (exch == "SSE" and code.startswith(("51", "56", "58"))) or (
+                exch == "SZSE" and code.startswith(("15", "16", "18"))
+            )
+        else:
+            ok = False
+        if not ok:
+            return ""
+        return f"{exch}.{kind}.{code}"
+
     def _stock_basic_to_entries(self, df, status: str) -> List[UniverseEntry]:
         entries = []
         for _, row in df.iterrows():
@@ -268,7 +434,10 @@ class TushareProvider:
 
     @staticmethod
     def _to_ts_code(symbol: str) -> str:
-        """Convert SSE.STK.600000 or 600000.SH to 600000.SH format."""
+        """Convert SSE.STK.600000 / 600000.SH / sh600000 to 600000.SH format."""
+        lower = symbol.lower()
+        if len(lower) == 8 and lower[:2] in ("sh", "sz", "bj") and lower[2:].isdigit():
+            return f"{lower[2:]}.{lower[:2].upper()}"
         if "." in symbol:
             parts = symbol.split(".")
             if len(parts) == 3:

@@ -24,6 +24,7 @@ from .service.runs import (
     delete_run,
 )
 from .forecast.service import ForecastService
+from .version import get_version_info, get_version_string
 
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
 
@@ -125,7 +126,10 @@ class SyncStartBody(BaseModel):
 def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
     cfg = cfg or get_default_config()
     cfg.ensure_dirs()
-    app = FastAPI(title="AStock Backtest Console", version="0.5.0")
+    app = FastAPI(
+        title="AStock Backtest Console",
+        version=get_version_string(),
+    )
     rules = RuleService(cfg)
     # Parallel backtest jobs: default 6, hard cap 8 (env ASTOCK_BT_MAX_WORKERS).
     jobs = JobStore(cfg)
@@ -143,6 +147,15 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             "market_data_root": str(cfg.market_data_root),
             "market_data_root_is_external": cfg.market_data_root_is_external,
         }
+
+    @app.get("/api/v1/version")
+    def version() -> dict:
+        import platform
+
+        info = get_version_info()
+        info["python_version"] = platform.python_version()
+        info["platform"] = platform.platform()
+        return info
 
     @app.get("/api/v1/market-data/status")
     def market_data_status() -> dict:
@@ -1382,6 +1395,66 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             )
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+
+    # Watchlist availability involves warehouse manifest scans + TDX stat;
+    # cache briefly so the bagua page renders instantly on revisit.
+    _wl_cache: Dict = {"key": None, "ts": 0.0, "payload": None}
+
+    @app.get("/api/v1/bagua/watchlist")
+    def api_bagua_watchlist(
+        kind: str = Query("all", description="all | index | etf"),
+    ) -> dict:
+        """Index (沪深指数) and ETF presets with TDX data availability."""
+        from .service.index_etf import watchlist
+
+        import time as _time
+
+        key = (kind, str(cfg.market_data_root))
+        if (
+            _wl_cache["payload"] is not None
+            and _wl_cache["key"] == key
+            and _time.time() - _wl_cache["ts"] < 60.0
+        ):
+            return _wl_cache["payload"]
+        try:
+            items = watchlist(cfg, kind=kind)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except Exception as e:
+            raise HTTPException(500, f"bagua watchlist failed: {e}") from e
+        payload = {
+            "ok": True,
+            "kind": kind,
+            "count": len(items),
+            "symbols": items,
+            "note": "指数/ETF 无复权口径，卦象按未复权(raw)价格计算（通达信本地 day 文件）。",
+        }
+        _wl_cache["key"] = key
+        _wl_cache["ts"] = _time.time()
+        _wl_cache["payload"] = payload
+        return payload
+
+    @app.get("/api/v1/bagua/constituents")
+    def api_bagua_constituents(
+        code: str = Query(..., min_length=1, description="index/ETF code e.g. sh510300 / sz399006"),
+        limit: Optional[int] = Query(None, ge=1, le=2000, description="max constituent count"),
+    ) -> dict:
+        """Constituent stocks (成分股) of an index or ETF (via tracked index)."""
+        from .service.bagua_query import normalize_query_code
+        from .service.index_etf import resolve_constituents
+
+        try:
+            std = normalize_query_code(code)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        try:
+            return resolve_constituents(cfg, std, limit=limit)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(404, str(e)) from e
+        except Exception as e:
+            raise HTTPException(500, f"bagua constituents failed: {e}") from e
 
     @app.get("/api/v1/bagua/query")
     def api_bagua_query(
