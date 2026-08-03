@@ -42,12 +42,33 @@ class MarketDataRepository:
         return cls(DatasetStore(root))
 
     @staticmethod
+    def _symbol_kind_std(code: str, suffix: str) -> str:
+        """Classify a bare code + exchange suffix into IDX/ETF/STK.
+
+        Segment rules mirror Tushare:
+          indices  SH 000xxx (sh000001) / SZ 399xxx (sz399006)
+          ETFs     SH 51/56/58xxxx / SZ 15/16/18xxxx
+          otherwise a stock.
+        """
+        if suffix == "SH" and code.startswith("000"):
+            return "IDX"
+        if suffix == "SZ" and code.startswith("399"):
+            return "IDX"
+        if suffix == "SH" and code.startswith(("51", "56", "58")):
+            return "ETF"
+        if suffix == "SZ" and code.startswith(("15", "16", "18")):
+            return "ETF"
+        return "STK"
+
+    @staticmethod
     def _symbol_variants(symbol: str) -> List[str]:
         """Return all known format variants for a symbol.
 
         Handles: SSE.STK.600000 <-> 600000.SH <-> sh600000 <-> 600000
                  SZSE.STK.000001 <-> 000001.SZ <-> sz000001 <-> 000001
                  BSE.STK.430047 <-> 430047.BJ <-> bj430047 <-> 430047
+                 SSE.IDX.000001 <-> 000001.SH <-> sh000001
+                 SSE.ETF.510300 <-> 510300.SH <-> sh510300
         """
         variants = [symbol]
         parts = symbol.split(".")
@@ -63,7 +84,12 @@ class MarketDataRepository:
             suffix_upper = suffix.upper()
             exch = {"SH": "SSE", "SZ": "SZSE", "BJ": "BSE"}.get(suffix_upper)
             if exch:
-                variants.append(f"{exch}.STK.{code}")
+                kind = (
+                    "STK"
+                    if suffix_upper == "BJ"
+                    else MarketDataRepository._symbol_kind_std(code, suffix_upper)
+                )
+                variants.append(f"{exch}.{kind}.{code}")
                 variants.append(f"{suffix.lower()}{code}")
             variants.append(code)
         elif len(symbol) == 8 and symbol[:2].lower() in ("sh", "sz", "bj") and symbol[2:].isdigit():
@@ -71,7 +97,12 @@ class MarketDataRepository:
             suffix_map = {"sh": "SH", "sz": "SZ", "bj": "BJ"}
             code = symbol[2:]
             pfx = symbol[:2].lower()
-            variants.append(f"{prefix_map[pfx]}.STK.{code}")
+            kind = (
+                "STK"
+                if pfx == "bj"
+                else MarketDataRepository._symbol_kind_std(code, suffix_map[pfx])
+            )
+            variants.append(f"{prefix_map[pfx]}.{kind}.{code}")
             variants.append(f"{code}.{suffix_map[pfx]}")
             variants.append(code)
         elif symbol.isdigit() and len(symbol) == 6:

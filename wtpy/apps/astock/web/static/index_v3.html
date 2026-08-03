@@ -1604,10 +1604,15 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     </aside>
     <main>
       <div class="card query-card">
-        <h3 class="section-title">卦象查询</h3>
-        <p class="section-desc">代码支持 600000、sh600000、000001；多股：600000,000001,300750。先选周期，再选日期 / 周 / 月。</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <h3 class="section-title" style="margin:0">卦象查询</h3>
+          <button type="button" class="btn" id="bqGuideBtn" style="font-size:12px;padding:4px 10px">❓ 首次使用？看 4 步引导</button>
+        </div>
+        <p class="section-desc">代码支持 600000、sh600000、000001、指数 sh000001/沪深300、ETF sh510300/159915；多股：600000,000001,300750。先选周期，再选日期 / 周 / 月。</p>
         <div class="query-row" style="flex-wrap:wrap;gap:10px;align-items:center">
-          <input class="input" id="bqCode" placeholder="代码：600000 / 多股 600000,000001" style="min-width:220px;flex:1" />
+          <input class="input" id="bqCode" placeholder="代码：600000 / sh000001 / sh510300 / 多股 600000,000001" style="min-width:220px;flex:1" />
+          <select class="select" id="bqIndexPreset" style="min-width:150px" title="指数预设（沪深主要指数）"><option value="">指数：上证指数/沪深300…</option></select>
+          <select class="select" id="bqEtfPreset" style="min-width:150px" title="ETF预设"><option value="">ETF：沪深300ETF…</option></select>
           <select class="select" id="bqPeriod" style="min-width:120px" title="周期">
             <option value="DAY" selected>按日</option>
             <option value="WEEK">按周</option>
@@ -1625,7 +1630,17 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
           <button type="button" class="btn" id="bqExportBtn" title="导出全市场日/周/月线卦象 Excel">⇩ 全市场导出</button>
           <button type="button" class="btn" id="bqExportOnePeriodBtn" title="导出输入框内股票的日/周/月线卦象 Excel">⇩ 导出查询股票</button>
         </div>
-        <div class="muted" style="font-size:11px;margin-top:8px" id="bqHint">导出为周报格式单表：code/name/week_end/OHLC/日柱/月卦组合/爻辞/周线组合/爻辞。日柱自动读桌面「股票+卦象/日柱(1).xlsx」。Ctrl+F5 强刷后生效。</div>
+        <div class="muted" style="font-size:11px;margin-top:8px" id="bqHint">指数/ETF 无复权口径，卦象按未复权(raw)计算；下拉预设可快速填入（也可手动输入 sh000001、sh510300、sz159915 等）。导出为周报格式单表：code/name/week_end/OHLC/日柱/月卦组合/爻辞/周线组合/爻辞。日柱自动读桌面「股票+卦象/日柱(1).xlsx」。Ctrl+F5 强刷后生效。</div>
+        <div id="bqGuidePanel" style="display:none;border:1px solid var(--line,#2a3a55);border-radius:8px;padding:12px 14px;margin-top:10px;font-size:12px;line-height:1.9;color:#c3d0e0;background:rgba(24,38,60,.35)">
+          <div style="font-weight:600;color:#9fc7ff;margin-bottom:6px">四步使用指南</div>
+          <ol style="margin:0;padding-left:20px">
+            <li><b>选标的</b>：输入股票代码（600000）、指数（sh000001 / 000001 / 沪深300）或 ETF（sh510300 / 159915）；也可用「指数」「ETF」预设下拉一键填入。</li>
+            <li><b>选周期与日期</b>：先选「按日 / 按周 / 按月」，再选对应日期；按日选日期，按周选周，按月选月。</li>
+            <li><b>选复权口径</b>：股票可选未复权 / 通达信前复权 / Tushare前复权；指数与 ETF 无复权概念，自动按未复权计算。</li>
+            <li><b>查询与成分股</b>：点「查询卦象」查看结果；查询指数 / ETF 后结果下方会出现「查看成分股卦象」按钮，可一键批量计算成分股卦象。</li>
+          </ol>
+          <div class="muted" style="margin-top:6px">批量查询：用逗号 / 分号分隔多只股票代码。「全市场导出」为后台任务，「导出查询股票」按输入框内代码导出。</div>
+        </div>
       </div>
       <div class="card section-pad" id="bqResultCard" style="display:none">
         <div class="result-head">
@@ -5478,9 +5493,92 @@ async function expCreateAndStart() {
   })();
 
   /* ---------- 查询卦象 ---------- */
+  const BQ_TOUR_KEY = "astock_bq_tour_v1";
+  const BQ_TOUR_STEPS = [
+    { id: "bqCode", title: "① 选标的", text: "输入股票代码（如 600000）、指数（sh000001 上证指数 / 沪深300 / 000300）或 ETF（sh510300 沪深300ETF / sz159915 创业板ETF）。也可以用右边的「指数」「ETF」预设下拉快速填入。" },
+    { id: "bqPeriod", title: "② 周期与日期", text: "先选「按日 / 按周 / 按月」，再选日期：按日选具体日期，按周选周，按月选月。默认按日、今天。" },
+    { id: "bqAdjust", title: "③ 复权口径", text: "股票可选未复权 / 通达信前复权 / Tushare前复权。指数与 ETF 无复权概念，系统自动按未复权(raw)计算。" },
+    { id: "bqSearchBtn", title: "④ 查询与成分股", text: "点「查询卦象」查看结果。查询指数或 ETF 后，结果下方会出现「查看成分股卦象」按钮，可一键批量计算成分股卦象（如沪深300ETF 的 300 只成分股）。" }
+  ];
+
+  function startBqTour() {
+    let step = 0;
+    ["bqTourOverlay", "bqTourCard", "bqTourHl"].forEach(function (id) {
+      const old = document.getElementById(id);
+      if (old) old.remove();
+    });
+    const overlay = document.createElement("div");
+    overlay.id = "bqTourOverlay";
+    overlay.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(8,14,24,.55)";
+    overlay.addEventListener("click", function () {
+      try { sessionStorage.setItem(BQ_TOUR_KEY + "_dismissed", "1"); } catch (e) {}
+      endTour();
+    });
+    const hl = document.createElement("div");
+    hl.id = "bqTourHl";
+    hl.style.cssText = "position:fixed;border:2px solid #6cacff;border-radius:8px;box-shadow:0 0 0 9999px rgba(8,14,24,.55);transition:all .25s;display:none;pointer-events:none";
+    const card = document.createElement("div");
+    card.id = "bqTourCard";
+    card.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:40px;width:min(720px,92vw);background:#101a2c;border:1px solid #2a3a55;border-radius:12px;padding:18px 22px;z-index:10000;box-shadow:0 12px 40px rgba(0,0,0,.5)";
+    document.body.appendChild(overlay);
+    document.body.appendChild(hl);
+    document.body.appendChild(card);
+    function showStep(i) {
+      step = i;
+      const s = BQ_TOUR_STEPS[i];
+      const el = $(s.id);
+      if (el) {
+        try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { el.scrollIntoView(); }
+        const r = el.getBoundingClientRect();
+        hl.style.display = "block";
+        hl.style.left = (r.left - 6) + "px";
+        hl.style.top = (r.top - 6) + "px";
+        hl.style.width = (r.width + 12) + "px";
+        hl.style.height = (r.height + 12) + "px";
+      } else { hl.style.display = "none"; }
+      card.innerHTML =
+        '<div style="font-size:15px;font-weight:600;color:#9fc7ff;margin-bottom:8px">' + esc(s.title) + "</div>" +
+        '<div style="font-size:13px;line-height:1.7;color:#cdd8e6;margin-bottom:14px">' + esc(s.text) + "</div>" +
+        '<div style="display:flex;gap:10px;align-items:center;justify-content:flex-end">' +
+        '<span class="muted" style="font-size:12px;margin-right:auto">' + (i + 1) + " / " + BQ_TOUR_STEPS.length + "</span>" +
+        (i > 0 ? '<button type="button" class="btn" id="bqTourPrev">上一步</button>' : "") +
+        '<button type="button" class="btn" id="bqTourSkip">' + (i === BQ_TOUR_STEPS.length - 1 ? "完成" : "跳过") + "</button>" +
+        (i < BQ_TOUR_STEPS.length - 1 ? '<button type="button" class="btn btn-primary" id="bqTourNext">下一步</button>' : "") +
+        "</div>";
+      const prev = card.querySelector("#bqTourPrev");
+      if (prev) prev.onclick = function () { showStep(step - 1); };
+      const next = card.querySelector("#bqTourNext");
+      if (next) next.onclick = function () { showStep(step + 1); };
+      const skip = card.querySelector("#bqTourSkip");
+      if (skip) skip.onclick = function () { endTour(); };
+    }
+    function endTour() {
+      try { localStorage.setItem(BQ_TOUR_KEY, "1"); } catch (e) {}
+      overlay.remove();
+      hl.remove();
+      card.remove();
+      const guide = $("bqGuidePanel");
+      if (guide) guide.style.display = "none";
+    }
+    showStep(0);
+  }
+
+  function maybeShowBqTour() {
+    try {
+      if (localStorage.getItem(BQ_TOUR_KEY)) return;
+      if (sessionStorage.getItem(BQ_TOUR_KEY + "_dismissed")) return;
+    } catch (e) {}
+    if (document.getElementById("bqTourOverlay")) return;
+    setTimeout(function () {
+      if (document.getElementById("bqTourOverlay")) return;
+      const view = $("view-bagua-query");
+      if (!view || !view.classList.contains("active")) return;
+      startBqTour();
+    }, 600);
+  }
+
   function initBaguaQueryPage() {
-    const d = $("bqDate");
-    if (d && !d.value) {
+    const d = $("bqDate");    if (d && !d.value) {
       const now = new Date();
       d.value = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
     }
@@ -5534,6 +5632,7 @@ async function expCreateAndStart() {
         }
       });
     }
+    initBqPresets();
     // smoke-check API so user sees immediate diagnosis
     if (!window._bqApiChecked) {
       window._bqApiChecked = true;
@@ -5546,6 +5645,49 @@ async function expCreateAndStart() {
           }
         })
         .catch(function () {});
+    }
+    const guideBtn = $("bqGuideBtn");
+    if (guideBtn && !guideBtn._bqBound) {
+      guideBtn._bqBound = true;
+      guideBtn.addEventListener("click", function () {
+        const guide = $("bqGuidePanel");
+        if (guide) guide.style.display = (guide.style.display === "none") ? "block" : "none";
+      });
+    }
+    const guide = $("bqGuidePanel");
+    if (guide) guide.style.display = "none";
+    maybeShowBqTour();
+  }
+
+  function initBqPresets() {
+    const idxSel = $("bqIndexPreset"), etfSel = $("bqEtfPreset");
+    if (!idxSel && !etfSel) return;
+    if (idxSel && idxSel._bqLoaded) return;
+    fetch("/api/v1/bagua/watchlist?kind=all")
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        const items = (j && j.symbols) || [];
+        for (const s of items) {
+          const sel = s.type === "index" ? idxSel : etfSel;
+          if (!sel) continue;
+          const opt = document.createElement("option");
+          opt.value = s.code;
+          opt.textContent = s.name + " (" + s.code + ")" + (s.available === false ? " · 无数据" : "");
+          sel.appendChild(opt);
+        }
+        if (idxSel) idxSel._bqLoaded = true;
+        if (etfSel) etfSel._bqLoaded = true;
+      })
+      .catch(function () {});
+    for (const sel of [idxSel, etfSel]) {
+      if (!sel || sel._bqPresetBound) continue;
+      sel._bqPresetBound = true;
+      sel.addEventListener("change", function () {
+        if (!sel.value) return;
+        const input = $("bqCode");
+        if (input) input.value = sel.value;
+        sel.value = "";
+      });
     }
   }
 
@@ -5709,7 +5851,7 @@ async function expCreateAndStart() {
           "&adjust=" +
           encodeURIComponent(adjust);
         const data = await api(url);
-        renderBaguaQueryResult(data);
+        renderBaguaQueryResult(data, { allowConstituents: true });
         if (hint) {
           const label = data.display || ((data.code || codes[0]) + (data.name ? (" " + data.name) : ""));
           hint.textContent =
@@ -5956,7 +6098,8 @@ async function expCreateAndStart() {
     if (card) card.style.display = "";
   }
 
-  function renderBaguaQueryResult(data) {
+  function renderBaguaQueryResult(data, opts) {
+    opts = opts || {};
     const card = $("bqResultCard");
     const box = $("bqResult");
     const title = $("bqResultTitle");
@@ -6066,6 +6209,109 @@ async function expCreateAndStart() {
           "</ul></div>"
         : "");
     if (card) card.style.display = "";
+    if (opts.allowConstituents && (data.symbol_type === "index" || data.symbol_type === "etf") && data.code) {
+      const kindLabel = data.symbol_type === "etf" ? "ETF" : "指数";
+      box.innerHTML +=
+        '<div class="forecast-panel" style="margin-top:12px">' +
+        "<h4>成分股（" +
+        esc(kindLabel) +
+        "）</h4>" +
+        '<p class="muted" style="font-size:12px">' +
+        esc(data.name || data.code) +
+        " 为" +
+        esc(kindLabel) +
+        "标的，可查看其成分股并批量计算卦象（按当前日期/周期/复权口径）。</p>" +
+        '<button type="button" class="btn btn-primary" id="bqConstBtn">☰ 查看成分股卦象</button>' +
+        "</div>";
+      const cb = $("bqConstBtn");
+      if (cb) {
+        cb.addEventListener("click", function () {
+          runBqConstituentsQuery(data.code).catch(function (e) {
+            toast("成分股查询失败: " + ((e && e.message) || e));
+          });
+        });
+      }
+    }
+  }
+
+  async function runBqConstituentsQuery(code) {
+    const card = $("bqResultCard");
+    const box = $("bqResult");
+    const hint = $("bqHint");
+    if (!box) return;
+    if (hint) hint.textContent = "正在加载成分股…";
+    const j = await api("/api/v1/bagua/constituents?code=" + encodeURIComponent(code));
+    const cons = j.constituents || [];
+    const qd = bqCurrentQueryDate();
+    const period = qd.period;
+    const date = qd.date;
+    const adjust = (($("bqAdjust") && $("bqAdjust").value) || "raw");
+    if (!date) {
+      toast("请先选择日期");
+      if (hint) hint.textContent = "成分股卦象需要先选择日期。";
+      return;
+    }
+    box.innerHTML =
+      '<div class="forecast-panel" style="margin-bottom:12px">' +
+      "<h4>成分股 · " +
+      esc(j.name || code) +
+      "（共 " +
+      esc(String(j.count != null ? j.count : cons.length)) +
+      " 只）</h4>" +
+      (j.note ? '<p class="note">' + esc(j.note) + "</p>" : "") +
+      (cons.length
+        ? '<p class="muted" style="font-size:12px">已加载 ' +
+          cons.length +
+          ' 只。选择数量后点击「批量计算卦象」，按当前日期/周期/复权口径逐只计算。</p>' +
+          '<div style="display:flex;gap:10px;align-items:center;margin:10px 0;flex-wrap:wrap">' +
+          '<label class="muted" style="font-size:12px">数量</label>' +
+          '<select class="select" id="bqConstLimit" style="min-width:130px">' +
+          '<option value="50">前 50 只</option>' +
+          '<option value="100" selected>前 100 只</option>' +
+          '<option value="200">前 200 只</option>' +
+          '<option value="' + cons.length + '">全部 ' + cons.length + " 只</option>" +
+          "</select>" +
+          '<button type="button" class="btn btn-primary" id="bqConstGo">☰ 批量计算卦象</button>' +
+          "</div>"
+        : "") +
+      "</div>";
+    if (card) card.style.display = "";
+    const go = $("bqConstGo");
+    if (go) {
+      go.addEventListener("click", async function () {
+        const limSel = $("bqConstLimit");
+        let n = parseInt((limSel && limSel.value) || "100", 10);
+        if (!isFinite(n) || n <= 0) n = 100;
+        const codes = cons.slice(0, n).map(function (c) { return c.code; });
+        if (hint) hint.textContent = "正在批量计算 " + codes.length + " 只成分股卦象…";
+        try {
+          const jj = await api("/api/v1/bagua/batch/query", {
+            method: "POST",
+            body: JSON.stringify({ codes: codes, date: date, period: period, adjust: adjust }),
+          });
+          const rows = jj.results || [];
+          const mapped = rows.map(function (r) {
+            if (r && r.ok !== false && !r.error) return { ok: true, code: r.code, data: r };
+            return { ok: false, code: (r && r.code) || "", message: (r && r.error) || "查询失败" };
+          });
+          renderBaguaQueryResults(mapped);
+          const okCount = jj.ok_count != null ? jj.ok_count : mapped.filter(function (r) { return r.ok; }).length;
+          if (hint) {
+            hint.textContent =
+              "成分股卦象完成 · " +
+              okCount +
+              "/" +
+              mapped.length +
+              " 成功 · " +
+              (j.tracked_index_name || j.name || code);
+          }
+          toast("成分股卦象计算完成");
+        } catch (e) {
+          if (hint) hint.textContent = "成分股批量计算失败：" + ((e && e.message) || e);
+          toast("成分股批量计算失败: " + ((e && e.message) || e));
+        }
+      });
+    }
   }
 
 

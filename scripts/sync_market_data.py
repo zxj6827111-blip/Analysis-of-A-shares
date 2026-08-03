@@ -49,7 +49,14 @@ def _normalize_symbol(symbol: str) -> str:
       600000.SH / 000001.SZ / 430047.BJ
       sh600000 / sz000001 / bj430047
       600000 / 000001 / 430047  (bare 6-digit, exchange inferred)
+    Index/ETF forms map to SSE.IDX.* / SZSE.IDX.* / SSE.ETF.* / SZSE.ETF.*
+      (sh000001, sz399001, sh510300, sz159915, 000001.SH-as-index ...).
     """
+    from wtpy.apps.astock.service.index_etf import to_index_etf_std_code
+
+    idx_etf = to_index_etf_std_code(symbol)
+    if idx_etf:
+        return idx_etf
     parts = symbol.split(".")
     if len(parts) == 3:
         return symbol
@@ -437,6 +444,131 @@ def sync_tdx_local_full(args, store: DatasetStore) -> dict:
         f"dataset={ds_result.get('dataset_id', 'N/A')}"
     )
     return {"status": "success", "sync_run_id": sync_run_id, "datasets": {"none_1d": ds_result}}
+
+
+def _resolve_index_etf_symbols(args, provider) -> List[str]:
+    """Resolve index/ETF universe for tushare sync (--asset-class index|etf|all).
+
+    --symbol wins; otherwise the Tushare index/ETF universe (filtered by
+    --asset-class) is fetched. Universe entries arrive as SSE.IDX.* /
+    SZSE.IDX.* / SSE.ETF.* / SZSE.ETF.* canonical symbols.
+    """
+    if args.symbol:
+        return [s.strip() for s in args.symbol.split(",") if s.strip()]
+    asset = (getattr(args, "asset_class", "index") or "index").lower()
+    universe = provider.fetch_index_etf_universe()
+    if asset == "index":
+        return [e.symbol for e in universe if ".IDX." in e.symbol]
+    if asset == "etf":
+        return [e.symbol for e in universe if ".ETF." in e.symbol]
+    return [e.symbol for e in universe]
+
+
+def _index_etf_configs() -> List[tuple]:
+    """Index/ETF sync configs: unadjusted only (indices/ETFs have no 复权)."""
+    return [(AdjustmentMode.NONE, BarPeriod.DAY)]
+
+
+def sync_tushare_index_etf_full(args, store: DatasetStore) -> dict:
+    from wtpy.apps.astock.data.providers.tushare import TushareProvider
+
+    provider = TushareProvider(token=args.token)
+    if not provider.health_check():
+        print("ERROR: Tushare API not available (check token/network)")
+        return {"status": "failed", "error": "api_unavailable"}
+
+    symbols = _resolve_index_etf_symbols(args, provider)
+    if not symbols:
+        print("ERROR: No index/ETF symbols to sync")
+        return {"status": "failed", "error": "no_symbols"}
+
+    print(f"Syncing {len(symbols)} index/ETF symbols from Tushare (full mode)...")
+    sync_run_id = make_sync_run_id("tushare_ie")
+
+    results = {}
+    for adj, period in _index_etf_configs():
+        ds_result = _sync_dataset(
+            provider=provider,
+            store=store,
+            symbols=symbols,
+            source=DataSource.TUSHARE.value,
+            adjustment=adj,
+            period=period,
+            sync_run_id=sync_run_id,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            anchor_date=args.anchor_date,
+        )
+        results[f"{adj.value}_{period.value}"] = ds_result
+        print(
+            f"  {adj.value}/{period.value}: "
+            f"{ds_result['success']}/{ds_result['total']} ok, "
+            f"dataset={ds_result.get('dataset_id', 'N/A')}"
+        )
+
+    return {"status": "success", "sync_run_id": sync_run_id, "datasets": results}
+
+
+def sync_tushare_index_etf_incremental(args, store: DatasetStore) -> dict:
+    from wtpy.apps.astock.data.providers.tushare import TushareProvider
+
+    provider = TushareProvider(token=args.token)
+    if not provider.health_check():
+        print("ERROR: Tushare API not available")
+        return {"status": "failed", "error": "api_unavailable"}
+
+    symbols = _resolve_index_etf_symbols(args, provider)
+    if not symbols:
+        print("ERROR: No index/ETF symbols to sync")
+        return {"status": "failed", "error": "no_symbols"}
+
+    print(f"Incremental sync for {len(symbols)} index/ETF symbols from Tushare...")
+    sync_run_id = make_sync_run_id("tushare_ie")
+
+    asset = (getattr(args, "asset_class", "index") or "index").lower()
+    ck_path = store.sync_logs_dir / f"checkpoint_tushare_index_etf_{asset}_1d.json"
+    ck = None
+    if ck_path.exists():
+        try:
+            ck = json.loads(ck_path.read_text(encoding="utf-8"))
+        except Exception:
+            ck = None
+    if ck and not getattr(args, "resume", False) and not getattr(args, "fresh", False):
+        print(f"ERROR: tushare index/ETF ({asset}) incremental checkpoint exists: "
+              f"{ck_path.name}. Use --resume or --fresh.")
+        return {"status": "failed", "error": "checkpoint_exists_use_resume_or_fresh"}
+    if getattr(args, "fresh", False) and ck_path.exists():
+        ck_path.unlink()
+        ck = None
+    if getattr(args, "resume", False) and ck:
+        sync_run_id = ck.get("sync_run_id", sync_run_id)
+        print(f"  Resuming tushare index/ETF incremental sync_run_id={sync_run_id}")
+
+    results = {}
+    for adj, period in _index_etf_configs():
+        phase_key = f"{adj.value}/{period.value}"
+        resume_records = None
+        if ck and getattr(args, "resume", False):
+            phase = ck.get("phases", {}).get(phase_key)
+            if phase:
+                resume_records = phase.get("done", {})
+        ds_result = _sync_dataset(
+            provider=provider,
+            store=store,
+            symbols=symbols,
+            source=DataSource.TUSHARE.value,
+            adjustment=adj,
+            period=period,
+            sync_run_id=sync_run_id,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            anchor_date=args.anchor_date,
+            checkpoint_path=ck_path,
+            resume_records=resume_records,
+        )
+        results[f"{adj.value}_{period.value}"] = ds_result
+
+    return {"status": "success", "sync_run_id": sync_run_id, "datasets": results}
 
 
 KNOWN_MISSING_DELISTED_EVIDENCE = [
@@ -2669,6 +2801,10 @@ def main():
     parser.add_argument("--mode", default="full",
                         choices=["full", "incremental", "rebuild", "audit", "derive"])
     parser.add_argument("--symbol", default=None, help="Comma-separated symbols")
+    parser.add_argument("--asset-class", default="stocks",
+                        choices=["stocks", "index", "etf", "all"],
+                        help="For --source tushare: stocks (default) | index | etf | all "
+                             "(index/ETF sync uses index_daily/fund_daily, none/1d only)")
     parser.add_argument("--period", default=None, help="1d, 1w, 1mon")
     parser.add_argument("--adjustment", default=None, help="none, front, qfq, asof_qfq")
     parser.add_argument("--batch-size", type=int, default=10)
@@ -3038,7 +3174,17 @@ def main():
             else:
                 r = sync_tdxquant_incremental(args, store)
         elif src == "tushare":
-            if args.adjustment == "adj_factor":
+            asset = (args.asset_class or "stocks").lower()
+            if asset in ("index", "etf", "all"):
+                if args.adjustment == "adj_factor":
+                    r = {"status": "failed",
+                         "error": "adj_factor sync does not apply to index/ETF "
+                                  "(no 复权)"}
+                elif args.mode in ("full", "rebuild"):
+                    r = sync_tushare_index_etf_full(args, store)
+                else:
+                    r = sync_tushare_index_etf_incremental(args, store)
+            elif args.adjustment == "adj_factor":
                 # Gate C factor mode: fetches adj_factor ONLY, never daily bars
                 r = sync_tushare_adj_factor_full(args, store)
             elif args.mode in ("full", "rebuild"):

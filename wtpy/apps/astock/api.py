@@ -1383,6 +1383,49 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
 
+    @app.get("/api/v1/bagua/watchlist")
+    def api_bagua_watchlist(
+        kind: str = Query("all", description="all | index | etf"),
+    ) -> dict:
+        """Index (沪深指数) and ETF presets with TDX data availability."""
+        from .service.index_etf import watchlist
+
+        try:
+            items = watchlist(cfg, kind=kind)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except Exception as e:
+            raise HTTPException(500, f"bagua watchlist failed: {e}") from e
+        return {
+            "ok": True,
+            "kind": kind,
+            "count": len(items),
+            "symbols": items,
+            "note": "指数/ETF 无复权口径，卦象按未复权(raw)价格计算（通达信本地 day 文件）。",
+        }
+
+    @app.get("/api/v1/bagua/constituents")
+    def api_bagua_constituents(
+        code: str = Query(..., min_length=1, description="index/ETF code e.g. sh510300 / sz399006"),
+        limit: Optional[int] = Query(None, ge=1, le=2000, description="max constituent count"),
+    ) -> dict:
+        """Constituent stocks (成分股) of an index or ETF (via tracked index)."""
+        from .service.bagua_query import normalize_query_code
+        from .service.index_etf import resolve_constituents
+
+        try:
+            std = normalize_query_code(code)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        try:
+            return resolve_constituents(cfg, std, limit=limit)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(404, str(e)) from e
+        except Exception as e:
+            raise HTTPException(500, f"bagua constituents failed: {e}") from e
+
     @app.get("/api/v1/bagua/query")
     def api_bagua_query(
         code: str = Query(..., min_length=1, description="stock code e.g. 600000 / sh600000"),

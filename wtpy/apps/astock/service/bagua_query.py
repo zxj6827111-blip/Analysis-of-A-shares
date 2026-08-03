@@ -32,6 +32,13 @@ from ..study import (
     day_bars_to_standard_qfq,
 )
 from ..data.affine_adjust import build_affine_series
+from .index_etf import (
+    classify_symbol,
+    display_code as display_index_etf_code,
+    load_index_etf_day_bars,
+    resolve_index_etf_name,
+    to_index_etf_std_code,
+)
 from .stock_names import display_code_with_name, resolve_stock_name
 
 
@@ -99,13 +106,20 @@ def normalize_adjust_mode(mode: Optional[str]) -> str:
 
 
 def normalize_query_code(raw: str) -> str:
-    """Accept 600000 / sh600000 / SSE.STK.600000 -> WonderTrader std code."""
+    """Accept 600000 / sh600000 / SSE.STK.600000 -> WonderTrader std code.
+
+    Index/ETF codes (sh000001 上证指数, sh510300 ETF, sz399001 深证成指,
+    sz159915 ETF) map to SSE.IDX.* / SZSE.IDX.* / SSE.ETF.* / SZSE.ETF.*.
+    """
     t = (raw or "").strip()
     if not t:
         raise ValueError("code is required")
     t = t.split()[0].split("　")[0]
     if t.startswith("SSE.") or t.startswith("SZSE."):
         return t
+    idx_etf = to_index_etf_std_code(t)
+    if idx_etf:
+        return idx_etf
     return to_std_code(t)
 
 
@@ -114,7 +128,7 @@ def display_code(std_code: str) -> str:
         return "sh" + std_code.split(".")[-1]
     if std_code.startswith("SZSE.STK."):
         return "sz" + std_code.split(".")[-1]
-    return std_code
+    return display_index_etf_code(std_code)
 
 
 def load_day_bars(cfg: AStockConfig, std_code: str) -> List[DayBar]:
@@ -513,6 +527,149 @@ def _adjust_day_bars(
     return out, meta
 
 
+def _query_bagua_index_etf(
+    cfg: AStockConfig,
+    *,
+    std: str,
+    symbol_type: str,
+    asof: int,
+    per: str,
+    requested_adjust: str,
+    calc: BaguaCalculator,
+) -> Dict[str, Any]:
+    """Hexagram for index / ETF symbols (always unadjusted raw prices).
+
+    Indices have no 复权 concept and ETF factor data is not stored in the
+    warehouse, so the price plane is always raw regardless of the requested
+    adjust mode (a note records the original request).
+
+    Data sources, mirroring stocks: warehouse datasets first (tushare/none
+    etc.), falling back to TDX local day files.
+    """
+    std_id = to_index_etf_std_code(std) or std
+    try:
+        day_bars, wmeta = _load_dataset_bars(cfg, std_id, "raw", asof=asof)
+        ds_source = wmeta.get("dataset_source")
+        ds_adjust = wmeta.get("dataset_adjustment")
+        ds_status = wmeta.get("dataset_status")
+        ds_id = wmeta.get("dataset_id")
+        model = "warehouse"
+        src_desc = "Tushare 数据仓库" if ds_source == "tushare" else f"数据仓库({ds_source}/{ds_adjust})"
+    except FileNotFoundError:
+        try:
+            day_bars = load_index_etf_day_bars(cfg, std)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"no market data for {display_code(std)}")
+        ds_source, ds_adjust, ds_status, ds_id = "legacy_tdx_day", "none", "legacy", None
+        model = "legacy_day_file"
+        src_desc = "通达信本地 day 文件"
+
+    adj = "raw"
+    adj_meta: Dict[str, Any] = {
+        "adjust": adj,
+        "price_plane": "L2_trade_price",
+        "price_format": f"未复权（指数/ETF 无复权口径，{src_desc}，两位小数）",
+        "signal_adjust": adj,
+        "model": model,
+        "dataset_id": ds_id,
+        "dataset_source": ds_source,
+        "dataset_adjustment": ds_adjust,
+        "dataset_status": ds_status,
+        "legacy_fallback": model == "legacy_day_file",
+        "requested_adjust": requested_adjust,
+    }
+
+    if per == "DAY":
+        bar, exact = _find_day_bar(day_bars, asof)
+        bar_meta = {
+            "date": int(bar.date),
+            "start_date": int(bar.date),
+            "end_date": int(bar.date),
+            "n_days": 1,
+            "closed": True,
+            "open": float(bar.open),
+            "high": float(bar.high),
+            "low": float(bar.low),
+            "close": float(bar.close),
+        }
+        o, h, l, c = bar.open, bar.high, bar.low, bar.close
+    else:
+        pb, exact = _find_period_bar(day_bars, per, asof)
+        bar_meta = {
+            "date": int(pb.date),
+            "start_date": int(getattr(pb, "start_date", pb.date)),
+            "end_date": int(getattr(pb, "end_date", pb.date)),
+            "n_days": int(getattr(pb, "n_days", 1)),
+            "closed": bool(getattr(pb, "closed", True)),
+            "open": float(pb.open),
+            "high": float(pb.high),
+            "low": float(pb.low),
+            "close": float(pb.close),
+        }
+        o, h, l, c = pb.open, pb.high, pb.low, pb.close
+
+    result = calc.calculate(open_price=o, high_price=h, low_price=l, close_price=c)
+    bagua = result.to_dict()
+
+    notes: List[str] = []
+    notes.append(
+        "算法：开盘定上卦(mod8)、收盘定下卦(mod8)、最高+最低定动爻(mod6)；"
+        f"指数/ETF 无复权概念，价格直接读取{src_desc}（未复权、两位小数）。"
+    )
+    if requested_adjust != "raw":
+        notes.append(
+            f"请求的复权口径 {requested_adjust} 对指数/ETF 不适用，已按未复权(raw)计算。"
+        )
+    if not exact and per == "DAY":
+        notes.append(f"请求日期 {asof} 非交易日或无日线，已使用最近交易日 {bar_meta['date']}。")
+    if per != "DAY" and not bar_meta.get("closed", True):
+        notes.append(f"该{('周' if per == 'WEEK' else '月')}K 尚未收官，卦象可能随后续交易日变化。")
+    if per == "DAY" and int(bar_meta["date"]) != asof:
+        notes.append(f"实际使用日线日期：{bar_meta['date']}。")
+
+    name = resolve_index_etf_name(std)
+    disp = display_code(std)
+
+    return {
+        "ok": True,
+        "code": disp,
+        "name": name,
+        "display": display_code_with_name(disp, name),
+        "std_code": std,
+        "symbol_type": symbol_type,
+        "query_date": asof,
+        "period": per,
+        "adjust": adj,
+        "price_plane": adj_meta.get("price_plane"),
+        "bar_date_exact": exact if per == "DAY" else (int(bar_meta["end_date"]) == asof),
+        "bar": bar_meta,
+        "bagua": bagua,
+        "algorithm": {
+            "open_to_upper": "digit_sum(open) mod 8 (0→8)",
+            "close_to_lower": "digit_sum(close) mod 8 (0→8)",
+            "hl_to_yao": "digit_sum(high)+digit_sum(low) mod 6 (0→6)",
+            "price_format": adj_meta.get("price_format"),
+            "adjust": adj,
+        },
+        "adjust_meta": adj_meta,
+        "notes": notes,
+        "summary": {
+            "full_name": bagua.get("full_name") or bagua.get("gua_name") or "",
+            "yao_name": bagua.get("yao_name") or bagua.get("line_name") or "",
+            "state_id": bagua.get("state_id") or "",
+            "action_signal": bagua.get("action_signal") or "",
+            "market_judgement": bagua.get("market_judgement")
+            or bagua.get("market_summary")
+            or "",
+            "upper": f"{bagua.get('upper_alias') or bagua.get('upper_name') or ''}"
+            f"({bagua.get('upper_id')})",
+            "lower": f"{bagua.get('lower_alias') or bagua.get('lower_name') or ''}"
+            f"({bagua.get('lower_id')})",
+            "yao_order": bagua.get("yao_order"),
+        },
+    }
+
+
 def query_bagua(
     cfg: AStockConfig,
     *,
@@ -539,6 +696,18 @@ def query_bagua(
         if not cfg.bagua_json:
             raise FileNotFoundError("bagua knowledge json not configured")
         calc = BaguaCalculator.from_json(cfg.bagua_json)
+
+    symbol_type = classify_symbol(code)
+    if symbol_type in ("index", "etf"):
+        return _query_bagua_index_etf(
+            cfg,
+            std=std,
+            symbol_type=symbol_type,
+            asof=asof,
+            per=per,
+            requested_adjust=adj,
+            calc=calc,
+        )
 
     if adj in ("tdx_front", "tushare_qfq", "raw"):
         try:
@@ -687,6 +856,7 @@ def query_bagua(
         "name": stock_name,
         "display": display_code_with_name(display_code(std), stock_name),
         "std_code": std,
+        "symbol_type": "stock",
         "query_date": asof,
         "period": per,
         "adjust": adj,
@@ -824,6 +994,7 @@ def batch_query_bagua(
                     "name": name,
                     "display": display_code_with_name(disp, name) if name else disp,
                     "std_code": std,
+                    "symbol_type": classify_symbol(raw_code),
                     "query_date": asof,
                     "period": per,
                     "adjust": adj,
@@ -1226,6 +1397,7 @@ def _query_bagua_periods_for_code(
                 "name": name,
                 "display": display_code_with_name(disp, name) if name else disp,
                 "std_code": std,
+                "symbol_type": classify_symbol(code),
                 "query_date": asof,
                 "period": per,
                 "adjust": adjust,
