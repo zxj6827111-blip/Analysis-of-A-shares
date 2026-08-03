@@ -216,6 +216,45 @@ def load_index_etf_day_bars(
     return list(bars)
 
 
+def _load_warehouse_datasets(cfg: AStockConfig):
+    """Load warehouse none/1d manifests once for availability checks.
+
+    Returns (repo, [manifests]); repo is None when the warehouse is absent.
+    """
+    md_root = getattr(cfg, "market_data_root", None)
+    if not md_root or not Path(md_root).exists():
+        return None, []
+    try:
+        from ..data.repository import MarketDataRepository
+
+        repo = MarketDataRepository.from_root(md_root)
+        return repo, [m for m in repo.list_datasets(adjustment="none", period="1d")]
+    except Exception:
+        return None, []
+
+
+def _availability_from_warehouse(
+    repo, datasets, std_code: str
+) -> Tuple[bool, Optional[int]]:
+    """Look up a std code in pre-loaded warehouse manifests."""
+    if not datasets or repo is None:
+        return False, None
+    for m in datasets:
+        rec = repo._find_symbol_record(m, std_code)
+        if rec is None or not getattr(rec, "blob_sha256", None):
+            continue
+        # manifest first/last may be stored descending (Tushare
+        # returns newest-first); take the true latest date.
+        d0 = int(rec.first_date) if rec.first_date else None
+        d1 = int(rec.last_date) if rec.last_date else None
+        if d0 is not None and d1 is not None:
+            last = max(d0, d1)
+        else:
+            last = d1 if d1 is not None else d0
+        return True, last
+    return False, None
+
+
 def check_availability(cfg: AStockConfig, code: str) -> Tuple[bool, Optional[int]]:
     """Check data availability; return (available, last_date).
 
@@ -224,27 +263,10 @@ def check_availability(cfg: AStockConfig, code: str) -> Tuple[bool, Optional[int
     """
     std_code = to_index_etf_std_code(code)
     if std_code:
-        md_root = getattr(cfg, "market_data_root", None)
-        if md_root and Path(md_root).exists():
-            try:
-                from ..data.repository import MarketDataRepository
-
-                repo = MarketDataRepository.from_root(md_root)
-                for m in repo.list_datasets(adjustment="none", period="1d"):
-                    rec = repo._find_symbol_record(m, std_code)
-                    if rec is None or not getattr(rec, "blob_sha256", None):
-                        continue
-                    # manifest first/last may be stored descending (Tushare
-                    # returns newest-first); take the true latest date.
-                    d0 = int(rec.first_date) if rec.first_date else None
-                    d1 = int(rec.last_date) if rec.last_date else None
-                    if d0 is not None and d1 is not None:
-                        last = max(d0, d1)
-                    else:
-                        last = d1 if d1 is not None else d0
-                    return True, last
-            except Exception:
-                pass
+        repo, datasets = _load_warehouse_datasets(cfg)
+        ok, last = _availability_from_warehouse(repo, datasets, std_code)
+        if ok:
+            return True, last
     return check_tdx_availability(cfg, code)
 
 
@@ -278,6 +300,9 @@ def watchlist(
     k = (kind or "all").strip().lower()
     if k not in ("all", "index", "etf"):
         raise ValueError("kind must be all | index | etf")
+    repo, datasets = (None, [])
+    if include_availability:
+        repo, datasets = _load_warehouse_datasets(cfg)
     items: List[Dict[str, Any]] = []
     for raw in INDEX_WATCHLIST + ETF_WATCHLIST:
         stype = classify_symbol(raw["code"])
@@ -290,7 +315,9 @@ def watchlist(
             "std_code": to_index_etf_std_code(raw["code"]),
         }
         if include_availability:
-            available, last_date = check_availability(cfg, raw["code"])
+            available, last_date = _availability_from_warehouse(repo, datasets, entry["std_code"])
+            if not available:
+                available, last_date = check_tdx_availability(cfg, raw["code"])
             entry["available"] = available
             entry["last_date"] = last_date
         items.append(entry)
