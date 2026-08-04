@@ -11,7 +11,7 @@ from .context import ApiContext, get_ctx
 
 router = APIRouter()
 
-def _research_platform(ctx: ApiContext, ):
+def _research_platform(ctx: ApiContext):
     cfg = ctx.cfg
     from ..research.platform import ResearchPlatform
     root = Path(cfg.storage_root)

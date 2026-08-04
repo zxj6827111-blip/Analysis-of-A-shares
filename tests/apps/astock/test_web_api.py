@@ -145,6 +145,62 @@ def test_factor_sync_start_adds_universe_file_from_env(tmp_path, monkeypatch):
     assert cmd[cmd.index("--end-date") + 1]
 
 
+def test_sync_scripts_resolve_to_existing_files(tmp_path, monkeypatch):
+    """Regression: sync script paths must stay anchored to the project root.
+
+    system.py lives one package level deeper than the old api.py, so a stale
+    `parents[3]` anchor resolves scripts to wtpy/scripts/... which does not
+    exist and makes every UI-launched sync fail inside the worker thread
+    (HTTP still returns 200, which is why route probes miss it).
+    """
+    pytest.importorskip("fastapi")
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from wtpy.apps.astock.api_routes import system as system_routes
+
+    script = Path(system_routes.SYNC_SCRIPT)
+    assert script.is_file(), f"sync script missing: {script}"
+
+    ca_script = system_routes.PROJECT_ROOT / "scripts" / "sync_ca_events.py"
+    assert ca_script.is_file(), f"ca script missing: {ca_script}"
+
+    started = {}
+
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            started["args"] = kwargs.get("args", ())
+
+        def start(self):
+            started["started"] = True
+
+    import threading
+
+    monkeypatch.setattr(threading, "Thread", FakeThread)
+    universe = tmp_path / "factor_universe.csv"
+    universe.write_text(
+        "canonical_symbol,inclusion_status\nSSE.STK.600000,included\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TUSHARE_FACTOR_UNIVERSE_FILE", str(universe))
+    storage = tmp_path / "st"
+    indicators = tmp_path / "ind"
+    storage.mkdir()
+    indicators.mkdir()
+    cfg = get_default_config(storage_root=storage, indicator_dir=indicators)
+
+    for task in ("tdx", "tushare", "factor", "derive", "ca"):
+        started.clear()
+        client = TestClient(create_app(cfg))
+        r = client.post("/api/v1/data-sync/start", json={"task": task})
+        assert r.status_code == 200, (task, r.text)
+        cmd = started.get("args", ())[0]
+        assert cmd, task
+        # cmd = [sys.executable, "-u", <script>, ...] -> script at index 2
+        assert Path(cmd[2]).is_file(), f"{task}: script missing: {cmd[2]}"
+
+
 def test_factor_sync_start_reuses_latest_manifest_universe(tmp_path, monkeypatch):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient

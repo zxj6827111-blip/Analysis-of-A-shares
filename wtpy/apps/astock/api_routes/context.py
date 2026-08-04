@@ -53,6 +53,10 @@ class ApiContext:
         default_factory=lambda: {"key": None, "ts": 0.0, "payload": None}
     )
 
+    calendar_range_cache: Dict[str, Any] = field(
+        default_factory=lambda: {"ts": 0.0, "data": None}
+    )
+
     ca_file_count_cache: Dict[str, Any] = field(
         default_factory=lambda: {"mtime": None, "count": 0}
     )

@@ -19,7 +19,11 @@ from .context import ApiContext, get_ctx
 
 router = APIRouter()
 
-SYNC_SCRIPT = str(Path(__file__).resolve().parents[3] / "scripts" / "sync_market_data.py")
+# Project root: api_routes/ is one level deeper than api.py, so the anchor is
+# parents[4] here (parents[3] would resolve to wtpy/ and break UI sync).
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+
+SYNC_SCRIPT = str(PROJECT_ROOT / "scripts" / "sync_market_data.py")
 PROGRESS_RE = re.compile(r"\[SYNC_PROGRESS\] done=(\d+) total=(\d+) phase=(\S+)")
 CHECKPOINT_FILES = {
     "tdx": "checkpoint_tdxquant_front_1d.json",
@@ -33,8 +37,6 @@ HTML_NO_CACHE_HEADERS = {
     "Expires": "0",
 }
 STATIC_DIR = Path(__file__).resolve().parent.parent / "web" / "static"
-
-_calendar_range_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
 class SyncStartBody(BaseModel):
     task: str
     end_date: Optional[int] = None
@@ -51,7 +53,7 @@ def _checkpoint_exists(ctx: ApiContext, task: str) -> bool:
     if not fname:
         return False
     return (cfg.market_data_root / "sync_logs" / fname).exists()
-def _latest_factor_universe_file(ctx: ApiContext, ) -> Optional[str]:
+def _latest_factor_universe_file(ctx: ApiContext) -> Optional[str]:
     cfg = ctx.cfg
     _sync_state = ctx.sync_state
     _sync_proc = ctx.sync_proc
@@ -106,7 +108,7 @@ def _run_sync_process(ctx: ApiContext, cmd: List[str], task_name: str) -> None:
             text=True,
             encoding="utf-8",
             errors="replace",
-            cwd=str(Path(__file__).resolve().parents[3]),
+            cwd=str(PROJECT_ROOT),
             env=env,
         )
         with _sync_lock:
@@ -461,6 +463,7 @@ def calendar_range(ctx: ApiContext = Depends(get_ctx)) -> dict:
     _sync_state = ctx.sync_state
     _sync_proc = ctx.sync_proc
     _sync_lock = ctx.sync_lock
+    _calendar_range_cache = ctx.calendar_range_cache
     """Year/month bounds for date dropdowns (trading calendar).
 
     max_date reflects the freshest ready dataset cutoff (so the backtest
@@ -585,7 +588,7 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
             raise HTTPException(400, "Tushare adj_factor sync requires --universe-file")
         cmd += ["--universe-file", universe_file]
     elif payload.task == "ca":
-        _CA_SCRIPT = str(Path(__file__).resolve().parents[3] / "scripts" / "sync_ca_events.py")
+        _CA_SCRIPT = str(PROJECT_ROOT / "scripts" / "sync_ca_events.py")
         cmd = [sys.executable, "-u", _CA_SCRIPT, "--mode", "incremental", "--days", "90",
                "--storage-root", str(cfg.market_data_root)]
     else:

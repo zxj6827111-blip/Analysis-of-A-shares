@@ -640,6 +640,8 @@ def quick_query(code: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
             "dataset_adjustment": ds_meta.get("dataset_adjustment"),
             "legacy_fallback": bool(ds_meta.get("legacy_fallback")),
         }
+    elif not market.get("error"):
+        market = {"error": "数据源返回空K线，无可用行情"}
 
     # ---- current hexagram (latest trading day, raw plane)
     gua: Dict[str, Any] = {}
