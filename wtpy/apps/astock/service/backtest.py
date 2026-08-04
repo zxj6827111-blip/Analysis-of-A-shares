@@ -104,7 +104,9 @@ def resolve_market_data_bindings(
     from ..data.dataset_binding import (
         DatasetBindingError,
         classify_symbol_coverage,
+        execution_resolve_candidates,
         manifest_symbol_index,
+        signal_resolve_candidates,
         validate_execution_dataset_binding,
         validate_signal_dataset_binding,
     )
@@ -137,32 +139,8 @@ def resolve_market_data_bindings(
     repo = MarketDataRepository(DatasetStore(cfg.market_data_root))
 
     def _resolve_signal_candidates():
-        """Return ordered (source, adjustment) pairs for product signal sources."""
-        src = _signal_data_source
-        adj = _signal_adjustment or ""
-        if src == "raw":
-            return [
-                ("local_vendor", "none"),
-                ("tushare", "none"),
-                ("tdxquant", "none"),
-                ("tdx_local", "none"),
-                ("internal", "composite_none"),
-            ]
-        if src == "tushare":
-            # Official qfq first; derived QFQ as same product family
-            return [
-                ("tushare", "qfq"),
-                ("internal", "tushare_factor_qfq"),
-                ("internal", "composite_tushare_factor_qfq"),
-            ]
-        if src == "tdxquant":
-            return [("tdxquant", adj or "front")]
-        if src == "internal":
-            return [
-                ("internal", adj or "tushare_factor_qfq"),
-                ("internal", "composite_tushare_factor_qfq"),
-            ]
-        return [(src, adj)]
+        """Ordered (source, adjustment) pairs for product signal sources."""
+        return signal_resolve_candidates(_signal_data_source, _signal_adjustment)
 
     def _product_family_pairs():
         """Pairs accepted for product UI keys (tushare/raw may span warehouse sources)."""
@@ -274,36 +252,9 @@ def resolve_market_data_bindings(
     else:
         _exec_source = getattr(req, "execution_data_source", None) or "local_vendor"
 
-        def _execution_resolve_candidates(src: str):
-            s = (src or "local_vendor").strip()
-            if s == "internal":
-                # survivorship-safe composite first, then plain internal/none
-                return [("internal", "composite_none"), ("internal", "none")]
-            if s in ("local_vendor", "tdx_local", "tdxquant", "tushare", "raw"):
-                # product defaults (local_vendor / raw) prefer warehouse raw
-                # and fall back across raw families; explicit family selections
-                # (tdx_local / tdxquant / tushare) bind strictly to their own.
-                if s == "local_vendor":
-                    return [
-                        ("local_vendor", "none"),
-                        ("tdx_local", "none"),
-                        ("tdxquant", "none"),
-                        ("tushare", "none"),
-                    ]
-                if s == "raw":
-                    return [
-                        ("local_vendor", "none"),
-                        ("tdx_local", "none"),
-                        ("tdxquant", "none"),
-                        ("tushare", "none"),
-                        ("internal", "composite_none"),
-                    ]
-                return [(s, "none")]
-            return [(s, "none")]
-
         _exec_ds = None
         _last_exec_err = None
-        for _es, _ea in _execution_resolve_candidates(_exec_source):
+        for _es, _ea in execution_resolve_candidates(_exec_source):
             try:
                 _exec_ds = repo.resolve_latest_ready(
                     source=_es, adjustment=_ea, period="1d",
@@ -314,7 +265,7 @@ def resolve_market_data_bindings(
         if _exec_ds is None:
             _tried = "、".join(
                 "%s/%s" % (_es, _ea)
-                for _es, _ea in _execution_resolve_candidates(_exec_source)
+                for _es, _ea in execution_resolve_candidates(_exec_source)
             )
             raise DatasetBindingError(
                 "DATASET_NOT_FOUND",

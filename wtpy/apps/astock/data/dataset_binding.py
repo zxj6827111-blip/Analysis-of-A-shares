@@ -11,7 +11,7 @@ the API layer maps to 4xx — never a generic 500, never a silent fallback.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .dataset_store import DatasetManifest
 from .repository import DatasetNotFoundError, MarketDataRepository
@@ -21,6 +21,71 @@ EXECUTION_ADJUSTMENT = "none"
 # Gate B7: internal/composite_none is unadjusted raw too (survivorship-safe
 # execution plane). Any adjustment in this set is execution-role.
 EXECUTION_ADJUSTMENTS = ("none", "composite_none")
+
+# Product data-source keys. `local_vendor` / `raw` are product defaults that
+# fall back across raw families; explicit family selections
+# (tdx_local / tdxquant / tushare) bind strictly to their own source.
+PRODUCT_SOURCES = ("local_vendor", "tdx_local", "tdxquant", "tushare", "internal", "raw")
+
+
+def signal_resolve_candidates(
+    src: Optional[str], adj: Optional[str]
+) -> List[Tuple[str, str]]:
+    """Ordered (source, adjustment) pairs for product signal sources."""
+    if src == "raw":
+        return [
+            ("local_vendor", "none"),
+            ("tushare", "none"),
+            ("tdxquant", "none"),
+            ("tdx_local", "none"),
+            ("internal", "composite_none"),
+        ]
+    if src == "tushare":
+        return [
+            ("tushare", "qfq"),
+            ("internal", "tushare_factor_qfq"),
+            ("internal", "composite_tushare_factor_qfq"),
+        ]
+    if src == "tdxquant":
+        return [("tdxquant", adj or "front")]
+    if src == "internal":
+        return [
+            ("internal", adj or "tushare_factor_qfq"),
+            ("internal", "composite_tushare_factor_qfq"),
+        ]
+    return [(src, adj or "")]
+
+
+def execution_resolve_candidates(src: Optional[str]) -> List[Tuple[str, str]]:
+    """Ordered (source, adjustment) pairs for the L2 execution dataset.
+
+    Preferred family first, then fall back across raw ``none`` families so a
+    missing local_vendor/none does not block backtests/experiment creation
+    (e.g. a test server that only has tushare raw data). Explicit family
+    selections (tushare / tdxquant / tdx_local) bind strictly to their own
+    source.
+    """
+    s = (src or "local_vendor").strip()
+    if s == "internal":
+        return [("internal", "composite_none"), ("internal", "none")]
+    if s in PRODUCT_SOURCES:
+        if s == "local_vendor":
+            return [
+                ("local_vendor", "none"),
+                ("tdx_local", "none"),
+                ("tdxquant", "none"),
+                ("tushare", "none"),
+            ]
+        if s == "raw":
+            return [
+                ("local_vendor", "none"),
+                ("tdx_local", "none"),
+                ("tdxquant", "none"),
+                ("tushare", "none"),
+                ("internal", "composite_none"),
+            ]
+        return [(s, "none")]
+    return [(s, "none")]
 
 
 class DatasetBindingError(ValueError):
