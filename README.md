@@ -35,7 +35,9 @@
 - **复权体系**：原始价（raw）、通达信前复权（front）、Tushare 官方前复权（qfq）、Tushare 复权因子推导 QFQ（tushare_factor_qfq）、复合数据集（composite_*，退市股补全）、asof 前瞻复权，正式模式默认 fail-closed 防前视偏差
 - **研究平台**：参数实验（自由轴/网格）、任务队列（SQLite 持久化）、漂移监控、截面研究、结果评分与 Excel 导出
 - **预测周报**：每周选股周报导入、搜索、评分与导出
-- **Web 控制台**：FastAPI + 单文件前端（`/v3` 为主界面），回测任务异步执行、进度实时推送
+- **关键发现 Dashboard**：`/dashboard` 只读面板聚合数据健康、同步状态、Top 实验发现与自选池，一键掌握系统状态
+- **个股快速查询**：顶栏搜索框 / `/quick.html` 输入代码或名称，直达行情概览、当前卦象与相关回测
+- **Web 控制台**：FastAPI（路由按域拆分为 `api_routes/`）+ 单文件前端（`/v3` 为主界面），回测任务异步执行、进度实时推送
 - **数据治理**：不可变 manifest + SHA256 内容寻址、严格发布策略（no_data 必须显式白名单）、幸存者偏差元数据记录、同步任务锁与断点续传
 
 ---
@@ -51,7 +53,8 @@ wtpy-master/
 │       ├── datahelper/          #   数据落地辅助模块（原始 wtpy）
 │       └── astock/              # ★ A股回测系统核心
 │           ├── cli.py           #   命令行入口（python -m wtpy.apps.astock）
-│           ├── api.py           #   FastAPI Web 服务（端口 8765）
+│           ├── api.py           #   FastAPI 组装器（路由在 api_routes/，端口 8765）
+│           ├── api_routes/      #   路由模块（rules/backtests/experiments/research/forecast/bagua/system）
 │           ├── config.py        #   运行时配置（路径、环境变量解析）
 │           ├── strategy.py      #   组合回测器
 │           ├── study.py         #   信号研究（DWM 共振、组合信号等）
@@ -74,7 +77,7 @@ wtpy-master/
 │   ├── sync_tushare_delisted.py #   退市股数据同步
 │   └── reconcile_sqlite_runs.py #   运行记录对账
 ├── deploy/                      # Linux 部署（install_astock.sh、PM2 配置）
-├── tests/                       # pytest 测试（950 个用例）
+├── tests/                       # pytest 测试（990 个用例）
 ├── demos/                       # 原始 wtpy 官方示例
 ├── storage/astock/              # 项目内本地存储（见下文）
 ├── 指标/                        # 本地 TN6 包与公式源文件（已 gitignore）
@@ -372,6 +375,10 @@ python -m wtpy.apps.astock serve --host 127.0.0.1 --port 8765
 | `/` `/legacy` `/v2` | 旧版控制台 |
 | `/v3` | 主界面（回测、任务、研究平台） |
 | `/v3/task-detail` | 任务详情 |
+| `/dashboard` | 关键发现面板（数据健康 + 同步状态 + Top 实验发现 + 自选池，只读） |
+| `/quick.html?code=600000` | 个股快速查询（行情概览 + 当前卦象 + 相关回测） |
+| `/api/v1/dashboard/overview` | Dashboard 聚合数据 |
+| `/api/v1/quick/{code}` | 个股快速查询 API（支持裸码 / ts_code / 中文名） |
 | `/api/v1/health` | 健康检查 |
 | `/api/v1/market-data/status` | 数据仓库状态（各数据集就绪度、最新同步） |
 | `/api/v1/rules*` | 指标规则 CRUD 与校验 |
@@ -481,8 +488,10 @@ python -m wtpy.apps.astock list-indicators
 ## 运行测试
 
 ```shell
-python -m pytest tests/apps/astock -q        # 全量（950 个用例）
+python -m pytest tests/apps/astock -q        # 全量（990 个用例）
 ```
+
+仓库带有 GitHub Actions CI（`.github/workflows/ci.yml`）：每次 push / PR 自动在 Python 3.11 / 3.12 上运行全量测试（跳过 live_tdxquant / live_tushare 实盘标记用例）。
 
 ---
 
