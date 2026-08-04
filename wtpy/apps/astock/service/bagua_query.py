@@ -330,33 +330,64 @@ class BaguaPlaneSession:
     ) -> Tuple[List[DayBar], Dict[str, Any]]:
         hits: List[Tuple[Any, Any, int, bool, int, int]] = []
         variants = _symbol_variants(std_code)
-        for m, idx, pr in self._indexed:
-            rec = None
-            for v in variants:
-                rec = idx.get(v)
-                if rec is not None:
+        # Variant priority matters: a bare 6-digit code collides across kinds
+        # (e.g. SSE.IDX.000001 上证指数 vs SZSE.STK.000001 平安银行 both map to
+        # "000001"). Qualified variants (canonical / ts_code / sh-prefix forms)
+        # are tried first across every dataset; only when they match nothing do
+        # we fall back to the bare code, so sh000001 / 000001.SH /
+        # SSE.IDX.000001 resolve to the index and never to the same-coded stock.
+        qualified = [v for v in variants if not (len(v) == 6 and v.isdigit())]
+        bare = [v for v in variants if len(v) == 6 and v.isdigit()]
+
+        def _scan(variant_list) -> Tuple[List[Tuple[Any, Any, int, bool, int, int]], bool]:
+            """Collect (manifest, rec, pair_rank, covers_asof, first, last) hits
+            for one variant tier; return (hits, matched_any_record)."""
+            found: List[Tuple[Any, Any, int, bool, int, int]] = []
+            matched_any = False
+            for v in variant_list:
+                for m, idx, pr in self._indexed:
+                    rec = idx.get(v)
+                    if rec is None:
+                        continue
+                    matched_any = True
+                    d0 = int(rec.first_date) if rec.first_date else None
+                    d1 = int(rec.last_date) if rec.last_date else None
+                    if d0 is not None and d1 is not None:
+                        first, last = (d0, d1) if d0 <= d1 else (d1, d0)
+                    else:
+                        first, last = d0, d1
+                    covers_asof = False
+                    has_on_or_before = True
+                    if asof is not None:
+                        if first is not None and last is not None:
+                            covers_asof = first <= asof <= last
+                            has_on_or_before = first <= asof
+                        elif last is not None:
+                            covers_asof = last >= asof
+                        elif first is not None:
+                            has_on_or_before = first <= asof
+                    if asof is not None and not has_on_or_before:
+                        continue
+                    found.append(
+                        (m, rec, pr, covers_asof, int(first or 0), int(last or 0))
+                    )
+                if found:
                     break
-            if rec is None:
-                continue
-            d0 = int(rec.first_date) if rec.first_date else None
-            d1 = int(rec.last_date) if rec.last_date else None
-            if d0 is not None and d1 is not None:
-                first, last = (d0, d1) if d0 <= d1 else (d1, d0)
-            else:
-                first, last = d0, d1
-            covers_asof = False
-            has_on_or_before = True
-            if asof is not None:
-                if first is not None and last is not None:
-                    covers_asof = first <= asof <= last
-                    has_on_or_before = first <= asof
-                elif last is not None:
-                    covers_asof = last >= asof
-                elif first is not None:
-                    has_on_or_before = first <= asof
-            if asof is not None and not has_on_or_before:
-                continue
-            hits.append((m, rec, pr, covers_asof, int(first or 0), int(last or 0)))
+            return found, matched_any
+
+        hits, qualified_matched = _scan(qualified)
+        if not hits:
+            if qualified_matched:
+                # The requested symbol exists in its own kind but no bar covers
+                # the query date — do NOT fall back to the bare code, which
+                # would resolve to a same-coded stock (e.g. 上证指数 queried
+                # before its inception would return 平安银行).
+                raise FileNotFoundError(
+                    f"{std_code} 无 {asof} 当日或之前K线"
+                    if asof is not None
+                    else f"{std_code} 在 {self.source_key} 全部数据集中均无可用K线"
+                )
+            hits, _ = _scan(bare)
 
         if not hits:
             if not self._saw_any_pair:

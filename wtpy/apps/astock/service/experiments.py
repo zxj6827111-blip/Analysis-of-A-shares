@@ -941,6 +941,38 @@ def _signal_resolve_candidates(src: str, adj: Optional[str]) -> List[tuple]:
     return [(src, adj or "")]
 
 
+def _execution_resolve_candidates(src: str) -> List[tuple]:
+    """Ordered (source, adjustment) pairs for the L2 execution dataset.
+
+    Mirrors backtest.py: preferred family first, then fall back across raw
+    ``none`` families so a missing local_vendor/none does not block experiment
+    creation (e.g. a test server that only has tushare raw data). Explicit
+    family selections (tushare / tdxquant / tdx_local) bind strictly to their
+    own source.
+    """
+    s = (src or "local_vendor").strip()
+    if s == "internal":
+        return [("internal", "composite_none"), ("internal", "none")]
+    if s in ("local_vendor", "tdx_local", "tdxquant", "tushare", "raw"):
+        if s == "local_vendor":
+            return [
+                ("local_vendor", "none"),
+                ("tdx_local", "none"),
+                ("tdxquant", "none"),
+                ("tushare", "none"),
+            ]
+        if s == "raw":
+            return [
+                ("local_vendor", "none"),
+                ("tdx_local", "none"),
+                ("tdxquant", "none"),
+                ("tushare", "none"),
+                ("internal", "composite_none"),
+            ]
+        return [(s, "none")]
+    return [(s, "none")]
+
+
 def _normalize_signal_variants(
     signal_variants: Optional[Sequence[dict]],
 ) -> List[Dict[str, Any]]:
@@ -1076,20 +1108,31 @@ def _resolve_variant_datasets_and_common_universe(
         )
         exec_id = execution_dataset_id
     else:
-        try:
-            exec_manifest = repo.resolve_latest_ready(
-                source=exec_src, adjustment="none", period="1d"
+        exec_manifest = None
+        _last_exec_err = None
+        for _es, _ea in _execution_resolve_candidates(exec_src):
+            try:
+                exec_manifest = repo.resolve_latest_ready(
+                    source=_es, adjustment=_ea, period="1d"
+                )
+                break
+            except DatasetNotFoundError as _e:
+                _last_exec_err = _e
+        if exec_manifest is None:
+            _tried = "、".join(
+                "%s/%s" % (_es, _ea)
+                for _es, _ea in _execution_resolve_candidates(exec_src)
             )
-            exec_id = exec_manifest.dataset_id
-        except DatasetNotFoundError:
             raise DatasetBindingError(
                 "DATASET_NOT_FOUND",
-                f"No ready {exec_src}/none execution dataset for experiment.",
+                f"No ready execution dataset for source={exec_src} "
+                f"(tried: {_tried}).",
                 http_status=404,
                 requested_source=exec_src,
                 requested_adjustment="none",
-                remediation="先同步执行数据集（如 local_vendor/none），或显式指定 execution_dataset_id",
-            ) from None
+                remediation="先同步执行数据集（local_vendor/none 或其它 none 集），或显式指定 execution_dataset_id",
+            ) from _last_exec_err
+        exec_id = exec_manifest.dataset_id
 
     # ---- dynamic common universe (requested ∩ every signal set ∩ execution) ----
     sig_indexes = [(r["label"], manifest_symbol_index(r["manifest"])) for r in resolved]

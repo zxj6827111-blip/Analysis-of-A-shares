@@ -376,6 +376,152 @@ def test_bagua_plane_session_prefers_freshest_stale_candidate(tmp_path):
     assert historical_meta["dataset_source"] == "local_vendor"
     assert historical_bars[-1].date == 20260717
 
+
+def test_bagua_plane_session_index_bare_code_collision(tmp_path):
+    """sh000001 (上证指数) must never resolve to SZSE.STK.000001 (平安银行).
+
+    Both canonical symbols share the bare variant "000001"; the qualified
+    variant (SSE.IDX.000001 / 000001.SH / sh000001) must win even when the
+    same-coded stock sits in a dataset that ranks higher.
+    """
+    from wtpy.apps.astock.data.dataset_store import (
+        DatasetManifest,
+        DatasetStore,
+        SymbolRecord,
+    )
+    from wtpy.apps.astock.data.providers.base import MarketBar
+
+    store = DatasetStore(tmp_path / "market_data")
+
+    def publish(dataset_id, symbol, dates):
+        bars = [
+            MarketBar(
+                symbol=symbol,
+                trade_date=date,
+                period="1d",
+                open=10.0,
+                high=11.0,
+                low=9.0,
+                close=float(date % 100),
+                volume=1000.0,
+                amount=10000.0,
+            )
+            for date in dates
+        ]
+        sha = store.store_bars(symbol, bars)
+        manifest = DatasetManifest(
+            dataset_id=dataset_id,
+            source="tushare",
+            adjustment="none",
+            period="1d",
+            status="ready",
+            data_cutoff_date=max(dates),
+            symbols=[
+                SymbolRecord(
+                    symbol=symbol,
+                    blob_sha256=sha,
+                    row_count=len(bars),
+                    quality="ok",
+                    first_date=min(dates),
+                    last_date=max(dates),
+                )
+            ],
+            symbol_count=1,
+            row_count=len(bars),
+        )
+        store.publish(manifest)
+
+    # Stock dataset is ready and holds SZSE.STK.000001 — the collision trap.
+    publish("tushare_none_1d_stock_test", "SZSE.STK.000001", [20240102, 20240105])
+    publish("tushare_none_1d_index_test", "SSE.IDX.000001", [20240102, 20240105])
+
+    cfg = SimpleNamespace(market_data_root=tmp_path / "market_data")
+    session = bq.BaguaPlaneSession(cfg, "raw")
+
+    bars, meta = session.load_symbol("sh000001", asof=20240105)
+    assert meta["dataset_id"] == "tushare_none_1d_index_test"
+    assert [b.date for b in bars] == [20240102, 20240105]
+
+    # 000001.SH form and canonical form resolve the index too.
+    bars2, meta2 = session.load_symbol("000001.SH", asof=20240105)
+    assert meta2["dataset_id"] == "tushare_none_1d_index_test"
+    bars3, meta3 = session.load_symbol("SSE.IDX.000001", asof=20240105)
+    assert meta3["dataset_id"] == "tushare_none_1d_index_test"
+
+    # The same-coded stock (sz000001) still resolves to the stock.
+    bars4, meta4 = session.load_symbol("sz000001", asof=20240105)
+    assert meta4["dataset_id"] == "tushare_none_1d_stock_test"
+
+
+def test_bagua_plane_session_index_asof_before_inception_no_stock_leak(tmp_path):
+    """Index queried before its inception must fail, not leak to the stock.
+
+    When the qualified variant (SSE.IDX.000001) matches a record that does not
+    cover the query date, we must NOT fall back to the bare code — otherwise
+    an out-of-range historical index query returns 平安银行's bars.
+    """
+    from wtpy.apps.astock.data.dataset_store import (
+        DatasetManifest,
+        DatasetStore,
+        SymbolRecord,
+    )
+    from wtpy.apps.astock.data.providers.base import MarketBar
+
+    store = DatasetStore(tmp_path / "market_data")
+
+    def publish(dataset_id, symbol, dates):
+        bars = [
+            MarketBar(
+                symbol=symbol,
+                trade_date=date,
+                period="1d",
+                open=10.0,
+                high=11.0,
+                low=9.0,
+                close=float(date % 100),
+                volume=1000.0,
+                amount=10000.0,
+            )
+            for date in dates
+        ]
+        sha = store.store_bars(symbol, bars)
+        manifest = DatasetManifest(
+            dataset_id=dataset_id,
+            source="tushare",
+            adjustment="none",
+            period="1d",
+            status="ready",
+            data_cutoff_date=max(dates),
+            symbols=[
+                SymbolRecord(
+                    symbol=symbol,
+                    blob_sha256=sha,
+                    row_count=len(bars),
+                    quality="ok",
+                    first_date=min(dates),
+                    last_date=max(dates),
+                )
+            ],
+            symbol_count=1,
+            row_count=len(bars),
+        )
+        store.publish(manifest)
+
+    publish("tushare_none_1d_stock_test", "SZSE.STK.000001", [20240102, 20240105])
+    # Index exists but starts later than the queried date.
+    publish("tushare_none_1d_index_test", "SSE.IDX.000001", [20240201, 20240205])
+
+    cfg = SimpleNamespace(market_data_root=tmp_path / "market_data")
+    session = bq.BaguaPlaneSession(cfg, "raw")
+
+    with pytest.raises(FileNotFoundError):
+        session.load_symbol("sh000001", asof=20240105)
+
+    # Same-code stock queries in-range still work.
+    bars, meta = session.load_symbol("sz000001", asof=20240105)
+    assert meta["dataset_id"] == "tushare_none_1d_stock_test"
+
+
 def test_bagua_plane_signal_family_match_helpers():
     """Document product family gates used by backtest reuse (inline mirror)."""
     def matches(plane, src, adj):

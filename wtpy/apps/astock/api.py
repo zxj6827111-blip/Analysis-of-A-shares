@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -300,6 +302,21 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         ]
         if not lv_ready:
             lv_ready = [d for d in ready if d.source == "local_vendor"]
+        # Execution dataset fallback: when no local_vendor raw dataset exists
+        # (e.g. a test server without vendor data), show the best ready raw
+        # `none` dataset so the UI's L2 execution panel is truthful instead of
+        # blocking with "无ready执行数据集". Prefers the same family order as
+        # backtest.py / experiments.py: tdx_local > tdxquant > tushare.
+        if not lv_ready:
+            for _fs in ("tdx_local", "tdxquant", "tushare"):
+                _cands = [
+                    d for d in ready
+                    if d.source == _fs and (d.adjustment or "none") == "none"
+                    and int(d.row_count or 0) > 0
+                ]
+                if _cands:
+                    lv_ready = _cands
+                    break
         if lv_ready:
             d = max(
                 lv_ready,
@@ -313,6 +330,8 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             earliest, latest = _date_range(d)
             latest_lv = {
                 "dataset_id": d.dataset_id,
+                "source": d.source,
+                "adjustment": d.adjustment,
                 "status": d.status,
                 "symbol_count": d.symbol_count,
                 "row_count": d.row_count,
@@ -1945,7 +1964,6 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
 
 
     # ---- Data Sync API ----
-    import subprocess
     import threading
     import time as _time
     import re as _re
@@ -2074,23 +2092,23 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             raise HTTPException(400, f"未知任务类型: {payload.task}")
 
         if payload.task == "tdx":
-            cmd = ["python", "-u", _SYNC_SCRIPT, "--source", "tdxquant", "--mode", "incremental", "--end-date", str(end_date), "--skip-ca-detect"]
+            cmd = [sys.executable, "-u", _SYNC_SCRIPT, "--source", "tdxquant", "--mode", "incremental", "--end-date", str(end_date), "--skip-ca-detect"]
         elif payload.task == "tushare":
-            cmd = ["python", "-u", _SYNC_SCRIPT, "--source", "tushare", "--mode", "incremental", "--end-date", str(end_date)]
+            cmd = [sys.executable, "-u", _SYNC_SCRIPT, "--source", "tushare", "--mode", "incremental", "--end-date", str(end_date)]
             if start_date:
                 cmd += ["--start-date", str(start_date)]
         elif payload.task == "factor":
-            cmd = ["python", "-u", _SYNC_SCRIPT, "--source", "tushare", "--adjustment", "adj_factor", "--mode", "full", "--end-date", str(end_date)]
+            cmd = [sys.executable, "-u", _SYNC_SCRIPT, "--source", "tushare", "--adjustment", "adj_factor", "--mode", "full", "--end-date", str(end_date)]
             universe_file = _latest_factor_universe_file()
             if not universe_file:
                 raise HTTPException(400, "Tushare adj_factor sync requires --universe-file")
             cmd += ["--universe-file", universe_file]
         elif payload.task == "ca":
             _CA_SCRIPT = str(Path(__file__).resolve().parents[3] / "scripts" / "sync_ca_events.py")
-            cmd = ["python", "-u", _CA_SCRIPT, "--mode", "incremental", "--days", "90",
+            cmd = [sys.executable, "-u", _CA_SCRIPT, "--mode", "incremental", "--days", "90",
                    "--storage-root", str(cfg.market_data_root)]
         else:
-            cmd = ["python", "-u", _SYNC_SCRIPT, "--source", "internal", "--mode", "derive",
+            cmd = [sys.executable, "-u", _SYNC_SCRIPT, "--source", "internal", "--mode", "derive",
                    "--adjustment", "tushare_factor_qfq", "--cutoff", str(end_date)]
 
         # Resume only when client asks; leftover checkpoint must not force resume.
@@ -2334,7 +2352,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
         if need_sync:
             print(f"[CA_AUTO] {reason}，后台自动启动增量同步…")
             _CA_SCRIPT = str(Path(__file__).resolve().parents[3] / "scripts" / "sync_ca_events.py")
-            cmd = ["python", "-u", _CA_SCRIPT, "--mode", "incremental", "--days", "90",
+            cmd = [sys.executable, "-u", _CA_SCRIPT, "--mode", "incremental", "--days", "90",
                    "--storage-root", str(cfg.market_data_root)]
             try:
                 import os as _os
