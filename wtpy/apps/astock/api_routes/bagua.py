@@ -104,7 +104,8 @@ def _bq_run_export_job(ctx: ApiContext, job_id: str, params: Dict[str, Any]) -> 
                 job["finished_at"] = _bq_time.time()
                 job["error"] = str(e)
                 job["message"] = f"导出失败: {e}"
-def _bq_start_export_job(ctx: ApiContext, 
+def _bq_start_export_job(
+    ctx: ApiContext,
     *,
     date: str,
     periods: List[str],
