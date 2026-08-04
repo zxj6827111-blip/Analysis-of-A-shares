@@ -302,6 +302,21 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         ]
         if not lv_ready:
             lv_ready = [d for d in ready if d.source == "local_vendor"]
+        # Execution dataset fallback: when no local_vendor raw dataset exists
+        # (e.g. a test server without vendor data), show the best ready raw
+        # `none` dataset so the UI's L2 execution panel is truthful instead of
+        # blocking with "无ready执行数据集". Prefers the same family order as
+        # backtest.py / experiments.py: tdx_local > tdxquant > tushare.
+        if not lv_ready:
+            for _fs in ("tdx_local", "tdxquant", "tushare"):
+                _cands = [
+                    d for d in ready
+                    if d.source == _fs and (d.adjustment or "none") == "none"
+                    and int(d.row_count or 0) > 0
+                ]
+                if _cands:
+                    lv_ready = _cands
+                    break
         if lv_ready:
             d = max(
                 lv_ready,
@@ -315,6 +330,8 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
             earliest, latest = _date_range(d)
             latest_lv = {
                 "dataset_id": d.dataset_id,
+                "source": d.source,
+                "adjustment": d.adjustment,
                 "status": d.status,
                 "symbol_count": d.symbol_count,
                 "row_count": d.row_count,

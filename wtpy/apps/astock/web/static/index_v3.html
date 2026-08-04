@@ -4976,8 +4976,10 @@ async function expCreateAndStart() {
         ? " | <span class='tag tag-orange' style='font-size:10px;padding:1px 5px'" + biasTitle + ">偏差</span>"
         : "";
       const range = dsDateRange(lv.earliest_date, lv.latest_date) || "—";
-      el.innerHTML = "L2执行数据: local_vendor/none | <span title=\"" + esc(dsid) + "\">" + esc(dsShort) + "</span> | " +
-        dsNum(lv.symbol_count) + "只 | " + dsNum(lv.row_count) + "根K线 | " + esc(range) + " | " + statusTag + biasTag;
+      const execSrc = (lv.source || "local_vendor") + "/" + (lv.adjustment || "none");
+      const fallbackNote = lv.source && lv.source !== "local_vendor" ? " <span class='tag tag-orange' style='font-size:10px;padding:1px 5px'>执行回退</span>" : "";
+      el.innerHTML = "L2执行数据: " + esc(execSrc) + " | <span title=\"" + esc(dsid) + "\">" + esc(dsShort) + "</span> | " +
+        dsNum(lv.symbol_count) + "只 | " + dsNum(lv.row_count) + "根K线 | " + esc(range) + " | " + statusTag + biasTag + fallbackNote;
     } catch (e) {
       el.textContent = "L2执行数据: —";
     }
