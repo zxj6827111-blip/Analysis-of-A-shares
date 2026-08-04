@@ -555,3 +555,170 @@ async def api_gua_import(file: UploadFile = File(...), ctx: ApiContext = Depends
                 tmp_path.unlink(missing_ok=True)
             except Exception:
                 pass
+
+
+@router.get("/api/v1/quick/{code}")
+def quick_query(code: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
+    """Single-stock quick view: market overview + current hexagram + related runs.
+
+    Accepts bare codes (600000), ts_code (000001.SH), canonical symbols
+    (SSE.STK.000001) and Chinese names (平安银行). Uses the same default raw
+    resolution chain as the bagua query center; no dataset selection required.
+    """
+    cfg = ctx.cfg
+    from ..service.bagua_query import (
+        _load_dataset_bars,
+        display_code,
+        load_day_bars,
+        normalize_query_code,
+        query_bagua,
+    )
+    from ..service.stock_names import ensure_name_cache, resolve_stock_name
+
+    raw = (code or "").strip()
+    if not raw:
+        raise HTTPException(400, "code 不能为空")
+
+    # Chinese-name input: reverse lookup in the name cache.
+    if any(ord(ch) > 127 for ch in raw):
+        try:
+            cache = ensure_name_cache(cfg)
+            for code6, nm in cache.items():
+                if nm == raw:
+                    raw = code6
+                    break
+        except Exception:
+            pass
+    if any(ord(ch) > 127 for ch in raw):
+        raise HTTPException(404, f"未找到代码或名称: {code}")
+
+    try:
+        std = normalize_query_code(raw)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    name = resolve_stock_name(cfg, raw, std_code=std)
+
+    # ---- market overview via the same raw resolution chain as the query center
+    market: Dict[str, Any] = {}
+    latest_date = None
+    bars = None
+    ds_meta: Dict[str, Any] = {}
+    try:
+        bars, ds_meta = _load_dataset_bars(cfg, std, "raw", asof=None)
+    except FileNotFoundError:
+        # Mirrors query_bagua's raw fallback: legacy TDX day files.
+        try:
+            bars = load_day_bars(cfg, std)
+            ds_meta = {"legacy_fallback": True, "dataset_source": "legacy_tdx_day"}
+        except Exception as e:
+            market = {"error": f"{type(e).__name__}: {e}"}
+    except Exception as e:
+        market = {"error": f"{type(e).__name__}: {e}"}
+    if bars:
+        last = bars[-1]
+        prev = bars[-2] if len(bars) >= 2 else None
+        pct = None
+        if prev and getattr(prev, "close", 0):
+            try:
+                pct = round((last.close - prev.close) / prev.close * 100, 2)
+            except (TypeError, ZeroDivisionError):
+                pct = None
+        latest_date = int(last.date)
+        market = {
+            "latest_date": latest_date,
+            "open": float(last.open),
+            "high": float(last.high),
+            "low": float(last.low),
+            "close": float(last.close),
+            "prev_close": float(prev.close) if prev else None,
+            "pct_change": pct,
+            "bars_total": len(bars),
+            "first_date": int(bars[0].date) if bars else None,
+            "dataset_id": ds_meta.get("dataset_id"),
+            "dataset_source": ds_meta.get("dataset_source"),
+            "dataset_adjustment": ds_meta.get("dataset_adjustment"),
+            "legacy_fallback": bool(ds_meta.get("legacy_fallback")),
+        }
+
+    # ---- current hexagram (latest trading day, raw plane)
+    gua: Dict[str, Any] = {}
+    if latest_date is None:
+        gua = {"error": "无市场数据，无法计算卦象"}
+    else:
+        try:
+            gua = query_bagua(
+                cfg,
+                code=std,
+                date=latest_date,
+                period="DAY",
+                adjust="raw",
+            )
+        except Exception as e:
+            gua = {"error": f"{type(e).__name__}: {e}"}
+
+    # query_bagua resolves kind-correct names (index watchlist / stock cache).
+    if isinstance(gua, dict) and gua.get("name"):
+        name = gua.get("name") or name
+
+    # ---- recent runs containing this code (metrics summary)
+    related: List[Dict[str, Any]] = []
+    try:
+        from ..service.runs import list_runs, load_run_summary
+
+        for row in list_runs(cfg, limit=30) or []:
+            rid = row.get("run_id")
+            if not rid:
+                continue
+            try:
+                summary = load_run_summary(cfg, rid)
+            except Exception:
+                continue
+            request = (
+                (summary.get("repro") or {}).get("request")
+                if isinstance((summary.get("repro") or {}), dict)
+                else {}
+            )
+            if not isinstance(request, dict):
+                request = {}
+            hit = False
+            for c in request.get("codes") or []:
+                try:
+                    if normalize_query_code(str(c)) == std:
+                        hit = True
+                        break
+                except ValueError:
+                    continue
+            if not hit:
+                continue
+            metrics = summary.get("metrics") or {}
+            related.append({
+                "run_id": rid,
+                "title": summary.get("title"),
+                "status": summary.get("status"),
+                "period": summary.get("period"),
+                "start": summary.get("start"),
+                "end": summary.get("end"),
+                "win_rate": metrics.get("win_rate"),
+                "total_return": metrics.get("total_return"),
+                "max_drawdown": metrics.get("max_drawdown"),
+                "payoff_ratio": metrics.get("payoff_ratio") or metrics.get("profit_loss_ratio"),
+                "n_round_trips": metrics.get("n_round_trips"),
+            })
+        related = related[:10]
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "code": display_code(std),
+        "name": name,
+        "display": f"{display_code(std)} {name}".strip(),
+        "std_code": std,
+        "symbol_type": "index" if std.startswith(("SSE.IDX", "SZSE.IDX")) else (
+            "etf" if ".ETF" in std else "stock"
+        ),
+        "market": market,
+        "gua": gua,
+        "related_runs": related,
+    }

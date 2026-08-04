@@ -228,3 +228,41 @@ def test_dashboard_overview_and_page(tmp_path: Path):
 
     index = client.get("/")
     assert "/dashboard" in index.text
+
+
+def test_quick_query_endpoint_and_page(tmp_path: Path):
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    storage = tmp_path / "st"
+    ind = tmp_path / "ind"
+    storage.mkdir()
+    ind.mkdir()
+    cfg = get_default_config(storage_root=storage, indicator_dir=ind)
+    client = TestClient(create_app(cfg))
+
+    # Structure is stable regardless of data availability.
+    r = client.get("/api/v1/quick/600000")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["std_code"] in ("SSE.STK.600000", "sh600000")
+    for key in ("code", "name", "std_code", "market", "gua", "related_runs"):
+        assert key in d
+    assert isinstance(d["related_runs"], list)
+    # market degrades gracefully without warehouse data
+    assert "market" in d and isinstance(d["market"], dict)
+
+    # Chinese-name input resolves to a code.
+    r = client.get("/api/v1/quick/平安银行")
+    assert r.status_code == 200
+
+    # Invalid input -> 4xx, not 500.
+    r = client.get("/api/v1/quick/zzzzz")
+    assert r.status_code in (400, 404)
+
+    page = client.get("/quick.html?code=600000")
+    assert page.status_code == 200
+    assert "个股快速查询" in page.text
+
+    index = client.get("/")
+    assert "quickCode" in index.text and "/quick.html" in index.text

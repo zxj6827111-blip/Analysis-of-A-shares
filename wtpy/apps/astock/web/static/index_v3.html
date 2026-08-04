@@ -104,6 +104,12 @@
       display:flex;align-items:center;justify-content:flex-end;gap:16px;
       color:var(--muted);flex:none;
     }
+    .quick-search input{
+      background:var(--panel);border:1px solid #22304a;color:var(--text);
+      border-radius:8px;padding:6px 12px;font-size:12px;width:210px;outline:none;
+    }
+    .quick-search input:focus{border-color:var(--blue)}
+    .quick-search input::placeholder{color:var(--muted)}
     .api-ok{display:flex;align-items:center;gap:8px;font-size:12px}
     .api-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green)}
     .view{display:none;padding:20px 22px 34px;max-width:1880px;margin:0 auto}
@@ -1209,6 +1215,9 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     <a class="nav-btn" style="display:inline-flex;align-items:center;text-decoration:none" href="/dashboard"><span class="nav-icon">◆</span>关键发现</a>
   </nav>
   <div class="header-right">
+    <div class="quick-search">
+      <input id="quickCode" placeholder="个股快速查询 600000/平安银行" onkeydown="if(event.key==='Enter'){var v=this.value.trim();if(v)location.href='/quick.html?code='+encodeURIComponent(v)}">
+    </div>
     <div class="api-ok" id="apiStatus"><span class="api-dot pending" id="apiDot"></span><span id="apiStatusText">连接中</span></div>
     <span class="edition" id="appVersion">V2.0</span>
   </div>

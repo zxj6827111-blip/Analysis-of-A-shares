@@ -841,6 +841,10 @@ def dashboard_overview(
 def dashboard_page(ctx: ApiContext = Depends(get_ctx)) -> HTMLResponse:
     return _html_page("dashboard.html", "AStock dashboard")
 
+@router.get("/quick.html", response_class=HTMLResponse)
+def quick_page(ctx: ApiContext = Depends(get_ctx)) -> HTMLResponse:
+    return _html_page("quick.html", "AStock quick query")
+
 @router.get("/", response_class=HTMLResponse)
 def index(ctx: ApiContext = Depends(get_ctx)) -> HTMLResponse:
     cfg = ctx.cfg
