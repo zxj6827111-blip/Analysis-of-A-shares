@@ -710,6 +710,137 @@ def ca_events_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         "total_files": n_files,
     }
 
+@router.get("/api/v1/dashboard/overview")
+def dashboard_overview(
+    top: int = Query(8, ge=1, le=50),
+    min_win_rate: float = Query(0.5, ge=0.0, le=1.0),
+    ctx: ApiContext = Depends(get_ctx),
+) -> dict:
+    """Read-only key-findings dashboard: data health + sync + top findings.
+
+    Composes existing route handlers (single source of truth, no duplicated
+    logic). Every sub-block degrades gracefully so the dashboard renders even
+    on a bare server (missing data root, no experiments, no watchlist data).
+    """
+    cfg = ctx.cfg
+    md = market_data_status(ctx)
+    try:
+        sync = data_sync_status(ctx)
+    except Exception:
+        sync = {"running": False, "status": "unavailable"}
+    try:
+        ca = ca_events_status(ctx)
+    except Exception:
+        ca = {"exists": False}
+    try:
+        uni = universe_summary(ctx)
+    except Exception:
+        uni = {}
+
+    findings: List[Dict[str, Any]] = []
+    try:
+        from ..service.db import experiment_results_table, list_experiments
+
+        for exp in list_experiments(cfg, limit=50):
+            try:
+                table = experiment_results_table(cfg, exp["experiment_id"])
+            except Exception:
+                continue
+            for row in table.get("rows") or []:
+                m = row.get("metrics") or {}
+                win_rate = m.get("win_rate")
+                if win_rate is None:
+                    continue
+                try:
+                    win_rate = float(win_rate)
+                except (TypeError, ValueError):
+                    continue
+                if win_rate < min_win_rate:
+                    continue
+                tr = m.get("total_return")
+                dd = m.get("max_drawdown")
+                pr = m.get("payoff_ratio") or m.get("profit_loss_ratio")
+                findings.append({
+                    "experiment_id": table.get("experiment_id"),
+                    "experiment_name": table.get("name"),
+                    "variant_id": row.get("variant_id"),
+                    "title": row.get("title"),
+                    "status": row.get("status"),
+                    "signal_data_source": row.get("signal_data_source"),
+                    "signal_adjustment": row.get("signal_adjustment"),
+                    "total_return": tr,
+                    "win_rate": win_rate,
+                    "max_drawdown": dd,
+                    "payoff_ratio": pr,
+                    "n_round_trips": m.get("n_round_trips"),
+                })
+    except Exception:
+        pass
+
+    def _find_score(f: Dict[str, Any]) -> float:
+        try:
+            return (
+                float(f.get("total_return") or 0)
+                + 2.0 * float(f.get("win_rate") or 0)
+                - float(f.get("max_drawdown") or 0)
+            )
+        except (TypeError, ValueError):
+            return -1e9
+
+    findings.sort(key=_find_score, reverse=True)
+    findings = findings[:top]
+
+    wl_count = None
+    wl_symbols: List[str] = []
+    try:
+        from ..service.index_etf import watchlist
+
+        items = watchlist(cfg, kind="all")
+        wl_count = len(items)
+        wl_symbols = [str(i.get("name") or i.get("code") or "") for i in items[:12]]
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "generated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
+        "data": {
+            "data_root": md.get("data_root"),
+            "exists": md.get("exists"),
+            "ready_dataset_count": md.get("ready_dataset_count"),
+            "partial_dataset_count": md.get("partial_dataset_count"),
+            "failed_dataset_count": md.get("failed_dataset_count"),
+            "total_bar_count": md.get("total_bar_count"),
+            "total_symbol_count": md.get("total_symbol_count"),
+            "source_freshness": md.get("source_freshness"),
+            "latest_local_vendor": md.get("latest_local_vendor"),
+        },
+        "sync": {
+            "running": bool(sync.get("running")),
+            "status": sync.get("status"),
+            "task": sync.get("task"),
+            "last_finished_at": sync.get("finished_at"),
+            "error": sync.get("error"),
+        },
+        "ca": {
+            "exists": bool(ca.get("exists")),
+            "last_sync_at": ca.get("last_sync_at"),
+            "total_files": ca.get("total_files"),
+        },
+        "universe": {
+            "count": uni.get("global_universe_count"),
+            "calendar_count": uni.get("calendar_count"),
+            "data_min_date": uni.get("data_min_date"),
+            "data_max_date": uni.get("data_max_date"),
+        },
+        "findings": findings,
+        "watchlist": {"count": wl_count, "symbols": wl_symbols},
+    }
+
+@router.get("/dashboard", response_class=HTMLResponse)
+def dashboard_page(ctx: ApiContext = Depends(get_ctx)) -> HTMLResponse:
+    return _html_page("dashboard.html", "AStock dashboard")
+
 @router.get("/", response_class=HTMLResponse)
 def index(ctx: ApiContext = Depends(get_ctx)) -> HTMLResponse:
     cfg = ctx.cfg

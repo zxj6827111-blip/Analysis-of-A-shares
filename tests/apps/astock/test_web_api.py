@@ -198,3 +198,33 @@ def test_factor_sync_start_reuses_latest_manifest_universe(tmp_path, monkeypatch
     assert response.status_code == 200
     cmd = started["args"][0]
     assert cmd[cmd.index("--universe-file") + 1] == str(universe)
+
+
+def test_dashboard_overview_and_page(tmp_path: Path):
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    storage = tmp_path / "st"
+    ind = tmp_path / "ind"
+    storage.mkdir()
+    ind.mkdir()
+    cfg = get_default_config(storage_root=storage, indicator_dir=ind)
+    client = TestClient(create_app(cfg))
+
+    r = client.get("/api/v1/dashboard/overview")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["ok"] is True
+    for key in ("data", "sync", "ca", "universe", "findings", "watchlist"):
+        assert key in d
+    # Graceful on a bare server: data block reports the missing root, no crash.
+    assert d["data"]["exists"] is False
+    assert isinstance(d["findings"], list)
+    assert isinstance(d["watchlist"]["count"], (int, type(None)))
+
+    page = client.get("/dashboard")
+    assert page.status_code == 200
+    assert "关键发现" in page.text
+
+    index = client.get("/")
+    assert "/dashboard" in index.text
