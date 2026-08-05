@@ -282,6 +282,11 @@ def test_dashboard_overview_and_page(tmp_path: Path):
     assert page.status_code == 200
     assert "关键发现" in page.text
 
+    # 30s TTL cache: repeated call must not recompute (same generated_at).
+    r2 = client.get("/api/v1/dashboard/overview")
+    assert r2.status_code == 200
+    assert r2.json()["generated_at"] == d["generated_at"]
+
     index = client.get("/")
     assert "/dashboard" in index.text
 
@@ -302,11 +307,23 @@ def test_quick_query_endpoint_and_page(tmp_path: Path):
     assert r.status_code == 200
     d = r.json()
     assert d["std_code"] in ("SSE.STK.600000", "sh600000")
-    for key in ("code", "name", "std_code", "market", "gua", "related_runs"):
+    for key in ("code", "name", "std_code", "market", "gua", "gua_week", "related_runs"):
         assert key in d
     assert isinstance(d["related_runs"], list)
     # market degrades gracefully without warehouse data
     assert "market" in d and isinstance(d["market"], dict)
+
+    # Daily + weekly hexagram blocks share the same shape.
+    for gk in ("gua", "gua_week"):
+        g = d[gk]
+        assert isinstance(g, dict)
+        if g.get("error") is None:
+            assert g["period"] in ("DAY", "WEEK")
+
+    # Same code is served from the 60s TTL cache (identical object id).
+    r2 = client.get("/api/v1/quick/600000")
+    assert r2.status_code == 200
+    assert r2.json()["gua"] == d["gua"]
 
     # Chinese-name input resolves to a code.
     r = client.get("/api/v1/quick/平安银行")
@@ -319,6 +336,7 @@ def test_quick_query_endpoint_and_page(tmp_path: Path):
     page = client.get("/quick.html?code=600000")
     assert page.status_code == 200
     assert "个股快速查询" in page.text
+    assert "周卦" in page.text
 
     index = client.get("/")
     assert "quickCode" in index.text and "/quick.html" in index.text

@@ -61,6 +61,14 @@ class ApiContext:
         default_factory=lambda: {"mtime": None, "count": 0}
     )
 
+    dashboard_cache: Dict[str, Any] = field(
+        default_factory=lambda: {"ts": 0.0, "payload": None}
+    )
+
+    quick_cache: Dict[str, Any] = field(
+        default_factory=lambda: {"ts": 0.0, "payload": {}}
+    )
+
     def __post_init__(self) -> None:
         self.sync_state.setdefault("output", [])
         self.sync_proc.setdefault("proc", None)

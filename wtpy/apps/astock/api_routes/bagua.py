@@ -568,7 +568,7 @@ def quick_query(code: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
     """
     cfg = ctx.cfg
     from ..service.bagua_query import (
-        _load_dataset_bars,
+        _get_plane_session,
         display_code,
         load_day_bars,
         normalize_query_code,
@@ -598,6 +598,13 @@ def quick_query(code: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
+    # ---- 60s per-code TTL cache (market + gua + related runs)
+    qc = ctx.quick_cache
+    now = _bq_time.time()
+    hit = qc["payload"].get(std)
+    if hit is not None and now - hit.get("ts", 0.0) < 60.0:
+        return hit["payload"]
+
     name = resolve_stock_name(cfg, raw, std_code=std)
 
     # ---- market overview via the same raw resolution chain as the query center
@@ -605,8 +612,10 @@ def quick_query(code: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
     latest_date = None
     bars = None
     ds_meta: Dict[str, Any] = {}
+    session = None
     try:
-        bars, ds_meta = _load_dataset_bars(cfg, std, "raw", asof=None)
+        session = _get_plane_session(cfg, "raw")
+        bars, ds_meta = session.load_symbol(std, asof=None)
     except FileNotFoundError:
         # Mirrors query_bagua's raw fallback: legacy TDX day files.
         try:
@@ -646,6 +655,7 @@ def quick_query(code: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
 
     # ---- current hexagram (latest trading day, raw plane)
     gua: Dict[str, Any] = {}
+    gua_week: Dict[str, Any] = {}
     if latest_date is None:
         gua = {"error": "无市场数据，无法计算卦象"}
     else:
@@ -656,9 +666,21 @@ def quick_query(code: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
                 date=latest_date,
                 period="DAY",
                 adjust="raw",
+                session=session,
             )
         except Exception as e:
             gua = {"error": f"{type(e).__name__}: {e}"}
+        try:
+            gua_week = query_bagua(
+                cfg,
+                code=std,
+                date=latest_date,
+                period="WEEK",
+                adjust="raw",
+                session=session,
+            )
+        except Exception as e:
+            gua_week = {"error": f"{type(e).__name__}: {e}"}
 
     # query_bagua resolves kind-correct names (index watchlist / stock cache).
     if isinstance(gua, dict) and gua.get("name"):
@@ -712,7 +734,7 @@ def quick_query(code: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
     except Exception:
         pass
 
-    return {
+    payload = {
         "ok": True,
         "code": display_code(std),
         "name": name,
@@ -723,5 +745,13 @@ def quick_query(code: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
         ),
         "market": market,
         "gua": gua,
+        "gua_week": gua_week,
         "related_runs": related,
     }
+    qc["payload"][std] = {"ts": now, "payload": payload}
+    if len(qc["payload"]) > 200:
+        for k in sorted(
+            qc["payload"], key=lambda k: qc["payload"][k].get("ts", 0.0)
+        )[: len(qc["payload"]) - 150]:
+            qc["payload"].pop(k, None)
+    return payload

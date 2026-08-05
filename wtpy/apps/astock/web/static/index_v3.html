@@ -63,7 +63,7 @@
       backdrop-filter:blur(16px);
     }
     .brand{
-      width:290px;padding:0 22px;
+      padding:0 18px;
       display:flex;align-items:center;gap:12px;
       flex:none;
     }
@@ -86,11 +86,12 @@
       color:#ffd28a;border-color:#8a6d3b;background:#2a2417;
       box-shadow:0 0 8px rgba(255,170,60,.25);
     }
-    .main-nav{height:100%;display:flex;align-items:stretch;gap:12px;flex:1;justify-content:center}
+    .main-nav{height:100%;display:flex;align-items:stretch;gap:6px;flex:1;min-width:0;justify-content:center;overflow-x:auto}
     .nav-btn{
-      min-width:112px;border:0;background:transparent;color:#9eacc0;
-      padding:0 18px;position:relative;font-weight:650;
+      min-width:92px;border:0;background:transparent;color:#9eacc0;
+      padding:0 10px;position:relative;font-weight:650;
       display:flex;align-items:center;justify-content:center;gap:8px;
+      white-space:nowrap;flex:none;
     }
     .nav-btn:hover{color:#dce7f6;background:rgba(255,255,255,.025)}
     .nav-btn.active{color:var(--blue2);background:linear-gradient(180deg,rgba(47,128,255,.12),rgba(47,128,255,.03))}
@@ -100,17 +101,23 @@
     }
     .nav-icon{font-size:16px}
     .header-right{
-      width:305px;padding:0 20px;
-      display:flex;align-items:center;justify-content:flex-end;gap:16px;
+      padding:0 14px;
+      display:flex;align-items:center;justify-content:flex-end;gap:12px;
       color:var(--muted);flex:none;
     }
     .quick-search input{
       background:var(--panel);border:1px solid #22304a;color:var(--text);
-      border-radius:8px;padding:6px 12px;font-size:12px;width:210px;outline:none;
+      border-radius:8px;padding:6px 12px;font-size:12px;width:150px;outline:none;
     }
     .quick-search input:focus{border-color:var(--blue)}
     .quick-search input::placeholder{color:var(--muted)}
-    .api-ok{display:flex;align-items:center;gap:8px;font-size:12px}
+    .find-link{
+      display:inline-flex;align-items:center;gap:6px;text-decoration:none;
+      color:#9eacc0;font-size:12px;font-weight:650;white-space:nowrap;flex:none;
+      border:1px solid #2c3d58;background:rgba(47,128,255,.08);border-radius:8px;padding:6px 10px;
+    }
+    .find-link:hover{color:var(--blue2);border-color:#3d5a85}
+    .api-ok{display:flex;align-items:center;gap:8px;font-size:12px;flex:none}
     .api-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green)}
     .view{display:none;padding:20px 22px 34px;max-width:1880px;margin:0 auto}
     .view.active{display:block}
@@ -613,7 +620,11 @@ th.task-col-payoff{
     .demo-toast.show{display:block;animation:fadeout 2.6s forwards}
     @keyframes fadeout{0%,72%{opacity:1}100%{opacity:0}}
     @media(max-width:1280px){
-      .brand{width:255px}.header-right{width:240px}.nav-btn{min-width:95px;padding:0 10px}
+      .brand{padding:0 12px}
+      .header-right{padding:0 10px;gap:8px}
+      .main-nav{gap:4px}
+      .nav-btn{min-width:80px;padding:0 6px}
+      .quick-search input{width:120px}
       .option-grid.cols-6{grid-template-columns:repeat(3,1fr)}
       .metric-grid,.task-kpis{grid-template-columns:repeat(3,1fr)}
     }
@@ -1212,9 +1223,9 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     <button type="button" class="nav-btn" data-view="experiment"><span class="nav-icon">⚗</span>实验中心</button>
     <button type="button" class="nav-btn" data-view="tasks"><span class="nav-icon">▤</span>任务中心</button>
     <button type="button" class="nav-btn" data-view="datastore"><span class="nav-icon">◈</span>数据仓库</button>
-    <a class="nav-btn" style="display:inline-flex;align-items:center;text-decoration:none" href="/dashboard"><span class="nav-icon">◆</span>关键发现</a>
   </nav>
   <div class="header-right">
+    <a class="find-link" href="/dashboard" title="关键发现 · 数据健康与实验 Top 结论"><span class="nav-icon">◆</span>关键发现</a>
     <div class="quick-search">
       <input id="quickCode" placeholder="个股快速查询 600000/平安银行" onkeydown="if(event.key==='Enter'){var v=this.value.trim();if(v)location.href='/quick.html?code='+encodeURIComponent(v)}">
     </div>
