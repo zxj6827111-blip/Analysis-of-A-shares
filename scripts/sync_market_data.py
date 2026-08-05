@@ -41,6 +41,71 @@ from wtpy.apps.astock.data.providers.base import (
 from wtpy.apps.astock.data.repository import MarketDataRepository
 
 
+def _infer_incremental_resume(
+    store: DatasetStore,
+    *,
+    source: str,
+    adjustment: str,
+    require_rows: int = 500,
+) -> Tuple[Optional[int], Optional[str]]:
+    """Resume window + parent dataset for an incremental sync.
+
+    Returns (start_date, parent_dataset_id): resume from the latest ready
+    manifest cutoff minus a safety margin (weekends / holidays / late vendor
+    updates), and merge that parent's history into the new window so the
+    dataset never orphans bars.
+
+    Without a resume window, UI-launched incremental syncs used start_date=None
+    — a full-history refetch per symbol that Tushare truncates at 6000 rows per
+    call (about 25 years), leaving series stuck on early-2000s data. Parents
+    whose per-symbol rows look degenerate (< require_rows average) are skipped
+    so a window-only dataset never becomes the next parent.
+    """
+    import datetime as _dt
+
+    best_id: Optional[str] = None
+    best_cut = 0
+    cands: List[DatasetManifest] = []
+    for mid in store.list_manifests():
+        m = store.load_manifest(mid)
+        if not m:
+            continue
+        if m.source != source or m.adjustment != adjustment or m.status != "ready":
+            continue
+        c = int(m.data_cutoff_date or 0)
+        if c <= 0:
+            continue
+        n = int(m.symbol_count or 0)
+        avg = (int(m.row_count or 0) / n) if n else 0
+        if avg < require_rows:
+            continue
+        cands.append(m)
+    # Drop small pools (e.g. an index/ETF-only set with a newer cutoff) so a
+    # full-market parent wins; otherwise most symbols find no history to merge.
+    if cands:
+        n_max = max(int(m.symbol_count or 0) for m in cands)
+        cands = [
+            m for m in cands
+            if int(m.symbol_count or 0) >= max(50, int(n_max * 0.5))
+        ]
+    if cands:
+        best_m = max(
+            cands,
+            key=lambda m: (
+                int(m.data_cutoff_date or 0),
+                int(m.symbol_count or 0),
+                int(m.row_count or 0),
+            ),
+        )
+        best_id = best_m.dataset_id
+        best_cut = int(best_m.data_cutoff_date or 0)
+    if best_id is None:
+        return None, None
+    d = _dt.datetime.strptime(str(best_cut), "%Y%m%d").date()
+    d -= _dt.timedelta(days=20)
+    return int(d.strftime("%Y%m%d")), best_id
+
+
 def _normalize_symbol(symbol: str) -> str:
     """Normalize any symbol format to SSE.STK.600000 / SZSE.STK.000001 / BSE.STK.430047.
 
@@ -320,11 +385,31 @@ def sync_tushare_full(args, store: DatasetStore) -> dict:
     sync_run_id = make_sync_run_id("tushare")
     results = {}
 
+    # A "full" sync without explicit start_date used to refetch full history
+    # every run (and hit the 6000-row single-call cap). Resume from the latest
+    # ready dataset instead unless the user explicitly asks for history.
+    resume: Dict[str, Tuple[Optional[int], Optional[str]]] = {}
+    for adj in (AdjustmentMode.NONE, AdjustmentMode.QFQ):
+        if args.start_date is None:
+            inferred, parent_id = _infer_incremental_resume(
+                store, source=DataSource.TUSHARE.value, adjustment=adj.value
+            )
+            if inferred:
+                print(f"  [auto] no --start-date given: resuming {adj.value}/1d "
+                      f"from {inferred} (latest ready cutoff - 20d)")
+                resume[adj.value] = (inferred, parent_id)
+        else:
+            _, parent_id = _infer_incremental_resume(
+                store, source=DataSource.TUSHARE.value, adjustment=adj.value
+            )
+            resume[adj.value] = (args.start_date, parent_id)
+
     configs = [
         (AdjustmentMode.NONE, BarPeriod.DAY),
         (AdjustmentMode.QFQ, BarPeriod.DAY),
     ]
     for adj, period in configs:
+        start, parent = resume.get(adj.value, (None, None))
         ds_result = _sync_dataset(
             provider=provider,
             store=store,
@@ -333,9 +418,10 @@ def sync_tushare_full(args, store: DatasetStore) -> dict:
             adjustment=adj,
             period=period,
             sync_run_id=sync_run_id,
-            start_date=args.start_date,
+            start_date=start,
             end_date=args.end_date,
             anchor_date=args.anchor_date,
+            parent_dataset_id=parent,
         )
         results[f"{adj.value}_{period.value}"] = ds_result
         print(
@@ -362,6 +448,25 @@ def sync_tushare_incremental(args, store: DatasetStore) -> dict:
 
     print(f"Incremental sync for {len(symbols)} symbols from Tushare...")
     sync_run_id = make_sync_run_id("tushare")
+
+    # Resume from the latest ready dataset (merging its history) unless the
+    # user pins a start date; without this, incremental == full-history
+    # refetch (6000-row cap truncates) or a window-only orphan dataset.
+    resume: Dict[str, Tuple[Optional[int], Optional[str]]] = {}
+    for adj in (AdjustmentMode.NONE, AdjustmentMode.QFQ):
+        if args.start_date is None:
+            inferred, parent_id = _infer_incremental_resume(
+                store, source=DataSource.TUSHARE.value, adjustment=adj.value
+            )
+            if inferred:
+                print(f"  [auto] no --start-date given: resuming {adj.value}/1d "
+                      f"from {inferred} (latest ready cutoff - 20d)")
+                resume[adj.value] = (inferred, parent_id)
+        else:
+            _, parent_id = _infer_incremental_resume(
+                store, source=DataSource.TUSHARE.value, adjustment=adj.value
+            )
+            resume[adj.value] = (args.start_date, parent_id)
 
     ck_path = store.sync_logs_dir / "checkpoint_tushare_incremental_1d.json"
     ck = None
@@ -392,6 +497,7 @@ def sync_tushare_incremental(args, store: DatasetStore) -> dict:
             phase = ck.get("phases", {}).get(phase_key)
             if phase:
                 resume_records = phase.get("done", {})
+        start, parent = resume.get(adj.value, (None, None))
         ds_result = _sync_dataset(
             provider=provider,
             store=store,
@@ -400,9 +506,10 @@ def sync_tushare_incremental(args, store: DatasetStore) -> dict:
             adjustment=adj,
             period=period,
             sync_run_id=sync_run_id,
-            start_date=args.start_date,
+            start_date=start,
             end_date=args.end_date,
             anchor_date=args.anchor_date,
+            parent_dataset_id=parent,
             checkpoint_path=ck_path,
             resume_records=resume_records,
         )
@@ -2793,6 +2900,47 @@ def _history_changed(
     return False
 
 
+def _auto_resolve_parents(
+    args,
+    store: DatasetStore,
+    *,
+    raw_source: str,
+    raw_adjustment: str,
+) -> Optional[str]:
+    """Fill missing --raw-dataset-id / --factor-dataset-id with the latest
+    ready parents. UI-launched derive tasks never select dataset ids, so
+    without this they always failed with missing_parent_dataset_ids."""
+    if not getattr(args, "raw_dataset_id", None):
+        best_id, best_cut = None, 0
+        for mid in store.list_manifests():
+            m = store.load_manifest(mid)
+            if not m or m.source != raw_source or m.adjustment != raw_adjustment:
+                continue
+            if m.status != "ready":
+                continue
+            c = int(m.data_cutoff_date or 0)
+            if c > best_cut:
+                best_cut, best_id = c, m.dataset_id
+        if not best_id:
+            return f"no ready {raw_source}/{raw_adjustment} parent dataset"
+        print(f"  [auto] raw parent -> {best_id} (cutoff={best_cut})")
+        args.raw_dataset_id = best_id
+    if not getattr(args, "factor_dataset_id", None):
+        best_id, best_cut = None, 0
+        for mid in store.list_manifests():
+            m = store.load_manifest(mid)
+            if not m or m.dataset_type != "factor" or m.status != "ready":
+                continue
+            c = int(m.data_cutoff_date or 0)
+            if c > best_cut:
+                best_cut, best_id = c, m.dataset_id
+        if not best_id:
+            return "no ready factor dataset"
+        print(f"  [auto] factor parent -> {best_id} (cutoff={best_cut})")
+        args.factor_dataset_id = best_id
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Sync market data to local datasets")
     parser.add_argument("--source", required=True,
@@ -3146,8 +3294,20 @@ def main():
             return
         adj = args.adjustment or "tushare_factor_qfq"
         if adj == "tushare_factor_qfq":
+            err = _auto_resolve_parents(
+                args, store, raw_source="local_vendor", raw_adjustment="none"
+            )
+            if err:
+                print(f"ERROR: {err}")
+                return
             r = derive_tushare_factor_qfq(args, store)
         elif adj == "composite_tushare_factor_qfq":
+            err = _auto_resolve_parents(
+                args, store, raw_source="internal", raw_adjustment="composite_none"
+            )
+            if err:
+                print(f"ERROR: {err}")
+                return
             r = derive_composite_tushare_factor_qfq(args, store)
         else:
             print("ERROR: derive supports adjustment=tushare_factor_qfq or "

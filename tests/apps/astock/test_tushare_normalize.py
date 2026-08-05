@@ -109,6 +109,24 @@ class TestTushareNormalization:
         assert len(bars) == 1
         assert bars[0].symbol == "SSE.IDX.000001"
         assert bars[0].source == "tushare"
+        # Full history is split into year-chunks (Tushare 6000-row/call cap).
+        calls = provider._pro.index_daily.call_args_list
+        assert len(calls) > 1
+        assert calls[0].kwargs["start_date"] == "19900101"
+        assert calls[-1].kwargs["end_date"] == str(int(pd.Timestamp.today().strftime("%Y%m%d")))
+        assert all(int(c.kwargs["start_date"]) <= int(c.kwargs["end_date"]) for c in calls)
+        # A short explicit window stays a single call.
+        provider._pro.index_daily.reset_mock()
+        provider._pro.index_daily.return_value = df
+        provider.fetch_bars(
+            MarketDataRequest(
+                symbols=["SSE.IDX.000001"],
+                period=BarPeriod.DAY,
+                adjustment=AdjustmentMode.NONE,
+                start_date=20260701,
+                end_date=20260731,
+            )
+        )
         provider._pro.index_daily.assert_called_once()
 
         provider._pro.fund_daily.return_value = df
@@ -120,7 +138,7 @@ class TestTushareNormalization:
             )
         )
         assert bars2[0].symbol == "SSE.ETF.510300"
-        provider._pro.fund_daily.assert_called_once()
+        assert provider._pro.fund_daily.call_count > 1
 
         # stocks still hit daily
         provider._pro.daily.return_value = df

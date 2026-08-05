@@ -14,6 +14,9 @@ Price plane selectable:
 
 from __future__ import annotations
 
+import re
+import threading
+import time as _bq_time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -120,6 +123,11 @@ def normalize_query_code(raw: str) -> str:
     idx_etf = to_index_etf_std_code(t)
     if idx_etf:
         return idx_etf
+    # Stock ts_code form: 600000.SH / 000001.SZ / 920001.BJ (exchange is
+    # explicit, so 000001.SZ resolves to the stock, not the index).
+    m = re.match(r"^(\d{6})\.(SH|SZ|BJ)$", t, re.IGNORECASE)
+    if m:
+        return {"SH": "SSE", "SZ": "SZSE", "BJ": "BSE"}[m.group(2).upper()] + f".STK.{m.group(1)}"
     return to_std_code(t)
 
 
@@ -406,6 +414,18 @@ class BaguaPlaneSession:
             # If every candidate is stale for the query date, freshness wins.
             # Covered historical queries preserve the existing status/source order.
             stale_latest = latest if asof is not None and not covers else 0
+            if asof is None:
+                # "Latest available" queries must prefer the freshest dataset:
+                # a stopped upstream (e.g. local_vendor) must not shadow newer
+                # feeds (e.g. tushare) just because its pair ranks first.
+                return (
+                    cutoff,
+                    latest,
+                    rows,
+                    self.status_rank.get(m.status or "", -1),
+                    -pr,
+                    m.created_at or "",
+                )
             return (
                 1 if covers else 0,
                 stale_latest,
@@ -442,14 +462,38 @@ class BaguaPlaneSession:
         return bars, meta
 
 
+# Process-wide plane-session reuse. Building the warehouse index is the
+# dominant cost of single-shot queries (scan all manifests + per-manifest
+# symbol indexes, ~1-2s with 50+ datasets). Sessions are read-only after
+# construction, so concurrent reads are safe under a plain TTL cache.
+_SESSION_CACHE_TTL = 300.0
+_session_cache_lock = threading.Lock()
+_session_cache: Dict[Tuple[str, str], Tuple[float, "BaguaPlaneSession"]] = {}
+
+
+def _get_plane_session(cfg: AStockConfig, source_key: str) -> "BaguaPlaneSession":
+    """Return a cached (TTL) BaguaPlaneSession for the given price plane."""
+    md_root = getattr(cfg, "market_data_root", None)
+    key = (str(md_root), normalize_adjust_mode(source_key))
+    now = _bq_time.time()
+    with _session_cache_lock:
+        hit = _session_cache.get(key)
+        if hit is not None and now - hit[0] < _SESSION_CACHE_TTL:
+            return hit[1]
+    session = BaguaPlaneSession(cfg, source_key)
+    with _session_cache_lock:
+        _session_cache[key] = (now, session)
+    return session
+
+
 def _load_dataset_bars(
     cfg: AStockConfig,
     std_code: str,
     source_key: str,
     asof: Optional[int] = None,
 ) -> Tuple[List[DayBar], Dict[str, Any]]:
-    """Load day bars from warehouse for bagua query (single-shot session)."""
-    session = BaguaPlaneSession(cfg, source_key)
+    """Load day bars from warehouse for bagua query (cached shared session)."""
+    session = _get_plane_session(cfg, source_key)
     return session.load_symbol(std_code, asof=asof)
 
 

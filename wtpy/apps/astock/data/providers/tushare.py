@@ -29,6 +29,47 @@ MAX_RETRIES = 3
 BASE_BACKOFF_SEC = 1.0
 RATE_LIMIT_BACKOFF_SEC = 5.0
 
+# Tushare pro.daily / index_daily / fund_daily cap a single call at 6000 rows
+# (~25 years of daily bars). One-shot full-history requests used to be silently
+# truncated, leaving per-symbol series stuck on early 2000s data. Split every
+# window into year-sized chunks so each call stays far below the cap.
+PAGE_YEARS = 3
+PAGE_YEAR_MIN = 1990
+
+
+def _page_year_ranges(
+    start_date: Optional[int], end_date: Optional[int]
+) -> List[Tuple[Optional[int], Optional[int]]]:
+    """Split [start, end] into <= PAGE_YEARS-year sub-windows (inclusive)."""
+    import datetime as _dt
+
+    end_int = int(end_date or int(_dt.date.today().strftime("%Y%m%d")))
+    start_int = int(start_date or PAGE_YEAR_MIN * 10000 + 101)
+    if start_int > end_int:
+        return []
+    y0, y1 = start_int // 10000, end_int // 10000
+    out: List[Tuple[Optional[int], Optional[int]]] = []
+    for y in range(y0, y1 + 1, PAGE_YEARS):
+        seg_start = max(start_int, y * 10000 + 101)
+        seg_end = min(end_int, min(y + PAGE_YEARS - 1, y1) * 10000 + 1231)
+        if seg_start <= seg_end:
+            out.append((seg_start, seg_end))
+    return out
+
+
+def _merge_paged_frames(frames: List) -> Any:
+    """Concatenate paged API frames into one ascending, deduped frame."""
+    import pandas as pd
+
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
+    if "trade_date" not in df.columns:
+        return df
+    df = df.drop_duplicates(subset="trade_date", keep="last")
+    df = df.sort_values("trade_date", ascending=True)
+    return df.reset_index(drop=True)
+
 
 def _symbol_kind(symbol: str) -> str:
     """stock / index / etf from any symbol spelling (SSE.IDX.*, sh000001...)."""
@@ -162,56 +203,88 @@ class TushareProvider:
     def _fetch_raw_daily(
         self, ts_code: str, request: MarketDataRequest, symbol: str
     ) -> List[MarketBar]:
-        df = self._call_with_retry(
-            self._pro.daily,
-            ts_code=ts_code,
-            start_date=str(request.start_date or ""),
-            end_date=str(request.end_date or ""),
-        )
-        if df is None or df.empty:
+        frames = []
+        for seg_start, seg_end in _page_year_ranges(
+            request.start_date, request.end_date
+        ):
+            df = self._call_with_retry(
+                self._pro.daily,
+                ts_code=ts_code,
+                start_date=str(seg_start or ""),
+                end_date=str(seg_end or ""),
+            )
+            if df is not None and not df.empty:
+                frames.append(df)
+        if not frames:
             raise DataNotDownloaded(f"No daily data for {ts_code}")
-        return self._dataframe_to_bars(df, request, AdjustmentMode.NONE, symbol)
+        return self._dataframe_to_bars(
+            _merge_paged_frames(frames), request, AdjustmentMode.NONE, symbol
+        )
 
     def _fetch_index_daily(
         self, ts_code: str, request: MarketDataRequest, symbol: str
     ) -> List[MarketBar]:
-        df = self._call_with_retry(
-            self._pro.index_daily,
-            ts_code=ts_code,
-            start_date=str(request.start_date or ""),
-            end_date=str(request.end_date or ""),
-        )
-        if df is None or df.empty:
+        frames = []
+        for seg_start, seg_end in _page_year_ranges(
+            request.start_date, request.end_date
+        ):
+            df = self._call_with_retry(
+                self._pro.index_daily,
+                ts_code=ts_code,
+                start_date=str(seg_start or ""),
+                end_date=str(seg_end or ""),
+            )
+            if df is not None and not df.empty:
+                frames.append(df)
+        if not frames:
             raise DataNotDownloaded(f"No index_daily data for {ts_code}")
-        return self._dataframe_to_bars(df, request, AdjustmentMode.NONE, symbol)
+        return self._dataframe_to_bars(
+            _merge_paged_frames(frames), request, AdjustmentMode.NONE, symbol
+        )
 
     def _fetch_fund_daily(
         self, ts_code: str, request: MarketDataRequest, symbol: str
     ) -> List[MarketBar]:
-        df = self._call_with_retry(
-            self._pro.fund_daily,
-            ts_code=ts_code,
-            start_date=str(request.start_date or ""),
-            end_date=str(request.end_date or ""),
-        )
-        if df is None or df.empty:
+        frames = []
+        for seg_start, seg_end in _page_year_ranges(
+            request.start_date, request.end_date
+        ):
+            df = self._call_with_retry(
+                self._pro.fund_daily,
+                ts_code=ts_code,
+                start_date=str(seg_start or ""),
+                end_date=str(seg_end or ""),
+            )
+            if df is not None and not df.empty:
+                frames.append(df)
+        if not frames:
             raise DataNotDownloaded(f"No fund_daily data for {ts_code}")
-        return self._dataframe_to_bars(df, request, AdjustmentMode.NONE, symbol)
+        return self._dataframe_to_bars(
+            _merge_paged_frames(frames), request, AdjustmentMode.NONE, symbol
+        )
 
     def _fetch_qfq(
         self, ts_code: str, request: MarketDataRequest, symbol: str
     ) -> List[MarketBar]:
         assert self._ts is not None
-        df = self._call_with_retry(
-            self._ts.pro_bar,
-            ts_code=ts_code,
-            adj="qfq",
-            start_date=str(request.start_date or ""),
-            end_date=str(request.end_date or ""),
-        )
-        if df is None or df.empty:
+        frames = []
+        for seg_start, seg_end in _page_year_ranges(
+            request.start_date, request.end_date
+        ):
+            df = self._call_with_retry(
+                self._ts.pro_bar,
+                ts_code=ts_code,
+                adj="qfq",
+                start_date=str(seg_start or ""),
+                end_date=str(seg_end or ""),
+            )
+            if df is not None and not df.empty:
+                frames.append(df)
+        if not frames:
             raise IncompleteResponse(f"No qfq data for {ts_code}")
-        return self._dataframe_to_bars(df, request, AdjustmentMode.QFQ, symbol)
+        return self._dataframe_to_bars(
+            _merge_paged_frames(frames), request, AdjustmentMode.QFQ, symbol
+        )
 
     def _dataframe_to_bars(
         self,

@@ -592,8 +592,10 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
         cmd = [sys.executable, "-u", _CA_SCRIPT, "--mode", "incremental", "--days", "90",
                "--storage-root", str(cfg.market_data_root)]
     else:
+        # Rebuild the composite signal plane (L1) from the latest ready
+        # composite_none x adj_factor parents (script auto-resolves parents).
         cmd = [sys.executable, "-u", SYNC_SCRIPT, "--source", "internal", "--mode", "derive",
-               "--adjustment", "tushare_factor_qfq", "--cutoff", str(end_date)]
+               "--adjustment", "composite_tushare_factor_qfq", "--cutoff", str(end_date)]
 
     # Resume only when client asks; leftover checkpoint must not force resume.
     if payload.task in ("tdx", "tushare", "factor"):
@@ -725,6 +727,14 @@ def dashboard_overview(
     logic). Every sub-block degrades gracefully so the dashboard renders even
     on a bare server (missing data root, no experiments, no watchlist data).
     """
+    dc = ctx.dashboard_cache
+    cache_key = (top, min_win_rate)
+    if (
+        dc.get("payload") is not None
+        and dc.get("key") == cache_key
+        and _time.time() - dc.get("ts", 0.0) < 30.0
+    ):
+        return dc["payload"]
     cfg = ctx.cfg
     md = market_data_status(ctx)
     try:
@@ -804,7 +814,7 @@ def dashboard_overview(
     except Exception:
         pass
 
-    return {
+    payload = {
         "ok": True,
         "generated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
         "data": {
@@ -839,6 +849,10 @@ def dashboard_overview(
         "findings": findings,
         "watchlist": {"count": wl_count, "symbols": wl_symbols},
     }
+    dc["key"] = cache_key
+    dc["ts"] = _time.time()
+    dc["payload"] = payload
+    return payload
 
 @router.get("/dashboard", response_class=HTMLResponse)
 def dashboard_page(ctx: ApiContext = Depends(get_ctx)) -> HTMLResponse:

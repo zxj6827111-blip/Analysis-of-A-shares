@@ -30,6 +30,11 @@ def test_normalize_period_and_code():
     assert bq.normalize_query_code("600000") == "SSE.STK.600000"
     assert bq.normalize_query_code("sh600000") == "SSE.STK.600000"
     assert bq.normalize_query_code("000001") == "SZSE.STK.000001"
+    assert bq.normalize_query_code("600000.SH") == "SSE.STK.600000"
+    assert bq.normalize_query_code("000001.SZ") == "SZSE.STK.000001"
+    assert bq.normalize_query_code("920001.BJ") == "BSE.STK.920001"
+    assert bq.normalize_query_code("000001.SH") == "SSE.IDX.000001"
+    assert bq.normalize_query_code("399001.SZ") == "SZSE.IDX.399001"
     assert bq.display_code("SSE.STK.600000") == "sh600000"
 
 
