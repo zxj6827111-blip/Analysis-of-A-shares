@@ -1,7 +1,26 @@
 """Tests for BacktestRequest multi-source fields."""
+import os
+
 import pytest
 
 from wtpy.apps.astock.service.backtest_request import BacktestRequest
+
+
+def _real_data_env_ok() -> bool:
+    """True when the machine has a real data environment (external data root
+    from env or local TDX day files). CI runners lack both; these regression
+    tests exercise the full backtest path and would legitimately no-go there.
+    """
+    md = os.environ.get("MARKET_DATA_ROOT", "").strip()
+    if md and os.path.isdir(md):
+        return True
+    try:
+        from wtpy.apps.astock.config import get_default_config
+
+        cfg = get_default_config()
+        return (cfg.tdx_root / "vipdoc" / "sh" / "lday" / "sh600000.day").exists()
+    except Exception:
+        return False
 
 
 class TestBacktestSourceSelection:
@@ -74,6 +93,10 @@ class TestBacktestSourceSelection:
         assert req.weekly_bar_mode == "vendor_native"
 
 
+@pytest.mark.skipif(
+    not _real_data_env_ok(),
+    reason="real data environment (external data root / TDX day files) required",
+)
 class TestLegacyTdxFrontBaguaPlaneRerun:
     """Regression: rerunning a legacy experiment with plane=tdx_front must
     degrade per code (bagua plane disabled by the Tushare-only policy), not

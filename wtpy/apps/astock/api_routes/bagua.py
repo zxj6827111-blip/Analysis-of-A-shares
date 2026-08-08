@@ -681,6 +681,7 @@ def quick_query(code: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
     gua_week: Dict[str, Any] = {}
     if latest_date is None:
         gua = {"error": "无市场数据，无法计算卦象"}
+        gua_week = {"error": "无市场数据，无法计算卦象"}
     else:
         try:
             gua = query_bagua(
