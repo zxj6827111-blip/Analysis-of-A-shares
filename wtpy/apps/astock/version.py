@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Dict, Optional
 
-APP_VERSION = "2.0"
+APP_VERSION = "2.1"
 
 _CACHE_TTL_SEC = 5.0
 _CACHE_LOCK = threading.Lock()

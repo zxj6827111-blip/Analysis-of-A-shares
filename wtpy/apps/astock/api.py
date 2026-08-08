@@ -87,20 +87,25 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
     guard = market_data_root_guard(cfg)
 
     ready_count = None
-    latest_lv = None
+    product_line = "—"
     try:
         from .data.dataset_store import DatasetStore
         from .data.repository import MarketDataRepository
+        from .data.tushare_product import resolve_active_tushare_product_pair
 
         if cfg.market_data_root.exists():
-            repo = MarketDataRepository(DatasetStore(cfg.market_data_root))
+            store = DatasetStore(cfg.market_data_root)
+            repo = MarketDataRepository(store)
             all_ds = repo.list_datasets()
             ready_count = sum(1 for d in all_ds if d.status == "ready")
-            lv = sorted(
-                (d for d in all_ds if d.source == "local_vendor" and d.status == "ready"),
-                key=lambda d: d.created_at or "",
-            )
-            latest_lv = lv[-1].dataset_id if lv else None
+            pair = resolve_active_tushare_product_pair(store)
+            if pair is not None:
+                product_line = (
+                    f"L1={pair.l1_dataset_id} | L2={pair.l2_dataset_id} "
+                    f"| cutoff={pair.cutoff}"
+                )
+            else:
+                product_line = "formal L1/L2 not ready (Tushare-only)"
         else:
             ready_count = 0
     except Exception as e:  # pragma: no cover - startup banner must never crash
@@ -113,7 +118,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
           + ("  [INTERNAL TEST ROOT]" if guard["is_internal"] else "  [external]"))
     print(f"  env var set       : {guard['market_data_root_env_set']}")
     print(f"  ready datasets    : {ready_count}")
-    print(f"  latest local_vendor ready dataset: {latest_lv or '—'}")
+    print(f"  Tushare product   : {product_line}")
     print("=" * 64)
 
     if guard["blocked"]:
@@ -173,6 +178,39 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
 
     import threading as _thr
     _thr.Thread(target=_auto_ca_check, daemon=True).start()
+
+    def _auto_tushare_product_reconcile() -> None:
+        """Build formal products from existing local Tushare parents only."""
+        try:
+            from .data.dataset_store import DatasetStore
+            from .data.tushare_product import reconcile_tushare_product_datasets
+
+            if not cfg.market_data_root.exists():
+                print("[TUSHARE_PRODUCT] data root missing; waiting for sync")
+                return
+            result = reconcile_tushare_product_datasets(
+                DatasetStore(cfg.market_data_root)
+            )
+            print(
+                "[TUSHARE_PRODUCT] "
+                f"status={result.status} "
+                f"L1={result.l1_dataset_id or '-'} "
+                f"L2={result.l2_dataset_id or '-'} "
+                f"missing={result.missing or '-'} "
+                f"issues={result.issues or '-'}"
+            )
+        except Exception as exc:
+            # Product migration must never prevent the API from starting.
+            print(
+                "[TUSHARE_PRODUCT] reconcile failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    _thr.Thread(
+        target=_auto_tushare_product_reconcile,
+        daemon=True,
+        name="astock-tushare-product-reconcile",
+    ).start()
 
     uvicorn.run(app, host=host, port=port)
 

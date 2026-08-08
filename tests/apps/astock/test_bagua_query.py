@@ -119,37 +119,33 @@ def test_calculator_same_as_query(monkeypatch):
 
 
 def test_source_match_pairs():
-    assert bq._source_match_pairs("tdx_front") == [("tdxquant", "front")]
+    from wtpy.apps.astock.service.bagua_query import SourceDisabledError
+
+    with pytest.raises(SourceDisabledError, match="已停用"):
+        bq._source_match_pairs("tdx_front")
     pairs = bq._source_match_pairs("tushare_qfq")
-    assert pairs[0] == ("tushare", "qfq")
-    assert ("internal", "tushare_factor_qfq") in pairs
+    assert pairs[0] == ("internal", "composite_tushare_factor_qfq")
+    assert pairs[1] == ("tushare", "qfq")
+    # legacy internal/tushare_factor_qfq derived sets are no longer readable
+    assert ("internal", "tushare_factor_qfq") not in pairs
     raw_pairs = bq._source_match_pairs("raw")
-    assert raw_pairs[0] == ("local_vendor", "none")
+    assert raw_pairs[0] == ("internal", "composite_none")
     assert ("tushare", "none") in raw_pairs
+    assert all(p[0] != "local_vendor" for p in raw_pairs)
 
 
-def test_query_bagua_tdx_and_tushare_from_warehouse(monkeypatch):
-    """Both front-adjusted sources resolve via warehouse multi-dataset scan."""
+def test_query_bagua_tushare_qfq_from_warehouse(monkeypatch):
+    """Tushare QFQ resolves via the warehouse multi-dataset scan."""
     if not JSON_PATH.exists():
         pytest.skip("bagua_384.json missing")
 
-    bars_tdx = [DayBar(20240103, 10.0, 11.0, 9.5, 10.5, 1, 1)]
     bars_ts = [DayBar(20240103, 10.1, 11.1, 9.6, 10.6, 1, 1)]
 
     def _fake_load(_cfg, _code, source_key, asof=None):
-        if source_key == "tdx_front":
-            return bars_tdx, {
-                "dataset_id": "tdxquant_front_1d_old",
-                "dataset_source": "tdxquant",
-                "dataset_adjustment": "front",
-                "dataset_status": "ready",
-                "covers_asof": True,
-                "candidate_datasets": 2,
-            }
         return bars_ts, {
-            "dataset_id": "tushare_qfq_1d_new",
-            "dataset_source": "tushare",
-            "dataset_adjustment": "qfq",
+            "dataset_id": "internal_composite_tushare_factor_qfq_1d_new",
+            "dataset_source": "internal",
+            "dataset_adjustment": "composite_tushare_factor_qfq",
             "dataset_status": "ready",
             "covers_asof": True,
             "candidate_datasets": 3,
@@ -167,27 +163,18 @@ def test_query_bagua_tdx_and_tushare_from_warehouse(monkeypatch):
     )
     monkeypatch.setattr(bq, "_load_dataset_bars", _fake_load)
 
-    out_tdx = bq.query_bagua(
-        cfg, code="600000", date="2024-01-03", period="DAY", adjust="tdx_front"
-    )
-    assert out_tdx["ok"] is True
-    assert out_tdx["adjust"] == "tdx_front"
-    assert out_tdx["bar"]["close"] == 10.5
-    assert out_tdx["adjust_meta"]["dataset_id"] == "tdxquant_front_1d_old"
-    assert out_tdx["adjust_meta"]["candidate_datasets"] == 2
-
     out_ts = bq.query_bagua(
         cfg, code="600000", date="2024-01-03", period="DAY", adjust="tushare_qfq"
     )
     assert out_ts["ok"] is True
     assert out_ts["adjust"] == "tushare_qfq"
     assert out_ts["bar"]["close"] == 10.6
-    assert out_ts["adjust_meta"]["dataset_source"] == "tushare"
+    assert out_ts["adjust_meta"]["dataset_source"] == "internal"
     assert "Tushare" in (out_ts["algorithm"].get("price_format") or "")
 
 
 def test_query_bagua_raw_from_warehouse(monkeypatch):
-    """未复权走仓库 local_vendor/none，不再依赖旧 day 文件优先路径。"""
+    """未复权走仓库正式L2（internal/composite_none）优先。"""
     if not JSON_PATH.exists():
         pytest.skip("bagua_384.json missing")
 
@@ -196,9 +183,9 @@ def test_query_bagua_raw_from_warehouse(monkeypatch):
     def _fake_load(_cfg, _code, source_key, asof=None):
         assert source_key == "raw"
         return bars_raw, {
-            "dataset_id": "localvendor_none_1d_20260726",
-            "dataset_source": "local_vendor",
-            "dataset_adjustment": "none",
+            "dataset_id": "internal_composite_none_1d_20260726",
+            "dataset_source": "internal",
+            "dataset_adjustment": "composite_none",
             "dataset_status": "ready",
             "covers_asof": True,
             "candidate_datasets": 1,
@@ -219,11 +206,9 @@ def test_query_bagua_raw_from_warehouse(monkeypatch):
     out = bq.query_bagua(cfg, code="600000", date="2024-01-03", period="DAY", adjust="raw")
     assert out["ok"] is True
     assert out["adjust"] == "raw"
-    assert out["price_plane"] == "L2_trade_price"
-    assert out["bar"]["close"] == 9.2
-    assert out["adjust_meta"]["dataset_source"] == "local_vendor"
-    assert out["adjust_meta"]["dataset_adjustment"] == "none"
-    assert "local_vendor" in (out["algorithm"].get("price_format") or "")
+    assert out["adjust_meta"]["dataset_source"] == "internal"
+    assert out["adjust_meta"]["dataset_adjustment"] == "composite_none"
+    assert "正式L2" in (out["algorithm"].get("price_format") or "")
 
 
 def test_bagua_plane_session_indexes_once(tmp_path):
@@ -239,11 +224,13 @@ def test_bagua_plane_session_indexes_once(tmp_path):
     codes = ["SSE.STK.600000", "SSE.STK.600004", "SZSE.STK.000001"]
     records = []
     total_rows = 0
+    # >= 120 rows and a >60-day span so the orphan-window gate passes
+    dates = list(range(20240102, 20240102 + 130))
     for code in codes:
         bars = [
             MarketBar(
                 symbol=code,
-                trade_date=20240102 + i,
+                trade_date=date,
                 period="1d",
                 open=10.0,
                 high=11.0,
@@ -252,50 +239,98 @@ def test_bagua_plane_session_indexes_once(tmp_path):
                 volume=1000.0,
                 amount=10000.0,
             )
-            for i in range(3)
+            for date in dates
         ]
         sha = store.store_bars(code, bars)
         records.append(
             SymbolRecord(
                 symbol=code,
                 blob_sha256=sha,
-                row_count=3,
+                row_count=len(bars),
                 quality="ok",
-                first_date=20240102,
-                last_date=20240104,
+                first_date=dates[0],
+                last_date=dates[-1],
             )
         )
-        total_rows += 3
-    m = DatasetManifest(
-        dataset_id="tdxquant_front_1d_session_t1",
-        source="tdxquant",
-        adjustment="front",
+        total_rows += len(bars)
+    # Tushare-only policy: the composite is only eligible as the FORMAL L1
+    # (exact dataset id once the atomic product pair exists), so the session
+    # test must publish the formal L2 + L1 pair with tushare_only_v1 lineage:
+    # L2 carries its two parents (base + supplement) and L1 its raw + factor
+    # parents so the strict fail-closed lineage validation accepts the pair.
+    def _parent(dataset_id, source, adjustment, *, factor=False):
+        store.publish(DatasetManifest(
+            dataset_id=dataset_id,
+            source=source,
+            adjustment=adjustment,
+            period="1d",
+            status="building",
+            dataset_type="factor" if factor else "bars",
+            data_cutoff_date=dates[-1],
+            symbol_count=0,
+            row_count=0,
+        ))
+
+    _parent("tushare_none_1d_pair_base", "tushare", "none")
+    _parent("tushare_none_1d_pair_supp", "tushare", "none")
+    _parent("tushare_adjfactor_1d_pair", "tushare", "adj_factor", factor=True)
+    l2_id = "internal_composite_none_1d_session_t1"
+    l2_manifest = DatasetManifest(
+        dataset_id=l2_id,
+        source="internal",
+        adjustment="composite_none",
         period="1d",
         status="building",
-        data_cutoff_date=20240104,
+        data_cutoff_date=dates[-1],
         symbols=records,
         symbol_count=len(records),
         row_count=total_rows,
+        provenance={
+            "data_policy": "tushare_only_v1",
+            "base_source": "tushare",
+            "supplement_source": "tushare",
+            "parents": [
+                {"dataset_id": "tushare_none_1d_pair_base", "role": "base"},
+                {"dataset_id": "tushare_none_1d_pair_supp", "role": "supplement"},
+            ],
+        },
+    )
+    store.publish(l2_manifest)
+    m = DatasetManifest(
+        dataset_id="internal_composite_tushare_factor_qfq_1d_session_t1",
+        source="internal",
+        adjustment="composite_tushare_factor_qfq",
+        period="1d",
+        status="building",
+        data_cutoff_date=dates[-1],
+        symbols=records,
+        symbol_count=len(records),
+        row_count=total_rows,
+        raw_dataset_id=l2_id,
+        factor_dataset_id="tushare_adjfactor_1d_pair",
+        provenance={"data_policy": "tushare_only_v1"},
     )
     store.publish(m)
 
     cfg = SimpleNamespace(market_data_root=tmp_path / "market_data")
-    session = bq.BaguaPlaneSession(cfg, "tdx_front")
+    session = bq.BaguaPlaneSession(cfg, "tushare_qfq")
     assert session._saw_any_pair is True
     assert len(session._indexed) >= 1
+    # the formal product pair pins the exact composite as the only candidate
+    assert session.formal_l1_id == "internal_composite_tushare_factor_qfq_1d_session_t1"
 
     bars0, meta0 = session.load_symbol("SSE.STK.600000")
-    assert len(bars0) == 3
+    assert len(bars0) == 130
     assert meta0.get("session_indexed") is True
-    assert meta0.get("dataset_id") == "tdxquant_front_1d_session_t1"
+    assert meta0.get("dataset_id") == "internal_composite_tushare_factor_qfq_1d_session_t1"
 
     bars1, meta1 = session.load_symbol("SZSE.STK.000001", asof=20240103)
-    assert len(bars1) == 3
+    assert len(bars1) == 130
     assert meta1.get("covers_asof") is True
 
     # Shared load_day_bars_for_plane path with session + date trim
     bars2, meta2 = bq.load_day_bars_for_plane(
-        cfg, "SSE.STK.600004", "tdx_front", start=20240103, end=20240104, session=session
+        cfg, "SSE.STK.600004", "tushare_qfq", start=20240103, end=20240104, session=session
     )
     assert len(bars2) == 2
     assert meta2.get("session_indexed") is True
@@ -306,7 +341,7 @@ def test_bagua_plane_session_indexes_once(tmp_path):
 
 
 def test_bagua_plane_session_prefers_freshest_stale_candidate(tmp_path):
-    """A stale vendor dataset must not hide a newer Tushare increment."""
+    """A stale composite surface must not hide a newer Tushare increment."""
     from wtpy.apps.astock.data.dataset_store import (
         DatasetManifest,
         DatasetStore,
@@ -317,7 +352,7 @@ def test_bagua_plane_session_prefers_freshest_stale_candidate(tmp_path):
     store = DatasetStore(tmp_path / "market_data")
     code = "SZSE.STK.300475"
 
-    def publish(dataset_id, source, dates, *, reverse_record_dates=False):
+    def publish(dataset_id, source, adjustment, dates, *, reverse_record_dates=False):
         bars = [
             MarketBar(
                 symbol=code,
@@ -347,7 +382,7 @@ def test_bagua_plane_session_prefers_freshest_stale_candidate(tmp_path):
         manifest = DatasetManifest(
             dataset_id=dataset_id,
             source=source,
-            adjustment="none",
+            adjustment=adjustment,
             period="1d",
             status="building",
             data_cutoff_date=max(dates),
@@ -357,29 +392,162 @@ def test_bagua_plane_session_prefers_freshest_stale_candidate(tmp_path):
         )
         store.publish(manifest)
 
+    # >= 120 rows with a >60-day span so the orphan gate passes
+    stale_dates = list(range(20240101, 20240101 + 200))  # 20240101..20240300
+    fresh_dates = list(range(20240101 + 100, 20240101 + 300))  # 20240201..20240400
     publish(
-        "localvendor_none_1d_20260717_test",
-        "local_vendor",
-        [20260701, 20260717],
+        "internal_composite_none_1d_20240300_test",
+        "internal",
+        "composite_none",
+        stale_dates,
     )
     publish(
-        "tushare_none_1d_20260730_test",
+        "tushare_none_1d_20240400_test",
         "tushare",
-        [20260701, 20260730],
+        "none",
+        fresh_dates,
         reverse_record_dates=True,
     )
 
     cfg = SimpleNamespace(market_data_root=tmp_path / "market_data")
     session = bq.BaguaPlaneSession(cfg, "raw")
 
-    fresh_bars, fresh_meta = session.load_symbol(code, asof=20260731)
-    assert fresh_meta["dataset_source"] == "tushare"
-    assert fresh_meta["symbol_effective_last_date"] == 20260730
-    assert fresh_bars[-1].date == 20260730
+    # Tushare-only policy bootstrap: without a formal product pair the legacy
+    # internal composite (no tushare_only_v1 lineage) is INELIGIBLE — it must
+    # never hide the newer complete tushare/none increment.
+    assert session.formal_l2_id is None
 
-    historical_bars, historical_meta = session.load_symbol(code, asof=20260715)
-    assert historical_meta["dataset_source"] == "local_vendor"
-    assert historical_bars[-1].date == 20260717
+    # latest query: freshest real data wins within the role
+    fresh_bars, fresh_meta = session.load_symbol(code, asof=20241201)
+    assert fresh_meta["dataset_source"] == "tushare"
+    assert fresh_meta["dataset_id"] == "tushare_none_1d_20240400_test"
+    assert fresh_meta["bootstrap_fallback"] is True
+    assert fresh_meta["symbol_effective_last_date"] == 20240400
+    assert fresh_bars[-1].date == 20240400
+
+    # historical asof: the legacy composite is not a product candidate; the
+    # complete tushare/none bootstrap surface covers the query date instead
+    historical_bars, historical_meta = session.load_symbol(code, asof=20240201)
+    assert historical_meta["dataset_source"] == "tushare"
+    assert historical_meta["dataset_id"] == "tushare_none_1d_20240400_test"
+    assert historical_meta["covers_asof"] is True
+    assert historical_bars[-1].date == 20240400
+
+
+def test_bagua_plane_session_caches_manifest_signals(tmp_path):
+    """Per-manifest history signals are computed once at index build; _score
+    reads the cached signals (no per-symbol manifest rescans)."""
+    from wtpy.apps.astock.data.dataset_store import (
+        DatasetManifest,
+        DatasetStore,
+        SymbolRecord,
+    )
+    from wtpy.apps.astock.data.providers.base import MarketBar
+    from wtpy.apps.astock.data.tushare_product import manifest_history_signals
+
+    store = DatasetStore(tmp_path / "market_data")
+    code = "SSE.STK.600000"
+    dates = list(range(20240102, 20240102 + 130))
+    bars = [
+        MarketBar(
+            symbol=code, trade_date=d, period="1d",
+            open=10.0, high=11.0, low=9.0, close=10.5,
+            volume=1000.0, amount=10000.0,
+        )
+        for d in dates
+    ]
+    sha = store.store_bars(code, bars)
+    m = DatasetManifest(
+        dataset_id="tushare_none_1d_sigcache_t1",
+        source="tushare",
+        adjustment="none",
+        period="1d",
+        status="building",
+        data_cutoff_date=dates[-1],
+        symbols=[SymbolRecord(
+            symbol=code, blob_sha256=sha, row_count=len(bars), quality="ok",
+            first_date=dates[0], last_date=dates[-1],
+        )],
+        symbol_count=1,
+        row_count=len(bars),
+    )
+    store.publish(m)
+
+    cfg = SimpleNamespace(market_data_root=tmp_path / "market_data")
+    session = bq.BaguaPlaneSession(cfg, "raw")
+    # the cached entry exists and matches a direct computation
+    sig = session._manifest_sig.get(m.dataset_id)
+    assert sig is not None
+    assert sig == manifest_history_signals(m)
+    assert sig.median_rows == 130
+    # loads still resolve through the cached signals
+    bars_out, meta = session.load_symbol(code, asof=20240201)
+    assert meta["dataset_id"] == m.dataset_id
+    assert len(bars_out) == 130
+
+
+def test_bagua_plane_session_short_index_etf_surface_indexed(tmp_path):
+    """A newly listed ETF/index tushare/none surface (short window, few rows)
+    must NOT be dropped wholesale by the orphan-window gate (it would hide
+    the only warehouse bars for that symbol), while a short stock surface
+    stays excluded."""
+    from wtpy.apps.astock.data.dataset_store import (
+        DatasetManifest,
+        DatasetStore,
+        SymbolRecord,
+    )
+    from wtpy.apps.astock.data.providers.base import MarketBar
+
+    store = DatasetStore(tmp_path / "market_data")
+
+    def publish(dataset_id, symbol, dates):
+        bars = [
+            MarketBar(
+                symbol=symbol, trade_date=d, period="1d",
+                open=10.0, high=11.0, low=9.0, close=float(d % 100),
+                volume=1000.0, amount=10000.0,
+            )
+            for d in dates
+        ]
+        sha = store.store_bars(symbol, bars)
+        store.publish(DatasetManifest(
+            dataset_id=dataset_id,
+            source="tushare",
+            adjustment="none",
+            period="1d",
+            status="building",
+            data_cutoff_date=max(dates),
+            symbols=[SymbolRecord(
+                symbol=symbol, blob_sha256=sha, row_count=len(bars),
+                quality="ok", first_date=min(dates), last_date=max(dates),
+            )],
+            symbol_count=1,
+            row_count=len(bars),
+        ))
+
+    # newly listed ETF / index: 16 rows, short span -> orphan window
+    publish("tushare_none_1d_etf_new_t1", "SSE.ETF.510300",
+            list(range(20260701, 20260701 + 16)))
+    publish("tushare_none_1d_idx_new_t1", "SSE.IDX.000001",
+            list(range(20260701, 20260701 + 16)))
+    # short stock surface must stay excluded by the orphan gate
+    publish("tushare_none_1d_stock_short_t1", "SSE.STK.600000",
+            list(range(20260701, 20260701 + 16)))
+
+    cfg = SimpleNamespace(market_data_root=tmp_path / "market_data")
+    session = bq.BaguaPlaneSession(cfg, "raw")
+    indexed_ids = {m.dataset_id for m, _, _ in session._indexed}
+    assert "tushare_none_1d_etf_new_t1" in indexed_ids
+    assert "tushare_none_1d_idx_new_t1" in indexed_ids
+    assert "tushare_none_1d_stock_short_t1" not in indexed_ids
+
+    bars, meta = session.load_symbol("sh510300", asof=20260710)
+    assert meta["dataset_id"] == "tushare_none_1d_etf_new_t1"
+    assert meta["covers_asof"] is True
+    assert len(bars) == 16
+    bars2, meta2 = session.load_symbol("sh000001", asof=20260710)
+    assert meta2["dataset_id"] == "tushare_none_1d_idx_new_t1"
+    assert meta2["covers_asof"] is True
 
 
 def test_bagua_plane_session_index_bare_code_collision(tmp_path):
@@ -437,15 +605,16 @@ def test_bagua_plane_session_index_bare_code_collision(tmp_path):
         store.publish(manifest)
 
     # Stock dataset is ready and holds SZSE.STK.000001 — the collision trap.
-    publish("tushare_none_1d_stock_test", "SZSE.STK.000001", [20240102, 20240105])
-    publish("tushare_none_1d_index_test", "SSE.IDX.000001", [20240102, 20240105])
+    publish("tushare_none_1d_stock_test", "SZSE.STK.000001", list(range(20240102, 20240102 + 120)))
+    publish("tushare_none_1d_index_test", "SSE.IDX.000001", list(range(20240102, 20240102 + 120)))
 
     cfg = SimpleNamespace(market_data_root=tmp_path / "market_data")
     session = bq.BaguaPlaneSession(cfg, "raw")
 
     bars, meta = session.load_symbol("sh000001", asof=20240105)
     assert meta["dataset_id"] == "tushare_none_1d_index_test"
-    assert [b.date for b in bars] == [20240102, 20240105]
+    assert bars[0].date == 20240102
+    assert bars[-1].date == 20240102 + 119
 
     # 000001.SH form and canonical form resolve the index too.
     bars2, meta2 = session.load_symbol("000001.SH", asof=20240105)
@@ -512,9 +681,9 @@ def test_bagua_plane_session_index_asof_before_inception_no_stock_leak(tmp_path)
         )
         store.publish(manifest)
 
-    publish("tushare_none_1d_stock_test", "SZSE.STK.000001", [20240102, 20240105])
+    publish("tushare_none_1d_stock_test", "SZSE.STK.000001", list(range(20240102, 20240102 + 120)))
     # Index exists but starts later than the queried date.
-    publish("tushare_none_1d_index_test", "SSE.IDX.000001", [20240201, 20240205])
+    publish("tushare_none_1d_index_test", "SSE.IDX.000001", list(range(20240201, 20240201 + 120)))
 
     cfg = SimpleNamespace(market_data_root=tmp_path / "market_data")
     session = bq.BaguaPlaneSession(cfg, "raw")
@@ -589,7 +758,7 @@ def test_batch_query_bagua_multi_codes(monkeypatch, tmp_path):
         codes=["600000", "000001", "600000"],
         date="2024-01-03",
         period="DAY",
-        adjust="tdx_front",
+        adjust="tushare_qfq",
     )
     assert out["ok"] is True
     assert out["requested"] == 2  # de-duped
@@ -645,7 +814,7 @@ def test_batch_query_bagua_all_stocks_limit(monkeypatch, tmp_path):
         all_stocks=True,
         date=20240103,
         period="DAY",
-        adjust="tdx_front",
+        adjust="tushare_qfq",
         limit=2,
     )
     assert out["requested"] == 2
@@ -694,7 +863,7 @@ def test_export_bagua_multi_period_xlsx(monkeypatch, tmp_path):
         cfg,
         date="2024-01-03",
         periods=["WEEK", "MONTH"],
-        adjust="tdx_front",
+        adjust="tushare_qfq",
         codes=["600000", "000001"],
         all_stocks=False,
     )

@@ -292,6 +292,38 @@ class TestCompositeQfqDerivation:
         assert r["status"] == "failed"
         assert "not_ready" in r["error"]
 
+    def test_idempotent_rerun_reports_real_stats(self, sync_mod, store):
+        """Second derive (idempotent branch) must reconstruct the stats from
+        the on-disk manifest instead of returning a zeroed summary — the CLI
+        prints "derived: imported/eligible ok, rows=..." from these fields."""
+        from wtpy.apps.astock.data.tushare_product import (
+            derive_composite_tushare_factor_qfq,
+        )
+
+        raw, fac, sup, pit = _standard_setup(store)
+        kw = dict(
+            raw_dataset_id=raw.dataset_id, factor_dataset_id=fac.dataset_id,
+            supplement_factor_dataset_id=sup.dataset_id,
+            universe_dataset_id=pit.universe_dataset_id,
+        )
+        r1 = derive_composite_tushare_factor_qfq(store, **kw)
+        assert r1["result"]["imported"] == 3
+        assert r1["result"]["rows"] == 26
+        r2 = derive_composite_tushare_factor_qfq(store, **kw)
+        assert r2["status"] == "success"
+        assert r2["idempotent"] is True
+        res = r2["result"]
+        assert res["imported"] == 3
+        assert res["eligible"] == 3
+        assert res["rows"] == 26
+        assert res["missing_factor"] == 1
+        assert res["failed"] == 0
+        assert res["factor_source_counts"] == {
+            "main": 1, "supplement": 1, "alias_main": 1, "alias_supplement": 0,
+        }
+        assert res["missing_factor_symbols"] == [SYM_NOFAC]
+        assert res["status"] == r1["dataset_status"]
+
     def test_manifest_lineage_and_versions(self, sync_mod, store):
         raw, fac, sup, pit = _standard_setup(store)
         r = sync_mod.derive_composite_tushare_factor_qfq(

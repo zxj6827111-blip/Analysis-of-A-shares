@@ -62,7 +62,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
       <div class="row"><span class="k">开 / 高 / 低</span><span class="v" id="mOHLC">-</span></div>
       <div class="row"><span class="k">交易日</span><span class="v" id="mDate">-</span></div>
       <div class="row"><span class="k">覆盖区间</span><span class="v" id="mRange">-</span></div>
-      <div class="row"><span class="k">数据来源</span><span class="v" id="mSrc">-</span></div>
+      <div class="row"><span class="k">数据来源</span><span class="v" id="mSrc">-</span><div class="k" id="mSrcExtra" style="width:100%;font-size:11px;margin-top:2px"></div></div>
     </div>
     <div class="card">
       <h2>当前日卦（最新交易日 · 未复权）</h2>
@@ -129,7 +129,13 @@ function render(d){
   $("mOHLC").textContent = [m.open,m.high,m.low].filter(function(x){return x!==undefined&&x!==null}).join(" / ")||"-";
   $("mDate").textContent = m.latest_date||"-";
   $("mRange").textContent = m.first_date&&m.latest_date?(m.first_date+" ~ "+m.latest_date):"-";
-  $("mSrc").textContent = m.error ? ("查询失败: "+m.error) : ((m.dataset_source||"-")+(m.legacy_fallback?"（本地后备）":"")+" / "+(m.dataset_adjustment||"none"));
+  $("mSrc").textContent = m.error ? ("查询失败: "+m.error) : ((m.dataset_source||"-")+" / "+(m.dataset_adjustment||"none"));
+  $("mSrc").title = (m.dataset_id||"") + (m.bootstrap_fallback ? " · bootstrap 后备（非正式产品面）" : (m.data_policy ? " · 策略 "+m.data_policy : ""));
+  $("mSrcExtra").textContent = m.error ? "" : [
+    m.data_max_date ? ("最新数据日 "+m.data_max_date) : "",
+    m.bootstrap_fallback ? "（bootstrap 后备）" : "",
+    m.dataset_id ? ("dataset: "+m.dataset_id) : ""
+  ].filter(Boolean).join(" · ");
   renderGua("guaGrid","guaNote",d.gua);
   renderGua("guaWeekGrid","guaWeekNote",d.gua_week);
   var runs=d.related_runs||[];

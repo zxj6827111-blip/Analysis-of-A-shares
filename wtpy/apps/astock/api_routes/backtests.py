@@ -54,7 +54,9 @@ class BacktestBody(BaseModel):
     signal_adjustment: Optional[str] = None
     dataset_id: Optional[str] = None
     weekly_bar_mode: str = "local_aggregate"
-    execution_data_source: str = "local_vendor"
+    # Tushare-only policy: product default execution plane is the formal L2
+    # (internal/composite_none). Legacy families must be requested explicitly.
+    execution_data_source: str = "internal"
     execution_dataset_id: Optional[str] = None
     # Gate B7: survivorship-safe chain
     baseline: Optional[str] = None  # "survivorship_safe" resolves the pinned combo
@@ -77,7 +79,7 @@ def api_backtest(payload: BacktestBody, ctx: ApiContext = Depends(get_ctx)) -> d
     _sig_src = payload.signal_data_source
     _sig_adj = payload.signal_adjustment
     _sig_ds = payload.dataset_id
-    _exec_src = payload.execution_data_source or "local_vendor"
+    _exec_src = payload.execution_data_source or "internal"
     _exec_ds = payload.execution_dataset_id
     _uni_ds = payload.universe_dataset_id
     _dl_scn = payload.delist_exit_scenario

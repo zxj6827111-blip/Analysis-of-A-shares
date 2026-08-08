@@ -54,6 +54,7 @@ class TestDryRunPreflight:
 
     def test_preflight_writes_nothing_and_reports(self, incoming, tmp_path):
         root = tmp_path / "md_root"
+        root.mkdir(parents=True)  # preflight fails (exit 1) on a missing root
         p = _run(["--source", "local_vendor", "--mode", "full", "--preflight"],
                  incoming, root)
         assert p.returncode == 0, p.stdout + p.stderr

@@ -20,7 +20,7 @@ class BaguaBatchBody(BaseModel):
     all_stocks: bool = False
     date: str
     period: str = "DAY"
-    adjust: str = "tdx_front"
+    adjust: str = "tushare_qfq"
     limit: Optional[int] = None
 
 class BaguaExportBody(BaseModel):
@@ -29,7 +29,7 @@ class BaguaExportBody(BaseModel):
     date: str
     period: Optional[str] = None  # single period shortcut
     periods: Optional[List[str]] = None  # DAY/WEEK/MONTH multi-sheet
-    adjust: str = "tdx_front"
+    adjust: str = "tushare_qfq"
     limit: Optional[int] = None
 
 def _bq_normalize_periods(
@@ -327,8 +327,9 @@ def api_bagua_query(
     date: str = Query(..., min_length=4, description="YYYY-MM-DD or YYYYMMDD"),
     period: str = Query("DAY", description="DAY | WEEK | MONTH"),
     adjust: str = Query(
-        "tdx_front",
-        description="tdx_front (通达信前复权) | tushare_qfq (Tushare前复权) | raw (未复权)",
+        "tushare_qfq",
+        description="tushare_qfq (Tushare前复权, 正式L1) | raw (未复权, 正式L2) | "
+                    "tdx_front (已停用, 返回错误)",
     ),
 
     ctx: ApiContext = Depends(get_ctx),
@@ -338,16 +339,35 @@ def api_bagua_query(
     _bq_export_lock = ctx.bq_export_lock
     _wl_cache = ctx.wl_cache
     """Query hexagram for one stock on a date (OHLC digit-sum algorithm)."""
-    from ..service.bagua_query import query_bagua
+    from ..service.bagua_query import SourceDisabledError, query_bagua
 
     try:
         return query_bagua(cfg, code=code, date=date, period=period, adjust=adjust)
+    except SourceDisabledError as e:
+        # A disabled price plane (e.g. tdx_front under the Tushare-only
+        # policy) is a client-side request error, never a server fault.
+        raise HTTPException(400, str(e)) from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except FileNotFoundError as e:
         raise HTTPException(404, str(e)) from e
     except Exception as e:
         raise HTTPException(500, f"bagua query failed: {e}") from e
+
+@router.post("/api/v1/bagua/query")
+def api_bagua_query_post(
+    payload: BaguaBatchBody = Body(...), ctx: ApiContext = Depends(get_ctx)
+) -> dict:
+    """POST alias for the single-stock bagua query (same semantics as GET)."""
+    if not payload.codes or len(payload.codes) != 1:
+        raise HTTPException(400, "codes 必须恰好包含一个股票代码")
+    return api_bagua_query(
+        code=payload.codes[0],
+        date=payload.date,
+        period=payload.period,
+        adjust=payload.adjust,
+        ctx=ctx,
+    )
 
 @router.post("/api/v1/bagua/batch/query")
 def api_bagua_batch(payload: BaguaBatchBody = Body(...), ctx: ApiContext = Depends(get_ctx)) -> dict:
@@ -438,7 +458,7 @@ def api_bagua_export_get(
         "DAY,WEEK,MONTH",
         description="comma-separated: DAY | WEEK | MONTH",
     ),
-    adjust: str = Query("tdx_front"),
+    adjust: str = Query("tushare_qfq"),
     all_stocks: bool = Query(True),
     codes: Optional[str] = Query(None, description="comma-separated codes if not all_stocks"),
     limit: Optional[int] = Query(None, ge=1),
@@ -648,6 +668,9 @@ def quick_query(code: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
             "dataset_id": ds_meta.get("dataset_id"),
             "dataset_source": ds_meta.get("dataset_source"),
             "dataset_adjustment": ds_meta.get("dataset_adjustment"),
+            "data_policy": ds_meta.get("data_policy"),
+            "data_max_date": ds_meta.get("symbol_effective_last_date"),
+            "bootstrap_fallback": bool(ds_meta.get("bootstrap_fallback")),
             "legacy_fallback": bool(ds_meta.get("legacy_fallback")),
         }
     elif not market.get("error"):

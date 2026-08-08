@@ -19,7 +19,7 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -211,7 +211,13 @@ def sync_tdxquant_full(args, store: DatasetStore) -> dict:
             f"dataset={ds_result.get('dataset_id', 'N/A')}"
         )
 
-    return {"status": "success", "sync_run_id": sync_run_id, "datasets": results}
+    _status, _detail = _aggregate_dataset_status(results)
+    _result = {"status": _status, "sync_run_id": sync_run_id, "datasets": results}
+    if _status == "failed":
+        _result["error"] = _detail
+    elif _status == "partial":
+        _result["warning"] = f"datasets not all ready: {_detail}"
+    return _result
 
 
 def sync_tdxquant_incremental(args, store: DatasetStore) -> dict:
@@ -358,7 +364,13 @@ def sync_tdxquant_incremental(args, store: DatasetStore) -> dict:
             flush=True,
         )
 
-    return {"status": "success", "sync_run_id": sync_run_id, "datasets": results}
+    _status, _detail = _aggregate_dataset_status(results)
+    _result = {"status": _status, "sync_run_id": sync_run_id, "datasets": results}
+    if _status == "failed":
+        _result["error"] = _detail
+    elif _status == "partial":
+        _result["warning"] = f"datasets not all ready: {_detail}"
+    return _result
 
 
 def sync_tushare_full(args, store: DatasetStore) -> dict:
@@ -430,10 +442,22 @@ def sync_tushare_full(args, store: DatasetStore) -> dict:
             f"dataset={ds_result.get('dataset_id', 'N/A')}"
         )
 
-    return {"status": "success", "sync_run_id": sync_run_id, "datasets": results}
+    result = {"status": "success", "sync_run_id": sync_run_id, "datasets": results}
+    _status, _detail = _aggregate_dataset_status(results)
+    if _status == "failed":
+        result["status"] = "failed"
+        result["error"] = _detail
+    elif _status == "partial":
+        result["status"] = "partial"
+        result["warning"] = f"datasets not all ready: {_detail}"
+    result["reconcile"] = _reconcile_after_sync(store)
+    _apply_reconcile_status(result)
+    return result
 
 
-def sync_tushare_incremental(args, store: DatasetStore) -> dict:
+def sync_tushare_incremental(
+    args, store: DatasetStore, *, skip_reconcile_status: bool = False
+) -> dict:
     from wtpy.apps.astock.data.providers.tushare import TushareProvider
 
     provider = TushareProvider(token=args.token)
@@ -515,7 +539,119 @@ def sync_tushare_incremental(args, store: DatasetStore) -> dict:
         )
         results[f"{adj.value}_{period.value}"] = ds_result
 
-    return {"status": "success", "sync_run_id": sync_run_id, "datasets": results}
+    result = {"status": "success", "sync_run_id": sync_run_id, "datasets": results}
+    _status, _detail = _aggregate_dataset_status(results)
+    if _status == "failed":
+        result["status"] = "failed"
+        result["error"] = _detail
+    elif _status == "partial":
+        result["status"] = "partial"
+        result["warning"] = f"datasets not all ready: {_detail}"
+    if skip_reconcile_status:
+        # Chain mode: the raw step must not run a full product reconcile.
+        # The chain runs one authoritative reconcile after the factor step
+        # (raw runs before the day's factors exist, so a raw-side reconcile
+        # would be a wasted full-market L2/L1 derivation that can only ever
+        # report waiting_for_parent or stale results).
+        result["reconcile"] = {
+            "status": "deferred",
+            "reason": "chain_reconcile_at_end",
+        }
+    else:
+        result["reconcile"] = _reconcile_after_sync(store)
+        _apply_reconcile_status(result)
+    return result
+
+
+def sync_tushare_chain(args, store: DatasetStore) -> dict:
+    """Zero-config default chain (task=tushare): raw -> factor -> reconcile.
+
+    Runs the Tushare raw incremental sync, then the adj_factor incremental
+    sync (reusing the latest ready factor manifest's universe file, with a
+    default raw cache under the external data root), then the product
+    reconcile. The task only reports success when raw, factor and the formal
+    L1/L2 product chain (lineage + freshness) all pass — a raw success with
+    a failed factor step or blocked reconcile never claims "sync success".
+
+    Fail-closed on the raw step: only a raw step that finished ``success``
+    may run the factor step. Any other raw status (partial / warning /
+    failed) skips factor and reconcile entirely, so a partial raw surface
+    can never update the formal L1/L2 product surfaces.
+
+    The raw step runs with ``skip_reconcile_status=True``, which now skips
+    the product reconcile work entirely (not just the status demotion): the
+    raw step runs before the factor step pulled the day's factors, so its
+    reconcile would only report waiting_for_parent for a same-day run and
+    would duplicate the full L2/L1 derivation. The raw step's ``reconcile``
+    entry is a structured ``{"status": "deferred"}`` placeholder instead.
+    The chain runs the single authoritative reconcile after the factor step;
+    only that result is applied to the chain status.
+    """
+    import copy as _copy
+
+    raw_result = sync_tushare_incremental(
+        args, store, skip_reconcile_status=True
+    )
+    chain: dict = {
+        "status": raw_result.get("status", "failed"),
+        "sync_run_id": raw_result.get("sync_run_id"),
+        "raw": raw_result,
+        "datasets": dict(raw_result.get("datasets") or {}),
+        "reconcile": raw_result.get("reconcile"),
+    }
+    raw_status = str(raw_result.get("status", "failed") or "failed")
+    if raw_status != "success":
+        # Fail-closed: only a fully successful raw surface may feed the
+        # factor step. A partial/warning raw surface (some datasets not
+        # ready) must never pull factors or touch the formal L1/L2 chain.
+        chain["factor"] = {
+            "status": "skipped",
+            "reason": "raw_step_not_success",
+            "raw_status": raw_status,
+        }
+        return chain
+
+    # ---- factor step: env > latest ready factor manifest universe ----
+    fa = _copy.copy(args)
+    fa.adjustment = "adj_factor"
+    fa.mode = "incremental"
+    if not getattr(fa, "universe_file", None):
+        fa.universe_file = _latest_factor_universe_file_path(store)
+        if fa.universe_file:
+            print(f"  [chain] factor universe file <- {fa.universe_file}")
+        else:
+            fa.universe_file = _auto_generate_factor_universe(store)
+            if fa.universe_file:
+                print(f"  [chain] auto factor universe <- {fa.universe_file}")
+            else:
+                print("  [chain] no factor universe file (env or ready factor manifest)")
+    fa.factor_raw_root = (
+        _resolve_factor_raw_root(args) or str(_factor_raw_cache_dir(store))
+    )
+
+    factor_result = sync_tushare_adj_factor_full(fa, store)
+    chain["factor"] = factor_result
+    chain["reconcile"] = factor_result.get("reconcile") or chain.get("reconcile")
+    if factor_result.get("status") != "success":
+        chain["status"] = "failed"
+        chain["error"] = (
+            f"factor step failed: {factor_result.get('error') or factor_result.get('status')}"
+        )
+        return chain
+    if factor_result.get("dataset_status") != "ready":
+        chain["status"] = "warning"
+        chain["warning"] = (
+            "factor step did not publish ready: "
+            f"dataset_status={factor_result.get('dataset_status')}"
+        )
+        return chain
+
+    # ---- final reconcile over the updated parents ----
+    chain["reconcile"] = _reconcile_after_sync(store)
+    chain["factor_dataset_id"] = factor_result.get("dataset_id")
+    chain["status"] = "success"
+    _apply_reconcile_status(chain)
+    return chain
 
 
 def sync_tdx_local_full(args, store: DatasetStore) -> dict:
@@ -550,7 +686,15 @@ def sync_tdx_local_full(args, store: DatasetStore) -> dict:
         f"  none/1d: {ds_result['success']}/{ds_result['total']} ok, "
         f"dataset={ds_result.get('dataset_id', 'N/A')}"
     )
-    return {"status": "success", "sync_run_id": sync_run_id, "datasets": {"none_1d": ds_result}}
+    _status, _detail = _aggregate_dataset_status({"none_1d": ds_result})
+    _result = {"status": _status, "sync_run_id": sync_run_id,
+               "datasets": {"none_1d": ds_result},
+               "dataset_status": ds_result.get("status")}
+    if _status == "failed":
+        _result["error"] = _detail
+    elif _status == "partial":
+        _result["warning"] = f"datasets not all ready: {_detail}"
+    return _result
 
 
 def _resolve_index_etf_symbols(args, provider) -> List[str]:
@@ -613,7 +757,13 @@ def sync_tushare_index_etf_full(args, store: DatasetStore) -> dict:
             f"dataset={ds_result.get('dataset_id', 'N/A')}"
         )
 
-    return {"status": "success", "sync_run_id": sync_run_id, "datasets": results}
+    _status, _detail = _aggregate_dataset_status(results)
+    _result = {"status": _status, "sync_run_id": sync_run_id, "datasets": results}
+    if _status == "failed":
+        _result["error"] = _detail
+    elif _status == "partial":
+        _result["warning"] = f"datasets not all ready: {_detail}"
+    return _result
 
 
 def sync_tushare_index_etf_incremental(args, store: DatasetStore) -> dict:
@@ -675,7 +825,13 @@ def sync_tushare_index_etf_incremental(args, store: DatasetStore) -> dict:
         )
         results[f"{adj.value}_{period.value}"] = ds_result
 
-    return {"status": "success", "sync_run_id": sync_run_id, "datasets": results}
+    _status, _detail = _aggregate_dataset_status(results)
+    _result = {"status": _status, "sync_run_id": sync_run_id, "datasets": results}
+    if _status == "failed":
+        _result["error"] = _detail
+    elif _status == "partial":
+        _result["warning"] = f"datasets not all ready: {_detail}"
+    return _result
 
 
 KNOWN_MISSING_DELISTED_EVIDENCE = [
@@ -1057,7 +1213,31 @@ def sync_local_vendor_full(args, store: DatasetStore) -> dict:
         lock.release()
 
 
-FACTOR_INCREMENTAL_POLICY_VERSION = "factor_inc_v1"
+FACTOR_INCREMENTAL_POLICY_VERSION = "factor_inc_v2_parent_merge"
+FACTOR_INCREMENTAL_LOOKBACK_DAYS = 20
+FACTOR_PARENT_MIN_AVG_ROWS = 250
+# Tushare adj_factor(trade_date=...) single responses can be row-capped
+# (~6000 rows), silently dropping symbols on low-tier tokens. The batch path
+# self-checks daily coverage against the universe; only large universes are
+# checked (truncation cannot bite small ones).
+FACTOR_BATCH_COVERAGE_MIN_UNIVERSE = 100
+FACTOR_BATCH_COVERAGE_RATIO = 0.9
+# Batch windows are meant for short correction windows; an explicit
+# --start-date far in the past would otherwise pull (and hold in memory)
+# hundreds of whole-market responses.
+FACTOR_BATCH_MAX_WINDOW_DAYS = 60
+# The probe walks back from the cutoff day across up to this many calendar
+# days to find the most recent trading day (weekend/holiday runs).
+FACTOR_BATCH_PROBE_MAX_DAYS = 7
+# Factor freshness gate: the share of raw-active stocks whose factor series
+# reaches the raw baseline's per-symbol last date. Below the ratio the factor
+# manifest is demoted to partial (global max date alone masks local stalls).
+FRESH_RATIO_MIN = 0.95
+FACTOR_FRESHNESS_RAW_TOLERANCE_DAYS = 5
+# Factor-side lag tolerance: Tushare publishes adj_factor EOD after daily
+# bars, so a same-day sync can legitimately lag the raw last date by one
+# trading day; 3 natural days covers a weekend + the ordering gap.
+FACTOR_FRESHNESS_FACTOR_TOLERANCE_DAYS = 3
 QFQ_FORMULA_VERSION = "tsqfq_v1"
 QFQ_ANCHOR_POLICY = "last_factor_on_or_before_cutoff"
 QFQ_PRICE_PRECISION_POLICY = "round_half_even_4dp_store; compare at 2dp"
@@ -1078,13 +1258,547 @@ def _resolve_factor_raw_root(args) -> Optional[str]:
     return val or None
 
 
-def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
-    """Full sync of Tushare adj_factor into an immutable FACTOR dataset.
+def _factor_raw_cache_dir(store: DatasetStore) -> Path:
+    """Zero-config default raw cache under the external data root.
 
-    Gate C phase 1. This mode does NOT download Tushare daily bars — it only
-    fetches per-symbol adj_factor series and stock_basic metadata. The token
-    is read via the provider's secure path (ts.get_token fallback) and never
-    printed, logged or persisted.
+    Used only when neither --factor-raw-root nor TUSHARE_FACTOR_RAW_ROOT is
+    set — no new required configuration for the Tushare-only chain.
+    """
+    return store.root / "tushare_factor_raw_cache"
+
+
+def _latest_factor_universe_file_path(store: DatasetStore) -> Optional[str]:
+    """Reuse the latest ready adj_factor manifest's universe file.
+
+    Environment variables (TUSHARE_FACTOR_UNIVERSE_FILE /
+    ASTOCK_FACTOR_UNIVERSE_FILE) still win over manifest reuse. A manifest's
+    universe is only reusable when it spans the full market: at least
+    FULL_MARKET_MIN_SYMBOLS included rows, or >= FULL_MARKET_RELATIVE_RATIO
+    of the current full-market raw baseline's ok symbols. With no full-market
+    raw baseline in the store the manifest universe is never reused (the
+    chain falls back to the auto universe generator / universe_file_required),
+    so a tiny 1-symbol universe can never drive a default incremental run.
+    """
+    import os as _os
+
+    for key in ("TUSHARE_FACTOR_UNIVERSE_FILE", "ASTOCK_FACTOR_UNIVERSE_FILE"):
+        explicit = _os.environ.get(key, "").strip()
+        if explicit and Path(explicit).exists():
+            return explicit
+    baseline = _select_factor_raw_baseline(store)
+    baseline_syms: set = set()
+    if baseline is not None:
+        baseline_syms = {
+            r.symbol for r in baseline.symbols
+            if r.quality == "ok" and r.blob_sha256
+        }
+    candidates: List[tuple] = []
+    for mid in store.list_manifests():
+        m = store.load_manifest(mid)
+        if not m:
+            continue
+        if (
+            m.source != "tushare"
+            or m.adjustment != "adj_factor"
+            or m.status != "ready"
+            or (m.dataset_type or "") != "factor"
+        ):
+            continue
+        uf = (m.universe_file or "").strip()
+        if not uf or not Path(uf).exists():
+            continue
+        candidates.append(
+            (int(m.data_cutoff_date or 0), int(m.symbol_count or 0),
+             m.created_at or "", uf)
+        )
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    for _, _, _, uf in candidates:
+        uni_syms = _load_universe_file(Path(uf))
+        if len(uni_syms) >= FULL_MARKET_MIN_SYMBOLS:
+            return uf
+        if baseline_syms and (
+            len(uni_syms) / len(baseline_syms) >= FULL_MARKET_RELATIVE_RATIO
+        ):
+            return uf
+    return None
+
+
+# Full-market gates for the factor raw baseline (P1-2): the freshness gate
+# and the auto universe generator must never run against a 16-row orphan
+# window or a tiny subset surface — only a real full-market history may
+# drive factor coverage decisions / universe generation.
+FACTOR_RAW_BASELINE_MIN_SYMBOLS = 500
+FACTOR_RAW_BASELINE_MIN_MEDIAN_ROWS = 250
+# Full-market anchor for A-share stock universes: the quality=ok symbol pool
+# must reach this size AND stay within 10% of the largest same-family ready
+# tushare/none surface in the store, so a 500-symbol subset pool next to a
+# 4000+ full market is never treated as a baseline.
+FULL_MARKET_MIN_SYMBOLS = 4000
+FULL_MARKET_RELATIVE_RATIO = 0.9
+
+
+def _is_full_market_manifest(store: DatasetStore, manifest: DatasetManifest) -> bool:
+    """True when a tushare/none manifest is a full-market raw surface.
+
+    n = quality=ok symbols with a blob in this manifest; N_max = the largest
+    such pool across all ready tushare/none/1d surfaces in the store. The
+    manifest is full-market only when n >= FULL_MARKET_MIN_SYMBOLS AND
+    n >= FULL_MARKET_RELATIVE_RATIO * N_max (a manifest that IS the largest
+    surface trivially passes; small subset pools fail the relative gate).
+    Orphan windows fail on both count and rows.
+    """
+    n = sum(
+        1 for r in manifest.symbols
+        if r.quality == "ok" and r.blob_sha256
+    )
+    if n < FULL_MARKET_MIN_SYMBOLS:
+        return False
+    n_max = n
+    for mid in store.list_manifests():
+        m = store.load_manifest(mid)
+        if m is None:
+            continue
+        if (
+            m.source != "tushare"
+            or (m.adjustment or "") != "none"
+            or (m.period or "1d") != "1d"
+            or m.status != "ready"
+        ):
+            continue
+        n_max = max(
+            n_max,
+            sum(1 for r in m.symbols if r.quality == "ok" and r.blob_sha256),
+        )
+    return n >= FULL_MARKET_RELATIVE_RATIO * n_max
+
+
+def _select_factor_raw_baseline(store: DatasetStore) -> Optional[DatasetManifest]:
+    """Latest complete ready tushare/none full-market raw baseline.
+
+    Reuses the formal base selector (blob-integrity gate + freshest/fullest
+    ordering + orphan-window rejection) and adds a full-market gate on top:
+    symbol count >= FACTOR_RAW_BASELINE_MIN_SYMBOLS, median rows >=
+    FACTOR_RAW_BASELINE_MIN_MEDIAN_ROWS and _is_full_market_manifest
+    (>= FULL_MARKET_MIN_SYMBOLS symbols with >= FULL_MARKET_RELATIVE_RATIO
+    relative coverage). Orphan windows (16-row truncations, incremental
+    windows without parent merge) are rejected outright. Used by the factor
+    freshness gate (P1-4) and the auto universe generator (P1-5).
+    """
+    from wtpy.apps.astock.data.tushare_product import (
+        manifest_history_signals,
+        select_tushare_base,
+    )
+
+    base = select_tushare_base(store)
+    if base is None:
+        return None
+    sig = manifest_history_signals(base)
+    if int(sig.symbol_count or 0) < FACTOR_RAW_BASELINE_MIN_SYMBOLS:
+        return None
+    if float(sig.median_rows or 0) < FACTOR_RAW_BASELINE_MIN_MEDIAN_ROWS:
+        return None
+    if not _is_full_market_manifest(store, base):
+        return None
+    return base
+
+
+def _factor_freshness_metrics(
+    store: DatasetStore,
+    factor_manifest: DatasetManifest,
+    raw_manifest: Optional[DatasetManifest] = None,
+) -> Optional[dict]:
+    """Per-symbol factor freshness vs the raw baseline's active stocks.
+
+    Active = raw quality ok AND raw last_date within
+    FACTOR_FRESHNESS_RAW_TOLERANCE_DAYS of the raw cutoff (suspended/delisted
+    stocks are auto-exempt). A factor symbol is fresh when its last_date is
+    within FACTOR_FRESHNESS_FACTOR_TOLERANCE_DAYS of the raw symbol's last
+    date (Tushare publishes adj_factor EOD after daily bars; 3 days covers a
+    weekend + one trading-day ordering lag). Returns None when no raw
+    baseline exists or there are no active symbols (the gate then passes).
+    """
+    import datetime as _dt
+
+    if raw_manifest is None:
+        raw_manifest = _select_factor_raw_baseline(store)
+    if raw_manifest is None:
+        return None
+    raw_cutoff = int(raw_manifest.data_cutoff_date or 0)
+    if not raw_cutoff:
+        return None
+    try:
+        cutoff_d = _dt.datetime.strptime(str(raw_cutoff), "%Y%m%d").date()
+    except ValueError:
+        return None
+    tol_d = cutoff_d - _dt.timedelta(days=FACTOR_FRESHNESS_RAW_TOLERANCE_DAYS)
+
+    factor_by_sym = {r.symbol: r for r in factor_manifest.symbols}
+    active: List[tuple] = []  # (raw_last_date_obj, raw_last, fac_last, symbol)
+    for r in raw_manifest.symbols:
+        if r.quality != "ok" or not r.blob_sha256:
+            continue
+        raw_last = int(r.last_date or 0)
+        if not raw_last:
+            continue
+        try:
+            rl_d = _dt.datetime.strptime(str(raw_last), "%Y%m%d").date()
+        except ValueError:
+            continue
+        if rl_d < tol_d:
+            continue  # suspended/delisted: auto-exempt
+        fac = factor_by_sym.get(r.symbol)
+        fac_last = int(fac.last_date or 0) if fac else 0
+        active.append((rl_d, raw_last, fac_last, r.symbol))
+    if not active:
+        return None
+
+    def _is_fresh(fac_last: int, raw_last_d) -> bool:
+        if not fac_last:
+            return False
+        try:
+            fl_d = _dt.datetime.strptime(str(fac_last), "%Y%m%d").date()
+        except ValueError:
+            return False
+        return fl_d >= raw_last_d - _dt.timedelta(
+            days=FACTOR_FRESHNESS_FACTOR_TOLERANCE_DAYS)
+
+    fresh = sum(1 for rl_d, _, fac_last, _ in active if _is_fresh(fac_last, rl_d))
+    stale = sorted(
+        ({"symbol": sym, "factor_last_date": fac_last,
+          "raw_last_date": raw_last}
+         for rl_d, raw_last, fac_last, sym in active
+         if not _is_fresh(fac_last, rl_d)),
+        key=lambda s: int(s["raw_last_date"] or 0) - int(s["factor_last_date"] or 0),
+        reverse=True,
+    )
+    factor_lasts = sorted(fac_last for _, _, fac_last, _ in active)
+    n = len(factor_lasts)
+    return {
+        "fresh_symbol_ratio": round(fresh / len(active), 4),
+        "fresh_count": fresh,
+        "active_count": len(active),
+        "stale_active_symbols": stale[:20],
+        "p50_last_date": factor_lasts[n // 2] if n else 0,
+        "p10_last_date": factor_lasts[max(0, int(n * 0.1))] if n else 0,
+        "raw_dataset_id": raw_manifest.dataset_id,
+        "fresh_tolerance_days": FACTOR_FRESHNESS_FACTOR_TOLERANCE_DAYS,
+    }
+
+
+def _auto_generate_factor_universe(store: DatasetStore) -> Optional[str]:
+    """Generate a factor universe CSV from the raw baseline's ok symbols.
+
+    First-migration path (P1-5): when no ready factor manifest exists yet,
+    no universe file can be reused, so build one from the latest complete
+    tushare/none raw manifest. Format is compatible with _load_universe_file
+    (canonical_symbol + inclusion_status=included). Returns the generated
+    path or None when no raw baseline is available.
+    """
+    import datetime as _dt
+    import hashlib as _hl2
+
+    raw = _select_factor_raw_baseline(store)
+    if raw is None:
+        return None
+    symbols = sorted(
+        r.symbol for r in raw.symbols
+        if r.quality == "ok" and r.blob_sha256
+    )
+    if not symbols:
+        return None
+    cutoff = int(raw.data_cutoff_date or 0)
+    uni_dir = store.root / "universes"
+    uni_dir.mkdir(parents=True, exist_ok=True)
+    payload = (
+        "canonical_symbol,inclusion_status\n"
+        + "\n".join(f"{s},included" for s in symbols) + "\n"
+    )
+    uni_sha = _hl2.sha256(payload.encode("utf-8-sig")).hexdigest()
+    sha8 = uni_sha[:8]
+    path = uni_dir / f"auto_factor_universe_{cutoff}_{sha8}.csv"
+    if not path.exists():
+        path.write_text(payload, encoding="utf-8-sig")
+    meta_path = path.with_suffix(path.suffix + ".meta.json")
+    if not meta_path.exists():
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "source_dataset_id": raw.dataset_id,
+                    "data_cutoff_date": cutoff,
+                    "generated_at": _dt.datetime.now().isoformat(
+                        timespec="seconds"),
+                    "symbol_count": len(symbols),
+                    "universe_sha256": uni_sha,
+                    "file": str(path),
+                },
+                ensure_ascii=False,
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
+    print(f"  [auto] factor universe generated -> {path}")
+    return str(path)
+
+
+def _select_factor_incremental_parent(
+    store: DatasetStore,
+) -> Optional[DatasetManifest]:
+    """Select a complete factor parent, rejecting short-window shells.
+
+    Ready manifests win; a ``partial`` manifest demoted by the freshness gate
+    (provenance freshness.gate == "blocked") is still acceptable as the
+    window-continuation parent — its series are complete, only per-symbol
+    freshness lags, and refusing it would degrade the next run to a
+    full-history refetch. Other partial manifests (provider failures) are
+    rejected: merging onto them would silently keep broken records.
+    """
+    candidates: List[DatasetManifest] = []
+    for mid in store.list_manifests():
+        m = store.load_manifest(mid)
+        if not m:
+            continue
+        if (
+            m.source != "tushare"
+            or m.adjustment != "adj_factor"
+            or (m.dataset_type or "") != "factor"
+        ):
+            continue
+        if m.status == "ready":
+            pass
+        elif (
+            m.status == "partial"
+            and ((m.provenance or {}).get("freshness") or {}).get("gate")
+            == "blocked"
+        ):
+            pass
+        else:
+            continue
+        records = [r for r in m.symbols if r.blob_sha256]
+        avg_rows = sum(int(r.row_count or 0) for r in records) / max(len(records), 1)
+        if avg_rows < FACTOR_PARENT_MIN_AVG_ROWS:
+            continue
+        if any(not store.blob_exists(r.blob_sha256) for r in records):
+            continue
+        candidates.append(m)
+    if not candidates:
+        return None
+
+    # A small, newer pool must not displace the full-market factor history.
+    max_symbols = max(int(m.symbol_count or 0) for m in candidates)
+    candidates = [
+        m for m in candidates
+        if int(m.symbol_count or 0) >= max(1, int(max_symbols * 0.5))
+    ]
+    return max(
+        candidates,
+        key=lambda m: (
+            max((int(r.last_date or 0) for r in m.symbols), default=0),
+            int(m.symbol_count or 0),
+            int(m.row_count or 0),
+            m.created_at or "",
+        ),
+    )
+
+
+def _factor_resume_start(parent: DatasetManifest) -> Optional[int]:
+    """Return parent real max date minus a calendar-day correction window."""
+    import datetime as _dt
+
+    last_date = max((int(r.last_date or 0) for r in parent.symbols), default=0)
+    if not last_date:
+        return None
+    try:
+        day = _dt.datetime.strptime(str(last_date), "%Y%m%d").date()
+    except ValueError:
+        return None
+    day -= _dt.timedelta(days=FACTOR_INCREMENTAL_LOOKBACK_DAYS)
+    return int(day.strftime("%Y%m%d"))
+
+
+def _merge_factor_history(parent_arrays: dict, window_df):
+    """Merge factor history with a correction window; window values win."""
+    import pandas as pd
+
+    old = pd.DataFrame({
+        "trade_date": parent_arrays["trade_date"],
+        "adj_factor": parent_arrays["adj_factor"],
+    })
+    merged = pd.concat(
+        [old, window_df[["trade_date", "adj_factor"]]], ignore_index=True
+    )
+    merged["trade_date"] = merged["trade_date"].astype(str).astype(int)
+    merged["adj_factor"] = merged["adj_factor"].astype(float)
+    merged = merged.sort_values("trade_date", kind="stable")
+    return merged.drop_duplicates(
+        subset="trade_date", keep="last"
+    ).reset_index(drop=True)
+
+
+def _fetch_factor_window_by_trade_date(
+    provider,
+    window_start: int,
+    cutoff: int,
+    stats: dict,
+    universe_size: int,
+    rate_per_min: int = 400,
+) -> Optional[Dict[str, pd.DataFrame]]:
+    """Pull a correction window market-wide, one trade_date call per day.
+
+    Tushare's adj_factor(trade_date=...) returns every symbol's factor for a
+    given day, so a ~60-calendar-day window costs ~40 calls instead of one per
+    symbol. Returns {symbol: DataFrame(trade_date, adj_factor)} or None when
+    the endpoint is unusable (permission/limits/errors/bad rows/truncated
+    coverage/oversized window), letting the caller fall back to the
+    per-symbol window path.
+    """
+    import datetime as _dt
+    import pandas as pd
+
+    try:
+        start = _dt.datetime.strptime(str(window_start), "%Y%m%d").date()
+        end = _dt.datetime.strptime(str(cutoff), "%Y%m%d").date()
+    except ValueError:
+        return None
+    if (end - start).days > FACTOR_BATCH_MAX_WINDOW_DAYS:
+        print(f"  WARNING: trade_date batch window {window_start}..{cutoff} "
+              f"is {(end - start).days} calendar days (> "
+              f"{FACTOR_BATCH_MAX_WINDOW_DAYS}); skipping batch, using "
+              f"per-symbol window fetch")
+        return None
+
+    interval = 60.0 / max(1, int(rate_per_min or 400))
+
+    def _day_unusable(df, d: int) -> Optional[str]:
+        """Return a fallback reason when a day's response is unusable.
+
+        None/empty responses are non-trading days (usable); missing columns
+        and truncated coverage abort the batch.
+        """
+        if df is None or df.empty:
+            return None
+        if not {"ts_code", "trade_date", "adj_factor"}.issubset(df.columns):
+            return f"missing required columns on {d}"
+        sub = df[["ts_code", "trade_date", "adj_factor"]].dropna()
+        if not sub.empty and universe_size >= FACTOR_BATCH_COVERAGE_MIN_UNIVERSE:
+            covered = int(sub["ts_code"].nunique())
+            if covered <= int(FACTOR_BATCH_COVERAGE_RATIO * universe_size):
+                return f"coverage on {d} too low ({covered}/{universe_size})"
+        return None
+
+    # Probe: walk back from the cutoff day to the most recent day that
+    # returns data (weekend/holiday runs must not fail the probe). None AND
+    # empty DataFrames count as "no data day" (an empty probe must keep
+    # walking back — treating it as usable would batch-pull a full empty
+    # window and publish stale parent blobs as ready). The probe only
+    # verifies the trade_date endpoint works; the day loop below still
+    # starts at window_start.
+    probe_day = end
+    probe = int(end.strftime("%Y%m%d"))
+    probe_df = None
+    for _ in range(FACTOR_BATCH_PROBE_MAX_DAYS):
+        d = int(probe_day.strftime("%Y%m%d"))
+        try:
+            df = provider.fetch_adj_factor(trade_date=d)
+        except Exception as e:
+            print(f"  WARNING: trade_date batch probe failed ({type(e).__name__}); "
+                  f"falling back to per-symbol window fetch")
+            return None
+        if df is not None and not df.empty:
+            probe, probe_df = d, df
+            break
+        probe_day -= _dt.timedelta(days=1)
+        time.sleep(interval)
+    if probe_df is None:
+        first = int(end.strftime("%Y%m%d"))
+        last = int((end - _dt.timedelta(
+            days=FACTOR_BATCH_PROBE_MAX_DAYS - 1)).strftime("%Y%m%d"))
+        print(f"  WARNING: trade_date batch probe found no data on "
+              f"{first}..{last} (rolled back {FACTOR_BATCH_PROBE_MAX_DAYS} "
+              f"days); falling back to per-symbol window fetch")
+        return None
+    if probe != int(end.strftime("%Y%m%d")):
+        print(f"  [batch] probe rolled back to {probe} "
+              f"(cutoff {int(end.strftime('%Y%m%d'))} has no data)")
+    probe_bad = _day_unusable(probe_df, probe)
+    if probe_bad:
+        print(f"  WARNING: trade_date batch probe on {probe} unusable "
+              f"({probe_bad}); falling back to per-symbol window fetch")
+        return None
+
+    frames: Dict[str, List[dict]] = {}
+    day = start
+    while day <= end:
+        d = int(day.strftime("%Y%m%d"))
+        try:
+            df = provider.fetch_adj_factor(trade_date=d)
+        except Exception as e:
+            print(f"  WARNING: trade_date batch fetch {d} failed "
+                  f"({type(e).__name__}); falling back to per-symbol window fetch")
+            return None
+        if df is None or df.empty:
+            day += _dt.timedelta(days=1)
+            time.sleep(interval)
+            continue
+        bad = _day_unusable(df, d)
+        if bad:
+            print(f"  WARNING: trade_date batch response unusable ({bad}); "
+                  f"falling back to per-symbol window fetch")
+            return None
+        sub = df[["ts_code", "trade_date", "adj_factor"]].dropna()
+        try:
+            for _, row in sub.iterrows():
+                symbol = provider._from_ts_code(str(row["ts_code"]))
+                frames.setdefault(symbol, []).append(
+                    {"trade_date": int(row["trade_date"]),
+                     "adj_factor": float(row["adj_factor"])})
+        except (KeyError, ValueError, TypeError) as e:
+            print(f"  WARNING: trade_date batch row parse failed on {d} "
+                  f"({type(e).__name__}); falling back to per-symbol "
+                  f"window fetch")
+            return None
+        day += _dt.timedelta(days=1)
+        time.sleep(interval)
+    stats["batch_by_trade_date"] = True
+    by_symbol: Dict[str, pd.DataFrame] = {}
+    for symbol, rows in frames.items():
+        wdf = pd.DataFrame(rows).drop_duplicates(subset="trade_date", keep="last")
+        wdf["trade_date"] = wdf["trade_date"].astype(int)
+        wdf["adj_factor"] = wdf["adj_factor"].astype(float)
+        by_symbol[symbol] = wdf.sort_values("trade_date").reset_index(drop=True)
+    return by_symbol
+
+
+def _prune_raw_batches(factor_raw_root: str, keep: int) -> None:
+    """Delete the oldest tsfactor_* batch dirs, keeping the newest ``keep``.
+
+    The fixed "latest" incremental cache is never touched.
+    """
+    import shutil
+
+    root = Path(factor_raw_root)
+    if not root.is_dir() or keep < 1:
+        return
+    batches = sorted(
+        (p for p in root.iterdir()
+         if p.is_dir() and p.name.startswith("tsfactor_")),
+        key=lambda p: p.name,
+    )
+    for old in batches[:-keep]:
+        print(f"  [raw] pruning old batch dir: {old}")
+        try:
+            shutil.rmtree(old)
+        except Exception as e:
+            print(f"  WARNING: could not prune {old}: {e}")
+
+
+def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
+    """Sync Tushare adj_factor into an immutable complete-history dataset.
+
+    Existing ``full`` and ``incremental`` commands reuse a complete ready
+    parent and fetch only a correction window. ``rebuild`` is the explicit
+    full-history path. Existing deployment commands remain compatible.
     """
     import os
     import hashlib as _hl
@@ -1098,9 +1812,10 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
 
     factor_raw_root = _resolve_factor_raw_root(args)
     if not factor_raw_root:
-        print("ERROR: factor raw root not set. Pass --factor-raw-root or set "
-              "TUSHARE_FACTOR_RAW_ROOT in .env")
-        return {"status": "failed", "error": "factor_raw_root_not_configured"}
+        # Zero-config chain: safe default cache under the external data root
+        # (never a required env var).
+        factor_raw_root = str(_factor_raw_cache_dir(store))
+        print(f"  [auto] factor raw cache default: {factor_raw_root}")
 
     if not getattr(args, "universe_file", None):
         print("ERROR: --universe-file (frozen vendor universe CSV) is required")
@@ -1166,6 +1881,31 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
                 print(f"  WARNING: stock_basic({status_flag}) failed: {type(e).__name__}")
         print(f"  stock_basic entries: {len(meta)}")
 
+        mode = str(getattr(args, "mode", "full") or "full").lower()
+        parent = (
+            None if mode == "rebuild"
+            else _select_factor_incremental_parent(store)
+        )
+        parent_records = {
+            r.symbol: r for r in (parent.symbols if parent else [])
+            if r.blob_sha256
+        }
+        inferred_start = _factor_resume_start(parent) if parent else None
+        explicit_start = getattr(args, "start_date", None)
+        window_start = int(explicit_start or inferred_start or 0) or None
+        sync_kind = (
+            "incremental_parent_merge"
+            if parent and window_start else "full_history"
+        )
+        if parent and window_start:
+            print(
+                f"  Factor parent: {parent.dataset_id}; fetch window "
+                f"{window_start}.."
+                f"{getattr(args, 'end_date', None) or 'today'}"
+            )
+        else:
+            print("  Factor parent: none; fetching full history")
+
         # checkpoint / resume (same sync_run_id on resume)
         ck_path = store.sync_logs_dir / "checkpoint_tushare_adj_factor_1d.json"
         ck = None
@@ -1177,10 +1917,45 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
         if ck and not getattr(args, "resume", False) and not getattr(args, "fresh", False):
             print("ERROR: factor checkpoint exists. Use --resume or --fresh.")
             return {"status": "failed", "error": "checkpoint_exists_use_resume_or_fresh"}
+        requested_cutoff = int(
+            getattr(args, "end_date", None) or time.strftime("%Y%m%d")
+        )
+        _resume_ok = False
         if getattr(args, "resume", False):
-            if not ck or ck.get("universe_hash") != universe_hash:
-                print("ERROR: no matching factor checkpoint to resume")
-                return {"status": "failed", "error": "checkpoint_mismatch"}
+            if (
+                not ck
+                or ck.get("universe_hash") != universe_hash
+                or ck.get("parent_dataset_id")
+                != (parent.dataset_id if parent else None)
+                or ck.get("window_start") != window_start
+                or int(ck.get("cutoff") or 0) != requested_cutoff
+            ):
+                # Stale-but-compatible checkpoint: the universe and parent
+                # match, only the window/cutoff moved (e.g. yesterday's
+                # checkpoint re-run today, when the inferred window start is
+                # necessarily different). Discard it and restart with a fresh
+                # window instead of forcing --fresh.
+                if (
+                    ck
+                    and ck.get("universe_hash") == universe_hash
+                    and ck.get("parent_dataset_id")
+                    == (parent.dataset_id if parent else None)
+                ):
+                    print(
+                        f"  stale checkpoint from "
+                        f"{ck.get('saved_at') or 'an earlier run'}: "
+                        "window/cutoff changed, restarting with a fresh window"
+                    )
+                else:
+                    print("ERROR: no matching factor checkpoint to resume")
+                    print(
+                        "  checkpoint is from a previous window/date or a "
+                        "different universe; use --fresh to restart"
+                    )
+                    return {"status": "failed", "error": "checkpoint_mismatch"}
+            else:
+                _resume_ok = True
+        if _resume_ok:
             sync_run_id = ck["sync_run_id"]
             lock.sync_run_id = sync_run_id
             done: Dict[str, dict] = ck.get("done", {})
@@ -1188,33 +1963,88 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
             print(f"  Resuming sync_run_id={sync_run_id}: {len(done)}/{len(symbols)} done")
         else:
             done = {}
-            ck = {"universe_hash": universe_hash,
-                  "sync_run_id": sync_run_id, "done": done, "api_calls": 0}
+            ck = {
+                "universe_hash": universe_hash,
+                "sync_run_id": sync_run_id,
+                "done": done,
+                "api_calls": 0,
+                "parent_dataset_id": parent.dataset_id if parent else None,
+                "window_start": window_start,
+                "cutoff": requested_cutoff,
+                "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
 
-        raw_dir = Path(factor_raw_root) / sync_run_id
+        # incremental merges overwrite a fixed cache dir each run; full/rebuild
+        # keep immutable per-run snapshots
+        if sync_kind == "incremental_parent_merge":
+            raw_dir = Path(factor_raw_root) / "latest"
+            print(f"  [raw] incremental cache -> {raw_dir}")
+        else:
+            raw_dir = Path(factor_raw_root) / sync_run_id
         raw_dir.mkdir(parents=True, exist_ok=True)
 
         rate_per_min = max(1, int(getattr(args, "rate_per_min", None) or 400))
         min_interval = 60.0 / rate_per_min
-        cutoff = int(getattr(args, "end_date", None) or time.strftime("%Y%m%d"))
+        cutoff = requested_cutoff
 
         from wtpy.apps.astock.data.io_util import atomic_write_json
         t0 = time.time()
         last_call = 0.0
         pending = [s for s in symbols if s not in done]
+
+        # Bulk window fetch: one whole-market trade_date call per calendar day
+        # (~40 calls per window) instead of one API call per symbol (~6000).
+        # A probe decides availability; any failure falls back to the
+        # per-symbol loop below (existing behaviour unchanged). Skipped when a
+        # resume already covered every symbol (empty pending).
+        window_map = None
+        if sync_kind == "incremental_parent_merge" and pending:
+            window_map = _fetch_factor_window_by_trade_date(
+                provider, window_start, cutoff, stats, len(symbols),
+                rate_per_min)
+            if window_map is not None:
+                if window_map:
+                    print(f"  [batch] trade_date window fetch ok: "
+                          f"{len(window_map)} symbols in window")
+                else:
+                    print("  WARNING: trade_date batch window returned no "
+                          "rows; every symbol keeps its parent history")
         print(f"Syncing adj_factor for {len(pending)} symbols "
               f"(rate<={rate_per_min}/min, total universe {len(symbols)})...")
         for i, sym in enumerate(pending):
             ts_code = provider._to_ts_code(sym)
-            wait = min_interval - (time.time() - last_call)
-            if wait > 0:
-                time.sleep(wait)
-            last_call = time.time()
+            parent_rec = parent_records.get(sym)
+            # Symbols absent from the parent need full history; otherwise
+            # newly listed names would become window-only orphan series.
+            symbol_start = window_start if parent_rec else None
             rec = {"symbol": sym, "ts_code": ts_code}
             try:
-                df = provider.fetch_adj_factor(ts_code, end_date=cutoff)
+                if window_map is not None and parent_rec:
+                    # Batch path: the window was already pulled market-wide;
+                    # a symbol missing from it keeps the parent blob below.
+                    df = window_map.get(sym)
+                else:
+                    # Per-symbol path (also the fallback when the trade_date
+                    # batch endpoint is unavailable).
+                    wait = min_interval - (time.time() - last_call)
+                    if wait > 0:
+                        time.sleep(wait)
+                    last_call = time.time()
+                    df = provider.fetch_adj_factor(
+                        ts_code, start_date=symbol_start, end_date=cutoff
+                    )
                 if df is None or df.empty:
-                    rec.update({"status": "no_factor", "rows": 0})
+                    if parent_rec:
+                        rec.update({
+                            "status": "factor_ready",
+                            "blob_sha256": parent_rec.blob_sha256,
+                            "rows": int(parent_rec.row_count or 0),
+                            "first_date": parent_rec.first_date,
+                            "last_date": parent_rec.last_date,
+                            "window_status": "no_new_rows_parent_retained",
+                        })
+                    else:
+                        rec.update({"status": "no_factor", "rows": 0})
                 else:
                     df = df[["trade_date", "adj_factor"]].dropna()
                     df["trade_date"] = df["trade_date"].astype(str).astype(int)
@@ -1228,10 +2058,26 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
                         rec.update({"status": "quality_failed",
                                     "error": f"nonpositive_factor_rows={len(bad)}"})
                     elif len(df) == 0:
-                        rec.update({"status": "no_factor", "rows": 0})
+                        if parent_rec:
+                            rec.update({
+                                "status": "factor_ready",
+                                "blob_sha256": parent_rec.blob_sha256,
+                                "rows": int(parent_rec.row_count or 0),
+                                "first_date": parent_rec.first_date,
+                                "last_date": parent_rec.last_date,
+                                "window_status": "no_new_rows_parent_retained",
+                            })
+                        else:
+                            rec.update({"status": "no_factor", "rows": 0})
                     else:
-                        # raw cache (versioned per sync_run)
+                        # Raw cache keeps the provider window; the blob
+                        # below contains complete merged history.
                         df.to_csv(raw_dir / f"{ts_code}.csv", index=False)
+                        if parent_rec:
+                            parent_arrays = store.load_bars(
+                                parent_rec.blob_sha256
+                            )
+                            df = _merge_factor_history(parent_arrays, df)
                         sha = store.store_factors(
                             sym, df["trade_date"].to_numpy(),
                             df["adj_factor"].to_numpy())
@@ -1241,6 +2087,7 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
                             "first_date": int(df["trade_date"].iloc[0]),
                             "last_date": int(df["trade_date"].iloc[-1]),
                             "dedup_dropped": int(dedup_dropped),
+                            "window_start": symbol_start,
                         })
             except RateLimited as e:
                 stats["rate_limited"] += 1
@@ -1252,6 +2099,17 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
             except Exception as e:
                 stats["provider_failed"] += 1
                 rec.update({"status": "provider_failed", "error": type(e).__name__})
+            if (
+                rec.get("status") in ("provider_failed", "quality_failed")
+                and parent_rec
+            ):
+                rec.update({
+                    "blob_sha256": parent_rec.blob_sha256,
+                    "rows": int(parent_rec.row_count or 0),
+                    "first_date": parent_rec.first_date,
+                    "last_date": parent_rec.last_date,
+                    "parent_history_retained": True,
+                })
             done[sym] = rec
             if (len(done)) % 25 == 0 or (i + 1) == len(pending):
                 ck["done"] = done
@@ -1284,8 +2142,11 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
                     symbol=sym, blob_sha256="", quality="no_data", error="no_factor"))
             else:
                 symbol_records.append(SymbolRecord(
-                    symbol=sym, blob_sha256="", quality="error",
-                    error=r.get("error", st)))
+                    symbol=sym, blob_sha256=r.get("blob_sha256", ""),
+                    first_date=r.get("first_date"),
+                    last_date=r.get("last_date"),
+                    row_count=r.get("rows", 0),
+                    quality="error", error=r.get("error", st)))
 
         total_records = sum(r.row_count for r in symbol_records)
         content_hash = _hl.sha256(json.dumps(
@@ -1299,8 +2160,8 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
             "tushare", "adjfactor", "1d", str(cutoff),
             _hl.sha256(canonical_pre.encode()).hexdigest())
 
-        firsts = [r.first_date for r in symbol_records if r.first_date]
         lasts = [r.last_date for r in symbol_records if r.last_date]
+        actual_cutoff = max(lasts) if lasts else 0
         manifest = DatasetManifest(
             dataset_id=dataset_id,
             source=DataSource.TUSHARE.value,
@@ -1308,9 +2169,10 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
             period=BarPeriod.DAY.value,
             dataset_type="factor",
             snapshot_date=int(time.strftime("%Y%m%d")),
-            data_cutoff_date=cutoff,
+            data_cutoff_date=actual_cutoff,
             provider_version=provider.provider_version(),
             sync_run_id=sync_run_id,
+            parent_dataset_id=parent.dataset_id if parent else None,
             status="building",
             created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
             universe_file=str(universe_path),
@@ -1326,6 +2188,15 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
                 "api_calls": stats["api_calls"],
                 "rate_limited": stats["rate_limited"],
                 "retries_estimated": stats["retries_estimated"],
+                "sync_kind": sync_kind,
+                "requested_cutoff": cutoff,
+                "actual_cutoff": actual_cutoff,
+                "window_start": window_start,
+                "parent_dataset_id": parent.dataset_id if parent else None,
+                "parent_history_retained_failures": sum(
+                    1 for r in done.values()
+                    if r.get("parent_history_retained")
+                ),
             },
             expected_symbol_count=len(symbols),
         )
@@ -1339,6 +2210,46 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
         if failed:
             manifest.status = "partial"
             print(f"  STRICT POLICY -> partial: provider/quality failures={len(failed)}")
+
+        # Factor freshness gate (incremental/merge only): per-symbol factor
+        # coverage must track the raw baseline's active stocks — the global
+        # max date alone masks local stalls (122/123 stocks stale still
+        # looked fresh). No raw baseline / no active symbols -> pass.
+        # --skip-freshness-gate disables the demotion (explicit escape hatch
+        # for subset-universe deployments) but records the decision in the
+        # manifest provenance.
+        freshness = None
+        if sync_kind == "incremental_parent_merge":
+            if getattr(args, "skip_freshness_gate", False):
+                manifest.provenance["freshness_gate"] = "skipped_by_flag"
+                print("  FACTOR FRESHNESS GATE: skipped by --skip-freshness-gate")
+            else:
+                freshness = _factor_freshness_metrics(store, manifest)
+                if freshness is None:
+                    print("  FACTOR FRESHNESS GATE: skipped (no raw baseline / "
+                          "no active symbols)")
+                else:
+                    manifest.provenance["freshness"] = freshness
+                    if freshness["fresh_symbol_ratio"] < FRESH_RATIO_MIN:
+                        # "blocked" marks the partial as gate-demoted (series
+                        # complete, freshness lagging) so the next run may
+                        # still use it as the window-continuation parent.
+                        freshness["gate"] = "blocked"
+                        manifest.status = "partial"
+                        print(f"  FACTOR FRESHNESS GATE: fresh="
+                              f"{freshness['fresh_count']}/"
+                              f"{freshness['active_count']} "
+                              f"(ratio={freshness['fresh_symbol_ratio']} < "
+                              f"{FRESH_RATIO_MIN}) -> partial")
+                        for _s in freshness["stale_active_symbols"][:8]:
+                            print(f"    stale {_s['symbol']}: factor="
+                                  f"{_s['factor_last_date']} raw="
+                                  f"{_s['raw_last_date']}")
+                    else:
+                        print(f"  FACTOR FRESHNESS GATE: fresh="
+                              f"{freshness['fresh_count']}/"
+                              f"{freshness['active_count']} "
+                              f"(ratio={freshness['fresh_symbol_ratio']})")
         store.publish(manifest)
         # After a full ready factor publish, demote smaller same-family ready
         # shells so resolve_latest_ready / UI freshness always prefer this set.
@@ -1357,6 +2268,13 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
             ck_path.unlink(missing_ok=True)
         except Exception:
             pass
+
+        # full/rebuild batches accumulate as tsfactor_{run_id} dirs; prune the
+        # oldest once a run publishes cleanly (the "latest" cache is never
+        # touched)
+        keep_raw = int(getattr(args, "keep_raw_batches", None) or 0)
+        if keep_raw > 0 and (manifest.status or "") in ("ready", "success"):
+            _prune_raw_batches(factor_raw_root, keep_raw)
 
         # symbol coverage / mapping CSV
         cov_out = getattr(args, "coverage_out", None)
@@ -1396,6 +2314,9 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
         log_payload = {
             "sync_run_id": sync_run_id, "dataset_id": dataset_id,
             "source": "tushare", "adjustment": "adj_factor",
+            "parent_dataset_id": parent.dataset_id if parent else None,
+            "sync_kind": sync_kind, "window_start": window_start,
+            "requested_cutoff": cutoff, "actual_cutoff": actual_cutoff,
             "universe_sha256": uni_sha,
             "stats": {**stats, "elapsed_seconds": round(elapsed, 1),
                       "calls_per_min": round(stats["api_calls"] / max(elapsed / 60, 0.01), 1)},
@@ -1403,6 +2324,20 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
                        "failed": len(failed), "records": total_records,
                        "status": manifest.status},
         }
+        if freshness is not None:
+            _fresh_log = dict(freshness)
+            if "gate" not in _fresh_log:
+                _fresh_log["gate"] = "passed"
+                _fresh_log["reason"] = "freshness_ratio_ok"
+            else:
+                _fresh_log["reason"] = "freshness_below_threshold"
+            log_payload["freshness"] = _fresh_log
+            log_payload["freshness_gate"] = _fresh_log["gate"]
+        elif (manifest.provenance or {}).get("freshness_gate"):
+            log_payload["freshness_gate"] = (
+                manifest.provenance or {}).get("freshness_gate")
+        else:
+            log_payload["freshness_gate"] = "skipped"
         store.save_sync_log(sync_run_id, log_payload)
         for extra in (getattr(args, "log_path", None), getattr(args, "report_path", None)):
             if extra:
@@ -1417,9 +2352,24 @@ def sync_tushare_adj_factor_full(args, store: DatasetStore) -> dict:
               f"no_factor={len(no_factor)}, failed={len(failed)}")
         print(f"  dataset={dataset_id} status={manifest.status} records={total_records}"
               f" elapsed={elapsed:.0f}s api_calls={stats['api_calls']}")
-        return {"status": "success", "sync_run_id": sync_run_id,
-                "dataset_id": dataset_id, "dataset_status": manifest.status,
-                "stats": log_payload["stats"], "result": log_payload["result"]}
+        _result = {"status": "success", "sync_run_id": sync_run_id,
+                   "dataset_id": dataset_id, "dataset_status": manifest.status,
+                   "stats": log_payload["stats"], "result": log_payload["result"]}
+        if freshness is not None:
+            _result["freshness"] = freshness
+        if (manifest.status or "") == "ready":
+            _result["reconcile"] = _reconcile_after_sync(store)
+            _apply_reconcile_status(_result)
+        else:
+            # Fail-closed: a factor manifest demoted by the freshness gate
+            # (or partial via provider failures) must not touch the formal
+            # L1/L2 product surfaces — the reconcile is skipped entirely.
+            _result["reconcile"] = {
+                "status": "skipped",
+                "reason": "factor_not_ready",
+                "dataset_status": manifest.status,
+            }
+        return _result
     finally:
         lock.release()
 
@@ -1668,22 +2618,20 @@ def derive_tushare_factor_qfq(args, store: DatasetStore) -> dict:
 
 def derive_composite_tushare_factor_qfq(args, store: DatasetStore) -> dict:
     """Gate B6: derive internal/composite_tushare_factor_qfq from
-    internal/composite_none raw bars × tushare adj_factor parents.
+    internal/composite_none raw bars x tushare adj_factor parents.
 
-    Per-symbol math is identical to tsqfq_v1 (anchor = last factor on or
-    before cutoff; asof ratio; round-half-even 4dp; volume/amount copied).
-    Factor resolution (FACTOR_RESOLUTION_RULE_VERSION):
-      1. exact symbol in the main factor dataset
-      2. exact symbol in the supplement factor dataset (delisted stocks)
-      3. BSE pre-migration alias -> post-migration (920) factor in main,
-         alias map taken from the point-in-time universe dataset
-    Symbols with no factor under any rule are recorded per-symbol as
-    no_data/missing_factor — raw prices are NEVER silently substituted.
+    The derivation implementation lives in
+    ``wtpy.apps.astock.data.tushare_product.derive_composite_tushare_factor_qfq``
+    so the CLI, the Tushare product reconcile pipeline and the API share one
+    code path (same math, same deterministic dataset id, same lineage
+    metadata). This wrapper keeps the legacy CLI contract: parent auto-resolve,
+    SyncTaskLock, sync log and the legacy return shape.
     """
     import hashlib as _hl
-    import numpy as np
     from wtpy.apps.astock.data.sync_lock import SyncTaskLock, SyncLockHeldError
-    from wtpy.apps.astock.data.pit_universe import PointInTimeUniverse
+    from wtpy.apps.astock.data.tushare_product import (
+        derive_composite_tushare_factor_qfq as _derive_composite_tushare_factor_qfq,
+    )
 
     raw_id = getattr(args, "raw_dataset_id", None)
     fac_id = getattr(args, "factor_dataset_id", None)
@@ -1692,69 +2640,6 @@ def derive_composite_tushare_factor_qfq(args, store: DatasetStore) -> dict:
     if not raw_id or not fac_id:
         print("ERROR: derive requires --raw-dataset-id and --factor-dataset-id")
         return {"status": "failed", "error": "missing_parent_dataset_ids"}
-
-    raw_m = store.load_manifest(raw_id)
-    fac_m = store.load_manifest(fac_id)
-    sup_m = store.load_manifest(sup_id) if sup_id else None
-    if raw_m is None or fac_m is None or (sup_id and sup_m is None):
-        print("ERROR: parent manifest not found")
-        return {"status": "failed", "error": "parent_manifest_not_found"}
-    if raw_m.source != "internal" or raw_m.adjustment != "composite_none":
-        print("ERROR: raw parent must be internal/composite_none")
-        return {"status": "failed", "error": "raw_parent_wrong_source"}
-    if raw_m.status != "ready":
-        print(f"ERROR: raw parent status={raw_m.status}")
-        return {"status": "failed", "error": "parent_not_ready"}
-    for label, m in (("factor", fac_m), ("supplement_factor", sup_m)):
-        if m is None:
-            continue
-        if m.status != "ready":
-            print(f"ERROR: {label} dataset status={m.status}; must be ready")
-            return {"status": "failed", "error": f"{label}_not_ready"}
-        if m.dataset_type != "factor":
-            print(f"ERROR: {label} dataset is not dataset_type=factor")
-            return {"status": "failed", "error": f"{label}_not_a_factor_dataset"}
-
-    alias_to_canon: Dict[str, str] = {}
-    if uni_id:
-        try:
-            pit = PointInTimeUniverse.from_root(store.root, uni_id)
-        except Exception as e:
-            print(f"ERROR: cannot load universe {uni_id}: {type(e).__name__}")
-            return {"status": "failed", "error": "universe_load_failed"}
-        for canon, w in pit.entries.items():
-            for alias in w.aliases:
-                alias_to_canon[alias] = canon
-
-    def _msha(ds_id: str) -> str:
-        return _hl.sha256(
-            (store.manifests_dir / f"{ds_id}.json").read_bytes()).hexdigest()
-
-    raw_ok = {r.symbol: r for r in raw_m.symbols if r.quality == "ok"}
-    fac_ok = {r.symbol: r for r in fac_m.symbols if r.quality == "ok"}
-    sup_ok = (
-        {r.symbol: r for r in sup_m.symbols if r.quality == "ok"} if sup_m else {}
-    )
-
-    resolution: Dict[str, tuple] = {}
-    missing: List[str] = []
-    for sym in raw_ok:
-        if sym in fac_ok:
-            resolution[sym] = ("main", fac_ok[sym])
-        elif sym in sup_ok:
-            resolution[sym] = ("supplement", sup_ok[sym])
-        elif sym in alias_to_canon and alias_to_canon[sym] in fac_ok:
-            resolution[sym] = ("alias_main", fac_ok[alias_to_canon[sym]])
-        elif sym in alias_to_canon and alias_to_canon[sym] in sup_ok:
-            resolution[sym] = ("alias_supplement", sup_ok[alias_to_canon[sym]])
-        else:
-            missing.append(sym)
-
-    lasts = [r.last_date for r in raw_ok.values() if r.last_date]
-    cutoff = int(getattr(args, "cutoff", None) or (max(lasts) if lasts else 0))
-    if not cutoff:
-        print("ERROR: cannot determine cutoff")
-        return {"status": "failed", "error": "no_cutoff"}
 
     sync_run_id = make_sync_run_id("ctsfqfq")
     lock = SyncTaskLock(store.root, source="internal",
@@ -1767,203 +2652,31 @@ def derive_composite_tushare_factor_qfq(args, store: DatasetStore) -> dict:
         return {"status": "failed", "error": "concurrent_lock"}
 
     try:
-        t0 = time.time()
-        eligible = sorted(resolution)
-        print(f"Deriving composite_tushare_factor_qfq: {len(eligible)} symbols "
-              f"(raw={raw_id}, factor={fac_id}, supplement={sup_id or '-'}, "
-              f"aliases={len(alias_to_canon)}, cutoff={cutoff}, "
-              f"formula={COMPOSITE_QFQ_FORMULA_VERSION})")
-        records: List[SymbolRecord] = []
-        issues: List[dict] = []
-        source_counts = {"main": 0, "supplement": 0, "alias_main": 0,
-                        "alias_supplement": 0}
-        nonpos_qfq_rows = 0
-        nan_inf_rows = 0
-        total_rows = 0
-        imported = 0
-        for sym in sorted(missing):
-            records.append(SymbolRecord(symbol=sym, blob_sha256="",
-                                        quality="no_data", error="missing_factor"))
-        for i, sym in enumerate(eligible):
-            rr = raw_ok[sym]
-            fsrc, fr = resolution[sym]
-            raw_arr = store.load_bars(rr.blob_sha256)
-            fac_arr = store.load_bars(fr.blob_sha256)
-            rd = raw_arr["trade_date"]
-            fd = fac_arr["trade_date"]
-            fv = fac_arr["adj_factor"]
-            aidx = int(np.searchsorted(fd, cutoff, side="right")) - 1
-            if aidx < 0:
-                records.append(SymbolRecord(symbol=sym, blob_sha256="",
-                                            quality="error", error="no_anchor_factor"))
-                issues.append({"symbol": sym, "issue": "no_anchor_factor"})
-                continue
-            anchor = float(fv[aidx])
-            pos = np.searchsorted(fd, rd, side="right") - 1
-            valid = pos >= 0
-            leading_gap = int(np.sum(~valid))
-            if leading_gap:
-                issues.append({"symbol": sym, "issue": "leading_gap_rows_dropped",
-                               "detail": leading_gap})
-            rdv = rd[valid]
-            if len(rdv) == 0:
-                records.append(SymbolRecord(symbol=sym, blob_sha256="",
-                                            quality="no_data", error="all_rows_leading_gap"))
-                continue
-            ratio = fv[pos[valid]] / anchor
-
-            def _r4(a):
-                return np.round(a, 4)
-
-            arrays = {
-                "trade_date": rdv,
-                "open": _r4(raw_arr["open"][valid] * ratio),
-                "high": _r4(raw_arr["high"][valid] * ratio),
-                "low": _r4(raw_arr["low"][valid] * ratio),
-                "close": _r4(raw_arr["close"][valid] * ratio),
-                "volume": raw_arr["volume"][valid],
-                "amount": raw_arr["amount"][valid],
-            }
-            o, h, l, c = arrays["open"], arrays["high"], arrays["low"], arrays["close"]
-            _finite = (np.isfinite(o) & np.isfinite(h) & np.isfinite(l)
-                       & np.isfinite(c))
-            _nbad_fin = int(np.sum(~_finite))
-            if _nbad_fin:
-                nan_inf_rows += _nbad_fin
-                issues.append({"symbol": sym, "issue": "nan_inf_rows",
-                               "detail": _nbad_fin})
-            _npos = int(np.sum(c <= 0))
-            if _npos:
-                nonpos_qfq_rows += _npos
-                issues.append({"symbol": sym, "issue": "non_positive_qfq_close",
-                               "detail": _npos})
-            bad = int(np.sum((h < l) | (o > h) | (o < l) | (c > h) | (c < l)))
-            if bad:
-                issues.append({"symbol": sym, "issue": "ohlc_bounds_inherited_from_raw",
-                               "detail": bad})
-            sha = store.store_bar_arrays(sym, arrays)
-            total_rows += len(rdv)
-            imported += 1
-            source_counts[fsrc] += 1
-            records.append(SymbolRecord(
-                symbol=sym, blob_sha256=sha, first_date=int(rdv[0]),
-                last_date=int(rdv[-1]), row_count=len(rdv), quality="ok"))
-            if (i + 1) % 1000 == 0:
-                print(f"  {i+1}/{len(eligible)} ({time.time()-t0:.0f}s)", flush=True)
-
-        failed = [r for r in records if r.quality == "error"]
-        no_data_cnt = sum(1 for r in records if r.quality == "no_data")
-        content_hash = _hl.sha256(json.dumps(
-            sorted((r.symbol, r.blob_sha256) for r in records if r.blob_sha256),
-        ).encode()).hexdigest()
-        canonical_pre = json.dumps(
-            {"source": "internal", "adjustment": "composite_tushare_factor_qfq",
-             "period": "1d", "raw": raw_id, "factor": fac_id,
-             "supplement_factor": sup_id or "", "universe": uni_id or "",
-             "cutoff": cutoff, "formula": COMPOSITE_QFQ_FORMULA_VERSION,
-             "factor_resolution": FACTOR_RESOLUTION_RULE_VERSION,
-             "sync_run_id": sync_run_id},
-            sort_keys=True)
-        dataset_id = make_dataset_id(
-            "internal", "composite_tushare_factor_qfq", "1d", str(cutoff),
-            _hl.sha256(canonical_pre.encode()).hexdigest())
-
-        alias_syms = sorted(
-            s for s, (src, _) in resolution.items()
-            if src in ("alias_main", "alias_supplement"))
-        supplement_syms = sorted(
-            s for s, (src, _) in resolution.items() if src == "supplement")
-        manifest = DatasetManifest(
-            dataset_id=dataset_id,
-            source="internal",
-            adjustment="composite_tushare_factor_qfq",
-            period="1d",
-            dataset_type="bars",
-            snapshot_date=int(time.strftime("%Y%m%d")),
-            data_cutoff_date=cutoff,
-            provider_version=f"derive_{COMPOSITE_QFQ_FORMULA_VERSION}",
-            sync_run_id=sync_run_id,
-            parent_dataset_id=raw_id,
-            status="building",
-            created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+        r = _derive_composite_tushare_factor_qfq(
+            store,
             raw_dataset_id=raw_id,
-            raw_dataset_sha256=_msha(raw_id),
-            raw_source="internal_composite",
             factor_dataset_id=fac_id,
-            factor_dataset_sha256=_msha(fac_id),
-            factor_source="tushare",
-            anchor_policy=QFQ_ANCHOR_POLICY,
-            formula_version=COMPOSITE_QFQ_FORMULA_VERSION,
-            price_precision_policy=QFQ_PRICE_PRECISION_POLICY,
-            volume_policy="copied_from_raw_shares_no_adjustment",
-            amount_policy="copied_from_raw_cny_no_adjustment",
-            universe_file=raw_m.universe_file,
-            universe_sha256=raw_m.universe_sha256,
-            content_hash=content_hash,
-            survivorship_bias=False,
-            historical_universe_complete=True,
-            delisted_coverage_complete=True,
-            coverage_start_year=raw_m.coverage_start_year,
-            coverage_end_year=raw_m.coverage_end_year,
-            warning_text=(
-                "Derived composite QFQ (NOT Tushare-native qfq). Signal use "
-                "only. BSE pre-migration series adjusted via 920-code alias "
-                "factors."
-            ),
-            recommended_use=["L1 signal computation (front-adjusted, "
-                             "survivorship-safe universe)"],
-            prohibited_or_discouraged_use=[
-                "L2 execution prices", "limit up/down checks",
-                "claiming Tushare-native qfq data",
-            ],
-            provenance={
-                "derivation": "composite_none raw OHLC × (adj_factor_asof/anchor)",
-                "anchor_policy": QFQ_ANCHOR_POLICY,
-                "formula_version": COMPOSITE_QFQ_FORMULA_VERSION,
-                "factor_resolution_rule": FACTOR_RESOLUTION_RULE_VERSION,
-                "supplement_factor_dataset_id": sup_id or "",
-                "supplement_factor_dataset_sha256": _msha(sup_id) if sup_id else "",
-                "universe_dataset_id": uni_id or "",
-                "factor_source_counts": source_counts,
-                "alias_factor_symbols": alias_syms,
-                "supplement_factor_symbols": supplement_syms,
-                "missing_factor_symbols": sorted(missing),
-                "leading_gap_policy": "rows before first factor date are dropped and recorded",
-                "gate": "B6",
-            },
-            expected_symbol_count=len(raw_ok),
+            supplement_factor_dataset_id=sup_id,
+            universe_dataset_id=uni_id,
+            cutoff=getattr(args, "cutoff", None),
         )
-        manifest.symbols = records
-        manifest.symbol_count = len(records)
-        manifest.row_count = total_rows
-        manifest.imported_symbol_count = imported
-        manifest.excluded_symbol_count = len(missing)
-        manifest.no_data_symbol_count = no_data_cnt
-        manifest.failed_symbol_count = len(failed)
-        manifest.coverage_ratio = round(imported / max(len(raw_ok), 1), 6)
-        if failed or no_data_cnt:
-            manifest.status = "partial"
-            print(f"  STRICT POLICY -> partial (failed={len(failed)}, "
-                  f"no_data={no_data_cnt})")
-        store.publish(manifest)
+        if r.get("status") != "success":
+            print(f"ERROR: {r.get('error', 'derive failed')}")
+            return r
 
-        elapsed = time.time() - t0
+        dataset_id = r["dataset_id"]
+        result = r["result"]
+        issues = r["issues"]
         log_payload = {
             "sync_run_id": sync_run_id, "dataset_id": dataset_id,
             "raw_dataset_id": raw_id, "factor_dataset_id": fac_id,
             "supplement_factor_dataset_id": sup_id or "",
             "universe_dataset_id": uni_id or "",
-            "cutoff": cutoff,
+            "cutoff": result.get("cutoff"),
             "formula_version": COMPOSITE_QFQ_FORMULA_VERSION,
             "factor_resolution_rule": FACTOR_RESOLUTION_RULE_VERSION,
             "anchor_policy": QFQ_ANCHOR_POLICY,
-            "result": {"eligible": len(eligible), "imported": imported,
-                       "missing_factor": len(missing), "failed": len(failed),
-                       "rows": total_rows, "status": manifest.status,
-                       "factor_source_counts": source_counts,
-                       "nonpos_qfq_rows": nonpos_qfq_rows,
-                       "nan_inf_rows": nan_inf_rows,
-                       "elapsed_seconds": round(elapsed, 1)},
+            "result": result,
             "issues_sample": issues[:50],
         }
         store.save_sync_log(sync_run_id, log_payload)
@@ -1971,20 +2684,21 @@ def derive_composite_tushare_factor_qfq(args, store: DatasetStore) -> dict:
             if extra:
                 try:
                     Path(extra).parent.mkdir(parents=True, exist_ok=True)
-                    Path(extra).write_text(json.dumps(log_payload, ensure_ascii=False, indent=1),
-                                           encoding="utf-8")
+                    Path(extra).write_text(
+                        json.dumps(log_payload, ensure_ascii=False, indent=1),
+                        encoding="utf-8")
                 except Exception:
                     pass
-        print(f"  derived: {imported}/{len(eligible)} ok, "
-              f"missing_factor={len(missing)}, rows={total_rows}, "
-              f"dataset={dataset_id} status={manifest.status} ({elapsed:.0f}s)")
-        return {"status": "success", "sync_run_id": sync_run_id,
-                "dataset_id": dataset_id, "dataset_status": manifest.status,
-                "result": log_payload["result"], "issues": issues}
+        print(f"  derived: {result.get('imported', 0)}/{result.get('eligible', 0)} ok, "
+              f"missing_factor={result.get('missing_factor', 0)}, rows={result.get('rows', 0)}, "
+              f"dataset={dataset_id} status={r.get('dataset_status')}")
+        return {
+            "status": "success", "sync_run_id": sync_run_id,
+            "dataset_id": dataset_id, "dataset_status": r.get("dataset_status"),
+            "result": result, "issues": issues,
+        }
     finally:
         lock.release()
-
-
 TDX_CHECKPOINT_VERSION = "tdx_ck_v1"
 TDX_FRONT_INCREMENTAL_POLICY_VERSION = "tdx_front_inc_v1"
 TDX_MAX_SINGLE_RETRIES = 2
@@ -2505,6 +3219,13 @@ def audit_dataset(args, store: DatasetStore) -> dict:
     return {"status": "success", "count": len(datasets)}
 
 
+# Raw sync no_data policy: symbols with no data AND no parent history to
+# retain must not silently vanish from a new dataset. Exceeding the stricter
+# of the two limits forces the manifest to partial.
+RAW_NO_DATA_MAX_RATIO = 0.05
+RAW_NO_DATA_MAX_COUNT = 20
+
+
 def _sync_dataset(
     *,
     provider,
@@ -2555,20 +3276,46 @@ def _sync_dataset(
     success = 0
     failed = 0
     no_data = 0
+    no_data_no_parent = 0
     total_rows = 0
     errors: List[dict] = []
     symbol_records: List[SymbolRecord] = []
 
+    # Parent records for window retention: a suspended symbol with parent
+    # history keeps its parent blob instead of vanishing from the new surface.
+    parent_manifest = (
+        store.load_manifest(parent_dataset_id) if parent_dataset_id else None
+    )
+    parent_records = {
+        r.symbol: r for r in (parent_manifest.symbols if parent_manifest else [])
+        if r.blob_sha256
+    }
+
     # ---- restore from checkpoint (resume) ----
     done_map: Dict[str, dict] = dict(resume_records or {})
     for sym, rec in done_map.items():
-        symbol_records.append(SymbolRecord(**rec))
         q = rec.get("quality")
+        parent_rec = parent_records.get(sym)
+        if q == "no_data" and parent_rec is not None:
+            # The window produced no rows before the interrupt and a parent
+            # blob exists: keep the parent history instead of dropping it.
+            rec = {
+                "symbol": sym,
+                "blob_sha256": parent_rec.blob_sha256,
+                "first_date": parent_rec.first_date,
+                "last_date": parent_rec.last_date,
+                "row_count": int(parent_rec.row_count or 0),
+                "quality": "ok",
+                "window_status": "no_new_rows_parent_retained",
+            }
+            q = "ok"
+        symbol_records.append(SymbolRecord(**rec))
         if q == "ok":
             success += 1
             total_rows += int(rec.get("row_count", 0))
         elif q == "no_data":
             no_data += 1
+            no_data_no_parent += 1
         else:
             failed += 1
     if done_map:
@@ -2647,6 +3394,27 @@ def _sync_dataset(
             return bars
         return _merge_bar_lists(parent_bars, bars)
 
+    def _empty_record(norm_sym: str) -> SymbolRecord:
+        """Empty window: retain the parent blob when one exists (a suspended
+        stock must not disappear from the new surface); otherwise no_data."""
+        nonlocal no_data, no_data_no_parent, success, total_rows
+        parent_rec = parent_records.get(norm_sym)
+        if parent_rec is None:
+            no_data += 1
+            no_data_no_parent += 1
+            return SymbolRecord(
+                symbol=norm_sym, blob_sha256="",
+                quality="no_data", error="empty",
+            )
+        success += 1
+        total_rows += int(parent_rec.row_count or 0)
+        return SymbolRecord(
+            symbol=norm_sym, blob_sha256=parent_rec.blob_sha256,
+            first_date=parent_rec.first_date, last_date=parent_rec.last_date,
+            row_count=int(parent_rec.row_count or 0), quality="ok",
+            window_status="no_new_rows_parent_retained",
+        )
+
     batch_size = getattr(provider, "_batch_size", 1)
     caps = provider.capabilities()
     # When any symbol needs a different start_date (rebuild full vs incremental
@@ -2679,15 +3447,7 @@ def _sync_dataset(
                     norm_sym = _normalize_symbol(sym)
                     sym_bars = by_symbol.get(norm_sym, [])
                     if not sym_bars:
-                        no_data += 1
-                        symbol_records.append(
-                            SymbolRecord(
-                                symbol=norm_sym,
-                                blob_sha256="",
-                                quality="no_data",
-                                error="empty",
-                            )
-                        )
+                        symbol_records.append(_empty_record(norm_sym))
                         continue
                     sym_bars = _finalize_bars(norm_sym, sym_bars, use_start)
                     blob_sha = store.store_bars(norm_sym, sym_bars)
@@ -2718,15 +3478,7 @@ def _sync_dataset(
                         )
                         single_bars = provider.fetch_bars(single_req)
                         if not single_bars:
-                            no_data += 1
-                            symbol_records.append(
-                                SymbolRecord(
-                                    symbol=norm_sym,
-                                    blob_sha256="",
-                                    quality="no_data",
-                                    error="empty",
-                                )
-                            )
+                            symbol_records.append(_empty_record(norm_sym))
                             continue
                         single_bars = _finalize_bars(
                             norm_sym, single_bars, single_start
@@ -2775,15 +3527,7 @@ def _sync_dataset(
                 )
                 bars = provider.fetch_bars(req)
                 if not bars:
-                    no_data += 1
-                    symbol_records.append(
-                        SymbolRecord(
-                            symbol=norm_sym,
-                            blob_sha256="",
-                            quality="no_data",
-                            error="empty",
-                        )
-                    )
+                    symbol_records.append(_empty_record(norm_sym))
                 else:
                     bars = _finalize_bars(norm_sym, bars, use_start)
                     blob_sha = store.store_bars(norm_sym, bars)
@@ -2819,6 +3563,20 @@ def _sync_dataset(
     manifest.symbols = symbol_records
     manifest.symbol_count = len(symbol_records)
     manifest.row_count = total_rows
+
+    # Too many symbols with no data AND no parent history must not publish as
+    # ready (silent data loss on the new surface). The threshold has a floor
+    # of 2 so small universes (e.g. ~30-symbol index/ETF surfaces with 2-3
+    # legitimately missing members) are not demoted to partial by rounding
+    # 5% down to 1; large universes still cap at the 5% ratio / 20 count.
+    max_no_data = min(
+        RAW_NO_DATA_MAX_COUNT,
+        max(2, int(RAW_NO_DATA_MAX_RATIO * len(symbols))),
+    )
+    if no_data_no_parent > max_no_data:
+        manifest.status = "partial"
+        print(f"  STRICT POLICY -> partial: no_data_without_parent="
+              f"{no_data_no_parent} > {max_no_data} allowed")
 
     try:
         store.publish(manifest)
@@ -2900,6 +3658,68 @@ def _history_changed(
     return False
 
 
+def _reconcile_after_sync(store: DatasetStore, *, dry_run: bool = False) -> dict:
+    """Auto-reconcile the Tushare product pair after a Tushare sync/derive.
+
+    Local-only: composite manifests + QFQ derivation reuse existing blobs,
+    never a network full-history pull. Missing parents return a structured
+    ``waiting_for_parent`` state instead of publishing half-baked surfaces.
+    """
+    from wtpy.apps.astock.data.tushare_product import (
+        reconcile_tushare_product_datasets,
+    )
+
+    try:
+        r = reconcile_tushare_product_datasets(store, dry_run=dry_run)
+        print(
+            f"  [reconcile] status={r.status} l1={r.l1_dataset_id or '-'} "
+            f"l2={r.l2_dataset_id or '-'} missing={r.missing or '-'} "
+            f"issues={r.issues or '-'}"
+        )
+        return r.to_dict()
+    except Exception as e:
+        print(f"  [reconcile] ERROR: {type(e).__name__}: {e}")
+        return {"status": "failed", "error": f"{type(e).__name__}: {e}"}
+
+
+def _apply_reconcile_status(result: dict) -> None:
+    """Overall task success requires the full product chain to pass.
+
+    Sync tasks only report success when raw, factor, L2, L1, lineage and
+    freshness all passed — otherwise the task is marked ``warning`` with the
+    reconcile reason, never a blanket success.
+    """
+    rc = (result.get("reconcile") or {}).get("status")
+    if result.get("status") == "success" and rc not in ("published", "up_to_date"):
+        result["status"] = "warning"
+        result["warning"] = (
+            f"product_reconcile={rc} missing="
+            f"{result['reconcile'].get('missing') or '-'} issues="
+            f"{result['reconcile'].get('issues') or '-'}"
+        )
+
+
+def _aggregate_dataset_status(results: Dict[str, dict]) -> Tuple[str, str]:
+    """Aggregate per-dataset results into a top-level (status, detail).
+
+    Any dataset failed -> ('failed', phase); any dataset partial or with a
+    non-ready status -> ('partial', phases); otherwise ('success', ''). A raw
+    surface that only published partial must never be reported as success.
+    """
+    partial_phases: List[str] = []
+    for phase, ds in (results or {}).items():
+        if not isinstance(ds, dict):
+            continue
+        st = ds.get("status") or ds.get("dataset_status") or ""
+        if st == "failed":
+            return "failed", f"dataset {phase} failed"
+        if st not in ("ready", "success", ""):
+            partial_phases.append(f"{phase}={st}")
+    if partial_phases:
+        return "partial", "; ".join(partial_phases)
+    return "success", ""
+
+
 def _auto_resolve_parents(
     args,
     store: DatasetStore,
@@ -2926,6 +3746,25 @@ def _auto_resolve_parents(
         print(f"  [auto] raw parent -> {best_id} (cutoff={best_cut})")
         args.raw_dataset_id = best_id
     if not getattr(args, "factor_dataset_id", None):
+        # Latest-candidate semantics (P1 derive-path review): when the NEWEST
+        # factor manifest is a freshness-gate-blocked partial, the derive must
+        # refuse instead of silently falling back to an older ready factor —
+        # otherwise a残缺 L1 derived from stale factors could enter the formal
+        # product plane (the derive-time freshness gate is the second line of
+        # defence, but failing fast here avoids running the derivation at all).
+        from wtpy.apps.astock.data.tushare_product import (
+            _select_latest_tushare_factor_candidate,
+        )
+        latest = _select_latest_tushare_factor_candidate(store)
+        if latest is not None and (latest.status or "") == "partial" and (
+            ((latest.provenance or {}).get("freshness") or {}).get("gate")
+            == "blocked"
+        ):
+            return (
+                "latest factor is a freshness-gate-blocked partial "
+                f"({latest.dataset_id}); refusing to derive over an older "
+                "ready factor"
+            )
         best_id, best_cut = None, 0
         for mid in store.list_manifests():
             m = store.load_manifest(mid)
@@ -2941,13 +3780,46 @@ def _auto_resolve_parents(
     return None
 
 
+def _exit_code_for_results(all_results: dict) -> int:
+    """Map per-source sync results to a process exit code.
+
+    0 = every source succeeded; 1 = any source failed; 2 = only
+    warning/partial results. Non-zero codes let schedulers/UI stop treating
+    business failures (expired token, missing parents, blocked reconcile) as
+    success. A result whose top-level status is success but whose
+    dataset_status is partial/building/failed is NOT a success (e.g. the
+    factor sync demoted by the freshness gate returns
+    {"status": "success", "dataset_status": "partial"}).
+    """
+    statuses = []
+    for r in all_results.values():
+        if not isinstance(r, dict):
+            continue
+        st = r.get("status", "failed")
+        if st == "success":
+            ds = (r.get("dataset_status") or "").strip()
+            if ds == "failed":
+                st = "failed"
+            elif ds in ("partial", "building"):
+                st = "partial"
+        statuses.append(st)
+    if any(st == "failed" for st in statuses):
+        return 1
+    if any(st in ("warning", "partial") for st in statuses):
+        return 2
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Sync market data to local datasets")
     parser.add_argument("--source", required=True,
                         choices=["tdxquant", "tushare", "tdx_local", "local_vendor",
                                  "internal", "all"])
     parser.add_argument("--mode", default="full",
-                        choices=["full", "incremental", "rebuild", "audit", "derive"])
+                        choices=["full", "incremental", "rebuild", "audit", "derive"],
+                        help="full (default) / incremental: 存在完整父数据集时"
+                             "只拉修正窗口并合并（无父则全量）; rebuild: 忽略"
+                             "父数据集强制全量重建历史; audit/derive: diagnostics")
     parser.add_argument("--symbol", default=None, help="Comma-separated symbols")
     parser.add_argument("--asset-class", default="stocks",
                         choices=["stocks", "index", "etf", "all"],
@@ -2991,8 +3863,18 @@ def main():
     parser.add_argument("--factor-raw-root", default=None,
                         help="Raw cache dir for tushare adj_factor CSVs "
                              "(or env TUSHARE_FACTOR_RAW_ROOT)")
+    parser.add_argument("--keep-raw-batches", type=int, default=3,
+                        help="Keep the newest N tsfactor_* raw batch dirs after "
+                             "a successful adj_factor sync, deleting older ones "
+                             "(the fixed 'latest' incremental cache is untouched)")
     parser.add_argument("--rate-per-min", type=int, default=400,
                         help="Max Tushare API calls per minute for factor sync")
+    parser.add_argument("--skip-freshness-gate", action="store_true",
+                        help="Factor sync: skip the per-symbol freshness gate "
+                             "(explicit escape hatch, e.g. subset-universe "
+                             "deployments; the decision is recorded in the "
+                             "manifest provenance as freshness_gate="
+                             "skipped_by_flag)")
     parser.add_argument("--coverage-out", default=None,
                         help="Write factor symbol coverage/mapping CSV here")
     parser.add_argument("--raw-dataset-id", default=None,
@@ -3038,6 +3920,9 @@ def main():
         print(f"  Storage root: {storage_root}")
         print(f"  Exists: {storage_root.exists()}")
         print(f"  MARKET_DATA_ROOT env: {_env_md or '(not set)'}")
+        if not storage_root.exists():
+            print("ERROR: preflight failed: storage root does not exist")
+            return 1
         if args.source == "tdxquant" and (args.adjustment or "") == "front":
             from wtpy.apps.astock.data.providers.tdxquant import (
                 TdxQuantProvider, read_tqcenter_version)
@@ -3135,7 +4020,7 @@ def main():
                     print("  Memory: (unavailable)")
         if args.source == "tushare" and args.adjustment == "adj_factor":
             frr = _resolve_factor_raw_root(args)
-            print(f"  Factor raw root: {frr or '(NOT CONFIGURED — set TUSHARE_FACTOR_RAW_ROOT)'}")
+            print(f"  Factor raw root: {frr or '(default: <data root>/tushare_factor_raw_cache)'}")
             try:
                 import warnings as _w
                 _w.filterwarnings("ignore")
@@ -3182,7 +4067,7 @@ def main():
         print(f"  Free disk space: {free/1024**3:.1f} GB")
         if free < 5 * 1024**3:
             print("  WARNING: Less than 5GB free space!")
-        return
+        return 0
 
     if args.dry_run:
         print(f"DRY RUN: source={args.source}, mode={args.mode}"
@@ -3191,7 +4076,7 @@ def main():
         if args.source == "tdxquant" and (args.adjustment or "") == "front":
             if not args.universe_file:
                 print("  Universe: (REQUIRED — pass --universe-file)")
-                return
+                return 0
             _up = Path(args.universe_file)
             _rows = _load_universe_rows(_up)
             _eli, _exc = _tdx_partition_universe(_rows)
@@ -3232,7 +4117,7 @@ def main():
             print(f"  Existing tdxquant/front datasets (preserved): "
                   f"{_existing or '(none)'}")
             print("  No client calls made. No data will be written.")
-            return
+            return 0
         if args.source == "tushare" and args.adjustment == "adj_factor":
             if args.universe_file:
                 syms = _load_universe_file(Path(args.universe_file))
@@ -3244,13 +4129,13 @@ def main():
             else:
                 print("  Factor universe: (requires --universe-file)")
             print("  No Tushare daily bars will be downloaded. No data will be written.")
-            return
+            return 0
         if args.mode == "derive":
             print(f"  raw_dataset_id: {args.raw_dataset_id}")
             print(f"  factor_dataset_id: {args.factor_dataset_id}")
             print(f"  cutoff: {args.cutoff or '(raw latest)'} | formula {QFQ_FORMULA_VERSION}")
             print("  No data will be written.")
-            return
+            return 0
         if args.symbol:
             syms = [s.strip() for s in args.symbol.split(",") if s.strip()]
             print(f"  Symbols: {len(syms)} specified")
@@ -3280,18 +4165,18 @@ def main():
             print(f"  Symbols: (will use full universe)")
         print(f"  Date range: {args.start_date} - {args.end_date}")
         print("  No data will be written.")
-        return
+        return 0
 
     store = DatasetStore(storage_root)
 
     if args.mode == "audit":
         result = audit_dataset(args, store)
-        return
+        return 0 if (result or {}).get("status") == "success" else 1
 
     if args.mode == "derive":
         if args.source != "internal":
             print("ERROR: --mode derive requires --source internal")
-            return
+            return 1
         adj = args.adjustment or "tushare_factor_qfq"
         if adj == "tushare_factor_qfq":
             err = _auto_resolve_parents(
@@ -3299,7 +4184,7 @@ def main():
             )
             if err:
                 print(f"ERROR: {err}")
-                return
+                return 1
             r = derive_tushare_factor_qfq(args, store)
         elif adj == "composite_tushare_factor_qfq":
             err = _auto_resolve_parents(
@@ -3307,16 +4192,31 @@ def main():
             )
             if err:
                 print(f"ERROR: {err}")
-                return
+                return 1
             r = derive_composite_tushare_factor_qfq(args, store)
+            if r.get("status") == "success":
+                r["reconcile"] = _reconcile_after_sync(store)
+                _apply_reconcile_status(r)
         else:
             print("ERROR: derive supports adjustment=tushare_factor_qfq or "
                   "composite_tushare_factor_qfq only")
-            return
+            return 1
         print(json.dumps(r, indent=2, ensure_ascii=False, default=str))
-        return
+        r_status = str(r.get("status") or "failed")
+        r_ds = (r.get("dataset_status") or "").strip()
+        if r_status == "failed":
+            return 1
+        if r_status == "success" and r_ds not in ("partial", "building", "failed"):
+            return 0
+        return 2
 
-    sources = [args.source] if args.source != "all" else ["tdxquant", "tushare", "tdx_local", "local_vendor"]
+    # Tushare-only policy: `all` now means "all Tushare stock tasks" — TDX,
+    # tdx_local and local_vendor providers are never initialized by the
+    # default chain (legacy sources stay available via explicit --source).
+    if args.source == "all":
+        print("NOTE: --source all now means Tushare-only (policy); "
+              "TDX/local_vendor require explicit --source")
+    sources = [args.source] if args.source != "all" else ["tushare"]
     all_results = {}
 
     for src in sources:
@@ -3349,6 +4249,11 @@ def main():
                 r = sync_tushare_adj_factor_full(args, store)
             elif args.mode in ("full", "rebuild"):
                 r = sync_tushare_full(args, store)
+            elif args.mode == "incremental" and not args.adjustment:
+                # Zero-config default chain (task=tushare): raw incremental ->
+                # adj_factor incremental -> product reconcile. Explicit
+                # --adjustment none remains a raw-only incremental sync.
+                r = sync_tushare_chain(args, store)
             else:
                 r = sync_tushare_incremental(args, store)
         elif src == "tdx_local":
@@ -3367,6 +4272,25 @@ def main():
     print("Sync complete.")
     print(json.dumps(all_results, indent=2, ensure_ascii=False, default=str))
 
+    code = _exit_code_for_results(all_results)
+    if code == 1:
+        _reasons = [
+            f"{src}={r.get('status')}({r.get('error') or 'no detail'})"
+            for src, r in all_results.items()
+            if isinstance(r, dict) and r.get("status") == "failed"
+        ]
+        print(f"SYNC STATUS: failed ({'; '.join(_reasons)})")
+    elif code == 2:
+        _reasons = [
+            f"{src}={r.get('status')}"
+            for src, r in all_results.items()
+            if isinstance(r, dict) and r.get("status") in ("warning", "partial")
+        ]
+        print(f"SYNC STATUS: warning ({'; '.join(_reasons)})")
+    else:
+        print("SYNC STATUS: success")
+    return code
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

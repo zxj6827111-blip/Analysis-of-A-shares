@@ -104,7 +104,7 @@ def api_create_experiment(payload: dict = Body(...), ctx: ApiContext = Depends(g
             signal_adjustment=payload.get("signal_adjustment"),
             dataset_id=payload.get("dataset_id"),
             weekly_bar_mode=str(payload.get("weekly_bar_mode") or "local_aggregate"),
-            execution_data_source=str(payload.get("execution_data_source") or "local_vendor"),
+            execution_data_source=str(payload.get("execution_data_source") or "internal"),
             execution_dataset_id=payload.get("execution_dataset_id"),
             dual_source_compare=bool(payload.get("dual_source_compare")),
             signal_variants=payload.get("signal_variants"),

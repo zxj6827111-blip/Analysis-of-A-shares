@@ -275,7 +275,7 @@ def apply_execution_cache(
             "supplement_factor_dataset_id": getattr(
                 ctx.req, "signal_supplement_factor_dataset_id", None
             ) or "",
-            "execution_data_source": getattr(ctx.req, "execution_data_source", None) or "local_vendor",
+            "execution_data_source": getattr(ctx.req, "execution_data_source", None) or "internal",
             "execution_adjustment": getattr(ctx.req, "execution_adjustment", None) or "none",
             "execution_dataset_id": getattr(ctx.req, "execution_dataset_id", None) or "",
             "execution_parent_dataset_ids": list(

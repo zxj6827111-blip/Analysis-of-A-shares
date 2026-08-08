@@ -11,7 +11,8 @@ class TestBacktestSourceSelection:
         assert req.signal_adjustment is None
         assert req.dataset_id is None
         assert req.weekly_bar_mode == "local_aggregate"
-        assert req.execution_data_source == "local_vendor"
+        # Tushare-only policy: product default execution plane is formal L2
+        assert req.execution_data_source == "internal"
         assert req.execution_dataset_id is None
 
     def test_tdxquant_source(self):
@@ -44,9 +45,13 @@ class TestBacktestSourceSelection:
         assert req.signal_data_source == "internal"
         assert req.signal_adjustment == "asof_qfq"
 
-    def test_execution_default_local_vendor(self):
+    def test_execution_default_is_formal_l2(self):
         req = BacktestRequest(rule_ids=["rule_a"])
-        assert req.execution_data_source == "local_vendor"
+        # product default = formal L2 (internal/composite_none); legacy
+        # families remain available via explicit selection
+        assert req.execution_data_source == "internal"
+        req_legacy = BacktestRequest(rule_ids=["rule_a"], execution_data_source="local_vendor")
+        assert req_legacy.execution_data_source == "local_vendor"
 
     def test_to_dict_includes_new_fields(self):
         req = BacktestRequest(
@@ -59,7 +64,7 @@ class TestBacktestSourceSelection:
         assert d["signal_data_source"] == "tdxquant"
         assert d["dataset_id"] == "ds_123"
         assert d["weekly_bar_mode"] == "vendor_native"
-        assert d["execution_data_source"] == "local_vendor"
+        assert d["execution_data_source"] == "internal"
 
     def test_vendor_native_weekly_mode(self):
         req = BacktestRequest(
@@ -67,3 +72,69 @@ class TestBacktestSourceSelection:
             weekly_bar_mode="vendor_native",
         )
         assert req.weekly_bar_mode == "vendor_native"
+
+
+class TestLegacyTdxFrontBaguaPlaneRerun:
+    """Regression: rerunning a legacy experiment with plane=tdx_front must
+    degrade per code (bagua plane disabled by the Tushare-only policy), not
+    abort the whole rerun with an uncaught SourceDisabledError (API 500).
+    """
+
+    def _run(self, tmp_path):
+        import tests.apps.astock.conftest  # noqa: F401
+
+        from wtpy.apps.astock.config import get_default_config
+        from wtpy.apps.astock.service.backtest import run_backtest
+        from wtpy.apps.astock.service.rules import RuleService
+
+        storage = tmp_path / "st"
+        ind = tmp_path / "ind"
+        storage.mkdir()
+        ind.mkdir()
+        cfg = get_default_config(storage_root=storage, indicator_dir=ind)
+
+        d = storage / "csv" / "day" / "SSE"
+        d.mkdir(parents=True)
+        lines = ["date,open,high,low,close,amount,volume"]
+        for i in range(1, 20):
+            dt = 20260700 + i
+            o = 10 + i * 0.1
+            lines.append(f"{dt},{o:.2f},{o + 0.3:.2f},{o - 0.2:.2f},{o + 0.2:.2f},1000000,100000")
+        (d / "600000.csv").write_text("\n".join(lines), encoding="utf-8")
+
+        rs = RuleService(cfg)
+        created = rs.create_rule(name="t_plane", formula_text="XG:C>OPEN;")
+        assert created.get("id", "").startswith("user_")
+
+        req = BacktestRequest(
+            rule_ids=[created["id"]],
+            codes=["SSE.STK.600000"],
+            start=20260701,
+            end=20260730,
+            with_bagua=True,
+            bagua_price_plane="tdx_front",
+            use_signal_cache=False,
+            artifact_level="summary",
+        )
+        return run_backtest(cfg, req)
+
+    def test_rerun_tdx_front_degrades_instead_of_raising(self, tmp_path):
+        res = self._run(tmp_path)
+        assert res["status"] == "ok"
+        assert res["bagua_price_plane_effective"] == "tdx_front"
+        # Per-code fallback recorded, whole rerun not aborted.
+        assert res["bagua_plane_missing_count"] == 1
+        sample = res.get("errors_sample") or []
+        assert any(
+            e.get("code") == "SSE.STK.600000"
+            and "bagua_plane_load_failed(tdx_front)" in (e.get("error") or "")
+            for e in sample
+        )
+
+    def test_rerun_does_not_silently_use_raw_plane(self, tmp_path):
+        res = self._run(tmp_path)
+        repro = res.get("repro") or {}
+        # The request keeps the requested plane; the run reports the disabled
+        # plane fidelity loss instead of claiming a successful tdx_front attach.
+        assert repro.get("bagua_price_plane") == "tdx_front"
+        assert repro.get("bagua_plane_missing_count") == 1

@@ -73,7 +73,7 @@ def signal_cache_key(
         "dataset_id": dataset_id or "",
         "weekly_bar_mode": weekly_bar_mode or "local_aggregate",
         "anchor_date": anchor_date,
-        "execution_data_source": execution_data_source or "local_vendor",
+        "execution_data_source": execution_data_source or "internal",
         "execution_dataset_id": execution_dataset_id or "",
         "universe_version": universe_version or "",
         # Gate C: derived-signal lineage isolates cache when the factor parent

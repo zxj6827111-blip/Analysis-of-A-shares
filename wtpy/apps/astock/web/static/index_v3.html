@@ -1357,13 +1357,13 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
             <select class="select" id="btSignalSource">
               <option value="tdxquant" disabled title="需先同步通达信前复权数据集">通达信前复权</option>
               <option value="tushare" selected disabled title="需先同步 Tushare 前复权或派生QFQ">Tushare前复权</option>
-              <option value="raw" disabled title="需先有 local_vendor 未复权数据集">未复权</option>
+              <option value="raw" disabled title="需先有正式L2（internal/composite_none）或完整 tushare/none">未复权</option>
             </select>
           </div>
         </div>
         <div class="muted" id="execRoBt" style="font-size:11px;margin-top:8px;line-height:1.7">L2执行数据: —</div>
         <div id="btNegPriceWarn" style="display:none;margin-top:8px;padding:8px 12px;border-radius:8px;border:1px solid rgba(255,159,67,.5);background:rgba(255,159,67,.10);color:var(--orange,#ff9f43);font-size:12px;font-weight:700;line-height:1.7">⚠ 通达信前复权为仿射模型：长历史高分红股早期 L1 信号价可为负（与通达信客户端一致）。负价仅用于 L1 信号面，绝不进入 L2 成交与估值（成交/估值恒用未复权 raw 价）。</div>
-        <div class="helper" style="margin-top:12px">ⓘ 信号三选一：通达信前复权 / Tushare前复权 / 未复权。成交与估值始终用 local_vendor 未复权。设了买卖星期后，延迟与持仓数字变灰且不生效。</div>
+        <div class="helper" style="margin-top:12px">ⓘ 信号三选一：通达信前复权 / Tushare前复权 / 未复权。成交与估值始终用正式 L2 未复权（internal/composite_none）。设了买卖星期后，延迟与持仓数字变灰且不生效。</div>
       </div>
 
 
@@ -1388,13 +1388,12 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
             <div class="field"><label>周卦价格口径</label>
               <select class="select" id="btBaguaPlane" title="算卦用的周线 OHLC 来源">
                 <option value="raw" selected>未复权</option>
-                <option value="tdx_front">通达信前复权</option>
                 <option value="tushare_qfq">Tushare前复权</option>
               </select>
             </div>
           </div>
           <div class="muted" style="font-size:11px;margin:0 0 10px;line-height:1.55">
-            固定看选出股票的<strong>周卦</strong>（覆盖信号日的那一周 OHLC）。价格口径与「信号数据源」独立：可对未复权 / 通达信前复权 / Tushare前复权周线分别算卦。
+            固定看选出股票的<strong>周卦</strong>（覆盖信号日的那一周 OHLC）。价格口径与「信号数据源」独立：可对未复权 / Tushare前复权周线分别算卦（通达信前复权已停用）。
           </div>
           <div class="muted" style="font-size:12px;margin:10px 0 4px">用法（三选一，建议从「操作信号」或「现成方案」开始）</div>
           <div class="gua-usage-grid" id="guaUsageGrid">
@@ -1639,7 +1638,6 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
           <select class="select" id="bqMonth" style="min-width:160px;display:none" title="查询月"></select>
           <select class="select" id="bqAdjust" style="min-width:180px" title="前复权数据源">
             <option value="raw" selected>未复权</option>
-            <option value="tdx_front">通达信前复权</option>
             <option value="tushare_qfq">Tushare前复权</option>
           </select>
           <button type="button" class="btn btn-primary" id="bqSearchBtn">查询卦象</button>
@@ -1825,18 +1823,14 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
                   <input type="checkbox" class="exp-bagua-plane" value="raw" checked style="margin-right:6px" />未复权
                 </label>
                 <label class="exp-chip" style="cursor:pointer">
-                  <input type="checkbox" class="exp-bagua-plane" value="tdx_front" style="margin-right:6px" />通达信前复权
-                </label>
-                <label class="exp-chip" style="cursor:pointer">
                   <input type="checkbox" class="exp-bagua-plane" value="tushare_qfq" style="margin-right:6px" />Tushare前复权
                 </label>
               </div>
               <div class="muted" style="font-size:11px;margin-top:6px;line-height:1.5">
-                启用卦象过滤后，多选会按口径各跑一套，对比「哪种周卦价更赚钱」。未启用卦象时多选不生效。
+                启用卦象过滤后，多选会按口径各跑一套，对比「哪种周卦价更赚钱」。未启用卦象时多选不生效（通达信前复权已停用）。
               </div>
               <select class="select" id="expBaguaPlane" style="display:none" title="compat">
                 <option value="raw" selected>未复权</option>
-                <option value="tdx_front">通达信前复权</option>
                 <option value="tushare_qfq">Tushare前复权</option>
               </select>
             </div>
@@ -2008,7 +2002,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
                 <label class="exp-chip" style="cursor:pointer" title="Tushare前复权/派生QFQ">
                   <input type="checkbox" class="exp-signal-src" value="tushare" data-adj="qfq" checked style="margin-right:6px" />Tushare前复权
                 </label>
-                <label class="exp-chip" style="cursor:pointer" title="未复权 local_vendor">
+                <label class="exp-chip" style="cursor:pointer" title="未复权（正式L2 / tushare/none）">
                   <input type="checkbox" class="exp-signal-src" value="raw" data-adj="none" style="margin-right:6px" />未复权
                 </label>
               </div>
@@ -2344,26 +2338,17 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       <div id="syncStatusBadge" style="font-size:12px"></div>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-      <button type="button" class="btn btn-primary" id="btnSyncTdx" title="需要通达信客户端在线">① 更新通达信</button>
-      <button type="button" class="btn btn-primary" id="btnSyncTushare" title="Tushare 原始日线 + 前复权">② 更新Tushare日线</button>
-      <button type="button" class="btn btn-primary" id="btnSyncFactor" title="Tushare 前复权因子 adj_factor">③ 更新Tushare前复权因子</button>
-      <button type="button" class="btn btn-primary" id="btnSyncDerive" title="合并 local_vendor 原始日线 × 复权因子 → 派生前复权">④ 派生QFQ</button>
-      <button type="button" class="btn btn-primary" id="btnSyncCA" title="从 Tushare 拉取分红/送转/除权日等公司行为数据">⑤ 更新CA数据</button>
+      <button type="button" class="btn btn-primary" id="btnSyncTushare" title="Tushare 原始日线 + 前复权">① 更新Tushare日线</button>
+      <button type="button" class="btn btn-primary" id="btnSyncFactor" title="Tushare 前复权因子 adj_factor">② 更新Tushare前复权因子</button>
+      <button type="button" class="btn btn-primary" id="btnSyncDerive" title="Tushare 原始日线 × 复权因子 → 派生前复权（自动协调正式L1/L2）">③ 派生QFQ</button>
+      <button type="button" class="btn btn-primary" id="btnSyncCA" title="从 Tushare 拉取分红/送转/除权日等公司行为数据">④ 更新CA数据</button>
       <button type="button" class="btn" id="btnSyncStop" style="display:none;background:rgba(255,79,123,.15);border:1px solid rgba(255,79,123,.5);color:#ff8aa7" title="停止当前同步任务">■ 停止</button>
     </div>
-    <!-- 四路本地数据更新到日期 -->
+    <!-- Tushare-only 正式产品链数据到日期 -->
     <div id="srcFreshnessGrid" style="margin-bottom:14px">
-      <div class="src-fresh-card" data-src="tdx" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
-          <span style="font-size:12px;font-weight:700;color:var(--muted)">① 通达信</span>
-          <span class="src-fresh-status" style="font-size:10px"></span>
-        </div>
-        <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
-        <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
-      </div>
       <div class="src-fresh-card" data-src="tushare" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
-          <span style="font-size:12px;font-weight:700;color:var(--muted)">② Tushare日线</span>
+          <span style="font-size:12px;font-weight:700;color:var(--muted)">① Tushare日线</span>
           <span class="src-fresh-status" style="font-size:10px"></span>
         </div>
         <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
@@ -2371,15 +2356,23 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       </div>
       <div class="src-fresh-card" data-src="factor" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
-          <span style="font-size:12px;font-weight:700;color:var(--muted)">③ Tushare前复权因子</span>
+          <span style="font-size:12px;font-weight:700;color:var(--muted)">② Tushare前复权因子</span>
           <span class="src-fresh-status" style="font-size:10px"></span>
         </div>
         <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
         <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
       </div>
-      <div class="src-fresh-card" data-src="derive" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px">
+      <div class="src-fresh-card" data-src="l2_product" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
-          <span style="font-size:12px;font-weight:700;color:var(--muted)">④ 派生QFQ</span>
+          <span style="font-size:12px;font-weight:700;color:var(--muted)">③ 正式L2(未复权)</span>
+          <span class="src-fresh-status" style="font-size:10px"></span>
+        </div>
+        <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
+        <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
+      </div>
+      <div class="src-fresh-card" data-src="l1_product" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+          <span style="font-size:12px;font-weight:700;color:var(--muted)">④ 正式L1(前复权)</span>
           <span class="src-fresh-status" style="font-size:10px"></span>
         </div>
         <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
@@ -2426,7 +2419,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
         <div><b>占用空间</b><div id="dsSize">—</div></div>
       </div>
       <div style="margin-bottom:16px">
-        <b>最新 local_vendor 数据集</b>
+        <b>正式产品面 (Tushare-only)</b>
         <div id="dsLatestLv" class="muted" style="margin-top:4px;word-break:break-all">—</div>
       </div>
       <div class="field-grid cols-4" style="margin-bottom:16px">
@@ -3734,7 +3727,7 @@ function collectPeriods() {
       signal_adjustment: primary.signal_adjustment || "front",
       signal_variants: signalVariants,
       dual_source_compare: signalVariants.length >= 2,
-      execution_data_source: "local_vendor",
+      execution_data_source: "internal",
       research_unadjusted: expSrc === "raw" && signalVariants.length === 1,
       bagua_period: "WEEK",
       bagua_price_plane: (collectExpBaguaPlanes()[0] || "raw"),
@@ -4839,10 +4832,10 @@ async function expCreateAndStart() {
   function pickSourceFreshnessClient(datasets) {
     const list = Array.isArray(datasets) ? datasets : [];
     const specs = [
-      { key: "tdx", label: "通达信", match: function(d) { return d.source === "tdxquant" && d.adjustment === "front"; } },
-      { key: "tushare", label: "Tushare日线", match: function(d) { return d.source === "tushare" && (d.adjustment === "none" || d.adjustment === "qfq"); } },
+      { key: "tushare", label: "Tushare日线", match: function(d) { return d.source === "tushare" && d.adjustment === "none"; } },
       { key: "factor", label: "Tushare前复权因子", match: function(d) { return d.source === "tushare" && d.adjustment === "adj_factor"; } },
-      { key: "derive", label: "派生QFQ", match: function(d) { return d.source === "internal" && d.adjustment === "tushare_factor_qfq"; } },
+      { key: "l2_product", label: "正式L2(未复权)", match: function(d) { return d.source === "internal" && d.adjustment === "composite_none" && (d.data_policy === "tushare_only_v1" || (d.provenance || {}).data_policy === "tushare_only_v1"); } },
+      { key: "l1_product", label: "正式L1(前复权)", match: function(d) { return d.source === "internal" && d.adjustment === "composite_tushare_factor_qfq" && (d.data_policy === "tushare_only_v1" || (d.provenance || {}).data_policy === "tushare_only_v1"); } },
     ];
     const rank = { ready: 3, partial: 2, building: 1, failed: 0 };
     return specs.map(function(sp) {
@@ -4981,26 +4974,18 @@ async function expCreateAndStart() {
     if (!el) return;
     try {
       const st = window.__mdStatus;
-      const lv = (st && st.latest_local_vendor && typeof st.latest_local_vendor === "object") ? st.latest_local_vendor : null;
-      if (!lv || !lv.dataset_id) {
-        el.innerHTML = "<span style='color:var(--red,#ff4f7b)'>⚠ 无ready执行数据集,无法创建数据集链路任务</span>";
+      const prod = (st && st.product && typeof st.product === "object") ? st.product : null;
+      const l2 = prod && prod.l2 ? prod.l2 : null;
+      if (!l2 || !l2.dataset_id) {
+        el.innerHTML = "<span style='color:var(--red,#ff4f7b)'>⚠ 正式L2未就绪,无法创建数据集链路任务</span>";
         return;
       }
-      const dsid = String(lv.dataset_id);
+      const dsid = String(l2.dataset_id);
       const dsShort = dsid.length > 12 ? dsid.slice(0, 12) + "…" : dsid;
-      const status = lv.status == null ? "" : String(lv.status);
-      const statusTag = "<span class='tag " + (status === "ready" ? "tag-green" : status === "partial" ? "tag-orange" : "tag-red") +
-        "' style='font-size:10px;padding:1px 5px'>" + esc(status || "—") + "</span>";
-      const biasTitle = (typeof lv.warning_text === "string" && lv.warning_text)
-        ? " title=\"" + esc(lv.warning_text) + "\"" : "";
-      const biasTag = lv.survivorship_bias === true
-        ? " | <span class='tag tag-orange' style='font-size:10px;padding:1px 5px'" + biasTitle + ">偏差</span>"
-        : "";
-      const range = dsDateRange(lv.earliest_date, lv.latest_date) || "—";
-      const execSrc = (lv.source || "local_vendor") + "/" + (lv.adjustment || "none");
-      const fallbackNote = lv.source && lv.source !== "local_vendor" ? " <span class='tag tag-orange' style='font-size:10px;padding:1px 5px'>执行回退</span>" : "";
-      el.innerHTML = "L2执行数据: " + esc(execSrc) + " | <span title=\"" + esc(dsid) + "\">" + esc(dsShort) + "</span> | " +
-        dsNum(lv.symbol_count) + "只 | " + dsNum(lv.row_count) + "根K线 | " + esc(range) + " | " + statusTag + biasTag + fallbackNote;
+      const statusTag = "<span class='tag tag-green' style='font-size:10px;padding:1px 5px'>ready</span>";
+      const dateTxt = dsFmtYmdDash(l2.max_date || l2.data_cutoff_date) || "—";
+      el.innerHTML = "L2执行数据: internal/composite_none | <span title=\"" + esc(dsid) + "\">" + esc(dsShort) + "</span> | " +
+        "日期 " + esc(dateTxt) + " | " + statusTag;
     } catch (e) {
       el.textContent = "L2执行数据: —";
     }
@@ -5021,21 +5006,16 @@ async function expCreateAndStart() {
     // hard gates for single-select (backtest / bagua): require ready
     const hardGates = [
       { value: "tdxquant", ok: mdHasReady("tdxquant", "front"),
-        hint: "需先同步通达信前复权数据集" },
+        hint: "需先同步通达信前复权数据集（TDX 已退出默认同步）" },
       { value: "tushare", ok: mdHasReadyAny([
+          ["internal", "composite_tushare_factor_qfq"],
           ["tushare", "qfq"],
           ["internal", "tushare_factor_qfq"],
-          ["internal", "composite_tushare_factor_qfq"],
         ]),
-        hint: "需先同步 Tushare 前复权或派生QFQ" },
-      { value: "raw", ok: mdHasReady("local_vendor", "none")
-          || mdHasReady("tdxquant", "none")
-          || mdHasReadyAny([
-          ["local_vendor", "none"],
-          ["tdxquant", "none"],
-          ["tushare", "none"],
-        ]),
-        hint: "需先有未复权数据集（local_vendor/none 等）" },
+        hint: "需先同步 Tushare 前复权或派生QFQ（正式L1优先）" },
+      { value: "raw", ok: mdHasReady("internal", "composite_none")
+          || mdHasReady("tushare", "none"),
+        hint: "需先有正式L2（internal/composite_none）或完整 tushare/none" },
       { value: "internal", ok: mdHasReady("internal", "tushare_factor_qfq"),
         hint: "需先同步因子并派生QFQ数据集" },
     ];
@@ -5044,18 +5024,13 @@ async function expCreateAndStart() {
       { value: "tdxquant", ok: mdHasUsable("tdxquant", "front"),
         hint: "本地尚无通达信前复权（ready/partial）；可先勾选，启动时后端会校验" },
       { value: "tushare", ok: mdHasUsableAny([
+          ["internal", "composite_tushare_factor_qfq"],
           ["tushare", "qfq"],
           ["internal", "tushare_factor_qfq"],
-          ["internal", "composite_tushare_factor_qfq"],
         ]),
         hint: "本地尚无 Tushare 前复权/派生QFQ；可先勾选，启动时后端会校验" },
-      { value: "raw", ok: mdHasUsable("local_vendor", "none")
-          || mdHasUsable("tdxquant", "none")
-          || mdHasUsableAny([
-          ["local_vendor", "none"],
-          ["tdxquant", "none"],
-          ["tushare", "none"],
-        ]),
+      { value: "raw", ok: mdHasUsable("internal", "composite_none")
+          || mdHasUsable("tushare", "none"),
         hint: "本地尚无未复权数据集；可先勾选，启动时后端会校验" },
       { value: "internal", ok: mdHasUsable("internal", "tushare_factor_qfq"),
         hint: "本地尚无因子派生QFQ；可先勾选" },
@@ -5100,7 +5075,7 @@ async function expCreateAndStart() {
           lab.style.pointerEvents = "auto";
           lab.style.cursor = "pointer";
           if (ok) {
-            lab.title = el.value === "tdxquant" ? "通达信前复权" : (el.value === "tushare" ? "Tushare前复权/派生QFQ" : "未复权 local_vendor");
+            lab.title = el.value === "tdxquant" ? "通达信前复权" : (el.value === "tushare" ? "Tushare前复权/派生QFQ" : "未复权（正式L2）");
             lab.classList.remove("exp-src-warn");
           } else {
             lab.title = (g && g.hint) ? g.hint : "数据未就绪（仍可勾选）";
@@ -5251,42 +5226,27 @@ async function expCreateAndStart() {
       if ($("dsFailed")) $("dsFailed").textContent = data.failed_dataset_count || 0;
       if ($("dsBlobs")) $("dsBlobs").textContent = data.blob_count || 0;
       const dsAll = Array.isArray(data.datasets) ? data.datasets : [];
-      const dsLv = (data.latest_local_vendor && typeof data.latest_local_vendor === "object") ? data.latest_local_vendor : null;
+      const product = (data.product && typeof data.product === "object") ? data.product : null;
+      const dsL1 = product && product.l1 ? product.l1 : null;
+      const dsL2 = product && product.l2 ? product.l2 : null;
       if ($("dsLatestLv")) {
-        if (dsLv) {
-          const lvStatus = dsLv.status == null ? "" : String(dsLv.status);
-          const lvStatusHtml = lvStatus
-            ? "<span class='tag " + (lvStatus === "ready" ? "tag-green" : lvStatus === "partial" ? "tag-orange" : "tag-red") + "'>" + esc(lvStatus) + "</span>"
-            : "—";
-          let lvRange = dsDateRange(dsLv.earliest_date, dsLv.latest_date);
-          if (!lvRange && (dsLv.coverage_start_year != null || dsLv.coverage_end_year != null)) {
-            lvRange = (dsLv.coverage_start_year == null ? "—" : esc(dsLv.coverage_start_year)) + "-" +
-              (dsLv.coverage_end_year == null ? "—" : esc(dsLv.coverage_end_year));
-          } else {
-            lvRange = esc(lvRange);
-          }
+        const prod = dsL2 || dsL1;
+        if (prod) {
           $("dsLatestLv").innerHTML =
-            "<span style='font-size:11px'>" + (esc(dsLv.dataset_id) || "—") + "</span> " + lvStatusHtml +
-            " · 股票数 " + dsNum(dsLv.symbol_count) +
-            " · K线数 " + dsNum(dsLv.row_count) +
-            " · 覆盖 " + (lvRange || "—");
+            "<span style='font-size:11px'>" + (esc(prod.dataset_id) || "—") + "</span> " +
+            "<span class='tag tag-green' style='font-size:10px;padding:1px 5px'>正式" + (dsL2 ? "L2" : "L1") + "</span>" +
+            " · 日期 " + (dsFmtYmdDash(prod.max_date || prod.data_cutoff_date) || "—");
         } else {
-          $("dsLatestLv").textContent = "—";
+          $("dsLatestLv").textContent = "—（尚未协调正式产品面）";
         }
       }
       if ($("dsBiasBanner")) {
         const dsBiased = dsAll.filter(function(d) { return d && d.survivorship_bias === true; });
-        const dsHasBias = (dsLv && dsLv.survivorship_bias === true) || dsBiased.length > 0;
-        if (dsHasBias) {
+        if (dsBiased.length > 0) {
           let warnTxt = "";
-          if (dsLv && dsLv.survivorship_bias === true && typeof dsLv.warning_text === "string" && dsLv.warning_text) {
-            warnTxt = dsLv.warning_text;
-          }
-          if (!warnTxt) {
-            for (let i = 0; i < dsBiased.length; i++) {
-              const w = dsBiased[i].warning_text;
-              if (typeof w === "string" && w) { warnTxt = w; break; }
-            }
+          for (let i = 0; i < dsBiased.length; i++) {
+            const w = dsBiased[i].warning_text;
+            if (typeof w === "string" && w) { warnTxt = w; break; }
           }
           $("dsBiasBanner").textContent = warnTxt || "⚠ 该数据集缺少部分历史退市股票,长期全市场回测存在幸存者偏差。";
           $("dsBiasBanner").style.display = "";
@@ -5326,7 +5286,7 @@ async function expCreateAndStart() {
     return parseInt(el.value.replace(/-/g, ""), 10);
   }
   function setSyncButtonsDisabled(disabled) {
-    ["btnSyncTdx", "btnSyncTushare", "btnSyncFactor", "btnSyncDerive", "btnSyncCA"].forEach(function(id) {
+    ["btnSyncTushare", "btnSyncFactor", "btnSyncDerive", "btnSyncCA"].forEach(function(id) {
       const b = $(id);
       if (b) b.disabled = disabled;
     });
@@ -5357,7 +5317,7 @@ async function expCreateAndStart() {
     box.textContent = lines.join("\n");
     box.scrollTop = box.scrollHeight;
   }
-  const _TASK_LABEL = { tdx: "通达信", tushare: "Tushare日线", factor: "Tushare前复权因子", derive: "派生QFQ", ca: "CA公司行为" };
+  const _TASK_LABEL = { tushare: "Tushare日线", factor: "Tushare前复权因子", derive: "派生QFQ", ca: "CA公司行为" };
   function renderSyncProgress(st) {
     const box = $("syncProgressBox");
     const bar = $("syncProgressBar");
@@ -5480,10 +5440,6 @@ async function expCreateAndStart() {
       $("syncProgressBox").style.display = "none";
     }
   }
-  if ($("btnSyncTdx")) $("btnSyncTdx").onclick = function() {
-    if (!confirm("更新通达信数据需要通达信客户端在线，确认继续？")) return;
-    startSync("tdx");
-  };
   if ($("btnSyncTushare")) $("btnSyncTushare").onclick = function() { startSync("tushare"); };
   if ($("btnSyncFactor")) $("btnSyncFactor").onclick = function() { startSync("factor"); };
   if ($("btnSyncDerive")) $("btnSyncDerive").onclick = function() { startSync("derive"); };
@@ -5662,7 +5618,7 @@ async function expCreateAndStart() {
     // smoke-check API so user sees immediate diagnosis
     if (!window._bqApiChecked) {
       window._bqApiChecked = true;
-      fetch("/api/v1/bagua/query?code=600000&date=2024-01-03&period=DAY&adjust=tdx_front")
+      fetch("/api/v1/bagua/query?code=600000&date=2024-01-03&period=DAY&adjust=tushare_qfq")
         .then(function (r) {
           if (r.status === 404) {
             const h = $("bqHint");
@@ -6058,7 +6014,7 @@ async function expCreateAndStart() {
     const qd = bqCurrentQueryDate();
     const date = qd.date;
     const hint = $("bqHint");
-    const adjust = (($("bqAdjust") && $("bqAdjust").value) || "tdx_front");
+    const adjust = (($("bqAdjust") && $("bqAdjust").value) || "tushare_qfq");
     if (!codes.length) {
       toast("请先填写要导出的股票代码");
       if (hint) hint.textContent = "导出查询股票需要先在输入框填写代码（可多股）。";
@@ -6105,7 +6061,7 @@ async function expCreateAndStart() {
     const qd = bqCurrentQueryDate();
     const date = qd.date;
     const hint = $("bqHint");
-    const adjust = (($("bqAdjust") && $("bqAdjust").value) || "tdx_front");
+    const adjust = (($("bqAdjust") && $("bqAdjust").value) || "tushare_qfq");
     if (!date) {
       toast("请选择日期");
       if (hint) hint.textContent = "导出需要先选择日期。";
@@ -11369,7 +11325,7 @@ function renderBtRuleList() {
     else if (btSrc === "tushare") body.signal_adjustment = "qfq";
     else if (btSrc === "raw") body.signal_adjustment = "none";
     else if (btSrc === "internal") body.signal_adjustment = "tushare_factor_qfq";
-    body.execution_data_source = "local_vendor";
+    body.execution_data_source = "internal";
     if (btSrc === "raw") body.research_unadjusted = true;
     return body;
   }

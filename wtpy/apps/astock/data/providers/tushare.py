@@ -350,7 +350,7 @@ class TushareProvider:
 
     def fetch_adj_factor(
         self,
-        ts_code: str,
+        ts_code: Optional[str] = None,
         *,
         start_date: Optional[int] = None,
         end_date: Optional[int] = None,
@@ -358,6 +358,8 @@ class TushareProvider:
     ):
         """Fetch adj_factor for a stock or full market on a trade_date."""
         self._ensure_initialized()
+        if trade_date and ts_code:
+            raise ValueError("ts_code and trade_date are mutually exclusive")
         kwargs = {}
         if trade_date:
             kwargs["trade_date"] = str(trade_date)

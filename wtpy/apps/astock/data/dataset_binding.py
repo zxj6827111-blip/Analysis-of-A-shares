@@ -22,28 +22,34 @@ EXECUTION_ADJUSTMENT = "none"
 # execution plane). Any adjustment in this set is execution-role.
 EXECUTION_ADJUSTMENTS = ("none", "composite_none")
 
-# Product data-source keys. `local_vendor` / `raw` are product defaults that
-# fall back across raw families; explicit family selections
-# (tdx_local / tdxquant / tushare) bind strictly to their own source.
+# Product data-source keys. The Tushare-only policy (tushare_only_v1) makes
+# the formal composite the default product surface; `local_vendor` /
+# `tdx_local` / `tdxquant` remain available as EXPLICIT legacy selections only
+# (historical reproducibility), never as product defaults.
 PRODUCT_SOURCES = ("local_vendor", "tdx_local", "tdxquant", "tushare", "internal", "raw")
 
 
 def signal_resolve_candidates(
     src: Optional[str], adj: Optional[str]
 ) -> List[Tuple[str, str]]:
-    """Ordered (source, adjustment) pairs for product signal sources."""
+    """Ordered (source, adjustment) pairs for product signal sources.
+
+    Tushare-only policy defaults:
+      raw       -> formal L2 (internal/composite_none), bootstrap fallback to
+                   the latest complete tushare/none (quick/read-only only)
+      tushare   -> formal L1 (internal/composite_tushare_factor_qfq) only;
+                   older L1-class datasets are NOT a default fallback for
+                   formal backtests (fail-closed product surface)
+    Legacy families (tdxquant / local_vendor / tdx_local) bind strictly to
+    their own source.
+    """
     if src == "raw":
         return [
-            ("local_vendor", "none"),
-            ("tushare", "none"),
-            ("tdxquant", "none"),
-            ("tdx_local", "none"),
             ("internal", "composite_none"),
+            ("tushare", "none"),
         ]
     if src == "tushare":
         return [
-            ("tushare", "qfq"),
-            ("internal", "tushare_factor_qfq"),
             ("internal", "composite_tushare_factor_qfq"),
         ]
     if src == "tdxquant":
@@ -59,15 +65,19 @@ def signal_resolve_candidates(
 def execution_resolve_candidates(src: Optional[str]) -> List[Tuple[str, str]]:
     """Ordered (source, adjustment) pairs for the L2 execution dataset.
 
-    Preferred family first, then fall back across raw ``none`` families so a
-    missing local_vendor/none does not block backtests/experiment creation
-    (e.g. a test server that only has tushare raw data). Explicit family
-    selections (tushare / tdxquant / tdx_local) bind strictly to their own
-    source.
+    Tushare-only policy: the product default (None / "" / "raw" / "internal")
+    resolves to the formal L2 (internal/composite_none) ONLY — a formal
+    backtest never falls back to a survivorship-unsafe raw family when the
+    product surface is missing.
+
+    Legacy families stay available as EXPLICIT selections: local_vendor /
+    tdx_local / tdxquant / tushare each bind to their own raw `none` set
+    (historical reproducibility), and a bare `local_vendor` keeps the old
+    cross-family fallback chain.
     """
-    s = (src or "local_vendor").strip()
-    if s == "internal":
-        return [("internal", "composite_none"), ("internal", "none")]
+    s = (src or "").strip()
+    if s in ("internal", "raw", ""):
+        return [("internal", "composite_none")]
     if s in PRODUCT_SOURCES:
         if s == "local_vendor":
             return [
@@ -75,14 +85,6 @@ def execution_resolve_candidates(src: Optional[str]) -> List[Tuple[str, str]]:
                 ("tdx_local", "none"),
                 ("tdxquant", "none"),
                 ("tushare", "none"),
-            ]
-        if s == "raw":
-            return [
-                ("local_vendor", "none"),
-                ("tdx_local", "none"),
-                ("tdxquant", "none"),
-                ("tushare", "none"),
-                ("internal", "composite_none"),
             ]
         return [(s, "none")]
     return [(s, "none")]

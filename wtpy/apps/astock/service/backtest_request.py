@@ -53,7 +53,9 @@ class BacktestRequest:
     signal_adjustment: Optional[str] = None  # front | qfq | asof_qfq
     dataset_id: Optional[str] = None  # locked dataset for reproducibility
     weekly_bar_mode: str = "local_aggregate"  # local_aggregate | vendor_native
-    execution_data_source: str = "local_vendor"  # product L2: warehouse raw
+    # Tushare-only policy: product default execution plane is the formal L2
+    # (internal/composite_none). Legacy families must be explicit.
+    execution_data_source: str = "internal"  # product L2: formal composite
     execution_dataset_id: Optional[str] = None
     # execution adjustment (repo mode: from execution manifest, always "none")
     execution_adjustment: Optional[str] = None

@@ -394,7 +394,7 @@ def finalize_run_outputs(
     repro["factor_dataset_id"] = getattr(req, "signal_factor_parent_dataset_id", None)
     repro["signal_formula_version"] = getattr(req, "signal_formula_version", None)
     repro["signal_anchor_policy"] = getattr(req, "signal_anchor_policy", None)
-    repro["execution_data_source"] = getattr(req, "execution_data_source", None) or "local_vendor"
+    repro["execution_data_source"] = getattr(req, "execution_data_source", None) or "internal"
     repro["execution_dataset_id"] = getattr(req, "execution_dataset_id", None)
     # Gate B7: survivorship-safe chain lineage on run_meta
     repro["universe_dataset_id"] = getattr(req, "universe_dataset_id", None)
@@ -506,7 +506,7 @@ def finalize_run_outputs(
                 "signal_adjustment": getattr(req, "signal_adjustment", None),
                 "dataset_id": getattr(req, "dataset_id", None),
                 "weekly_bar_mode": getattr(req, "weekly_bar_mode", None) or "local_aggregate",
-                "execution_data_source": getattr(req, "execution_data_source", None) or "local_vendor",
+                "execution_data_source": getattr(req, "execution_data_source", None) or "internal",
                 "execution_dataset_id": getattr(req, "execution_dataset_id", None),
                 "execution_adjustment": getattr(req, "execution_adjustment", None),
                 "raw_dataset_id": getattr(req, "signal_raw_parent_dataset_id", None),

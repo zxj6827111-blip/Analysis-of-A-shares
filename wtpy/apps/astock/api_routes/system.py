@@ -72,7 +72,11 @@ def _latest_factor_universe_file(ctx: ApiContext) -> Optional[str]:
         m = store.load_manifest(mid)
         if not m:
             continue
-        if m.source != "tushare" or m.adjustment != "adj_factor":
+        if (
+            m.source != "tushare"
+            or m.adjustment != "adj_factor"
+            or (m.dataset_type or "") != "factor"
+        ):
             continue
         uf = (m.universe_file or "").strip()
         if not uf or not Path(uf).exists():
@@ -87,6 +91,7 @@ def _run_sync_process(ctx: ApiContext, cmd: List[str], task_name: str) -> None:
     _sync_state = ctx.sync_state
     _sync_proc = ctx.sync_proc
     _sync_lock = ctx.sync_lock
+    proc = None
     try:
         import os as _os
         env = dict(_os.environ)
@@ -125,17 +130,51 @@ def _run_sync_process(ctx: ApiContext, cmd: List[str], task_name: str) -> None:
                     _sync_state["progress_phase"] = m.group(3)
         proc.wait()
         with _sync_lock:
+            # Classify by real exit code first: rc=0 means the sync genuinely
+            # finished even if a stop request arrived while the reader thread
+            # was draining (stopped/done race — completed runs must never be
+            # reported as stopped, which would trigger a user restart).
+            if proc.returncode == 0:
+                _sync_state["status"] = "done"
+                _sync_state["error"] = None
+            elif _sync_state.get("stop_requested"):
+                _sync_state["status"] = "stopped"
+                _sync_state["error"] = "用户手动停止"
+            else:
+                # Any non-zero exit code means the sync did not fully succeed
+                # (1 = business failure such as expired token / missing parent,
+                # 2 = warning/partial). UI shows error instead of done so
+                # business failures never look successful; the numeric code
+                # itself is available to schedulers/alerting.
+                _sync_state["status"] = "error"
+                _sync_state["error"] = f"exit code {proc.returncode}"
+    except Exception as e:
+        with _sync_lock:
+            # Windows TerminateProcess can make the stdout read loop raise
+            # OSError while the user is stopping the sync — keep that an
+            # intentional stop, not a spurious error.
             if _sync_state["status"] == "stopping":
                 _sync_state["status"] = "stopped"
                 _sync_state["error"] = "用户手动停止"
             else:
-                _sync_state["status"] = "done" if proc.returncode == 0 else "error"
-                _sync_state["error"] = f"exit code {proc.returncode}" if proc.returncode != 0 else None
-    except Exception as e:
-        with _sync_lock:
-            _sync_state["status"] = "error"
-            _sync_state["error"] = str(e)
+                _sync_state["status"] = "error"
+                _sync_state["error"] = str(e)
     finally:
+        # Never leave an orphan holding the SyncTaskLock: a reader-loop
+        # exception or a timed-out stop must not strand the child process.
+        if proc is not None:
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+            except OSError:
+                # ProcessLookupError etc. after natural exit are expected.
+                pass
+            except Exception:
+                pass
         with _sync_lock:
             _sync_state["running"] = False
             _sync_state["finished_at"] = _time.strftime("%Y-%m-%d %H:%M:%S")
@@ -200,7 +239,7 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
     if not md_root.exists():
         result.update({
             "manifest_count": 0, "ready_dataset_count": 0,
-            "datasets": [], "latest_local_vendor": None,
+            "datasets": [], "product": {"l1": None, "l2": None, "active": False},
         })
         return result
     store = DatasetStore(md_root)
@@ -242,13 +281,49 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
             "survivorship_bias": d.survivorship_bias,
             "universe_type": d.universe_type,
             "warning_text": d.warning_text,
+            "data_policy": (d.provenance or {}).get("data_policy"),
         })
 
-    def _pick_source_freshness(key, label, match_fn):
+    def _factor_freshness_summary(d):
+        """Freshness-gate summary for the factor tile.
+
+        Reads manifest.provenance["freshness"] (the sync script records
+        gate="blocked", the derive path records status="blocked"/"passed";
+        both shapes are handled). Old-format manifests without freshness
+        yield None. stale_active_symbols is capped at the top 5.
+        """
+        prov = d.provenance or {}
+        f = prov.get("freshness") or {}
+        if not f:
+            if prov.get("freshness_gate") == "skipped_by_flag":
+                return {
+                    "fresh_symbol_ratio": None, "fresh_count": None,
+                    "active_count": None, "stale_active_symbols": [],
+                    "p50": None, "p10": None,
+                    "gate": "skipped", "reason": "skipped_by_flag",
+                }
+            return None
+        return {
+            "fresh_symbol_ratio": f.get("fresh_symbol_ratio"),
+            "fresh_count": f.get("fresh_count"),
+            "active_count": f.get("active_count"),
+            "stale_active_symbols": (f.get("stale_active_symbols") or [])[:5],
+            "p50": f.get("p50_last_date"),
+            "p10": f.get("p10_last_date"),
+            "gate": f.get("gate") or f.get("status"),
+            "reason": f.get("reason"),
+        }
+
+    def _pick_source_freshness(key, label, match_fn, *,
+                               latest_first=False, carry_freshness=False):
         """Pick best dataset for a UI source tile.
 
-        ready > partial; then freshest cutoff, fullest symbol_count,
+        Default: ready > partial; then freshest cutoff, fullest symbol_count,
         most rows (blocks empty/tiny shells), then newest created_at.
+        latest_first (factor tile): newest candidate wins regardless of
+        status — a freshly synced partial demoted by the freshness gate must
+        not be shadowed by an older ready factor surface (same ordering as
+        tushare_product._select_latest_tushare_factor_candidate).
         """
         cands = [
             d for d in all_ds
@@ -258,31 +333,46 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
             # fall back: still show something if only superseded exists
             cands = [d for d in all_ds if match_fn(d)]
         if not cands:
-            return {
+            tile = {
                 "key": key, "label": label, "status": "missing",
                 "dataset_id": None, "earliest_date": None, "latest_date": None,
                 "data_cutoff_date": None, "updated_to": None,
                 "symbol_count": 0, "row_count": 0, "created_at": None,
                 "source": None, "adjustment": None,
             }
-        rank = {"ready": 3, "partial": 2, "building": 1, "failed": 0, "superseded": -1}
+            if carry_freshness:
+                tile["freshness"] = None
+            return tile
+        if latest_first:
+            def _score(d):
+                _earliest, latest = _date_range(d)
+                updated = d.data_cutoff_date or latest or 0
+                return (
+                    int(updated or 0),
+                    int(d.symbol_count or 0),
+                    int(d.row_count or 0),
+                    int(latest or 0),
+                    d.created_at or "",
+                )
+        else:
+            rank = {"ready": 3, "partial": 2, "building": 1, "failed": 0, "superseded": -1}
 
-        def _score(d):
-            earliest, latest = _date_range(d)
-            updated = d.data_cutoff_date or latest or 0
-            return (
-                rank.get(d.status or "", -1),
-                int(updated or 0),
-                int(d.symbol_count or 0),
-                int(d.row_count or 0),
-                int(latest or 0),
-                d.created_at or "",
-            )
+            def _score(d):
+                _earliest, latest = _date_range(d)
+                updated = d.data_cutoff_date or latest or 0
+                return (
+                    rank.get(d.status or "", -1),
+                    int(updated or 0),
+                    int(d.symbol_count or 0),
+                    int(d.row_count or 0),
+                    int(latest or 0),
+                    d.created_at or "",
+                )
 
         best = max(cands, key=_score)
         earliest, latest = _date_range(best)
         updated = best.data_cutoff_date or latest
-        return {
+        tile = {
             "key": key,
             "label": label,
             "status": best.status,
@@ -297,77 +387,90 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
             "row_count": best.row_count,
             "created_at": best.created_at,
         }
+        if carry_freshness:
+            tile["freshness"] = _factor_freshness_summary(best)
+        return tile
+
+    # Tushare-only policy: resolve the formal L1/L2 product pair ONCE and
+    # reuse it for both the source tiles and the product block, so the
+    # dashboard can never show a tile from a different (independent-latest)
+    # surface than the pair the backtests actually use.
+    try:
+        from ..data.tushare_product import resolve_active_tushare_product_pair
+
+        pair = resolve_active_tushare_product_pair(store)
+    except Exception:
+        pair = None
+
+    def _pair_tile(key, label, manifest, max_date, data_policy):
+        """Tile for a formal product surface (same shape as
+        _pick_source_freshness so index_v3.html renderSourceFreshness keeps
+        working); None manifest -> inactive/None tile."""
+        if manifest is None:
+            return {
+                "key": key, "label": label, "status": "inactive",
+                "dataset_id": None, "source": None, "adjustment": None,
+                "earliest_date": None, "latest_date": None, "max_date": None,
+                "data_cutoff_date": None, "updated_to": None,
+                "symbol_count": 0, "row_count": 0, "created_at": None,
+                "data_policy": None,
+            }
+        earliest, latest = _date_range(manifest)
+        return {
+            "key": key, "label": label, "status": manifest.status,
+            "dataset_id": manifest.dataset_id,
+            "source": manifest.source, "adjustment": manifest.adjustment,
+            "earliest_date": earliest, "latest_date": latest,
+            "max_date": max_date,
+            "data_cutoff_date": manifest.data_cutoff_date,
+            "updated_to": manifest.data_cutoff_date or latest,
+            "symbol_count": manifest.symbol_count,
+            "row_count": manifest.row_count,
+            "created_at": manifest.created_at,
+            "data_policy": data_policy,
+        }
+
+    if pair is not None:
+        l2_tile = _pair_tile("l2_product", "正式L2(未复权)",
+                             pair.l2_manifest, pair.l2_max_date, pair.data_policy)
+        l1_tile = _pair_tile("l1_product", "正式L1(前复权)",
+                             pair.l1_manifest, pair.l1_max_date, pair.data_policy)
+        product = {
+            "l1": {
+                "dataset_id": pair.l1_dataset_id,
+                "data_cutoff_date": pair.l1_manifest.data_cutoff_date,
+                "max_date": pair.l1_max_date,
+                "data_policy": pair.data_policy,
+            },
+            "l2": {
+                "dataset_id": pair.l2_dataset_id,
+                "data_cutoff_date": pair.l2_manifest.data_cutoff_date,
+                "max_date": pair.l2_max_date,
+                "data_policy": pair.data_policy,
+            },
+            "active": True,
+        }
+    else:
+        l2_tile = _pair_tile("l2_product", "正式L2(未复权)", None, None, None)
+        l1_tile = _pair_tile("l1_product", "正式L1(前复权)", None, None, None)
+        product = {"l1": None, "l2": None, "active": False}
 
     source_freshness = [
         _pick_source_freshness(
-            "tdx", "通达信",
-            lambda d: d.source == "tdxquant" and d.adjustment == "front"
-            and getattr(d, "period", "1d") in ("1d", "", None),
-        ),
-        _pick_source_freshness(
             "tushare", "Tushare日线",
-            lambda d: d.source == "tushare" and d.adjustment in ("none", "qfq")
+            lambda d: d.source == "tushare" and d.adjustment == "none"
             and getattr(d, "period", "1d") in ("1d", "", None),
         ),
         _pick_source_freshness(
             "factor", "Tushare前复权因子",
-            lambda d: d.source == "tushare" and d.adjustment == "adj_factor",
+            lambda d: d.source == "tushare" and d.adjustment == "adj_factor"
+            and (getattr(d, "dataset_type", "") or "") == "factor",
+            latest_first=True,
+            carry_freshness=True,
         ),
-        _pick_source_freshness(
-            "derive", "派生QFQ",
-            lambda d: d.source == "internal" and d.adjustment == "tushare_factor_qfq",
-        ),
+        l2_tile,
+        l1_tile,
     ]
-
-    latest_lv = None
-    lv_ready = [
-        d for d in ready
-        if d.source == "local_vendor"
-        and (d.adjustment or "none") == "none"
-        and int(d.row_count or 0) > 0
-    ]
-    if not lv_ready:
-        lv_ready = [d for d in ready if d.source == "local_vendor"]
-    # Execution dataset fallback: when no local_vendor raw dataset exists
-    # (e.g. a test server without vendor data), show the best ready raw
-    # `none` dataset so the UI's L2 execution panel is truthful instead of
-    # blocking with "无ready执行数据集". Prefers the same family order as
-    # backtest.py / experiments.py: tdx_local > tdxquant > tushare.
-    if not lv_ready:
-        for _fs in ("tdx_local", "tdxquant", "tushare"):
-            _cands = [
-                d for d in ready
-                if d.source == _fs and (d.adjustment or "none") == "none"
-                and int(d.row_count or 0) > 0
-            ]
-            if _cands:
-                lv_ready = _cands
-                break
-    if lv_ready:
-        d = max(
-            lv_ready,
-            key=lambda x: (
-                int(x.data_cutoff_date or 0),
-                int(x.symbol_count or 0),
-                int(x.row_count or 0),
-                x.created_at or "",
-            ),
-        )
-        earliest, latest = _date_range(d)
-        latest_lv = {
-            "dataset_id": d.dataset_id,
-            "source": d.source,
-            "adjustment": d.adjustment,
-            "status": d.status,
-            "symbol_count": d.symbol_count,
-            "row_count": d.row_count,
-            "earliest_date": earliest,
-            "latest_date": latest,
-            "coverage_start_year": d.coverage_start_year,
-            "coverage_end_year": d.coverage_end_year,
-            "survivorship_bias": d.survivorship_bias,
-            "warning_text": d.warning_text,
-        }
 
     result.update({
         "manifest_count": len(all_ds),
@@ -380,9 +483,212 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         "total_symbol_count": total_symbols,
         "datasets": datasets_info,
         "source_freshness": source_freshness,
-        "latest_local_vendor": latest_lv,
+        "product": product,
     })
     return result
+
+def _latest_factor_manifest(store) -> Optional["DatasetManifest"]:
+    """Latest tushare/adj_factor factor manifest regardless of status.
+
+    Mirrors tushare_product._select_latest_tushare_factor_candidate: newest
+    by data_cutoff_date -> symbol_count -> row_count -> created_at, no
+    ready-only filter, blob integrity enforced. A freshly synced partial
+    demoted by the freshness gate is the newest surface and must not be
+    shadowed by an older ready factor.
+    """
+    from ..data.dataset_store import DatasetManifest
+
+    candidates = []
+    for mid in store.list_manifests():
+        m = store.load_manifest(mid)
+        if m is None:
+            continue
+        if m.source != "tushare" or (m.adjustment or "") != "adj_factor":
+            continue
+        if (m.dataset_type or "") != "factor":
+            continue
+        if any(r.blob_sha256 and not store.blob_exists(r.blob_sha256)
+               for r in m.symbols):
+            continue
+        candidates.append(m)
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda m: (
+            int(m.data_cutoff_date or 0),
+            int(m.symbol_count or 0),
+            int(m.row_count or 0),
+            m.created_at or "",
+        ),
+    )
+
+@router.get("/api/v1/system/data-health")
+def data_health(ctx: ApiContext = Depends(get_ctx)) -> dict:
+    """Tushare-only product chain health (formal L1/L2 dates, real lineage).
+
+    Reports the actual product dataset dates — never the universe-file max
+    date masquerading as the backtest surface. Distinguishes current
+    freshness from historical completeness (pre-2001 backfill is a separate
+    channel).
+    """
+    cfg = ctx.cfg
+    from ..data.dataset_store import DatasetStore
+    from ..data.tushare_product import tushare_product_data_health
+
+    md_root = cfg.market_data_root
+    if not md_root.exists():
+        return {
+            "ok": False,
+            "status": "stale",
+            "error": "market data root missing",
+            "market_data_root": str(md_root),
+        }
+    store = DatasetStore(md_root)
+
+    # expected latest trading day: calendar-aware when the app calendar file
+    # exists, otherwise a weekday fallback (plan 10.2 — never natural-day lag).
+    # When the calendar itself is stale (its max < real dataset dates) the
+    # weekday heuristic takes over so the report never claims an expected day
+    # older than the actual data.
+    calendar_dates: Optional[List[int]] = None
+    expected: Optional[int] = None
+    calendar_stale = False
+    try:
+        from ..data.calendar import TradeCalendar
+        from ..data.tushare_product import (
+            manifest_history_signals,
+            select_tushare_base,
+            select_tushare_factor,
+        )
+
+        cal = TradeCalendar.load(cfg.calendar_path)
+        if cal.dates:
+            calendar_dates = [int(d) for d in cal.dates]
+            import datetime as _dt
+
+            now = _dt.datetime.now()
+            today = now.date()
+            completed_through = (
+                today if now.hour >= 18 else today - _dt.timedelta(days=1)
+            )
+            completed_int = int(completed_through.strftime("%Y%m%d"))
+            cand = [d for d in calendar_dates if d <= completed_int]
+            if cand:
+                expected = max(cand)
+            # real data max (base/factor) — the calendar must never lag behind
+            data_maxes: List[int] = []
+            for _m in (select_tushare_base(store), select_tushare_factor(store)):
+                if _m is not None:
+                    _sig = manifest_history_signals(_m)
+                    if _sig.max_last_date:
+                        data_maxes.append(int(_sig.max_last_date))
+            if not expected or (data_maxes and expected < max(data_maxes)):
+                from ..data.tushare_product import _last_weekday_on_or_before
+                expected = _last_weekday_on_or_before(completed_int)
+                calendar_stale = True
+            if calendar_stale:
+                # stale calendar cannot compute trading-day lag — fall back to
+                # plain day arithmetic against the weekday expected date
+                calendar_dates = None
+    except Exception:
+        calendar_dates = None
+        expected = None
+
+    # recent sync failures from sync_logs (last 20 runs, newest first)
+    recent_errors: List[dict] = []
+    try:
+        logs = sorted(store.sync_logs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for lp in logs[:20]:
+            try:
+                log = json.loads(lp.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            result = log.get("result") or log
+            status = result.get("status") if isinstance(result, dict) else None
+            if status in ("failed", "error", "partial"):
+                entry = {
+                    "sync_run_id": log.get("sync_run_id"),
+                    "dataset_id": log.get("dataset_id"),
+                    "status": status,
+                    "error": result.get("error") if isinstance(result, dict) else None,
+                    "log_file": lp.name,
+                }
+                if isinstance(result, dict):
+                    # Carry the concrete failure detail the UI needs (partial
+                    # derives report missing_factor + a missing list, raw syncs
+                    # report counts); every key stays None when absent.
+                    missing = result.get("missing")
+                    entry.update({
+                        "missing_factor": result.get("missing_factor"),
+                        "missing_count": (
+                            len(missing) if isinstance(missing, list)
+                            else result.get("missing_count")
+                        ),
+                        "imported": result.get("imported"),
+                        "eligible": result.get("eligible"),
+                        "row_count": result.get("row_count"),
+                        "failed": result.get("failed"),
+                        "no_data": result.get("no_data"),
+                        "warning": result.get("warning"),
+                        "reason": result.get("reason"),
+                    })
+                    issues_sample = (
+                        log.get("issues_sample")
+                        or result.get("issues_sample")
+                        or result.get("issues")
+                    )
+                else:
+                    issues_sample = log.get("issues_sample")
+                if issues_sample:
+                    entry["issues_sample"] = [
+                        str(x)[:200] for x in list(issues_sample)[:3]
+                    ]
+                recent_errors.append(entry)
+    except Exception:
+        pass
+
+    health = tushare_product_data_health(
+        store,
+        expected_trading_day=expected,
+        calendar_dates=calendar_dates,
+        recent_sync_errors=recent_errors,
+    )
+    # P2-1b: report the LATEST factor surface regardless of status — the
+    # health check inside tushare_product_data_health only looks at ready
+    # factors, so a freshness-gate-blocked partial (the newest state) would
+    # otherwise be hidden behind an older ready factor. The factor item
+    # carries the gate state (blocked/passed/skipped) from provenance.
+    try:
+        latest_factor = _latest_factor_manifest(store)
+        if latest_factor is not None:
+            from ..data.tushare_product import manifest_history_signals
+
+            sig = manifest_history_signals(latest_factor)
+            prov = latest_factor.provenance or {}
+            f = prov.get("freshness") or {}
+            if not f and prov.get("freshness_gate") == "skipped_by_flag":
+                gate = "skipped"
+            else:
+                gate = f.get("gate") or f.get("status")
+            health.setdefault("current_freshness", {})["tushare_factor"] = {
+                "key": "tushare_factor", "label": "Tushare adj_factor",
+                "status": latest_factor.status,
+                "dataset_id": latest_factor.dataset_id,
+                "data_cutoff_date": latest_factor.data_cutoff_date,
+                "max_date": sig.max_last_date,
+                "symbol_count": sig.symbol_count,
+                "row_count": sig.total_rows,
+                "data_policy": prov.get("data_policy"),
+                "fresh_symbol_ratio": f.get("fresh_symbol_ratio"),
+                "stale_active_symbols": f.get("stale_active_symbols"),
+                "freshness_gate": gate,
+            }
+    except Exception:
+        pass
+    health["ok"] = health["status"] in ("healthy", "warning")
+    health["market_data_root"] = str(md_root)
+    return health
 
 @router.get("/api/v1/universe/summary")
 def universe_summary(ctx: ApiContext = Depends(get_ctx)) -> dict:
@@ -576,13 +882,32 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
         raise HTTPException(400, f"未知任务类型: {payload.task}")
 
     if payload.task == "tdx":
-        cmd = [sys.executable, "-u", SYNC_SCRIPT, "--source", "tdxquant", "--mode", "incremental", "--end-date", str(end_date), "--skip-ca-detect"]
-    elif payload.task == "tushare":
+        # Tushare-only policy: TDX is disabled in the default sync chain.
+        # Return a structured skip WITHOUT touching the TDX client or
+        # spawning any process (no silent remapping to Tushare).
+        return {
+            "ok": True,
+            "task": "tdx",
+            "skipped": "disabled_by_policy",
+            "message": "通达信(TDX)已退出正式同步：系统为 Tushare-only 数据策略。"
+                       "请使用 tushare/factor/derive 任务。",
+        }
+    if payload.task == "tushare":
+        # Zero-config default chain (handled inside the script for the same
+        # CLI args cron jobs already use): raw incremental -> adj_factor
+        # incremental -> product reconcile. Only the full formal L1/L2 chain
+        # reports success.
         cmd = [sys.executable, "-u", SYNC_SCRIPT, "--source", "tushare", "--mode", "incremental", "--end-date", str(end_date)]
         if start_date:
             cmd += ["--start-date", str(start_date)]
     elif payload.task == "factor":
-        cmd = [sys.executable, "-u", SYNC_SCRIPT, "--source", "tushare", "--adjustment", "adj_factor", "--mode", "full", "--end-date", str(end_date)]
+        # Tushare-only chain: adj_factor is always incremental (window fetch
+        # + parent merge); a user-pinned start_date overrides the auto resume.
+        cmd = [sys.executable, "-u", SYNC_SCRIPT, "--source", "tushare",
+               "--adjustment", "adj_factor", "--mode", "incremental",
+               "--end-date", str(end_date)]
+        if start_date:
+            cmd += ["--start-date", str(start_date)]
         universe_file = _latest_factor_universe_file(ctx, )
         if not universe_file:
             raise HTTPException(400, "Tushare adj_factor sync requires --universe-file")
@@ -621,7 +946,9 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
             "progress_phase": "",
         }
 
-    t = threading.Thread(target=_run_sync_process, args=(cmd, payload.task), daemon=True)
+    t = threading.Thread(
+        target=_run_sync_process, args=(ctx, cmd, payload.task), daemon=True
+    )
     t.start()
     return {
         "ok": True,
@@ -667,6 +994,9 @@ def data_sync_stop(ctx: ApiContext = Depends(get_ctx)) -> dict:
         if proc is None:
             return {"ok": False, "message": "进程句柄丢失"}
         _sync_state["status"] = "stopping"
+        # Internal marker for the worker classifier (never part of the
+        # status payload): rc!=0 + stop_requested -> stopped, rc==0 -> done.
+        _sync_state["stop_requested"] = True
     try:
         proc.terminate()
         try:
@@ -826,7 +1156,7 @@ def dashboard_overview(
             "total_bar_count": md.get("total_bar_count"),
             "total_symbol_count": md.get("total_symbol_count"),
             "source_freshness": md.get("source_freshness"),
-            "latest_local_vendor": md.get("latest_local_vendor"),
+            "product": md.get("product"),
         },
         "sync": {
             "running": bool(sync.get("running")),
