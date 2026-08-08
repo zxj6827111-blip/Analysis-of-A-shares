@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>关键发现 · AStock Dashboard</title>
+<style>
+:root{
+  --bg:#08111d;--bg2:#0b1524;--panel:#111d2d;--panel2:#0e1928;--panel3:#152338;
+  --text:#f1f5fb;--muted:#8fa3bf;--blue:#2f80ff;--blue2:#58a2ff;
+  --green:#3dd68c;--red:#ff6b6b;--amber:#ffb648;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;min-height:100vh}
+header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:var(--bg2);border-bottom:1px solid #1d2b40}
+header h1{font-size:17px;font-weight:600}
+header .sub{color:var(--muted);font-size:12px}
+header a{color:var(--blue2);font-size:12px;text-decoration:none;margin-left:auto}
+main{max-width:1180px;margin:0 auto;padding:18px 22px 60px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.card{background:var(--panel);border:1px solid #1d2b40;border-radius:10px;padding:16px 18px}
+.card h2{font-size:13px;color:var(--muted);font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.big{font-size:30px;font-weight:700;line-height:1.1}
+.row{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px}
+.row .k{color:var(--muted)}
+.row .v{font-weight:600}
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600}
+.tag.ok{background:rgba(61,214,140,.14);color:var(--green)}
+.tag.warn{background:rgba(255,182,72,.14);color:var(--amber)}
+.tag.bad{background:rgba(255,107,107,.14);color:var(--red)}
+.tag.muted{background:rgba(143,163,191,.14);color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{color:var(--muted);font-weight:600;text-align:left;padding:8px 10px;border-bottom:1px solid #22304a;white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid #182538;white-space:nowrap}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+tr:hover td{background:rgba(47,128,255,.05)}
+.pos{color:var(--green)}.neg{color:var(--red)}
+.empty{color:var(--muted);font-size:13px;padding:18px 4px}
+.wl{display:flex;flex-wrap:wrap;gap:8px}
+.wl span{background:var(--panel2);border:1px solid #22304a;border-radius:6px;padding:4px 10px;font-size:12px}
+#err{display:none;background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.4);color:var(--red);padding:14px 18px;border-radius:10px;margin-bottom:14px;font-size:13px}
+footer{color:var(--muted);font-size:11px;text-align:center;padding:18px}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--panel3);border-top-color:var(--blue);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:8px}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>关键发现</h1>
+  <span class="sub" id="genTime">加载中…</span>
+  <a href="/">返回主控制台 →</a>
+</header>
+<main>
+  <div id="err"></div>
+
+  <section class="grid" style="margin-bottom:14px">
+    <div class="card">
+      <h2>数据完备度</h2>
+      <div class="row"><span class="k">数据根</span><span class="v" id="dRoot">-</span></div>
+      <div class="row"><span class="k">Ready 数据集</span><span class="big" id="dReady">-</span></div>
+      <div class="row"><span class="k">partial / failed</span><span class="v" id="dPartial">-</span></div>
+      <div class="row"><span class="k">标的 / 日K</span><span class="v" id="dSymbols">-</span></div>
+    </div>
+    <div class="card">
+      <h2>数据同步</h2>
+      <div class="row"><span class="k">同步任务</span><span class="v" id="sTask">-</span></div>
+      <div class="row"><span class="k">状态</span><span id="sStatus"></span></div>
+      <div class="row"><span class="k">上次完成</span><span class="v" id="sFinished">-</span></div>
+      <div class="row"><span class="k">CA 事件</span><span class="v" id="caInfo">-</span></div>
+    </div>
+    <div class="card">
+      <h2>股票池 / 正式产品面</h2>
+      <div class="row"><span class="k">全市场标的</span><span class="v" id="uCount">-</span></div>
+      <div class="row"><span class="k">交易日历</span><span class="v" id="uCal">-</span></div>
+      <div class="row"><span class="k">数据覆盖</span><span class="v" id="uRange">-</span></div>
+      <div class="row"><span class="k">正式L1(前复权)</span><span class="v" id="dL1">-</span></div>
+      <div class="row"><span class="k">正式L2(未复权)</span><span class="v" id="dL2">-</span></div>
+      <div class="row"><span class="k">执行数据集</span><span class="v" id="dExec">-</span></div>
+    </div>
+  </section>
+
+  <section class="card" style="margin-bottom:14px">
+    <h2>关键发现 · Top 实验变体</h2>
+    <div id="findingsBody" class="empty">加载中…</div>
+  </section>
+
+  <section class="card">
+    <h2>自选观察池 <span id="wlCount" class="tag muted" style="margin-left:auto">-</span></h2>
+    <div id="wlBody" class="empty">加载中…</div>
+  </section>
+</main>
+<footer id="foot">AStock Dashboard</footer>
+<script>
+function $(id){return document.getElementById(id)}
+function fmt(n, digits){
+  if(n===null||n===undefined||n==="") return "-";
+  var x=parseFloat(n);
+  if(isNaN(x)) return String(n);
+  var pct = Math.abs(x) < 5 && x !== 0 ? (x*100).toFixed(2)+"%" : x.toFixed(digits===undefined?2:digits);
+  return pct;
+}
+function cls(n){
+  if(n===null||n===undefined||n==="") return "";
+  var x=parseFloat(n);
+  if(isNaN(x)) return "";
+  return x>=0?"pos":"neg";
+}
+function statusTag(s){
+  if(s==="running"||s==="stopping") return '<span class="tag warn">运行中</span>';
+  if(s==="idle") return '<span class="tag muted">空闲</span>';
+  if(s==="done"||s==="stopped") return '<span class="tag ok">已完成</span>';
+  if(s==="error") return '<span class="tag bad">异常</span>';
+  return '<span class="tag muted">'+s+'</span>';
+}
+function render(d){
+  $("genTime").textContent = "生成于 "+d.generated_at;
+  var data=d.data, sync=d.sync, ca=d.ca, uni=d.universe;
+  $("dRoot").textContent = data.data_root || "-";
+  $("dReady").textContent = data.exists ? (data.ready_dataset_count||0) : "无数据根";
+  $("dPartial").textContent = data.exists ? ((data.partial_dataset_count||0)+" / "+(data.failed_dataset_count||0)) : "-";
+  $("dSymbols").textContent = data.exists ? ((data.total_symbol_count||0)+" / "+(data.total_bar_count||0)) : "-";
+  $("sTask").textContent = sync.task || "无";
+  $("sStatus").innerHTML = statusTag(sync.status);
+  $("sFinished").textContent = sync.last_finished_at || "-";
+  $("caInfo").textContent = ca.exists ? ("同步于 "+(ca.last_sync_at||"?")+"，"+((ca.total_files||0))+" 文件") : "未同步";
+  $("uCount").textContent = uni.count===null||uni.count===undefined ? "-" : uni.count;
+  $("uCal").textContent = uni.calendar_count===null||uni.calendar_count===undefined ? "-" : uni.calendar_count;
+  $("uRange").textContent = uni.data_min_date&&uni.data_max_date ? (String(uni.data_min_date).slice(0,4)+" ~ "+String(uni.data_max_date).slice(0,4)) : "-";
+  var prod = data.product||null, l1 = prod&&prod.l1 ? prod.l1 : null, l2 = prod&&prod.l2 ? prod.l2 : null;
+  var execTxt = "-";
+  if (l2) execTxt = "正式L2 · "+(String(l2.dataset_id||"").slice(0,18))+" · "+(l2.max_date||l2.data_cutoff_date||"");
+  else if (l1) execTxt = "正式L1 · "+(String(l1.dataset_id||"").slice(0,18));
+  else execTxt = "正式产品面未就绪（Tushare-only）";
+  $("dExec").textContent = execTxt;
+  $("dL1").textContent = l1 ? (String(l1.dataset_id||"").slice(0,20)+" · "+(l1.max_date||l1.data_cutoff_date||"")) : "未就绪";
+  $("dL2").textContent = l2 ? (String(l2.dataset_id||"").slice(0,20)+" · "+(l2.max_date||l2.data_cutoff_date||"")) : "未就绪";
+  var fb=$("findingsBody");
+  if(!d.findings.length){ fb.className="empty"; fb.textContent="暂无达到阈值（胜率≥50%）的实验结果。"; }
+  else{
+    fb.className="";
+    var rows=d.findings.map(function(f){
+      var sig=[f.signal_data_source,f.signal_adjustment].filter(Boolean).join("/");
+      return '<tr><td>'+(f.title||"-")+'</td><td>'+(f.experiment_name||"-")+'</td>'+
+        '<td class="num '+cls(f.win_rate)+'">'+fmt(f.win_rate,1)+'</td>'+
+        '<td class="num '+cls(f.total_return)+'">'+fmt(f.total_return)+'</td>'+
+        '<td class="num '+cls(f.max_drawdown)+'">'+fmt(f.max_drawdown)+'</td>'+
+        '<td class="num">'+fmt(f.payoff_ratio,2)+'</td>'+
+        '<td class="num">'+(f.n_round_trips||0)+'</td>'+
+        '<td>'+sig+'</td></tr>';
+    }).join("");
+    fb.innerHTML='<table><thead><tr><th>变体</th><th>实验</th><th>胜率</th><th>总收益</th><th>最大回撤</th><th>盈亏比</th><th>交易数</th><th>信号源</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+  $("wlCount").textContent = d.watchlist.count===null||d.watchlist.count===undefined?"-":(d.watchlist.count+" 个");
+  var wb=$("wlBody");
+  if(d.watchlist.symbols&&d.watchlist.symbols.length){
+    wb.className="wl";
+    wb.innerHTML = d.watchlist.symbols.map(function(s){return "<span>"+s+"</span>"}).join("");
+  } else { wb.className="empty"; wb.textContent="自选池不可用（需通达信本地数据）。"; }
+}
+fetch("/api/v1/dashboard/overview")
+  .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
+  .then(render)
+  .catch(function(e){
+    var el=$("err"); el.style.display="block";
+    el.textContent="Dashboard 加载失败: "+e.message;
+    ["dReady","dRoot","dPartial","dSymbols","sTask","sStatus","sFinished","caInfo","uCount","uCal","uRange","dExec"].forEach(function(id){$(id).textContent="-";});
+    $("findingsBody").className="empty"; $("findingsBody").textContent="不可用";
+    $("wlBody").className="empty"; $("wlBody").textContent="不可用";
+    $("genTime").textContent="加载失败";
+  });
+</script>
+</body>
+</html>

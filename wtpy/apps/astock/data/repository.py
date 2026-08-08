@@ -244,6 +244,9 @@ class MarketDataRepository:
             period=winner.period or "1d",
             status="ready",
         )
+        win_syms = {
+            r.symbol for r in (winner.symbols or []) if getattr(r, "blob_sha256", None)
+        }
         for m in peers:
             if m.dataset_id == winner.dataset_id:
                 continue
@@ -254,6 +257,15 @@ class MarketDataRepository:
             empty = n >= 50 and rows <= 0 and win_rows > 0
             older_smaller = cut <= win_cut and n < win_n and rows < win_rows
             if not (tiny or empty or older_smaller):
+                continue
+            # A same-family set with unique symbol coverage is a supplement
+            # role (e.g. the delisted-factor set feeding the formal L1), not
+            # a dominated duplicate — demoting it would break factor
+            # resolution for symbols the winner does not carry.
+            cand_syms = {
+                r.symbol for r in (m.symbols or []) if getattr(r, "blob_sha256", None)
+            }
+            if cand_syms and win_syms and not cand_syms <= win_syms:
                 continue
             m.status = "superseded"
             prov = dict(getattr(m, "provenance", None) or {})

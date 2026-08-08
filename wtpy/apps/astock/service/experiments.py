@@ -915,64 +915,6 @@ DUAL_SOURCE_COMPARE_TEMPLATE: List[Dict[str, Any]] = [
 _REPO_SIGNAL_SOURCES = ("tdxquant", "tushare", "internal", "raw")
 
 
-def _signal_resolve_candidates(src: str, adj: Optional[str]) -> List[tuple]:
-    """Ordered (source, adjustment) pairs for product signal sources."""
-    if src == "raw":
-        return [
-            ("local_vendor", "none"),
-            ("tushare", "none"),
-            ("tdxquant", "none"),
-            ("tdx_local", "none"),
-            ("internal", "composite_none"),
-        ]
-    if src == "tushare":
-        return [
-            ("tushare", "qfq"),
-            ("internal", "tushare_factor_qfq"),
-            ("internal", "composite_tushare_factor_qfq"),
-        ]
-    if src == "tdxquant":
-        return [("tdxquant", adj or "front")]
-    if src == "internal":
-        return [
-            ("internal", adj or "tushare_factor_qfq"),
-            ("internal", "composite_tushare_factor_qfq"),
-        ]
-    return [(src, adj or "")]
-
-
-def _execution_resolve_candidates(src: str) -> List[tuple]:
-    """Ordered (source, adjustment) pairs for the L2 execution dataset.
-
-    Mirrors backtest.py: preferred family first, then fall back across raw
-    ``none`` families so a missing local_vendor/none does not block experiment
-    creation (e.g. a test server that only has tushare raw data). Explicit
-    family selections (tushare / tdxquant / tdx_local) bind strictly to their
-    own source.
-    """
-    s = (src or "local_vendor").strip()
-    if s == "internal":
-        return [("internal", "composite_none"), ("internal", "none")]
-    if s in ("local_vendor", "tdx_local", "tdxquant", "tushare", "raw"):
-        if s == "local_vendor":
-            return [
-                ("local_vendor", "none"),
-                ("tdx_local", "none"),
-                ("tdxquant", "none"),
-                ("tushare", "none"),
-            ]
-        if s == "raw":
-            return [
-                ("local_vendor", "none"),
-                ("tdx_local", "none"),
-                ("tdxquant", "none"),
-                ("tushare", "none"),
-                ("internal", "composite_none"),
-            ]
-        return [(s, "none")]
-    return [(s, "none")]
-
-
 def _normalize_signal_variants(
     signal_variants: Optional[Sequence[dict]],
 ) -> List[Dict[str, Any]]:
@@ -1045,7 +987,9 @@ def _resolve_variant_datasets_and_common_universe(
     from ..data.dataset_binding import (
         DatasetBindingError,
         classify_symbol_coverage,
+        execution_resolve_candidates,
         manifest_symbol_index,
+        signal_resolve_candidates,
         validate_execution_dataset_binding,
         validate_signal_dataset_binding,
     )
@@ -1069,7 +1013,7 @@ def _resolve_variant_datasets_and_common_universe(
         else:
             manifest = None
             _last = None
-            for _cs, _ca in _signal_resolve_candidates(src, adj):
+            for _cs, _ca in signal_resolve_candidates(src, adj):
                 try:
                     manifest = repo.resolve_latest_ready(
                         source=_cs, adjustment=_ca, period="1d"
@@ -1101,7 +1045,7 @@ def _resolve_variant_datasets_and_common_universe(
     if len({r["dataset_id"] for r in resolved}) != len(resolved):
         raise ValueError("signal variants must use distinct signal datasets")
 
-    exec_src = (execution_data_source or "local_vendor").strip()
+    exec_src = (execution_data_source or "internal").strip()
     if execution_dataset_id:
         exec_manifest = validate_execution_dataset_binding(
             repo, execution_dataset_id, source=exec_src, period="1d"
@@ -1110,7 +1054,7 @@ def _resolve_variant_datasets_and_common_universe(
     else:
         exec_manifest = None
         _last_exec_err = None
-        for _es, _ea in _execution_resolve_candidates(exec_src):
+        for _es, _ea in execution_resolve_candidates(exec_src):
             try:
                 exec_manifest = repo.resolve_latest_ready(
                     source=_es, adjustment=_ea, period="1d"
@@ -1121,7 +1065,7 @@ def _resolve_variant_datasets_and_common_universe(
         if exec_manifest is None:
             _tried = "、".join(
                 "%s/%s" % (_es, _ea)
-                for _es, _ea in _execution_resolve_candidates(exec_src)
+                for _es, _ea in execution_resolve_candidates(exec_src)
             )
             raise DatasetBindingError(
                 "DATASET_NOT_FOUND",
@@ -1130,7 +1074,7 @@ def _resolve_variant_datasets_and_common_universe(
                 http_status=404,
                 requested_source=exec_src,
                 requested_adjustment="none",
-                remediation="先同步执行数据集（local_vendor/none 或其它 none 集），或显式指定 execution_dataset_id",
+                remediation="先同步 Tushare 数据并协调正式 L2（internal/composite_none），或显式指定 execution_dataset_id",
             ) from _last_exec_err
         exec_id = exec_manifest.dataset_id
 
@@ -1353,7 +1297,8 @@ def create_experiment_from_grid(
     signal_adjustment: Optional[str] = None,
     dataset_id: Optional[str] = None,
     weekly_bar_mode: str = "local_aggregate",
-    execution_data_source: str = "local_vendor",
+    # Tushare-only policy: product default execution plane is formal L2.
+    execution_data_source: str = "internal",
     execution_dataset_id: Optional[str] = None,
     dual_source_compare: bool = False,
     signal_variants: Optional[Sequence[dict]] = None,
@@ -1612,7 +1557,9 @@ def create_experiment_from_grid(
             signal_adjustment = _resolved_descriptors[0]["signal_adjustment"]
             dataset_id = _resolved_descriptors[0]["dataset_id"]
 
-    # ---- Weekly bagua price-plane axis (raw / tdx_front / tushare_qfq) ----
+    # ---- Weekly bagua price-plane axis (raw / tushare_qfq) ----
+    # Tushare-only policy: tdx_front is disabled; explicit requests raise a
+    # clear error instead of silently mapping to another plane.
     # Multi-select expands only variants that enable bagua filter; others keep
     # a single default plane for repro without multiplying the grid.
     _planes: List[str] = []
@@ -1627,7 +1574,12 @@ def create_experiment_from_grid(
             s = "tushare_qfq"
         elif s in ("none", "unadjusted", "未复权"):
             s = "raw"
-        if s not in ("raw", "tdx_front", "tushare_qfq"):
+        if s == "tdx_front":
+            raise ValueError(
+                "tdx_front 已停用：系统已切换为 Tushare-only 数据策略。"
+                "请使用 tushare_qfq 或 raw 周卦口径。"
+            )
+        if s not in ("raw", "tushare_qfq"):
             continue
         _seen_pl.add(s)
         _planes.append(s)
@@ -1639,7 +1591,12 @@ def create_experiment_from_grid(
             s0 = "tushare_qfq"
         elif s0 in ("none", "unadjusted"):
             s0 = "raw"
-        if s0 not in ("raw", "tdx_front", "tushare_qfq"):
+        if s0 == "tdx_front":
+            raise ValueError(
+                "tdx_front 已停用：系统已切换为 Tushare-only 数据策略。"
+                "请使用 tushare_qfq 或 raw 周卦口径。"
+            )
+        if s0 not in ("raw", "tushare_qfq"):
             s0 = "raw"
         _planes = [s0]
     _bp = (bagua_period or "WEEK").strip().upper() or "WEEK"
@@ -1916,7 +1873,7 @@ class ExperimentRunner:
                 or "local_aggregate",
                 execution_data_source=params.get("execution_data_source")
                 or exp_cfg.get("execution_data_source")
-                or "local_vendor",
+                or "internal",
                 execution_dataset_id=params.get("execution_dataset_id")
                 or exp_cfg.get("execution_dataset_id"),
                 universe_dataset_id=params.get("universe_dataset_id")

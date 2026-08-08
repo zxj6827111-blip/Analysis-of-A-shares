@@ -14,6 +14,9 @@ Price plane selectable:
 
 from __future__ import annotations
 
+import re
+import threading
+import time as _bq_time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -80,7 +83,7 @@ def normalize_period(period: Optional[str]) -> str:
 
 def normalize_adjust_mode(mode: Optional[str]) -> str:
     """Return canonical: raw | tdx_front | tushare_qfq | standard_qfq | asof_forward_qfq."""
-    m = (mode or "tdx_front").strip().lower()
+    m = (mode or "tushare_qfq").strip().lower()
     if m in ("raw", "unadjusted", "none", "未复权", "不复权"):
         return "raw"
     if m in ("tdx_front", "tdxquant_front", "通达信前复权"):
@@ -120,6 +123,11 @@ def normalize_query_code(raw: str) -> str:
     idx_etf = to_index_etf_std_code(t)
     if idx_etf:
         return idx_etf
+    # Stock ts_code form: 600000.SH / 000001.SZ / 920001.BJ (exchange is
+    # explicit, so 000001.SZ resolves to the stock, not the index).
+    m = re.match(r"^(\d{6})\.(SH|SZ|BJ)$", t, re.IGNORECASE)
+    if m:
+        return {"SH": "SSE", "SZ": "SZSE", "BJ": "BSE"}[m.group(2).upper()] + f".STK.{m.group(1)}"
     return to_std_code(t)
 
 
@@ -152,26 +160,40 @@ def _symbol_variants(symbol: str) -> List[str]:
     return MarketDataRepository._symbol_variants(symbol)
 
 
+class SourceDisabledError(ValueError):
+    """A price plane was disabled by the Tushare-only data policy."""
+
+
 def _source_match_pairs(source_key: str) -> List[Tuple[str, str]]:
-    """Map UI adjust key to warehouse (source, adjustment) pairs, priority order."""
+    """Map UI adjust key to warehouse (source, adjustment) pairs, priority order.
+
+    Tushare-only policy (tushare_only_v1):
+      raw        -> formal L2 (internal/composite_none) first; the latest
+                    complete tushare/none is the bootstrap fallback
+      tushare_qfq -> formal L1 (internal/composite_tushare_factor_qfq) first;
+                     without a formal pair the bootstrap fallback is the
+                     read-only native tushare/qfq set; the legacy internal
+                     tushare_factor_qfq derived set is no longer readable
+      tdx_front  -> DISABLED: explicit requests raise SourceDisabledError
+    """
     if source_key == "tdx_front":
-        # 通达信原生前复权（仅 tdxquant/front）
-        return [("tdxquant", "front")]
+        raise SourceDisabledError(
+            "tdx_front 已停用：系统已切换为 Tushare-only 数据策略，不再提供"
+            "通达信前复权数据面。请使用 tushare_qfq（正式 L1 前复权）或 raw"
+            "（正式 L2 未复权）。"
+        )
     if source_key == "tushare_qfq":
-        # Tushare 官方 QFQ 优先；派生 QFQ 作为同源前复权后备
+        # 正式 L1 优先；无正式面对时 bootstrap 只读后备为原生 tushare/qfq
+        # （旧 internal/tushare_factor_qfq 派生集已不可读）
         return [
-            ("tushare", "qfq"),
-            ("internal", "tushare_factor_qfq"),
             ("internal", "composite_tushare_factor_qfq"),
+            ("tushare", "qfq"),
         ]
     if source_key == "raw":
-        # 未复权：与回测 L2 一致优先 local_vendor/none，再其它 none 集
+        # 未复权：与回测 L2 一致，正式 L2 优先，bootstrap 后备为完整 tushare/none
         return [
-            ("local_vendor", "none"),
-            ("tushare", "none"),
-            ("tdxquant", "none"),
-            ("tdx_local", "none"),
             ("internal", "composite_none"),
+            ("tushare", "none"),
         ]
     raise ValueError(f"unsupported dataset source_key: {source_key}")
 
@@ -233,7 +255,12 @@ def load_day_bars_for_plane(
     manifests are listed once (avoids per-symbol full-warehouse scans).
     """
     key = normalize_adjust_mode(plane)
-    if key not in ("raw", "tdx_front", "tushare_qfq"):
+    if key == "tdx_front":
+        raise SourceDisabledError(
+            "tdx_front 已停用：系统已切换为 Tushare-only 数据策略。"
+            "请使用 tushare_qfq 或 raw。"
+        )
+    if key not in ("raw", "tushare_qfq"):
         raise ValueError(f"unsupported bagua price plane: {plane}")
     try:
         if session is not None:
@@ -264,13 +291,24 @@ class BaguaPlaneSession:
     Built once per backtest bagua phase: lists matching manifests, builds
     per-manifest symbol indexes, and serves per-code blob loads without
     re-scanning the entire data root for every stock (full-A freeze fix).
+
+    Tushare-only policy: candidates are restricted to the product role's
+    dataset families, short-window orphan surfaces are ineligible, and the
+    formal L1/L2 product pair is preferred. ``bootstrap_fallback`` in the
+    returned meta marks datasets that are NOT the current formal surface
+    (quick/read-only fallback only).
     """
 
     def __init__(self, cfg: AStockConfig, source_key: str):
         from ..data.dataset_store import DatasetStore
 
         self.source_key = normalize_adjust_mode(source_key)
-        if self.source_key not in ("raw", "tdx_front", "tushare_qfq"):
+        if self.source_key == "tdx_front":
+            raise SourceDisabledError(
+                "tdx_front 已停用：系统已切换为 Tushare-only 数据策略。"
+                "请使用 tushare_qfq 或 raw。"
+            )
+        if self.source_key not in ("raw", "tushare_qfq"):
             raise ValueError(f"unsupported bagua price plane: {source_key}")
         md_root = getattr(cfg, "market_data_root", None)
         if not md_root or not Path(md_root).exists():
@@ -281,20 +319,99 @@ class BaguaPlaneSession:
         self.status_rank = {"ready": 3, "partial": 2, "building": 1, "failed": 0}
         # list of (manifest, symbol_index dict, pair_priority)
         self._indexed: List[Tuple[Any, Dict[str, Any], int]] = []
+        # per-manifest history signals (computed once in _build_index, reused
+        # by every _score call — avoids an O(N) scan + np.median per symbol)
+        self._manifest_sig: Dict[str, Any] = {}
         self._saw_any_pair = False
+        # current formal product surface (Tushare-only), if any
+        self.formal_l1_id: Optional[str] = None
+        self.formal_l2_id: Optional[str] = None
+        try:
+            from ..data.tushare_product import resolve_active_tushare_product_pair
+
+            pair = resolve_active_tushare_product_pair(self.store)
+            if pair is not None:
+                self.formal_l1_id = pair.l1_dataset_id
+                self.formal_l2_id = pair.l2_dataset_id
+        except Exception:
+            self.formal_l1_id = None
+            self.formal_l2_id = None
         self._build_index()
 
+    def _is_index_etf_surface(self, m: Any) -> bool:
+        """True when a manifest's blob-bearing symbols are mainly index/ETF.
+
+        Index/ETF symbols are synced into tushare/none surfaces of their own
+        (separate from the stock full-market base). Newly listed ETFs
+        legitimately start with a short window, so those fallback surfaces
+        must not be dropped wholesale by the orphan-window gate.
+        """
+        syms = [r.symbol for r in m.symbols if r.blob_sha256]
+        if not syms:
+            return False
+        idx_etf = sum(1 for s in syms if ".IDX." in s or ".ETF." in s)
+        return idx_etf > 0 and idx_etf * 2 >= len(syms)
+
     def _build_index(self) -> None:
+        from ..data.tushare_product import manifest_history_signals
+
         for mid in self.store.list_manifests():
             m = self.store.load_manifest(mid)
             if m is None:
                 continue
             if (m.period or "1d") not in ("1d", "", None):
                 continue
-            if m.status not in ("ready", "partial"):
+            # eligibility: product candidates must be ready (partial/building/
+            # failed never enter the selection chain)
+            if m.status != "ready":
                 continue
             pair = (m.source, m.adjustment)
             if pair not in self.pair_rank:
+                continue
+            formal_id = (
+                self.formal_l2_id
+                if self.source_key == "raw"
+                else self.formal_l1_id
+            )
+            if formal_id:
+                # Once the atomic product pair exists, only that exact
+                # manifest is eligible. Same-date legacy composites or native
+                # QFQ datasets must not win through row-count tie breakers.
+                if m.dataset_id != formal_id:
+                    # Index/ETF symbols are synced into tushare/none, never
+                    # into the stock composite product pair; keep the latest
+                    # ready tushare/none surface indexed on the raw plane so
+                    # index/ETF queries still resolve from the warehouse.
+                    if not (
+                        self.source_key == "raw"
+                        and pair == ("tushare", "none")
+                    ):
+                        continue
+            else:
+                # Bootstrap remains Tushare-only. Old internal composites may
+                # carry local_vendor/TDX lineage and are therefore ineligible.
+                bootstrap_pair = (
+                    ("tushare", "none")
+                    if self.source_key == "raw"
+                    else ("tushare", "qfq")
+                )
+                if pair != bootstrap_pair:
+                    continue
+            # quality gate: quality_status must not be explicitly failed
+            prov = getattr(m, "provenance", None) or {}
+            if prov.get("quality_status") == "failed":
+                continue
+            sig = manifest_history_signals(m)
+            self._manifest_sig[m.dataset_id] = sig
+            # short-window orphan surfaces are ineligible as product
+            # candidates — except tushare/none index/ETF fallback surfaces
+            # (newly listed ETFs legitimately start with a short window and
+            # would otherwise drop the whole fallback surface). Ready and
+            # quality filters stay in force.
+            is_idx_etf_fallback = (
+                pair == ("tushare", "none") and self._is_index_etf_surface(m)
+            )
+            if sig.is_short_window and not is_idx_etf_fallback:
                 continue
             self._saw_any_pair = True
             idx: Dict[str, Any] = {}
@@ -309,7 +426,8 @@ class BaguaPlaneSession:
                     elif getattr(r, "quality", None) == "ok" and getattr(prev, "quality", None) != "ok":
                         idx[v] = r
             self._indexed.append((m, idx, self.pair_rank[pair]))
-        # Prefer fuller / fresher / ready datasets first for scan order.
+        # Scan order does NOT rank by vendor priority: freshness and history
+        # depth decide within the product role (plan 8.2).
         self._indexed.sort(
             key=lambda t: (
                 self.status_rank.get(t[0].status or "", -1),
@@ -317,7 +435,6 @@ class BaguaPlaneSession:
                 int(t[0].symbol_count or 0),
                 int(t[0].row_count or 0),
                 t[0].created_at or "",
-                -t[2],  # official pair before fallback
             ),
             reverse=True,
         )
@@ -392,27 +509,64 @@ class BaguaPlaneSession:
         if not hits:
             if not self._saw_any_pair:
                 raise FileNotFoundError(
-                    f"未找到 {self.source_key} 数据集，请先在数据仓库同步通达信前复权或 Tushare 前复权"
+                    f"未找到 {self.source_key} 数据集，请先同步 Tushare 前复权数据"
                 )
             raise FileNotFoundError(
                 f"{std_code} 在 {self.source_key} 全部数据集中均无可用K线"
                 + (f"（查询日 {asof}）" if asof else "")
             )
 
+        # Formal product lock for stocks: once the atomic L1/L2 pair exists,
+        # stock queries must resolve only from the formal composite. The
+        # extra tushare/none surfaces indexed in _build_index exist for
+        # index/ETF symbols, which are outside the composite pair.
+        formal_id = (
+            self.formal_l2_id if self.source_key == "raw" else self.formal_l1_id
+        )
+        is_index_etf = any(".IDX." in v or ".ETF." in v for v in variants)
+        if formal_id and not is_index_etf:
+            hits = [h for h in hits if h[0].dataset_id == formal_id]
+            if not hits:
+                raise FileNotFoundError(
+                    f"{std_code} 在 {self.source_key} 全部数据集中均无可用K线"
+                    + (f"（查询日 {asof}）" if asof else "")
+                )
+
         def _score(item):
             m, rec, pr, covers, _first, latest = item
             cutoff = int(m.data_cutoff_date or latest or 0)
             rows = int(rec.row_count or 0)
-            # If every candidate is stale for the query date, freshness wins.
-            # Covered historical queries preserve the existing status/source order.
-            stale_latest = latest if asof is not None and not covers else 0
+            # history depth: median per-symbol rows (1.0 = ~1000+ rows).
+            # Per-manifest signals were computed once in _build_index, so
+            # scoring never re-scans the manifest symbol records.
+            sig = self._manifest_sig.get(m.dataset_id)
+            med = float(sig.median_rows) if sig is not None else float(rows)
+            completeness = min(1.0, med / 1000.0)
+            if asof is None:
+                # "Latest available" queries: freshest real data wins within the
+                # product role — no vendor/source priority overrides freshness.
+                return (
+                    latest,
+                    cutoff,
+                    completeness,
+                    rows,
+                    m.created_at or "",
+                )
+            # Historical asof: the candidate must span the query date; the
+            # anchored (cutoff >= asof, nearest) version wins, which keeps the
+            # point-in-time semantics of derived QFQ versions. Distances are
+            # negated so the NEAREST version sorts first under reverse=True.
+            near = -(
+                abs(cutoff - asof)
+                if cutoff >= asof
+                else (asof - cutoff) + 10**9
+            )
             return (
                 1 if covers else 0,
-                stale_latest,
-                self.status_rank.get(m.status or "", -1),
-                -pr,
-                cutoff,
+                1 if cutoff >= asof else 0,
+                near,
                 latest,
+                completeness,
                 rows,
                 m.created_at or "",
             )
@@ -424,6 +578,10 @@ class BaguaPlaneSession:
             raise FileNotFoundError(
                 f"{std_code} 数据集 {manifest.dataset_id} blob 为空"
             )
+        formal_id = (
+            self.formal_l2_id if self.source_key == "raw" else self.formal_l1_id
+        )
+        prov = getattr(manifest, "provenance", None) or {}
         meta: Dict[str, Any] = {
             "dataset_id": manifest.dataset_id,
             "dataset_source": manifest.source,
@@ -438,8 +596,38 @@ class BaguaPlaneSession:
             "symbol_effective_last_date": effective_last,
             "candidate_datasets": len(hits),
             "session_indexed": True,
+            "data_policy": prov.get("data_policy"),
+            "expected_formal_l1_id": self.formal_l1_id,
+            "expected_formal_l2_id": self.formal_l2_id,
+            "bootstrap_fallback": bool(
+                formal_id is None or manifest.dataset_id != formal_id
+            ),
         }
         return bars, meta
+
+
+# Process-wide plane-session reuse. Building the warehouse index is the
+# dominant cost of single-shot queries (scan all manifests + per-manifest
+# symbol indexes, ~1-2s with 50+ datasets). Sessions are read-only after
+# construction, so concurrent reads are safe under a plain TTL cache.
+_SESSION_CACHE_TTL = 300.0
+_session_cache_lock = threading.Lock()
+_session_cache: Dict[Tuple[str, str], Tuple[float, "BaguaPlaneSession"]] = {}
+
+
+def _get_plane_session(cfg: AStockConfig, source_key: str) -> "BaguaPlaneSession":
+    """Return a cached (TTL) BaguaPlaneSession for the given price plane."""
+    md_root = getattr(cfg, "market_data_root", None)
+    key = (str(md_root), normalize_adjust_mode(source_key))
+    now = _bq_time.time()
+    with _session_cache_lock:
+        hit = _session_cache.get(key)
+        if hit is not None and now - hit[0] < _SESSION_CACHE_TTL:
+            return hit[1]
+    session = BaguaPlaneSession(cfg, source_key)
+    with _session_cache_lock:
+        _session_cache[key] = (now, session)
+    return session
 
 
 def _load_dataset_bars(
@@ -448,8 +636,8 @@ def _load_dataset_bars(
     source_key: str,
     asof: Optional[int] = None,
 ) -> Tuple[List[DayBar], Dict[str, Any]]:
-    """Load day bars from warehouse for bagua query (single-shot session)."""
-    session = BaguaPlaneSession(cfg, source_key)
+    """Load day bars from warehouse for bagua query (cached shared session)."""
+    session = _get_plane_session(cfg, source_key)
     return session.load_symbol(std_code, asof=asof)
 
 
@@ -723,6 +911,12 @@ def query_bagua(
     per = normalize_period(period)
     adj = normalize_adjust_mode(adjust)
 
+    if adj == "tdx_front":
+        raise SourceDisabledError(
+            "tdx_front 已停用：系统已切换为 Tushare-only 数据策略，不再提供"
+            "通达信前复权数据面。请使用 tushare_qfq（正式 L1）或 raw（正式 L2）。"
+        )
+
     if calc is None:
         if not cfg.bagua_json:
             raise FileNotFoundError("bagua knowledge json not configured")
@@ -777,12 +971,10 @@ def query_bagua(
             price_plane = "L1_signal_price"
         else:
             ds_src = ds_meta.get("dataset_source")
-            if ds_src == "local_vendor":
-                src_label = "local_vendor未复权数据集"
+            if ds_src == "internal":
+                src_label = "正式L2复合数据集" if ds_meta.get("dataset_adjustment") == "composite_none" else "内部未复权数据集"
             elif ds_src == "tushare":
                 src_label = "Tushare未复权日线"
-            elif ds_src == "tdxquant":
-                src_label = "通达信未复权日线"
             elif ds_src == "legacy_tdx_day":
                 src_label = "本地通达信day文件(未复权后备)"
             else:
@@ -959,7 +1151,7 @@ def batch_query_bagua(
     all_stocks: bool = False,
     date: Union[str, int],
     period: str = "DAY",
-    adjust: str = "tdx_front",
+    adjust: str = "tushare_qfq",
     limit: Optional[int] = None,
     on_progress: Optional[Any] = None,
 ) -> Dict[str, Any]:
@@ -983,6 +1175,11 @@ def batch_query_bagua(
 
     session: Optional[BaguaPlaneSession] = None
     if adj in ("tdx_front", "tushare_qfq", "raw"):
+        if adj == "tdx_front":
+            raise SourceDisabledError(
+                "tdx_front 已停用：系统已切换为 Tushare-only 数据策略。"
+                "请使用 tushare_qfq 或 raw。"
+            )
         try:
             session = BaguaPlaneSession(cfg, adj)
         except FileNotFoundError:
@@ -1362,7 +1559,7 @@ def export_bagua_xlsx(
     *,
     date: Union[str, int],
     period: str = "DAY",
-    adjust: str = "tdx_front",
+    adjust: str = "tushare_qfq",
     codes: Optional[Sequence[str]] = None,
     all_stocks: bool = True,
     limit: Optional[int] = None,
@@ -1476,7 +1673,7 @@ def export_bagua_multi_period_xlsx(
     *,
     date: Union[str, int],
     periods: Optional[Sequence[str]] = None,
-    adjust: str = "tdx_front",
+    adjust: str = "tushare_qfq",
     codes: Optional[Sequence[str]] = None,
     all_stocks: bool = True,
     limit: Optional[int] = None,
@@ -1531,6 +1728,11 @@ def export_bagua_multi_period_xlsx(
     calc = BaguaCalculator.from_json(cfg.bagua_json)
     session: Optional[BaguaPlaneSession] = None
     if adj in ("tdx_front", "tushare_qfq", "raw"):
+        if adj == "tdx_front":
+            raise SourceDisabledError(
+                "tdx_front 已停用：系统已切换为 Tushare-only 数据策略。"
+                "请使用 tushare_qfq 或 raw。"
+            )
         try:
             session = BaguaPlaneSession(cfg, adj)
         except FileNotFoundError:

@@ -65,6 +65,9 @@ class SymbolRecord:
     row_count: int = 0
     quality: str = "ok"
     error: str = ""
+    # Incremental retention marker: "no_new_rows_parent_retained" when the
+    # parent blob was kept because the window had no new rows.
+    window_status: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

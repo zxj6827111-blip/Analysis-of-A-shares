@@ -3,8 +3,11 @@
 Builds internal/composite_none by composing two parent datasets at the
 manifest level:
 
-  parent 1 (base):       local_vendor/none   — every vendor symbol used as-is
-  parent 2 (supplement): tushare/none        — ONLY symbols absent from base
+  product default (Tushare-only policy):
+    parent 1 (base):       tushare/none            — full-market raw base
+    parent 2 (supplement): internal/delisted_complement — delisted symbols
+                           missing from base (blobs come from tushare/none
+                           delisted datasets)
 
 Rules (composite_merge_rule_version=composite_merge_v1):
   1. base symbols always win: a symbol present in both parents is a rule
@@ -13,7 +16,10 @@ Rules (composite_merge_rule_version=composite_merge_v1):
   2. blobs are content-addressed and shared: the composite references parent
      blob hashes, no bar data is copied or rewritten;
   3. per-symbol provenance records the contributing parent dataset;
-  4. both parents must be status=ready and are never modified.
+  4. both parents must be status=ready and are never modified;
+  5. manifest metadata (data_policy / survivorship_policy / base_source /
+     supplement_source / supplement_rule / warning text) is derived from the
+     REAL parent manifests — never hardcoded to a vendor.
 """
 
 from __future__ import annotations
@@ -31,6 +37,12 @@ from .dataset_store import (
 )
 
 COMPOSITE_MERGE_RULE_VERSION = "composite_merge_v1"
+
+# Tushare-only product policy identifiers (see tushare_product.py)
+DATA_POLICY_TUSHARE_ONLY = "tushare_only_v1"
+SURVIVORSHIP_POLICY_LISTED_PLUS_DELISTED = "listed_plus_delisted"
+SUPPLEMENT_RULE_MISSING_SYMBOLS_ONLY = "missing_symbols_only"
+QUALITY_STATUS_PASSED = "passed"
 
 
 class CompositeOverlapError(RuntimeError):
@@ -117,6 +129,39 @@ def build_composite_none(
     base_sha = _manifest_file_sha256(store, base_dataset_id)
     supp_sha = _manifest_file_sha256(store, supplement_dataset_id)
 
+    # ---- product metadata derived from the REAL parents ----
+    # A delisted complement dataset is source=internal but its bars are
+    # Tushare data; the effective supplement source comes from its
+    # provenance so the composite lineage stays truthful.
+    def _effective_source(m: DatasetManifest) -> str:
+        if m.source == "internal" and m.adjustment == "delisted_complement":
+            prov = m.provenance or {}
+            return str(prov.get("supplement_source") or prov.get("base_source") or m.source)
+        return str(m.source or "")
+
+    base_source = _effective_source(base)
+    supplement_source = _effective_source(supp)
+    if base_source == "tushare" and supplement_source == "tushare":
+        data_policy = DATA_POLICY_TUSHARE_ONLY
+        survivorship_policy = SURVIVORSHIP_POLICY_LISTED_PLUS_DELISTED
+        supplement_rule = SUPPLEMENT_RULE_MISSING_SYMBOLS_ONLY
+        warning_text = (
+            "Execution (L2) dataset composed of Tushare raw bars plus "
+            "Tushare delisted bars for delisted stocks missing from the base. "
+            "Raw unadjusted prices; use the matching composite QFQ dataset "
+            "for signals (L1)."
+        )
+    else:
+        data_policy = "legacy_mixed_vendor"
+        survivorship_policy = "mixed_vendor"
+        supplement_rule = "missing_symbols_only"
+        warning_text = (
+            f"Execution (L2) dataset composed of {base_source}/{base.adjustment} "
+            f"bars plus {supplement_source}/{supp.adjustment} bars for symbols "
+            "missing from the base. Raw unadjusted prices; use the matching "
+            "composite QFQ dataset for signals (L1)."
+        )
+
     canonical_pre = json.dumps(
         {
             "source": "internal",
@@ -158,12 +203,7 @@ def build_composite_none(
         survivorship_bias=False,
         historical_universe_complete=True,
         delisted_coverage_complete=True,
-        warning_text=(
-            "Execution (L2) dataset composed of local_vendor bars plus "
-            "Tushare bars for delisted stocks missing from the vendor. "
-            "Raw unadjusted prices; use the matching composite QFQ dataset "
-            "for signals (L1)."
-        ),
+        warning_text=warning_text,
         recommended_use=[
             "survivorship-safe backtest execution (L2)",
             "B6 composite QFQ parent",
@@ -173,6 +213,12 @@ def build_composite_none(
         ],
         provenance={
             "gate": "B3",
+            "data_policy": data_policy,
+            "survivorship_policy": survivorship_policy,
+            "base_source": base_source,
+            "supplement_source": supplement_source,
+            "supplement_rule": supplement_rule,
+            "quality_status": QUALITY_STATUS_PASSED,
             "composite_merge_rule_version": COMPOSITE_MERGE_RULE_VERSION,
             "parents": [
                 {

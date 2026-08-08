@@ -180,15 +180,29 @@ def test_query_bagua_etf_forces_raw(monkeypatch):
     cfg = make_cfg()
 
     out = bq.query_bagua(
-        cfg, code="sh510300", date="2026-07-23", period="DAY", adjust="tdx_front"
+        cfg, code="sh510300", date="2026-07-23", period="DAY", adjust="tushare_qfq"
     )
     assert out["ok"] is True
     assert out["symbol_type"] == "etf"
     assert out["adjust"] == "raw"
     assert out["std_code"] == "SSE.ETF.510300"
     assert out["name"] == "沪深300ETF"
-    assert any("tdx_front" in n for n in out["notes"])
+    assert any("tushare_qfq" in n for n in out["notes"])
     assert any("不适用" in n for n in out["notes"])
+
+
+def test_query_bagua_tdx_front_disabled(monkeypatch):
+    """Explicit tdx_front raises a clear disabled-source error (even ETF)."""
+    from wtpy.apps.astock.service.bagua_query import SourceDisabledError
+
+    bars = [DayBar(20260723, 4.78, 4.82, 4.75, 4.80, 1.0, 1.0)]
+    monkeypatch.setattr(bq, "load_index_etf_day_bars", lambda _cfg, _std: bars)
+    cfg = make_cfg()
+
+    with pytest.raises(SourceDisabledError, match="已停用"):
+        bq.query_bagua(
+            cfg, code="sh510300", date="2026-07-23", period="DAY", adjust="tdx_front"
+        )
 
 
 def test_query_bagua_index_week_month(monkeypatch):
@@ -283,6 +297,121 @@ def test_query_bagua_index_warehouse_miss_falls_back_tdx(monkeypatch):
     assert am["model"] == "legacy_day_file"
     assert am["legacy_fallback"] is True
     assert "通达信" in out["notes"][0]
+
+
+def test_query_bagua_index_etf_warehouse_with_formal_pair(tmp_path, monkeypatch):
+    """Formal L1/L2 pair exists -> index/ETF must still resolve from the
+    latest ready tushare/none warehouse surface (regression), while stock
+    queries stay locked to the formal L2 composite (fail-closed)."""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+
+    from types import SimpleNamespace as _NS
+
+    from wtpy.apps.astock.data import tushare_product as tp
+    from wtpy.apps.astock.data.dataset_store import (
+        DatasetManifest,
+        DatasetStore,
+        SymbolRecord,
+    )
+    from wtpy.apps.astock.data.providers.base import MarketBar
+
+    store = DatasetStore(tmp_path / "market_data")
+
+    def publish(dataset_id, source, adjustment, symbol, dates, *,
+                data_policy=None, raw_dataset_id=None):
+        bars = [
+            MarketBar(
+                symbol=symbol,
+                trade_date=date,
+                period="1d",
+                open=10.0,
+                high=11.0,
+                low=9.0,
+                close=float(date % 100),
+                volume=1000.0,
+                amount=10000.0,
+            )
+            for date in dates
+        ]
+        sha = store.store_bars(symbol, bars)
+        provenance = {}
+        if data_policy:
+            provenance["data_policy"] = data_policy
+        store.publish(DatasetManifest(
+            dataset_id=dataset_id,
+            source=source,
+            adjustment=adjustment,
+            period="1d",
+            status="building",
+            data_cutoff_date=max(dates),
+            symbols=[
+                SymbolRecord(
+                    symbol=symbol,
+                    blob_sha256=sha,
+                    row_count=len(bars),
+                    quality="ok",
+                    first_date=min(dates),
+                    last_date=max(dates),
+                )
+            ],
+            symbol_count=1,
+            row_count=len(bars),
+            raw_dataset_id=raw_dataset_id,
+            provenance=provenance,
+        ))
+
+    # Formal L2 composite: stocks only (index/ETF are NOT part of the pair).
+    formal_l2 = "internal_composite_none_1d_formal_t1"
+    publish(formal_l2, "internal", "composite_none", "SZSE.STK.000001",
+            list(range(20240102, 20240102 + 130)),
+            data_policy="tushare_only_v1")
+    # Index/ETF symbols live in separately synced tushare/none datasets.
+    publish("tushare_none_1d_index_t1", "tushare", "none", "SSE.IDX.000001",
+            list(range(20240102, 20240102 + 130)))
+    # A fresher tushare/none stock set must NOT win over the formal L2.
+    publish("tushare_none_1d_stock_fresher_t1", "tushare", "none",
+            "SZSE.STK.000001", list(range(20240201, 20240201 + 130)))
+
+    fake_pair = _NS(
+        l1_dataset_id="internal_composite_tushare_factor_qfq_1d_formal_t1",
+        l2_dataset_id=formal_l2,
+    )
+    monkeypatch.setattr(tp, "resolve_active_tushare_product_pair",
+                        lambda store: fake_pair)
+
+    cfg = make_cfg(market_data_root=tmp_path / "market_data",
+                   tdx_root=tmp_path / "nope")
+
+    # index: warehouse hit from tushare/none, no legacy fallback
+    out = bq.query_bagua(cfg, code="sh000001", date="2024-01-05", period="DAY")
+    assert out["ok"] is True
+    am = out["adjust_meta"]
+    assert am["model"] == "warehouse"
+    assert am["dataset_source"] == "tushare"
+    assert am["dataset_adjustment"] == "none"
+    assert am["dataset_id"] == "tushare_none_1d_index_t1"
+    assert am["legacy_fallback"] is False
+
+    # stock: stays locked to the formal L2 composite
+    out2 = bq.query_bagua(cfg, code="sz000001", date="2024-01-05", period="DAY")
+    assert out2["ok"] is True
+    am2 = out2["adjust_meta"]
+    assert am2["dataset_source"] == "internal"
+    assert am2["dataset_adjustment"] == "composite_none"
+    assert am2["dataset_id"] == formal_l2
+    assert am2["bootstrap_fallback"] is False
+    assert am2["session_indexed"] is True
+
+    # session-level meta: tushare/none is a non-formal fallback for index/ETF,
+    # while the stock stays on the formal surface
+    session = bq.BaguaPlaneSession(cfg, "raw")
+    _, smeta = session.load_symbol("sh000001", asof=20240105)
+    assert smeta["dataset_id"] == "tushare_none_1d_index_t1"
+    assert smeta["bootstrap_fallback"] is True
+    _, smeta2 = session.load_symbol("sz000001", asof=20240105)
+    assert smeta2["dataset_id"] == formal_l2
+    assert smeta2["bootstrap_fallback"] is False
 
 
 def test_watchlist_warehouse_availability(tmp_path):

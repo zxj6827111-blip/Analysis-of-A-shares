@@ -14,11 +14,15 @@ from wtpy.apps.astock.config import get_default_config
 from wtpy.apps.astock.indicators.registry import IndicatorRegistry
 
 
-def _tdx_ok() -> bool:
-    return (get_default_config().tdx_root / "vipdoc" / "sh" / "lday" / "sh600000.day").exists()
+def _e2e_ok() -> bool:
+    cfg = get_default_config()
+    return (
+        (cfg.tdx_root / "vipdoc" / "sh" / "lday" / "sh600000.day").exists()
+        and cfg.registry_path.exists()
+    )
 
 
-@pytest.mark.skipif(not _tdx_ok(), reason="local TDX required")
+@pytest.mark.skipif(not _e2e_ok(), reason="local TDX + indicator registry required")
 def test_e2e_small_pool(tmp_path):
     storage = tmp_path / "storage"
     rc = main([

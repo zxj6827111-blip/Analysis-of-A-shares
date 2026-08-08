@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>个股快速查询 · AStock</title>
+<style>
+:root{
+  --bg:#08111d;--bg2:#0b1524;--panel:#111d2d;--panel2:#0e1928;--panel3:#152338;
+  --text:#f1f5fb;--muted:#8fa3bf;--blue:#2f80ff;--blue2:#58a2ff;
+  --green:#3dd68c;--red:#ff6b6b;--amber:#ffb648;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;min-height:100vh}
+header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:var(--bg2);border-bottom:1px solid #1d2b40;flex-wrap:wrap}
+header h1{font-size:17px;font-weight:600}
+header a{color:var(--blue2);font-size:12px;text-decoration:none}
+main{max-width:1100px;margin:0 auto;padding:18px 22px 60px}
+.search{flex:1;min-width:260px;display:flex;gap:8px}
+.search input{flex:1;background:var(--panel);border:1px solid #22304a;color:var(--text);border-radius:8px;padding:9px 14px;font-size:14px;outline:none}
+.search input:focus{border-color:var(--blue)}
+.search button{background:var(--blue);border:none;color:#fff;border-radius:8px;padding:9px 18px;font-size:14px;cursor:pointer}
+.card{background:var(--panel);border:1px solid #1d2b40;border-radius:10px;padding:16px 18px;margin-bottom:14px}
+.card h2{font-size:13px;color:var(--muted);font-weight:600;margin-bottom:12px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:860px){.grid{grid-template-columns:1fr}}
+.big{font-size:26px;font-weight:700}
+.row{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;font-size:13px}
+.row .k{color:var(--muted)}
+.row .v{font-weight:600}
+.pos{color:var(--green)}.neg{color:var(--red)}
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(143,163,191,.14);color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{color:var(--muted);font-weight:600;text-align:left;padding:8px 10px;border-bottom:1px solid #22304a;white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid #182538;white-space:nowrap}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.empty{color:var(--muted);font-size:13px;padding:14px 4px}
+#err{display:none;background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.4);color:var(--red);padding:14px 18px;border-radius:10px;margin-bottom:14px;font-size:13px}
+.gua-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.gua-item{background:var(--panel2);border:1px solid #22304a;border-radius:8px;padding:12px;text-align:center}
+.gua-item .lbl{color:var(--muted);font-size:11px;margin-bottom:6px}
+.gua-item .val{font-size:15px;font-weight:700;color:var(--blue2)}
+.gua-note{color:var(--muted);font-size:11.5px;line-height:1.7;margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <h1>个股快速查询</h1>
+  <div class="search">
+    <input id="q" placeholder="代码 / 名称，如 600000、000001.SH、平安银行" onkeydown="if(event.key==='Enter')go()">
+    <button onclick="go()">查询</button>
+  </div>
+  <a href="/dashboard">关键发现 →</a>
+</header>
+<main>
+  <div id="err"></div>
+  <section class="grid">
+    <div class="card">
+      <h2 id="titleLabel">行情概览</h2>
+      <div class="big" id="mClose">-</div>
+      <div class="row"><span class="k">涨跌幅</span><span class="v" id="mPct">-</span></div>
+      <div class="row"><span class="k">开 / 高 / 低</span><span class="v" id="mOHLC">-</span></div>
+      <div class="row"><span class="k">交易日</span><span class="v" id="mDate">-</span></div>
+      <div class="row"><span class="k">覆盖区间</span><span class="v" id="mRange">-</span></div>
+      <div class="row"><span class="k">数据来源</span><span class="v" id="mSrc">-</span><div class="k" id="mSrcExtra" style="width:100%;font-size:11px;margin-top:2px"></div></div>
+    </div>
+    <div class="card">
+      <h2>当前日卦（最新交易日 · 未复权）</h2>
+      <div class="gua-grid" id="guaGrid"><div class="empty">加载中…</div></div>
+      <div class="gua-note" id="guaNote"></div>
+    </div>
+  </section>
+  <section class="card">
+    <h2>当前周卦（最新交易日所在周 · 未复权）</h2>
+    <div class="gua-grid" id="guaWeekGrid"><div class="empty">加载中…</div></div>
+    <div class="gua-note" id="guaWeekNote"></div>
+  </section>
+  <section class="card">
+    <h2>相关回测记录 <span id="runTag" class="tag">-</span></h2>
+    <div id="runsBody" class="empty">加载中…</div>
+  </section>
+</main>
+<script>
+function $(id){return document.getElementById(id)}
+function fmt(n,digits){
+  if(n===null||n===undefined||n==="") return "-";
+  var x=parseFloat(n);
+  if(isNaN(x)) return String(n);
+  return (Math.abs(x)<5&&x!==0?(x*100).toFixed(2)+"%":x.toFixed(digits===undefined?2:digits));
+}
+function cls(n){var x=parseFloat(n);return isNaN(x)?"":(x>=0?"pos":"neg")}
+function pctCls(n){var x=parseFloat(n);return isNaN(x)?"":(x>=0?"pos":"neg")}
+function go(){
+  var q=$("q").value.trim();
+  if(!q) return;
+  location.href="/quick.html?code="+encodeURIComponent(q);
+}
+function renderGua(gridId, noteId, g){
+  var grid=$(gridId), note=$(noteId);
+  if(!g){ grid.className="empty"; grid.textContent="无卦象数据"; note.textContent=""; return; }
+  if(g.error){ grid.className="empty"; grid.textContent=g.error; note.textContent=""; return; }
+  if(g.bagua){
+    grid.className="gua-grid";
+    var b=g.bagua;
+    var bm=g.bar||{};
+    var items=[
+      ["主卦",b.gua_name||b.full_name||b.primary_gua||b.main_hexagram||"-"],
+      ["变卦",b.biangua||b.changed_hexagram_name||b.changed_hexagram||"-"],
+      ["动爻",b.yao_order||b.moving_yao||"-"],
+      ["查询日",g.query_date||"-"],
+      ["周期",g.period||"-"],
+      ["区间",(bm.start_date||"-")+" ~ "+(bm.end_date||"-")]
+    ];
+    grid.innerHTML=items.map(function(it){
+      return '<div class="gua-item"><div class="lbl">'+it[0]+'</div><div class="val">'+it[1]+'</div></div>';
+    }).join("");
+    var notes=g.algorithm&&g.algorithm.notes;
+    note.textContent=(Array.isArray(notes)?notes.join(""):notes)||"";
+  } else { grid.className="empty"; grid.textContent="无卦象数据"; note.textContent=""; }
+}
+function render(d){
+  document.title = d.name ? (d.name+" · 快速查询") : "个股快速查询";
+  $("titleLabel").textContent = d.name+" "+(d.code||"");
+  var m=d.market||{};
+  $("mClose").textContent = m.close===undefined?"-":(m.close);
+  $("mClose").className = "big "+cls(m.close);
+  $("mPct").textContent = m.pct_change===null||m.pct_change===undefined?"-":(m.pct_change+"%");
+  $("mPct").className = "v "+pctCls(m.pct_change);
+  $("mOHLC").textContent = [m.open,m.high,m.low].filter(function(x){return x!==undefined&&x!==null}).join(" / ")||"-";
+  $("mDate").textContent = m.latest_date||"-";
+  $("mRange").textContent = m.first_date&&m.latest_date?(m.first_date+" ~ "+m.latest_date):"-";
+  $("mSrc").textContent = m.error ? ("查询失败: "+m.error) : ((m.dataset_source||"-")+" / "+(m.dataset_adjustment||"none"));
+  $("mSrc").title = (m.dataset_id||"") + (m.bootstrap_fallback ? " · bootstrap 后备（非正式产品面）" : (m.data_policy ? " · 策略 "+m.data_policy : ""));
+  $("mSrcExtra").textContent = m.error ? "" : [
+    m.data_max_date ? ("最新数据日 "+m.data_max_date) : "",
+    m.bootstrap_fallback ? "（bootstrap 后备）" : "",
+    m.dataset_id ? ("dataset: "+m.dataset_id) : ""
+  ].filter(Boolean).join(" · ");
+  renderGua("guaGrid","guaNote",d.gua);
+  renderGua("guaWeekGrid","guaWeekNote",d.gua_week);
+  var runs=d.related_runs||[];
+  $("runTag").textContent=runs.length+" 条";
+  var rb=$("runsBody");
+  if(!runs.length){ rb.className="empty"; rb.textContent="暂无可回溯记录（或未包含该标的）。"; }
+  else{
+    rb.className="";
+    rb.innerHTML='<table><thead><tr><th>回测</th><th>区间</th><th>胜率</th><th>总收益</th><th>最大回撤</th><th>盈亏比</th><th>状态</th></tr></thead><tbody>'+runs.map(function(r){
+      return '<tr><td>'+(r.title||r.run_id||"-")+'</td>'+
+        '<td>'+(r.start||"-")+" ~ "+(r.end||"-")+'</td>'+
+        '<td class="num '+cls(r.win_rate)+'">'+fmt(r.win_rate,1)+'</td>'+
+        '<td class="num '+cls(r.total_return)+'">'+fmt(r.total_return)+'</td>'+
+        '<td class="num '+cls(r.max_drawdown)+'">'+fmt(r.max_drawdown)+'</td>'+
+        '<td class="num">'+fmt(r.payoff_ratio,2)+'</td>'+
+        '<td>'+(r.status||"-")+'</td></tr>';
+    }).join('')+'</tbody></table>';
+  }
+}
+function load(code){
+  $("q").value=code;
+  fetch("/api/v1/quick/"+encodeURIComponent(code))
+    .then(function(r){return r.json().then(function(j){return {status:r.status,json:j}})})
+    .then(function(res){
+      if(res.status===404||(res.json&&res.json.detail)) throw new Error(res.json.detail||("HTTP "+res.status));
+      render(res.json);
+    })
+    .catch(function(e){
+      $("err").style.display="block";
+      $("err").textContent="查询失败: "+e.message;
+      $("titleLabel").textContent="个股快速查询";
+    });
+}
+var params=new URLSearchParams(location.search);
+var code=params.get("code");
+if(code){ load(code); } else { $("q").focus(); }
+</script>
+</body>
+</html>

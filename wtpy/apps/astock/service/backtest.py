@@ -104,7 +104,9 @@ def resolve_market_data_bindings(
     from ..data.dataset_binding import (
         DatasetBindingError,
         classify_symbol_coverage,
+        execution_resolve_candidates,
         manifest_symbol_index,
+        signal_resolve_candidates,
         validate_execution_dataset_binding,
         validate_signal_dataset_binding,
     )
@@ -137,32 +139,8 @@ def resolve_market_data_bindings(
     repo = MarketDataRepository(DatasetStore(cfg.market_data_root))
 
     def _resolve_signal_candidates():
-        """Return ordered (source, adjustment) pairs for product signal sources."""
-        src = _signal_data_source
-        adj = _signal_adjustment or ""
-        if src == "raw":
-            return [
-                ("local_vendor", "none"),
-                ("tushare", "none"),
-                ("tdxquant", "none"),
-                ("tdx_local", "none"),
-                ("internal", "composite_none"),
-            ]
-        if src == "tushare":
-            # Official qfq first; derived QFQ as same product family
-            return [
-                ("tushare", "qfq"),
-                ("internal", "tushare_factor_qfq"),
-                ("internal", "composite_tushare_factor_qfq"),
-            ]
-        if src == "tdxquant":
-            return [("tdxquant", adj or "front")]
-        if src == "internal":
-            return [
-                ("internal", adj or "tushare_factor_qfq"),
-                ("internal", "composite_tushare_factor_qfq"),
-            ]
-        return [(src, adj)]
+        """Ordered (source, adjustment) pairs for product signal sources."""
+        return signal_resolve_candidates(_signal_data_source, _signal_adjustment)
 
     def _product_family_pairs():
         """Pairs accepted for product UI keys (tushare/raw may span warehouse sources)."""
@@ -272,38 +250,11 @@ def resolve_market_data_bindings(
             period="1d",
         )
     else:
-        _exec_source = getattr(req, "execution_data_source", None) or "local_vendor"
-
-        def _execution_resolve_candidates(src: str):
-            s = (src or "local_vendor").strip()
-            if s == "internal":
-                # survivorship-safe composite first, then plain internal/none
-                return [("internal", "composite_none"), ("internal", "none")]
-            if s in ("local_vendor", "tdx_local", "tdxquant", "tushare", "raw"):
-                # product defaults (local_vendor / raw) prefer warehouse raw
-                # and fall back across raw families; explicit family selections
-                # (tdx_local / tdxquant / tushare) bind strictly to their own.
-                if s == "local_vendor":
-                    return [
-                        ("local_vendor", "none"),
-                        ("tdx_local", "none"),
-                        ("tdxquant", "none"),
-                        ("tushare", "none"),
-                    ]
-                if s == "raw":
-                    return [
-                        ("local_vendor", "none"),
-                        ("tdx_local", "none"),
-                        ("tdxquant", "none"),
-                        ("tushare", "none"),
-                        ("internal", "composite_none"),
-                    ]
-                return [(s, "none")]
-            return [(s, "none")]
+        _exec_source = getattr(req, "execution_data_source", None) or "internal"
 
         _exec_ds = None
         _last_exec_err = None
-        for _es, _ea in _execution_resolve_candidates(_exec_source):
+        for _es, _ea in execution_resolve_candidates(_exec_source):
             try:
                 _exec_ds = repo.resolve_latest_ready(
                     source=_es, adjustment=_ea, period="1d",
@@ -314,17 +265,18 @@ def resolve_market_data_bindings(
         if _exec_ds is None:
             _tried = "、".join(
                 "%s/%s" % (_es, _ea)
-                for _es, _ea in _execution_resolve_candidates(_exec_source)
+                for _es, _ea in execution_resolve_candidates(_exec_source)
             )
             raise DatasetBindingError(
                 "DATASET_NOT_FOUND",
                 f"No ready execution dataset for source={_exec_source} "
                 f"(tried: {_tried}). "
-                f"Run: python scripts/sync_market_data.py --source local_vendor --mode full",
+                f"Run: python scripts/sync_market_data.py --source tushare --mode "
+                f"incremental then reconcile the formal L2",
                 http_status=404,
                 requested_source=_exec_source,
                 requested_adjustment="none",
-                remediation="先同步执行数据集（local_vendor/none 或 internal/composite_none），或显式指定 execution_dataset_id",
+                remediation="先同步 Tushare 数据并协调正式 L2（internal/composite_none），或显式指定 execution_dataset_id",
             ) from _last_exec_err
         _execution_dataset_id = _exec_ds.dataset_id
         # keep request source aligned with the dataset actually resolved
@@ -1124,7 +1076,7 @@ def run_backtest(
             dataset_id=getattr(req, "dataset_id", None) or "",
             weekly_bar_mode=getattr(req, "weekly_bar_mode", None) or "local_aggregate",
             anchor_date=getattr(req, "end", None),
-            execution_data_source=getattr(req, "execution_data_source", None) or "local_vendor",
+            execution_data_source=getattr(req, "execution_data_source", None) or "internal",
             execution_dataset_id=getattr(req, "execution_dataset_id", None) or "",
             raw_parent_dataset_id=getattr(req, "signal_raw_parent_dataset_id", None) or "",
             factor_parent_dataset_id=getattr(req, "signal_factor_parent_dataset_id", None) or "",
@@ -1336,7 +1288,7 @@ def run_backtest(
                     "signal_adjustment": getattr(req, "signal_adjustment", None),
                     "dataset_id": getattr(req, "dataset_id", None),
                     "weekly_bar_mode": getattr(req, "weekly_bar_mode", None) or "local_aggregate",
-                    "execution_data_source": getattr(req, "execution_data_source", None) or "local_vendor",
+                    "execution_data_source": getattr(req, "execution_data_source", None) or "internal",
                     "execution_dataset_id": getattr(req, "execution_dataset_id", None),
                     "execution_adjustment": getattr(req, "execution_adjustment", None),
                     "raw_dataset_id": getattr(req, "signal_raw_parent_dataset_id", None),
@@ -1558,15 +1510,25 @@ def run_backtest(
 
             session = None
             if not reuse:
-                from .bagua_query import BaguaPlaneSession, load_day_bars_for_plane as _load_plane
+                from .bagua_query import (
+                    BaguaPlaneSession,
+                    SourceDisabledError,
+                    load_day_bars_for_plane as _load_plane,
+                )
                 try:
                     session = BaguaPlaneSession(cfg, plane)
-                except FileNotFoundError as _se:
-                    errors.append({
-                        "code": "*",
-                        "indicator": "bagua_plane",
-                        "error": "bagua_plane_session_failed(%s): %s" % (plane, _se),
-                    })
+                except (FileNotFoundError, SourceDisabledError) as _se:
+                    # Unbuildable sessions and disabled planes (legacy
+                    # tdx_front experiments rerun under the Tushare-only
+                    # policy) degrade per code like per-symbol load failures
+                    # instead of aborting the whole rerun.
+                    for _c in want:
+                        bagua_plane_fallback_codes.append(_c)
+                        errors.append({
+                            "code": _c,
+                            "indicator": "*",
+                            "error": "bagua_plane_load_failed(%s): %s" % (plane, _se),
+                        })
                     return out
             else:
                 from .bagua_query import load_day_bars_for_plane as _load_plane  # noqa: F401

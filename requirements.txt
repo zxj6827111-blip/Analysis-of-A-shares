@@ -8,6 +8,7 @@ pyquery
 psutil
 fastapi
 uvicorn
+python-multipart
 deap
 websockets>=10.4
 pypinyin
