@@ -53,6 +53,227 @@ _ALL_ROUTERS = (
 )
 
 
+def eod_sync_decide(
+    *,
+    lag: Optional[int],
+    now,
+    sync_time: str = "18:30",
+    min_lag: int = 1,
+    last_trigger_day=None,
+) -> tuple:
+    """Decide whether an automatic EOD sync should fire.
+
+    Returns ``(trigger: bool, reason: str, today_key)`` where ``today_key``
+    is the date the caller should remember as the last trigger day (None when
+    not triggering). Weekends, pre-``sync_time`` hours, unknown lag, a lag
+    below ``min_lag`` and an already-triggered day all short-circuit to False.
+    """
+    import datetime as _dt
+
+    if now.weekday() >= 5:
+        return False, "周末，不触发", None
+    if now.strftime("%H:%M") < sync_time:
+        return False, f"未到自动同步时间（{sync_time}）", None
+    today = now.date()
+    if last_trigger_day is not None and last_trigger_day == today:
+        return False, "今日已触发过自动同步", None
+    if lag is None:
+        return False, "无法判断数据新鲜度（跳过）", None
+    if lag < min_lag:
+        return False, f"数据已最新（lag={lag}）", None
+    return True, f"raw 数据滞后 {lag} 个交易日", today
+
+
+def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
+    """Startup + scheduled EOD auto-sync of Tushare market data.
+
+    Scheduling: on weekdays it sleeps straight to ``ASTOCK_EOD_SYNC_TIME``
+    (no idle polling before it); at/after the time it checks freshness and
+    spawns the same incremental sync the UI button uses
+    (``--source tushare --mode incremental``) plus ``--fresh``. If the data
+    is not yet lagged (Tushare publishes late) it retries every
+    ``ASTOCK_EOD_SYNC_POLL_SECONDS`` (default 30 min); once fired, the day is
+    done and it sleeps to the next day's sync time. Weekends sleep to Monday.
+
+    The trigger record is persisted to ``storage/astock/eod_sync_state.json``
+    so the UI can show "上次自动同步时间".
+
+    Env switches (all optional):
+      ASTOCK_EOD_SYNC_ENABLED=0|1        (default 1)
+      ASTOCK_EOD_SYNC_STARTUP=0|1        (default 1, run once on startup)
+      ASTOCK_EOD_SYNC_TIME=HH:MM         (default 18:30)
+      ASTOCK_EOD_SYNC_MIN_LAG_DAYS=N     (default 1)
+      ASTOCK_EOD_SYNC_POLL_SECONDS=N     (default 1800, min 60)
+    """
+    import datetime as _dt
+    import json as _json
+    import os as _os
+    import time as _time
+
+    def _env_flag(name: str, default: str = "1") -> bool:
+        return _os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+    if not _env_flag("ASTOCK_EOD_SYNC_ENABLED", "1"):
+        print("[EOD_SYNC] 已禁用（ASTOCK_EOD_SYNC_ENABLED=0），跳过自动更新")
+        return
+    if not cfg.market_data_root.exists():
+        print("[EOD_SYNC] 数据目录不存在，跳过自动更新")
+        return
+
+    sync_time = _os.environ.get("ASTOCK_EOD_SYNC_TIME", "18:30")
+    try:
+        min_lag = max(0, int(_os.environ.get("ASTOCK_EOD_SYNC_MIN_LAG_DAYS", "1")))
+    except ValueError:
+        min_lag = 1
+    try:
+        # retry interval AFTER the sync time when data is not yet lagged
+        poll_sec = max(60, int(_os.environ.get("ASTOCK_EOD_SYNC_POLL_SECONDS", "1800")))
+    except ValueError:
+        poll_sec = 1800
+    startup_check = _env_flag("ASTOCK_EOD_SYNC_STARTUP", "1")
+
+    # persisted trigger record for the UI status card
+    state_path = Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+
+    last_trigger_day = None
+
+    def _load_state() -> Dict[str, Any]:
+        try:
+            if state_path.exists():
+                return _json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        return {}
+
+    def _save_state(extra: Optional[Dict[str, Any]] = None) -> None:
+        try:
+            st = _load_state()
+            st.update({
+                "enabled": True,
+                "sync_time": sync_time,
+                "min_lag_days": min_lag,
+                "poll_seconds": poll_sec,
+                "updated_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            })
+            if extra:
+                st.update(extra)
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(
+                _json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+    def _lag_days() -> Optional[int]:
+        from .data.dataset_store import DatasetStore
+        from .data.tushare_product import tushare_product_data_health
+
+        health = tushare_product_data_health(DatasetStore(cfg.market_data_root))
+        return health.get("trading_day_lag", {}).get("raw")
+
+    def _sync_in_progress() -> bool:
+        try:
+            with ctx.sync_lock:
+                return bool(ctx.sync_state.get("running"))
+        except Exception:
+            return False
+
+    def _trigger(reason: str) -> None:
+        nonlocal last_trigger_day
+        script = str(Path(__file__).resolve().parents[3] / "scripts" / "sync_market_data.py")
+        today = int(_dt.date.today().strftime("%Y%m%d"))
+        cmd = [
+            sys.executable, "-u", script,
+            "--source", "tushare", "--mode", "incremental",
+            "--end-date", str(today), "--fresh",
+            "--storage-root", str(cfg.market_data_root),
+        ]
+        token = _os.environ.get("TUSHARE_TOKEN", "").strip()
+        if token:
+            cmd += ["--token", token]
+        env = dict(_os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["MARKET_DATA_ROOT"] = str(cfg.market_data_root)
+        print(f"[EOD_SYNC] {reason}，自动启动 Tushare 增量同步…")
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env
+            )
+            print(f"[EOD_SYNC] 已启动后台进程 PID={proc.pid}")
+            last_trigger_day = _dt.date.today()
+            _save_state({
+                "last_trigger_date": last_trigger_day.strftime("%Y-%m-%d"),
+                "last_sync_started_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_reason": reason,
+                "sync_pid": int(proc.pid or 0),
+            })
+        except Exception as e:
+            print(f"[EOD_SYNC] 启动失败: {e}")
+
+    def _check(label: str) -> bool:
+        """Returns True when a sync was triggered."""
+        now = _dt.datetime.now()
+        trigger, reason, today_key = eod_sync_decide(
+            lag=_lag_days(),
+            now=now,
+            sync_time=sync_time,
+            min_lag=min_lag,
+            last_trigger_day=last_trigger_day,
+        )
+        if trigger:
+            if _sync_in_progress():
+                print(f"[EOD_SYNC] {label}：{reason}，但已有手动同步在运行，稍后重试")
+                return False
+            _trigger(f"{label}：{reason}")
+            return True
+        print(f"[EOD_SYNC] {label}：{reason}")
+        return False
+
+    def _sleep_until(hhmm: str) -> None:
+        """Sleep until today's hh:mm (or tomorrow if already passed)."""
+        now = _dt.datetime.now()
+        try:
+            target = now.replace(
+                hour=int(hhmm[:2]), minute=int(hhmm[3:5]), second=0, microsecond=0
+            )
+        except (ValueError, IndexError):
+            target = now.replace(hour=18, minute=30, second=0, microsecond=0)
+        if target <= now:
+            target += _dt.timedelta(days=1)
+        _time.sleep(max(1.0, (target - now).total_seconds()))
+
+    if startup_check:
+        try:
+            _check("启动检查")
+        except Exception as e:
+            print(f"[EOD_SYNC] 启动检查异常: {type(e).__name__}: {e}")
+    _save_state()
+
+    while True:
+        try:
+            now = _dt.datetime.now()
+            if now.weekday() >= 5:
+                # weekend: sleep to Monday 00:05
+                days_until_mon = (7 - now.weekday()) % 7
+                target = (now + _dt.timedelta(days=days_until_mon)).replace(
+                    hour=0, minute=5, second=0, microsecond=0
+                )
+                _time.sleep(max(1.0, (target - now).total_seconds()))
+                continue
+            if now.strftime("%H:%M") < sync_time:
+                _sleep_until(sync_time)
+                continue
+            fired = _check("收盘后定时检查")
+            if fired:
+                # day done: sleep to tomorrow's sync time
+                _sleep_until(sync_time)
+            else:
+                _time.sleep(poll_sec)
+        except Exception as e:
+            print(f"[EOD_SYNC] 定时检查异常: {type(e).__name__}: {e}")
+            _time.sleep(300)
+
+
 def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
     cfg = cfg or get_default_config()
     cfg.ensure_dirs()
@@ -210,6 +431,15 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
         target=_auto_tushare_product_reconcile,
         daemon=True,
         name="astock-tushare-product-reconcile",
+    ).start()
+
+    # Automatic EOD market-data sync: startup freshness check + scheduled
+    # weekday sync after market close (env-configurable, see _auto_eod_sync).
+    _thr.Thread(
+        target=_auto_eod_sync,
+        args=(cfg, app.state.astock),
+        daemon=True,
+        name="astock-eod-sync",
     ).start()
 
     uvicorn.run(app, host=host, port=port)

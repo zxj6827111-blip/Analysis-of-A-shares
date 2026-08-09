@@ -1,0 +1,214 @@
+# -*- coding: utf-8 -*-
+"""Tests for the automatic EOD market-data sync (startup + scheduled)."""
+
+from __future__ import annotations
+
+import datetime as _dt
+import threading
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from wtpy.apps.astock.api import eod_sync_decide
+
+
+# ------------------------------------------------------------ decide (pure)
+
+def test_eod_sync_decide_triggers_on_weekday_after_time():
+    wed = _dt.datetime(2026, 8, 12, 18, 40)  # Wednesday
+    trigger, reason, today = eod_sync_decide(
+        lag=2, now=wed, sync_time="18:30", min_lag=1
+    )
+    assert trigger is True
+    assert today == _dt.date(2026, 8, 12)
+    assert "滞后" in reason
+
+
+def test_eod_sync_decide_skips_weekend():
+    sat = _dt.datetime(2026, 8, 15, 18, 40)  # Saturday
+    trigger, reason, today = eod_sync_decide(lag=5, now=sat)
+    assert trigger is False
+    assert today is None
+
+
+def test_eod_sync_decide_skips_before_time():
+    wed_before = _dt.datetime(2026, 8, 12, 18, 20)
+    trigger, reason, today = eod_sync_decide(lag=5, now=wed_before, sync_time="18:30")
+    assert trigger is False
+    assert today is None
+
+
+def test_eod_sync_decide_skips_when_fresh():
+    wed = _dt.datetime(2026, 8, 12, 18, 40)
+    trigger, reason, today = eod_sync_decide(lag=0, now=wed)
+    assert trigger is False
+    trigger, reason, today = eod_sync_decide(lag=None, now=wed)
+    assert trigger is False
+
+
+def test_eod_sync_decide_once_per_day():
+    wed = _dt.datetime(2026, 8, 12, 18, 40)
+    trigger, reason, today = eod_sync_decide(
+        lag=2, now=wed, last_trigger_day=_dt.date(2026, 8, 12)
+    )
+    assert trigger is False
+    # next day triggers again
+    thu = _dt.datetime(2026, 8, 13, 18, 40)
+    trigger, reason, today = eod_sync_decide(
+        lag=2, now=thu, last_trigger_day=_dt.date(2026, 8, 12)
+    )
+    assert trigger is True
+
+
+# --------------------------------------------------- _auto_eod_sync (loop)
+
+def _make_cfg_ctx(tmp_path):
+    cfg = SimpleNamespace(market_data_root=tmp_path)
+    ctx = SimpleNamespace(
+        sync_state={"running": False},
+        sync_lock=threading.Lock(),
+    )
+    return cfg, ctx
+
+
+def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
+    import subprocess
+    import time as _time
+
+    import wtpy.apps.astock.api as api_mod
+    from wtpy.apps.astock.api import _auto_eod_sync
+
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "00:00")
+    monkeypatch.setenv("TUSHARE_TOKEN", "test_token_123")
+
+    cfg, ctx = _make_cfg_ctx(tmp_path)
+
+    # force the decision to "trigger" exactly once (startup check); the
+    # polling loop then sees the daily-once guard, like production
+    decide_n = {"n": 0}
+    def _fake_decide(**k):
+        decide_n["n"] += 1
+        if decide_n["n"] == 1:
+            return (True, "lag=3 个交易日", tmp_path)
+        return (False, "今日已触发过自动同步", None)
+    monkeypatch.setattr(api_mod, "eod_sync_decide", _fake_decide)
+
+    calls = []
+    class FakeProc:
+        pid = 4242
+    monkeypatch.setattr(
+        subprocess, "Popen",
+        lambda cmd, **kw: calls.append((cmd, kw)) or FakeProc(),
+    )
+    # exit the polling loop right after the startup check
+    def _break_sleep(_s):
+        raise SystemExit("stop-loop")
+    monkeypatch.setattr(_time, "sleep", _break_sleep)
+
+    with pytest.raises(SystemExit, match="stop-loop"):
+        _auto_eod_sync(cfg, ctx)
+
+    assert len(calls) == 1, "exactly one sync process should be spawned"
+    cmd = calls[0][0]
+    assert "--source" in cmd and "tushare" in cmd
+    assert "--mode" in cmd and "incremental" in cmd
+    assert "--fresh" in cmd
+    assert "--token" in cmd and "test_token_123" in cmd
+    assert "--storage-root" in cmd and str(tmp_path) in cmd
+
+    # trigger record is persisted for the UI status card (repo storage dir)
+    state_path = Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+    assert state_path.exists(), f"state file not written: {state_path}"
+    import json as _json
+    st = _json.loads(state_path.read_text(encoding="utf-8"))
+    assert st.get("last_trigger_date")
+    assert st.get("last_sync_started_at")
+    assert st.get("enabled") is True
+
+
+def test_auto_eod_sync_skips_when_fresh(monkeypatch, tmp_path):
+    import subprocess
+    import time as _time
+
+    import wtpy.apps.astock.api as api_mod
+    from wtpy.apps.astock.api import _auto_eod_sync
+
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "00:00")
+
+    cfg, ctx = _make_cfg_ctx(tmp_path)
+    monkeypatch.setattr(
+        api_mod, "eod_sync_decide", lambda **k: (False, "数据已最新（lag=0）", None)
+    )
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kw: calls.append(cmd))
+    monkeypatch.setattr(_time, "sleep", lambda _s: (_ for _ in ()).throw(SystemExit("stop")))
+
+    with pytest.raises(SystemExit):
+        _auto_eod_sync(cfg, ctx)
+    assert calls == []
+
+
+def test_auto_eod_sync_disabled_by_env(monkeypatch, tmp_path):
+    import subprocess
+
+    import wtpy.apps.astock.api as api_mod
+    from wtpy.apps.astock.api import _auto_eod_sync
+
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "0")
+    calls = []
+    monkeypatch.setattr(api_mod.subprocess, "Popen", lambda *a, **k: calls.append(a))
+
+    cfg, ctx = _make_cfg_ctx(tmp_path)
+    # disabled -> returns before the loop; no Popen at all
+    _auto_eod_sync(cfg, ctx)
+    assert calls == []
+
+
+def test_eod_sync_status_api(tmp_path, monkeypatch):
+    """/api/v1/eod-sync/status returns config + last trigger + data status."""
+    import pytest
+
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from wtpy.apps.astock.api import create_app
+    from wtpy.apps.astock.config import get_default_config
+    from wtpy.apps.astock.data import dataset_store as ds_mod
+
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "18:30")
+
+    storage = tmp_path / "st"
+    storage.mkdir()
+    ind = tmp_path / "ind"
+    ind.mkdir()
+    cfg = get_default_config(storage_root=storage, indicator_dir=ind)
+    md_root = Path(cfg.market_data_root)
+    md_root.mkdir(parents=True, exist_ok=True)
+
+    # write a trigger record so the endpoint shows a last-sync time
+    state_path = Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        '{"enabled": true, "last_trigger_date": "2026-08-10", '
+        '"last_sync_started_at": "2026-08-10 18:31:00", "last_reason": "raw 数据滞后 1 个交易日", '
+        '"sync_time": "18:30", "min_lag_days": 1, "poll_seconds": 1800}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ds_mod.DatasetStore, "load_manifest", lambda self, *a, **k: None)
+
+    app = create_app(cfg)
+    client = TestClient(app)
+    r = client.get("/api/v1/eod-sync/status")
+    assert r.status_code == 200
+    j = r.json()
+    assert j.get("ok") is True
+    assert j.get("enabled") is True
+    assert j.get("sync_time") == "18:30"
+    assert j.get("last_sync_started_at") == "2026-08-10 18:31:00"
+    assert j.get("last_trigger_date") == "2026-08-10"
+    # data status may be missing on an empty warehouse but never an error
+    assert "data_status" in j

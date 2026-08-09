@@ -323,7 +323,7 @@ class DatasetStore:
         atomic_write_json(path, payload)
         return path
 
-    def load_manifest(self, dataset_id: str) -> Optional[DatasetManifest]:
+    def load_manifest(self, dataset_id: str, *, deep_copy: bool = True) -> Optional[DatasetManifest]:
         path = self.manifests_dir / f"{dataset_id}.json"
         if not path.exists():
             return None
@@ -336,6 +336,10 @@ class DatasetStore:
         with self._MANIFEST_CACHE_LOCK:
             cached = self._MANIFEST_CACHE.get(cache_key)
             if cached is not None and cached[0] == sig:
+                if not deep_copy:
+                    # Read-only fast path: hand out the shared cached object.
+                    # Callers that mutate must use copy=True (the default).
+                    return cached[1]
                 # Manifests are mutable dataclasses; hand out a copy so a
                 # caller that mutates a loaded manifest (e.g. demote_stale
                 # setting status/provenance) can't leak into the shared cache.
@@ -345,6 +349,8 @@ class DatasetStore:
         if sig is not None:
             with self._MANIFEST_CACHE_LOCK:
                 self._MANIFEST_CACHE[cache_key] = (sig, manifest)
+        if not deep_copy:
+            return manifest
         return copy.deepcopy(manifest)
 
     def list_manifests(self) -> List[str]:

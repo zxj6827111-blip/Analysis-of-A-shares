@@ -8,7 +8,7 @@ import sys
 import threading
 import time as _time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
@@ -226,6 +226,19 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
     _sync_state = ctx.sync_state
     _sync_proc = ctx.sync_proc
     _sync_lock = ctx.sync_lock
+
+    # Full scan of every manifest + blob dir can take seconds on a large
+    # warehouse; warehouse state does not change between page loads, so cache
+    # the result for a short TTL (refreshed by the next sync/derive run via
+    # the natural expiry).
+    mdc = ctx.md_status_cache
+    now = _time.time()
+    if (
+        mdc.get("payload") is not None
+        and now - mdc.get("ts", 0.0) < 30.0
+    ):
+        return mdc["payload"]
+
     from ..data.dataset_store import DatasetStore
     from ..data.repository import MarketDataRepository
     md_root = cfg.market_data_root
@@ -244,7 +257,9 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         return result
     store = DatasetStore(md_root)
     repo = MarketDataRepository(store)
-    all_ds = repo.list_datasets()
+    # Read-only path: skip manifest deepcopy (~100k symbol records each)
+    # since this handler never mutates the loaded manifests.
+    all_ds = repo.list_datasets(deep_copy=False)
     ready = [d for d in all_ds if d.status == "ready"]
     partial = [d for d in all_ds if d.status == "partial"]
     failed = [d for d in all_ds if d.status == "failed"]
@@ -253,16 +268,47 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
     blob_dir = md_root / "blobs"
     total_size = 0
     blob_count = 0
-    if blob_dir.exists():
-        for f in blob_dir.iterdir():
-            if f.is_file():
-                total_size += f.stat().st_size
-                blob_count += 1
+    # The blob set only changes during sync/derive; walking ~100k files with
+    # stat() takes many seconds, so cache it for 5 minutes independently of
+    # the main status cache.
+    bsc = ctx.md_blob_stats_cache
+    if bsc.get("ts") and now - bsc.get("ts", 0.0) < 300.0:
+        blob_count = bsc.get("count") or 0
+        total_size = bsc.get("size") or 0
+    elif blob_dir.exists():
+        import os as _os
+
+        _count = 0
+        _size = 0
+        with _os.scandir(blob_dir) as it:
+            for entry in it:
+                if not entry.is_file():
+                    continue
+                _count += 1
+                try:
+                    _size += entry.stat().st_size
+                except OSError:
+                    pass
+        blob_count = _count
+        total_size = _size
+        bsc["ts"] = now
+        bsc["count"] = _count
+        bsc["size"] = _size
+
+    _date_range_cache: Dict[str, Tuple[Optional[int], Optional[int]]] = {}
 
     def _date_range(d):
+        """min/max symbol dates; memoized per dataset_id because this walks
+        every symbol record and is called repeatedly by the tile pickers."""
+        key = getattr(d, "dataset_id", None)
+        if key is not None and key in _date_range_cache:
+            return _date_range_cache[key]
         firsts = [s.first_date for s in d.symbols if s.first_date]
         lasts = [s.last_date for s in d.symbols if s.last_date]
-        return (min(firsts) if firsts else None, max(lasts) if lasts else None)
+        res = (min(firsts) if firsts else None, max(lasts) if lasts else None)
+        if key is not None:
+            _date_range_cache[key] = res
+        return res
 
     datasets_info = []
     for d in all_ds:
@@ -398,7 +444,7 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
     try:
         from ..data.tushare_product import resolve_active_tushare_product_pair
 
-        pair = resolve_active_tushare_product_pair(store)
+        pair = resolve_active_tushare_product_pair(store, deep_copy=False)
     except Exception:
         pair = None
 
@@ -485,6 +531,8 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         "source_freshness": source_freshness,
         "product": product,
     })
+    mdc["ts"] = now
+    mdc["payload"] = result
     return result
 
 def _latest_factor_manifest(store) -> Optional["DatasetManifest"]:
@@ -957,6 +1005,67 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
         "resume": bool(payload.resume and not payload.fresh),
         "fresh": bool(payload.fresh),
         "checkpoint_present": _checkpoint_exists(ctx, payload.task) if payload.task in CHECKPOINT_FILES else False,
+    }
+
+@router.get("/api/v1/eod-sync/status")
+def eod_sync_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
+    """Auto EOD sync config + last trigger record (datastore page status card)."""
+    import datetime as _dt
+    import json as _json
+    import os as _os
+
+    cfg = ctx.cfg
+    state_path = PROJECT_ROOT / "storage" / "astock" / "eod_sync_state.json"
+    state: Dict[str, Any] = {}
+    try:
+        if state_path.exists():
+            state = _json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        state = {}
+
+    def _flag(name: str, default: str = "1") -> bool:
+        return _os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+    health: Dict[str, Any] = {}
+    try:
+        from ..data.dataset_store import DatasetStore
+        from ..data.tushare_product import tushare_product_data_health
+
+        if cfg.market_data_root.exists():
+            health = tushare_product_data_health(DatasetStore(cfg.market_data_root))
+    except Exception:
+        health = {}
+
+    with ctx.sync_lock:
+        manual_running = bool(ctx.sync_state.get("running"))
+
+    pid = state.get("sync_pid")
+    auto_running = None
+    if pid:
+        try:
+            import psutil  # type: ignore
+
+            auto_running = bool(psutil.pid_exists(int(pid)))
+        except Exception:
+            auto_running = None
+
+    return {
+        "ok": True,
+        "enabled": _flag("ASTOCK_EOD_SYNC_ENABLED", "1"),
+        "sync_time": _os.environ.get("ASTOCK_EOD_SYNC_TIME", "18:30"),
+        "min_lag_days": int(_os.environ.get("ASTOCK_EOD_SYNC_MIN_LAG_DAYS", "1") or 1),
+        "poll_seconds": int(_os.environ.get("ASTOCK_EOD_SYNC_POLL_SECONDS", "1800") or 1800),
+        "startup_check": _flag("ASTOCK_EOD_SYNC_STARTUP", "1"),
+        "last_trigger_date": state.get("last_trigger_date"),
+        "last_sync_started_at": state.get("last_sync_started_at"),
+        "last_reason": state.get("last_reason"),
+        "sync_pid": pid,
+        "auto_running": auto_running,
+        "manual_running": manual_running,
+        "data_status": health.get("status"),
+        "raw_lag": (health.get("trading_day_lag") or {}).get("raw"),
+        "expected_latest_trading_day": health.get("expected_latest_trading_day"),
+        "state_path": str(state_path),
     }
 
 @router.get("/api/v1/data-sync/status")

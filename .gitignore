@@ -79,4 +79,6 @@ _render_history_fn.js
 /SZSE.*.csv
 /A股回测系统_*.png
 /2026年7月*.xls
+.reasonix/
+reasonix.toml
 
