@@ -1163,6 +1163,8 @@ def _validate_pair_core(
     store: DatasetStore,
     l1: Optional[DatasetManifest],
     l2: Optional[DatasetManifest],
+    *,
+    deep_copy: bool = True,
 ) -> Tuple[bool, List[str]]:
     """Non-recursive L1/L2 pair validation shared by validate + resolver.
 
@@ -1192,7 +1194,7 @@ def _validate_pair_core(
         if not factor_parent_id:
             issues.append("L1 factor parent missing")
         else:
-            fac_m = store.load_manifest(factor_parent_id)
+            fac_m = store.load_manifest(factor_parent_id, deep_copy=deep_copy)
             if fac_m is None:
                 issues.append(f"L1 factor manifest missing: {factor_parent_id}")
             else:
@@ -1209,7 +1211,7 @@ def _validate_pair_core(
         if not raw_parent:
             issues.append("L1 raw parent missing")
         else:
-            raw_m = store.load_manifest(raw_parent)
+            raw_m = store.load_manifest(raw_parent, deep_copy=deep_copy)
             if raw_m is None:
                 issues.append(f"L1 raw parent manifest missing: {raw_parent}")
             else:
@@ -1345,16 +1347,21 @@ def validate_tushare_product_pair(
 # ---------------------------------------------------------------------------
 
 
-def resolve_active_tushare_product_pair(store: DatasetStore) -> Optional[ProductPair]:
+def resolve_active_tushare_product_pair(
+    store: DatasetStore, *, deep_copy: bool = True
+) -> Optional[ProductPair]:
     """Resolve the current formal L1/L2 product pair (atomic).
 
     Rule: the latest ready ``tushare_only_v1`` L1 wins; its raw parent must
     be the matching formal L2 (ready, composite_none, tushare-only lineage).
     Only a fully consistent pair is returned.
+
+    ``copy=False`` skips manifest deepcopy for read-only callers (large
+    warehouses: each manifest deepcopy walks ~100k symbol records).
     """
     l1_candidates: List[DatasetManifest] = []
     for mid in store.list_manifests():
-        m = store.load_manifest(mid)
+        m = store.load_manifest(mid, deep_copy=deep_copy)
         if m is None:
             continue
         if m.source != L1_SOURCE or m.adjustment != L1_ADJUSTMENT:
@@ -1379,7 +1386,7 @@ def resolve_active_tushare_product_pair(store: DatasetStore) -> Optional[Product
         l2_id = (l1.raw_dataset_id or "").strip()
         if not l2_id:
             continue
-        l2 = store.load_manifest(l2_id)
+        l2 = store.load_manifest(l2_id, deep_copy=deep_copy)
         if l2 is None or l2.status != "ready":
             continue
         if l2.source != L2_SOURCE or l2.adjustment != L2_ADJUSTMENT:
@@ -1391,7 +1398,7 @@ def resolve_active_tushare_product_pair(store: DatasetStore) -> Optional[Product
         # policy, raw parent lineage, factor source, supplement overlap).
         # A pair the validator would reject (e.g. factor_source=tdx) is
         # never resolved as the active product.
-        ok, _issues = _validate_pair_core(store, l1, l2)
+        ok, _issues = _validate_pair_core(store, l1, l2, deep_copy=deep_copy)
         if not ok:
             continue
         return _product_pair_from_manifests(l1, l2)

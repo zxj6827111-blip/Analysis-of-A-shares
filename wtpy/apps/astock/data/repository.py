@@ -137,10 +137,11 @@ class MarketDataRepository:
         adjustment: Optional[str] = None,
         period: Optional[str] = None,
         status: Optional[str] = None,
+        deep_copy: bool = True,
     ) -> List[DatasetManifest]:
         results = []
         for ds_id in self._store.list_manifests():
-            m = self._store.load_manifest(ds_id)
+            m = self._store.load_manifest(ds_id, deep_copy=deep_copy)
             if m is None:
                 continue
             if source and m.source != source:
@@ -154,8 +155,8 @@ class MarketDataRepository:
             results.append(m)
         return results
 
-    def get_dataset(self, dataset_id: str) -> DatasetManifest:
-        m = self._store.load_manifest(dataset_id)
+    def get_dataset(self, dataset_id: str, *, deep_copy: bool = True) -> DatasetManifest:
+        m = self._store.load_manifest(dataset_id, deep_copy=deep_copy)
         if m is None:
             raise DatasetNotFoundError(f"Dataset not found: {dataset_id}")
         return m

@@ -53,6 +53,19 @@ class ApiContext:
         default_factory=lambda: {"key": None, "ts": 0.0, "payload": None}
     )
 
+    # market-data/status scans every manifest + blob dir (slow on large
+    # warehouses); 30s TTL cache keeps page refreshes fast.
+    md_status_cache: Dict[str, Any] = field(
+        default_factory=lambda: {"ts": 0.0, "payload": None}
+    )
+
+    # Blob-dir size/count scan walks ~100k files (many seconds); blob set
+    # only changes during sync, so cache it for 5 minutes independently so a
+    # market-data/status cache expiry never re-triggers the full blob scan.
+    md_blob_stats_cache: Dict[str, Any] = field(
+        default_factory=lambda: {"ts": 0.0, "count": 0, "size": 0}
+    )
+
     calendar_range_cache: Dict[str, Any] = field(
         default_factory=lambda: {"ts": 0.0, "data": None}
     )

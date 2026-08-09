@@ -18,9 +18,11 @@ import threading
 import time
 from typing import Dict, Optional
 
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
 
-_CACHE_TTL_SEC = 5.0
+# git build info changes only on commit; a long TTL keeps page refreshes
+# from re-running `git status` (which takes ~0.5s on Windows).
+_CACHE_TTL_SEC = 300.0
 _CACHE_LOCK = threading.Lock()
 _CACHE = {"ts": 0.0, "info": None}
 

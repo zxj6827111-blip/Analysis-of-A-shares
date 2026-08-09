@@ -329,7 +329,9 @@ class BaguaPlaneSession:
         try:
             from ..data.tushare_product import resolve_active_tushare_product_pair
 
-            pair = resolve_active_tushare_product_pair(self.store)
+            # Read-only resolution: skip manifest deepcopy (100k+ symbol
+            # records each) — this session never mutates the manifests.
+            pair = resolve_active_tushare_product_pair(self.store, deep_copy=False)
             if pair is not None:
                 self.formal_l1_id = pair.l1_dataset_id
                 self.formal_l2_id = pair.l2_dataset_id
@@ -356,7 +358,8 @@ class BaguaPlaneSession:
         from ..data.tushare_product import manifest_history_signals
 
         for mid in self.store.list_manifests():
-            m = self.store.load_manifest(mid)
+            # Read-only indexing: reuse cached manifests (no deepcopy).
+            m = self.store.load_manifest(mid, deep_copy=False)
             if m is None:
                 continue
             if (m.period or "1d") not in ("1d", "", None):
@@ -1154,6 +1157,7 @@ def batch_query_bagua(
     adjust: str = "tushare_qfq",
     limit: Optional[int] = None,
     on_progress: Optional[Any] = None,
+    session: Optional["BaguaPlaneSession"] = None,
 ) -> Dict[str, Any]:
     """Multi-stock hexagram query (same algorithm as single-stock).
 
@@ -1161,6 +1165,8 @@ def batch_query_bagua(
     scans do not re-list manifests per symbol.
 
     Optional ``on_progress(done, total, ok_count, err_count, code)`` callback.
+    Optional ``session`` reuses a caller-built plane session (avoids building
+    a second warehouse index when the target query already built one).
     """
     asof = _parse_ymd(date)
     per = normalize_period(period)
@@ -1173,17 +1179,17 @@ def batch_query_bagua(
         raise FileNotFoundError("bagua knowledge json not configured")
     calc = BaguaCalculator.from_json(cfg.bagua_json)
 
-    session: Optional[BaguaPlaneSession] = None
     if adj in ("tdx_front", "tushare_qfq", "raw"):
         if adj == "tdx_front":
             raise SourceDisabledError(
                 "tdx_front 已停用：系统已切换为 Tushare-only 数据策略。"
                 "请使用 tushare_qfq 或 raw。"
             )
-        try:
-            session = BaguaPlaneSession(cfg, adj)
-        except FileNotFoundError:
-            session = None
+        if session is None:
+            try:
+                session = BaguaPlaneSession(cfg, adj)
+            except FileNotFoundError:
+                session = None
 
     results: List[Dict[str, Any]] = []
     ok_count = 0
@@ -1245,6 +1251,252 @@ def batch_query_bagua(
         "count": len(results),
         "ok_count": ok_count,
         "error_count": err_count,
+        "results": results,
+    }
+
+
+def _bagua_match_target(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compact projection of the target stock for same-hexagram matching."""
+    if not row or row.get("error"):
+        return {}
+    b = row.get("bagua") or {}
+    s = row.get("summary") or {}
+    return {
+        "code": row.get("code"),
+        "name": row.get("name"),
+        "display": row.get("display") or row.get("code") or "",
+        "std_code": row.get("std_code"),
+        "state_id": s.get("state_id") or b.get("state_id") or "",
+        "full_name": s.get("full_name") or b.get("full_name") or "",
+        "yao_name": s.get("yao_name") or b.get("yao_name") or "",
+        "yao_order": s.get("yao_order")
+        if s.get("yao_order") is not None
+        else b.get("yao_order"),
+    }
+
+
+def _bagua_match_row(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compact projection of one matched stock for same-hexagram matching."""
+    if not row or row.get("error"):
+        return {"ok": False}
+    b = row.get("bagua") or {}
+    s = row.get("summary") or {}
+    bar = row.get("bar") or {}
+    return {
+        "ok": True,
+        "code": row.get("code"),
+        "name": row.get("name"),
+        "display": row.get("display") or row.get("code") or "",
+        "std_code": row.get("std_code"),
+        "state_id": s.get("state_id") or b.get("state_id") or "",
+        "full_name": s.get("full_name") or b.get("full_name") or "",
+        "gua_name": b.get("gua_name") or "",
+        "yao_name": s.get("yao_name") or b.get("yao_name") or "",
+        "yao_order": s.get("yao_order")
+        if s.get("yao_order") is not None
+        else b.get("yao_order"),
+        "action_signal": s.get("action_signal") or b.get("action_signal") or "",
+        "market_judgement": s.get("market_judgement")
+        or b.get("market_judgement")
+        or "",
+        "bar": {
+            "date": bar.get("date"),
+            "start_date": bar.get("start_date"),
+            "end_date": bar.get("end_date"),
+            "open": bar.get("open"),
+            "high": bar.get("high"),
+            "low": bar.get("low"),
+            "close": bar.get("close"),
+        },
+    }
+
+
+def find_same_bagua(
+    cfg: AStockConfig,
+    *,
+    code: str,
+    date: Union[str, int],
+    period: str = "DAY",
+    adjust: str = "raw",
+    scope: Optional[Sequence[str]] = None,
+    limit: Optional[int] = None,
+    on_progress: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Find other stocks with the exact same hexagram state (主卦+动爻, 384态).
+
+    Computes the target stock's ``state_id`` (``gua_order-yao_order``) at the
+    given date/period/adjust, scans the whole market (or ``scope`` codes) with
+    the same parameters, and returns every stock whose ``state_id`` matches.
+
+    A shared ``BaguaPlaneSession`` covers both the target query and the batch
+    scan so the warehouse index is built only once.
+    """
+    std = normalize_query_code(code)
+    asof = _parse_ymd(date)
+    per = normalize_period(period)
+    adj = normalize_adjust_mode(adjust)
+    if adj == "tdx_front":
+        raise SourceDisabledError(
+            "tdx_front 已停用：系统已切换为 Tushare-only 数据策略。"
+            "请使用 tushare_qfq 或 raw。"
+        )
+
+    session: Optional[BaguaPlaneSession] = None
+    if adj in ("raw", "tushare_qfq"):
+        try:
+            session = BaguaPlaneSession(cfg, adj)
+        except FileNotFoundError:
+            session = None
+
+    target = query_bagua(
+        cfg,
+        code=code,
+        date=asof,
+        period=per,
+        adjust=adj,
+        session=session,
+    )
+    if target.get("error") or not target.get("ok", True):
+        raise ValueError(f"目标股票卦象查询失败: {target.get('error')}")
+    target_state = _bagua_match_target(target).get("state_id") or ""
+    if not target_state:
+        raise ValueError("目标股票未计算出卦象 state_id")
+
+    use_all = scope is None
+    batch = batch_query_bagua(
+        cfg,
+        codes=scope,
+        all_stocks=use_all,
+        date=asof,
+        period=per,
+        adjust=adj,
+        limit=None,
+        on_progress=on_progress,
+        session=session,
+    )
+
+    results: List[Dict[str, Any]] = []
+    for row in batch.get("results") or []:
+        if not row or row.get("error") or row.get("ok") is False:
+            continue
+        if row.get("std_code") == std:
+            continue
+        proj = _bagua_match_row(row)
+        if proj.get("state_id") != target_state:
+            continue
+        results.append(proj)
+        if limit is not None and len(results) >= int(limit):
+            break
+
+    return {
+        "ok": True,
+        "mode": "bagua",
+        "target": _bagua_match_target(target),
+        "match_key": target_state,
+        "query_date": asof,
+        "period": per,
+        "adjust": adj,
+        "all_stocks": use_all,
+        "scanned": batch.get("requested")
+        or batch.get("count")
+        or len(batch.get("results") or []),
+        "count": len(results),
+        "results": results,
+    }
+
+
+def find_same_rizhu(
+    cfg: AStockConfig,
+    *,
+    code: str,
+    rizhu_path: Optional[Path] = None,
+    scope: Optional[Sequence[str]] = None,
+    limit: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Find other stocks sharing the target's static 日柱 (code6 -> 日柱 Excel).
+
+    日柱 is a per-stock static attribute loaded from the Desktop
+    ``股票+卦象/日柱(1).xlsx`` map (``load_rizhu_map``). No market data or date
+    is involved — the whole universe (or ``scope``) is grouped by that value.
+    """
+    std = normalize_query_code(code)
+    rizhu_map = load_rizhu_map(rizhu_path)
+    rizhu_src = _RIZHU_CACHE.get("path") or ""
+    target_c6 = _code6_from_any(std)
+    target_rizhu = (rizhu_map.get(target_c6) or "").strip()
+
+    disp = display_code(std)
+    target_name = resolve_stock_name(cfg, disp, std_code=std)
+
+    if not target_rizhu:
+        return {
+            "ok": False,
+            "mode": "rizhu",
+            "error": (
+                f"未在日柱表中找到 {disp}（code6={target_c6}）的日柱；"
+                "请确认桌面「股票+卦象/日柱(1).xlsx」存在且包含该股票。"
+            ),
+            "target": {
+                "code": disp,
+                "name": target_name,
+                "display": display_code_with_name(disp, target_name),
+                "std_code": std,
+                "code6": target_c6,
+                "rizhu": "",
+            },
+            "match_key": "",
+            "rizhu_source": rizhu_src,
+            "scanned": 0,
+            "count": 0,
+            "results": [],
+        }
+
+    universe = _resolve_batch_codes(cfg, scope, all_stocks=scope is None)
+
+    results: List[Dict[str, Any]] = []
+    for raw_code in universe:
+        try:
+            cur_std = normalize_query_code(raw_code)
+        except ValueError:
+            continue
+        if cur_std == std:
+            continue
+        cur_c6 = _code6_from_any(cur_std)
+        if not cur_c6:
+            continue
+        if (rizhu_map.get(cur_c6) or "").strip() != target_rizhu:
+            continue
+        cur_disp = display_code(cur_std)
+        name = resolve_stock_name(cfg, cur_disp, std_code=cur_std)
+        results.append(
+            {
+                "ok": True,
+                "code": cur_disp,
+                "name": name,
+                "display": display_code_with_name(cur_disp, name),
+                "std_code": cur_std,
+                "code6": cur_c6,
+                "rizhu": target_rizhu,
+            }
+        )
+        if limit is not None and len(results) >= int(limit):
+            break
+
+    return {
+        "ok": True,
+        "mode": "rizhu",
+        "target": {
+            "code": disp,
+            "name": target_name,
+            "display": display_code_with_name(disp, target_name),
+            "std_code": std,
+            "code6": target_c6,
+            "rizhu": target_rizhu,
+        },
+        "match_key": target_rizhu,
+        "rizhu_source": rizhu_src,
+        "scanned": len(universe),
+        "count": len(results),
         "results": results,
     }
 
@@ -1411,6 +1663,11 @@ def _code6_from_any(code: Any) -> str:
 _RIZHU_CACHE: Dict[str, Any] = {"path": None, "mtime": None, "map": {}}
 
 
+def _rizhu_disk_cache_path() -> Path:
+    """Persistent json cache for the 28MB 日柱 Excel (cold parse ~20s)."""
+    return Path(__file__).resolve().parents[4] / "storage" / "astock" / "rizhu_cache.json"
+
+
 def _default_rizhu_path() -> Optional[Path]:
     """Locate 日柱(1).xlsx under Desktop/股票+卦象 (or common fallbacks)."""
     home = Path.home()
@@ -1441,23 +1698,9 @@ def _default_rizhu_path() -> Optional[Path]:
     return None
 
 
-def load_rizhu_map(path: Optional[Path] = None) -> Dict[str, str]:
-    """Load code6 -> 日柱 string from 日柱 Excel (总表/SH/SZ/BJ)."""
+def _read_rizhu_excel(p: Path) -> Dict[str, str]:
+    """Parse code6 -> 日柱 from the Excel workbook (总表/SH/SZ/BJ)."""
     import openpyxl
-
-    p = Path(path) if path else _default_rizhu_path()
-    if p is None or not p.exists():
-        return {}
-    try:
-        mtime = p.stat().st_mtime
-    except OSError:
-        return {}
-    if (
-        _RIZHU_CACHE.get("path") == str(p)
-        and _RIZHU_CACHE.get("mtime") == mtime
-        and _RIZHU_CACHE.get("map")
-    ):
-        return dict(_RIZHU_CACHE["map"])
 
     out: Dict[str, str] = {}
     wb = openpyxl.load_workbook(p, read_only=True, data_only=True)
@@ -1507,10 +1750,68 @@ def load_rizhu_map(path: Optional[Path] = None) -> Dict[str, str]:
                     out[c6] = str(val).strip()
     finally:
         wb.close()
+    return out
+
+
+def load_rizhu_map(path: Optional[Path] = None) -> Dict[str, str]:
+    """Load code6 -> 日柱 string from 日柱 Excel (总表/SH/SZ/BJ).
+
+    The workbook is ~28MB and cold parses in ~20s, so the result is cached
+    in memory (per process) and persisted to a json file under storage/ so a
+    backend restart does not re-parse it.
+    """
+    import json
+
+    p = Path(path) if path else _default_rizhu_path()
+    if p is None or not p.exists():
+        return {}
+    try:
+        mtime = p.stat().st_mtime
+    except OSError:
+        return {}
+    if (
+        _RIZHU_CACHE.get("path") == str(p)
+        and _RIZHU_CACHE.get("mtime") == mtime
+        and _RIZHU_CACHE.get("map")
+    ):
+        return dict(_RIZHU_CACHE["map"])
+
+    disk = _rizhu_disk_cache_path()
+    if str(p) != _RIZHU_CACHE.get("path") or _RIZHU_CACHE.get("mtime") != mtime:
+        # try disk cache first
+        try:
+            if disk.exists():
+                j = json.loads(disk.read_text(encoding="utf-8"))
+                if (
+                    isinstance(j, dict)
+                    and j.get("path") == str(p)
+                    and j.get("mtime") == mtime
+                    and isinstance(j.get("map"), dict)
+                ):
+                    _RIZHU_CACHE["path"] = str(p)
+                    _RIZHU_CACHE["mtime"] = mtime
+                    _RIZHU_CACHE["map"] = j["map"]
+                    return dict(j["map"])
+        except Exception:
+            pass
+
+    out = _read_rizhu_excel(p)
 
     _RIZHU_CACHE["path"] = str(p)
     _RIZHU_CACHE["mtime"] = mtime
     _RIZHU_CACHE["map"] = out
+    # persist for future processes
+    try:
+        disk.parent.mkdir(parents=True, exist_ok=True)
+        disk.write_text(
+            json.dumps(
+                {"path": str(p), "mtime": mtime, "map": out},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
     return dict(out)
 
 

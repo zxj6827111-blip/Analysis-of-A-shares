@@ -8,6 +8,27 @@
 - 每次发版递增版本号（如 2.0 → 2.1 → 2.2），并打 `v{版本号}` 的 git tag
 - 提交后右上角版本号自动显示新版本
 
+## [2.2] - 2026-08-10
+
+### 新增
+- **收盘后自动更新行情数据**（无需手动点击）：
+  - 服务启动时后台检查数据新鲜度（raw lag），工作日到达 `ASTOCK_EOD_SYNC_TIME`（默认 18:30）后定时检查，发现滞后 ≥ `ASTOCK_EOD_SYNC_MIN_LAG_DAYS`（默认 1）个交易日自动触发 Tushare 全链增量同步（raw→factor→reconcile）
+  - 调度优化：未到设定时间不空转（直接睡到 18:30 到点才检查）；数据晚出时以 `ASTOCK_EOD_SYNC_POLL_SECONDS`（默认 30 分钟）重试；每自然日最多触发一次；周末睡到周一
+  - 触发记录持久化到 `storage/astock/eod_sync_state.json`；新增 `/api/v1/eod-sync/status` 接口与数据仓库页「🤖 收盘后自动更新」状态卡（开关、定时时间、上次自动同步时间、数据状态）
+  - 全部可配置：`ASTOCK_EOD_SYNC_ENABLED / _STARTUP / _TIME / _MIN_LAG_DAYS / _POLL_SECONDS`（见 `.env.example`），默认开启
+- **卦象导出修复与提速**：
+  - 修复全市场导出后台任务卡死在 `queued` 的问题：`_bq_start_export_job` 启动工作线程时漏传 `ctx`，线程启动即抛 TypeError 崩溃，job 永不进入 running（前端永远显示「已排队」）；补回归测试
+  - 日柱表（桌面 28MB xlsx）解析结果持久化到 `storage/astock/rizhu_cache.json`，冷解析 20s+ 降至毫秒级（进程重启也不再重读）
+  - `BaguaPlaneSession` 构建走只读路径（`deep_copy=False`，跳过 13.8 万条 symbol 记录的 deepcopy）
+  - 新增诊断接口 `/api/v1/bagua/export/jobs`（列出所有导出/同卦任务状态与进度）
+- **页面刷新性能优化**（F5 长时间加载问题）：
+  - `/api/v1/market-data/status` 冷扫描从约 13 秒降至约 0.5 秒：新增 30s 响应缓存 + blob 目录统计独立 300s 缓存（blob 目录约 13.8 万个文件，不再每次全量 stat）；`load_manifest` 新增 `deep_copy=False` 只读路径（跳过对 13.8 万条 symbol 记录的 deepcopy），`market_data_status` 与 `resolve_active_tushare_product_pair` 只读调用复用
+  - `/api/v1/version` git 构建信息缓存 TTL 从 5s 提至 300s（消除 Windows 上每次刷新触发 `git status` 的 ~0.6s 阻塞）
+- **同卦 / 同日柱股票检索**：查询卦象页查询单只股票后，结果下方新增「查看同卦股票」（全市场扫描主卦+动爻完全相同，384态）与「查看同日柱」（静态日柱表 code6→日柱）按钮；新增后端接口 `/api/v1/bagua/same-gua`、`/api/v1/bagua/same-rizhu`（GET/POST，支持 scope 限定股票池与 limit 截断）
+  - 全市场同卦扫描耗时数分钟，`/api/v1/bagua/same-gua` POST 默认转后台任务（`/jobs/{id}` 轮询进度、`/jobs/{id}/result` 取结果），前端按钮事件改为容器委托（修复批量查询后按钮点击无响应）
+  - 同卦扫描带**可视化进度条**（百分比 + 扫描 x/5217 + 成功/失败计数）；同卦/同日柱结果页与进度面板均提供「← 返回卦象查询结果」按钮，可随时回到原个股卦象界面
+  - 同卦扫描任务**幂等**：同参数任务已在排队/运行时不重复创建（前端记住活跃任务直接复用轮询；后端 `/api/v1/bagua/same-gua` POST 幂等兜底，刷新页面后重复提交也返回在跑任务）
+
 ## [2.1] - 2026-08-08
 
 ### 新增

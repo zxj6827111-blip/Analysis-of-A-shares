@@ -32,6 +32,19 @@ class BaguaExportBody(BaseModel):
     adjust: str = "tushare_qfq"
     limit: Optional[int] = None
 
+class BaguaSameGuaBody(BaseModel):
+    code: str
+    date: str
+    period: str = "DAY"
+    adjust: str = "raw"
+    scope: Optional[List[str]] = None
+    limit: Optional[int] = None
+
+class BaguaSameRizhuBody(BaseModel):
+    code: str
+    scope: Optional[List[str]] = None
+    limit: Optional[int] = None
+
 def _bq_normalize_periods(
     period: Optional[str] = None,
     periods: Optional[List[str]] = None,
@@ -59,7 +72,7 @@ def _bq_run_export_job(ctx: ApiContext, job_id: str, params: Dict[str, Any]) -> 
             return
         job["status"] = "running"
         job["started_at"] = _bq_time.time()
-        job["message"] = "正在计算全市场卦象…"
+        job["message"] = "正在准备（加载日柱表 / 构建数据索引）…"
 
     def _prog(info: Dict[str, Any]) -> None:
         with _bq_export_lock:
@@ -155,7 +168,7 @@ def _bq_start_export_job(
     }
     t = _bq_threading.Thread(
         target=_bq_run_export_job,
-        args=(job_id, params),
+        args=(ctx, job_id, params),
         name=f"bagua-export-{job_id}",
         daemon=True,
     )
@@ -168,6 +181,152 @@ def _bq_should_async(all_stocks: bool, codes: Optional[List[str]], limit: Option
         return True
     n = len(codes or [])
     return n > 50
+
+def _bq_same_gua_should_async(scope: Optional[List[str]]) -> bool:
+    """Full-market same-hexagram scan takes minutes -> background job."""
+    if scope is None:
+        return True
+    return len(scope) > 50
+
+def _bq_run_same_gua_job(ctx: ApiContext, job_id: str, params: Dict[str, Any]) -> None:
+    cfg = ctx.cfg
+    _bq_export_jobs = ctx.bq_export_jobs
+    _bq_export_lock = ctx.bq_export_lock
+    from ..service.bagua_query import find_same_bagua
+
+    def _prog(done: int, total: int, ok_count: int, err_count: int, code: str) -> None:
+        with _bq_export_lock:
+            j = _bq_export_jobs.get(job_id)
+            if not j:
+                return
+            j["progress"] = {
+                "done": done,
+                "total": total,
+                "ok": ok_count,
+                "error": err_count,
+                "code": code,
+            }
+            j["message"] = f"扫描 {done}/{total}（成功 {ok_count} / 失败 {err_count}）"
+
+    with _bq_export_lock:
+        j = _bq_export_jobs.get(job_id)
+        if j:
+            j["status"] = "running"
+            j["started_at"] = _bq_time.time()
+            j["message"] = "正在扫描全市场卦象…"
+
+    try:
+        result = find_same_bagua(
+            cfg,
+            code=params["code"],
+            date=params["date"],
+            period=params["period"],
+            adjust=params["adjust"],
+            scope=params.get("scope"),
+            limit=params.get("limit"),
+            on_progress=_prog,
+        )
+        with _bq_export_lock:
+            j = _bq_export_jobs.get(job_id)
+            if j:
+                j["status"] = "done"
+                j["finished_at"] = _bq_time.time()
+                j["result"] = result
+                j["count"] = result.get("count") or 0
+                j["message"] = "扫描完成 · 命中 " + str(result.get("count") or 0) + " 只"
+    except Exception as e:
+        with _bq_export_lock:
+            j = _bq_export_jobs.get(job_id)
+            if j:
+                j["status"] = "error"
+                j["finished_at"] = _bq_time.time()
+                j["error"] = str(e)
+                j["message"] = "查询失败: " + str(e)
+
+def _bq_start_same_gua_job(
+    ctx: ApiContext,
+    *,
+    code: str,
+    date: str,
+    period: str,
+    adjust: str,
+    scope: Optional[List[str]],
+    limit: Optional[int],
+) -> dict:
+    cfg = ctx.cfg
+    _bq_export_jobs = ctx.bq_export_jobs
+    _bq_export_lock = ctx.bq_export_lock
+
+    scope_count = len(scope) if scope else None
+    # Idempotency: if a same-parameter same_gua job is already queued/running,
+    # hand back that job instead of spawning a duplicate full-market scan.
+    with _bq_export_lock:
+        for jid, j in list(_bq_export_jobs.items()):
+            if not j or not isinstance(j, dict):
+                continue
+            if j.get("kind") != "same_gua":
+                continue
+            if j.get("status") not in ("queued", "running"):
+                continue
+            if (
+                j.get("code") == code
+                and j.get("date") == date
+                and j.get("period") == period
+                and j.get("adjust") == adjust
+                and j.get("scope_count") == scope_count
+                and j.get("limit") == limit
+            ):
+                return {
+                    "ok": True,
+                    "mode": "async",
+                    "reused": True,
+                    **{k: v for k, v in j.items() if k != "result"},
+                }
+
+    job_id = "bqsame_" + _bq_uuid.uuid4().hex[:12]
+    rec = {
+        "job_id": job_id,
+        "kind": "same_gua",
+        "status": "queued",
+        "created_at": _bq_time.time(),
+        "started_at": None,
+        "finished_at": None,
+        "message": "已排队",
+        "code": code,
+        "date": date,
+        "period": period,
+        "adjust": adjust,
+        "scope_count": scope_count,
+        "limit": limit,
+        "progress": None,
+        "count": None,
+        "error": None,
+    }
+    with _bq_export_lock:
+        if len(_bq_export_jobs) > 20:
+            old = sorted(
+                _bq_export_jobs.items(),
+                key=lambda kv: float(kv[1].get("created_at") or 0),
+            )[: max(0, len(_bq_export_jobs) - 15)]
+            for k, _ in old:
+                _bq_export_jobs.pop(k, None)
+        _bq_export_jobs[job_id] = rec
+    params = {
+        "code": code,
+        "date": date,
+        "period": period,
+        "adjust": adjust,
+        "scope": scope,
+        "limit": limit,
+    }
+    t = _bq_threading.Thread(
+        target=_bq_run_same_gua_job,
+        args=(ctx, job_id, params),
+        name=f"bagua-same-gua-{job_id}",
+        daemon=True,
+    )
+    t.start()
+    return {"ok": True, "mode": "async", **{k: v for k, v in rec.items() if k != "result"}}
 
 @router.get("/api/v1/gua/states")
 def api_gua_states(
@@ -397,6 +556,160 @@ def api_bagua_batch(payload: BaguaBatchBody = Body(...), ctx: ApiContext = Depen
     except Exception as e:
         raise HTTPException(500, f"bagua batch query failed: {e}") from e
 
+@router.post("/api/v1/bagua/same-gua")
+def api_bagua_same_gua(
+    payload: BaguaSameGuaBody = Body(...),
+    async_mode: bool = Query(
+        True,
+        description="full-market defaults to background job; false forces sync",
+    ),
+
+    ctx: ApiContext = Depends(get_ctx),
+) -> dict:
+    """Find other stocks with the exact same hexagram state (主卦+动爻, 384态).
+
+    Full-market scans take minutes, so they default to a background job
+    (poll ``/api/v1/bagua/same-gua/jobs/{job_id}`` then fetch ``/result``).
+    """
+    cfg = ctx.cfg
+    from ..service.bagua_query import SourceDisabledError, find_same_bagua
+
+    use_async = async_mode and _bq_same_gua_should_async(payload.scope)
+    if use_async:
+        return _bq_start_same_gua_job(
+            ctx,
+            code=payload.code,
+            date=payload.date,
+            period=payload.period,
+            adjust=payload.adjust,
+            scope=payload.scope,
+            limit=payload.limit,
+        )
+    try:
+        return find_same_bagua(
+            cfg,
+            code=payload.code,
+            date=payload.date,
+            period=payload.period,
+            adjust=payload.adjust,
+            scope=payload.scope,
+            limit=payload.limit,
+        )
+    except SourceDisabledError as e:
+        raise HTTPException(400, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except Exception as e:
+        raise HTTPException(500, f"bagua same-gua query failed: {e}") from e
+
+@router.get("/api/v1/bagua/same-gua/jobs/{job_id}")
+def api_bagua_same_gua_job(job_id: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
+    cfg = ctx.cfg
+    _bq_export_jobs = ctx.bq_export_jobs
+    _bq_export_lock = ctx.bq_export_lock
+    _wl_cache = ctx.wl_cache
+    with _bq_export_lock:
+        job = _bq_export_jobs.get(job_id)
+        if not job:
+            raise HTTPException(404, f"same-gua job not found: {job_id}")
+        return {
+            k: v
+            for k, v in job.items()
+            if k not in ("result",)
+        }
+
+@router.get("/api/v1/bagua/same-gua/jobs/{job_id}/result")
+def api_bagua_same_gua_job_result(job_id: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
+    cfg = ctx.cfg
+    _bq_export_jobs = ctx.bq_export_jobs
+    _bq_export_lock = ctx.bq_export_lock
+    _wl_cache = ctx.wl_cache
+    with _bq_export_lock:
+        job = _bq_export_jobs.get(job_id)
+        if not job:
+            raise HTTPException(404, f"same-gua job not found: {job_id}")
+        if job.get("status") != "done":
+            raise HTTPException(409, f"job not ready: {job.get('status')}")
+        return job.get("result") or {"ok": False, "error": "job result missing"}
+
+@router.get("/api/v1/bagua/same-gua")
+def api_bagua_same_gua_get(
+    code: str = Query(..., min_length=1, description="stock code e.g. 600000 / sh600000"),
+    date: str = Query(..., min_length=4, description="YYYY-MM-DD or YYYYMMDD"),
+    period: str = Query("DAY", description="DAY | WEEK | MONTH"),
+    adjust: str = Query("raw", description="raw | tushare_qfq"),
+    limit: Optional[int] = Query(None, ge=1, le=2000, description="max matched rows"),
+
+    ctx: ApiContext = Depends(get_ctx),
+) -> dict:
+    """GET alias for same-hexagram stock search."""
+    from ..service.bagua_query import SourceDisabledError, find_same_bagua
+
+    try:
+        return find_same_bagua(
+            cfg=ctx.cfg,
+            code=code,
+            date=date,
+            period=period,
+            adjust=adjust,
+            limit=limit,
+        )
+    except SourceDisabledError as e:
+        raise HTTPException(400, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except Exception as e:
+        raise HTTPException(500, f"bagua same-gua query failed: {e}") from e
+
+@router.post("/api/v1/bagua/same-rizhu")
+def api_bagua_same_rizhu(
+    payload: BaguaSameRizhuBody = Body(...), ctx: ApiContext = Depends(get_ctx)
+) -> dict:
+    """Find other stocks sharing the target's static 日柱 (日柱 Excel)."""
+    cfg = ctx.cfg
+    from ..service.bagua_query import find_same_rizhu
+
+    try:
+        return find_same_rizhu(
+            cfg,
+            code=payload.code,
+            scope=payload.scope,
+            limit=payload.limit,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except Exception as e:
+        raise HTTPException(500, f"bagua same-rizhu query failed: {e}") from e
+
+@router.get("/api/v1/bagua/same-rizhu")
+def api_bagua_same_rizhu_get(
+    code: str = Query(..., min_length=1, description="stock code e.g. 600000 / sh600000"),
+    limit: Optional[int] = Query(None, ge=1, le=2000, description="max matched rows"),
+
+    ctx: ApiContext = Depends(get_ctx),
+) -> dict:
+    """GET alias for same-日柱 stock search."""
+    from ..service.bagua_query import find_same_rizhu
+
+    try:
+        return find_same_rizhu(
+            cfg=ctx.cfg,
+            code=code,
+            limit=limit,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except Exception as e:
+        raise HTTPException(500, f"bagua same-rizhu query failed: {e}") from e
+
 @router.post("/api/v1/bagua/export")
 def api_bagua_export(
     payload: BaguaExportBody = Body(...),
@@ -510,6 +823,22 @@ def api_bagua_export_get(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=path.name,
     )
+
+@router.get("/api/v1/bagua/export/jobs")
+def api_bagua_export_jobs_list(ctx: ApiContext = Depends(get_ctx)) -> dict:
+    """List all in-memory bagua jobs (exports + same-gua scans) with status."""
+    cfg = ctx.cfg
+    _bq_export_jobs = ctx.bq_export_jobs
+    _bq_export_lock = ctx.bq_export_lock
+    _wl_cache = ctx.wl_cache
+    with _bq_export_lock:
+        items = [
+            {k: v for k, v in j.items() if k != "result"}
+            for j in _bq_export_jobs.values()
+            if isinstance(j, dict)
+        ]
+    items.sort(key=lambda j: float(j.get("created_at") or 0), reverse=True)
+    return {"ok": True, "count": len(items), "jobs": items}
 
 @router.get("/api/v1/bagua/export/jobs/{job_id}")
 def api_bagua_export_job(job_id: str, ctx: ApiContext = Depends(get_ctx)) -> dict:
