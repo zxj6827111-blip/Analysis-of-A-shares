@@ -1380,3 +1380,115 @@ def experiment_results_table(cfg: AStockConfig, experiment_id: str) -> Dict[str,
         "rows": rows,
         "n": len(rows),
     }
+
+
+def _chunk_ids(ids: Sequence[str], size: int) -> Iterable[List[str]]:
+    """Split id lists to stay under SQLite's IN() variable limit."""
+    for i in range(0, len(ids), size):
+        yield list(ids[i:i + size])
+
+
+def experiment_findings_batch(
+    cfg: AStockConfig, experiment_ids: Sequence[str]
+) -> Dict[str, Dict[str, Any]]:
+    """Read-only batch sibling of :func:`experiment_results_table`.
+
+    The dashboard findings loop called experiment_results_table once per
+    experiment (get_experiment = 2 queries) plus 2 queries per variant
+    (metrics + runs), each on its own connection — an N+1 pattern. This
+    loads experiments / variants / runs / metrics for many experiments in a
+    few chunked IN() queries on a single connection and returns
+    ``{experiment_id: table}`` where each table has the same shape and row
+    keys as experiment_results_table (so callers read identical fields).
+    Experiments missing from the DB are simply absent from the result.
+    """
+    ids = [str(i) for i in experiment_ids if str(i or "").strip()]
+    if not ids:
+        return {}
+    init_db(cfg)
+    tables: Dict[str, Dict[str, Any]] = {}
+    with _LOCK:
+        conn = connect(cfg)
+        try:
+            for chunk in _chunk_ids(ids, 400):
+                marks = ",".join("?" * len(chunk))
+                exps = conn.execute(
+                    f"SELECT experiment_id, name, status FROM experiments "
+                    f"WHERE experiment_id IN ({marks})",
+                    chunk,
+                ).fetchall()
+                if not exps:
+                    continue
+                vars_by_exp: Dict[str, list] = {}
+                for v in conn.execute(
+                    f"SELECT * FROM experiment_variants "
+                    f"WHERE experiment_id IN ({marks}) ORDER BY variant_id",
+                    chunk,
+                ).fetchall():
+                    vars_by_exp.setdefault(v["experiment_id"], []).append(v)
+                run_ids = [
+                    v["run_id"]
+                    for rows in vars_by_exp.values()
+                    for v in rows
+                    if v["run_id"]
+                ]
+                runs_map: Dict[str, Any] = {}
+                metrics_map: Dict[str, Any] = {}
+                for rid_chunk in _chunk_ids(run_ids, 400):
+                    r_marks = ",".join("?" * len(rid_chunk))
+                    for r in conn.execute(
+                        f"SELECT run_id, title, status FROM runs "
+                        f"WHERE run_id IN ({r_marks})",
+                        rid_chunk,
+                    ).fetchall():
+                        runs_map[r["run_id"]] = r
+                    for m in conn.execute(
+                        f"SELECT * FROM metrics WHERE run_id IN ({r_marks})",
+                        rid_chunk,
+                    ).fetchall():
+                        metrics_map[m["run_id"]] = m
+                for exp in exps:
+                    exp_id = exp["experiment_id"]
+                    rows = []
+                    for v in vars_by_exp.get(exp_id) or []:
+                        rid = v["run_id"]
+                        metrics = {}
+                        title = None
+                        m = metrics_map.get(rid) if rid else None
+                        r = runs_map.get(rid) if rid else None
+                        if m:
+                            metrics = _json_loads(m["metrics_json"], default={}) or {
+                                "total_return": m["total_return"],
+                                "annual_return": m["annual_return"],
+                                "max_drawdown": m["max_drawdown"],
+                                "win_rate": m["win_rate"],
+                                "n_round_trips": m["n_round_trips"],
+                                "payoff_ratio": m["payoff_ratio"],
+                            }
+                        if r:
+                            title = r["title"]
+                        _p = _json_loads(v["params_json"], default={}) or {}
+                        rows.append({
+                            "variant_id": v["variant_id"],
+                            "status": v["status"],
+                            "param_hash": v["param_hash"],
+                            "params": _p,
+                            "run_id": rid,
+                            "title": title,
+                            "error": v["error"],
+                            "metrics": metrics,
+                            "signal_data_source": _p.get("signal_data_source"),
+                            "signal_adjustment": _p.get("signal_adjustment"),
+                            "signal_dataset_id": _p.get("dataset_id"),
+                            "execution_dataset_id": _p.get("execution_dataset_id"),
+                        })
+                    tables[exp_id] = {
+                        "experiment_id": exp_id,
+                        "name": exp["name"],
+                        "status": exp["status"],
+                        "rows": rows,
+                        "n": len(rows),
+                    }
+        finally:
+            conn.close()
+    return tables

@@ -473,6 +473,28 @@ def sync_tushare_incremental(
     print(f"Incremental sync for {len(symbols)} symbols from Tushare...")
     sync_run_id = make_sync_run_id("tushare")
 
+    # Cross-process exclusion for (tushare, none, 1d) on this data root: the
+    # EOD auto-sync, the UI button and cron all write the same checkpoint and
+    # raw manifests, so concurrent runs must never overlap (adj_factor and
+    # local_vendor already hold their own SyncTaskLock).
+    from wtpy.apps.astock.data.sync_lock import SyncTaskLock, SyncLockHeldError
+    lock = SyncTaskLock(
+        store.root, source="tushare", adjustment="none", period="1d",
+        sync_run_id=sync_run_id,
+    )
+    try:
+        lock.acquire()
+    except SyncLockHeldError as e:
+        print(f"ERROR: {e}")
+        print("Another sync task for (tushare, none, 1d) on this data root "
+              "is running. Concurrent tasks with the same scope are forbidden.")
+        return {"status": "failed", "error": "concurrent_lock", "holder": e.holder}
+    if lock.recovered_stale:
+        print(f"NOTE: recovered stale lock from previous holder: "
+              f"pid={lock.recovered_stale.get('pid')} "
+              f"alive={lock.recovered_stale.get('holder_alive')} "
+              f"start={lock.recovered_stale.get('start_time')}")
+
     # Resume from the latest ready dataset (merging its history) unless the
     # user pins a start date; without this, incremental == full-history
     # refetch (6000-row cap truncates) or a window-only orphan dataset.
@@ -501,12 +523,14 @@ def sync_tushare_incremental(
             ck = None
     if ck and not getattr(args, "resume", False) and not getattr(args, "fresh", False):
         print("ERROR: tushare incremental checkpoint exists. Use --resume or --fresh.")
+        lock.release()
         return {"status": "failed", "error": "checkpoint_exists_use_resume_or_fresh"}
     if getattr(args, "fresh", False) and ck_path.exists():
         ck_path.unlink()
         ck = None
     if getattr(args, "resume", False) and ck:
         sync_run_id = ck.get("sync_run_id", sync_run_id)
+        lock.sync_run_id = sync_run_id
         print(f"  Resuming tushare incremental sync_run_id={sync_run_id}")
 
     configs = [
@@ -560,6 +584,7 @@ def sync_tushare_incremental(
     else:
         result["reconcile"] = _reconcile_after_sync(store)
         _apply_reconcile_status(result)
+    lock.release()
     return result
 
 
@@ -3563,6 +3588,13 @@ def _sync_dataset(
     manifest.symbols = symbol_records
     manifest.symbol_count = len(symbol_records)
     manifest.row_count = total_rows
+
+    # data_cutoff_date must be the real last trading day present in the
+    # blobs (never the requested end_date, which may fall on a weekend or
+    # holiday); this keeps raw/factor surfaces reporting identical dates.
+    _lasts = [r.last_date for r in symbol_records if r.last_date]
+    if _lasts:
+        manifest.data_cutoff_date = max(_lasts)
 
     # Too many symbols with no data AND no parent history must not publish as
     # ready (silent data loss on the new surface). The threshold has a floor

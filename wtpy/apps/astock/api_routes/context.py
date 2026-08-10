@@ -66,6 +66,13 @@ class ApiContext:
         default_factory=lambda: {"ts": 0.0, "count": 0, "size": 0}
     )
 
+    # eod-sync/status runs a full tushare product health scan (base/factor
+    # selection + per-symbol blob integrity + pair validation — seconds on
+    # large warehouses); 30s TTL cache keeps datastore-page refreshes fast.
+    eod_sync_cache: Dict[str, Any] = field(
+        default_factory=lambda: {"ts": 0.0, "payload": None}
+    )
+
     calendar_range_cache: Dict[str, Any] = field(
         default_factory=lambda: {"ts": 0.0, "data": None}
     )

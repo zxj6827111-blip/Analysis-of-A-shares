@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -875,8 +876,439 @@ def test_export_bagua_multi_period_xlsx(monkeypatch, tmp_path):
     assert "stock-all" in wb.sheetnames
     ws = wb["stock-all"]
     headers = [c.value for c in ws[1]]
-    assert headers == list(bq._WEEKLY_EXPORT_HEADERS)
+    assert headers[:8] == ["code", "name", "week_end", "open", "high", "low", "close", "日柱"]
+    assert re.match(r"^周卦周线-组合\(\d{4}-W\d{1,2}\)$", headers[8]), headers[8]
+    assert headers[9] == "爻辞解释"
+    assert re.match(r"^月卦月线-组合\(\d{4}-\d{2}\)$", headers[10]), headers[10]
+    assert headers[11] == "爻辞解释"
     assert ws.max_row >= 2
     # code / 日柱 columns
     assert ws.cell(2, 1).value in ("600000", "000001")
     assert ws.cell(2, 8).value in ("甲子", "乙丑", None, "")
+
+
+def test_export_month_defaults_to_prev_month(monkeypatch, tmp_path):
+    """MONTH 列默认取查询月份的上一个月（回归）。
+
+    date=2024-01-15 时 asof_map = {"WEEK": 20240115, "MONTH": 20231231}：
+    周卦取查询周（2024-W02），月卦取上一月（2023-12）。
+    12 月与 1 月 OHLC 不同（山水蒙 vs 天水讼），若月卦误用当月数据，
+    月卦组合列将与周卦列一致而不是 2023-12 的卦象。
+    """
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+
+    # 2023-12 全部交易日 + 2024-01 月上旬（到 1/12，即 2024 年第 2 周）
+    dec_days = [
+        20231201, 20231204, 20231205, 20231206, 20231207, 20231208,
+        20231211, 20231212, 20231213, 20231214, 20231215,
+        20231218, 20231219, 20231220, 20231221, 20231222,
+        20231225, 20231226, 20231227, 20231228, 20231229,
+    ]
+    jan_days = [
+        20240102, 20240103, 20240104, 20240105,
+        20240108, 20240109, 20240110, 20240111, 20240112,
+    ]
+    bars = [DayBar(d, 6.27, 7.33, 5.90, 5.90, 1.0, 1.0) for d in dec_days] + [
+        DayBar(d, 10.0, 11.0, 9.0, 10.5, 1.0, 1.0) for d in jan_days
+    ]
+
+    monkeypatch.setattr(
+        bq,
+        "_load_dataset_bars",
+        lambda *_a, **_k: (
+            bars,
+            {
+                "dataset_id": "mock",
+                "dataset_source": "tdxquant",
+                "dataset_adjustment": "front",
+                "dataset_status": "ready",
+                "covers_asof": True,
+                "candidate_datasets": 1,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        bq,
+        "BaguaPlaneSession",
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("no md")),
+    )
+    monkeypatch.setattr(bq, "load_rizhu_map", lambda _p=None: {"600000": "甲子"})
+
+    cfg = SimpleNamespace(
+        bagua_json=JSON_PATH,
+        storage_root=tmp_path,
+        tdx_root=tmp_path,
+        market_data_root=tmp_path / "md",
+        forecast_root=tmp_path,
+        forecast_weekly_dir=tmp_path,
+        universe_path=tmp_path / "universe.json",
+        adj_root=tmp_path,
+    )
+
+    # 基准：直接用上一月最后一天查 MONTH，导出文件的月卦列应与其一致
+    ref = bq.query_bagua(
+        cfg, code="600000", date="2023-12-31", period="MONTH", adjust="tushare_qfq"
+    )
+    assert ref["ok"] is True
+    ref_full = ref["summary"]["full_name"]
+    assert ref_full
+    # 导出组合已剥离卦符（U+4DC0–U+4DFF），基准 full_name 同步剥离后再比较
+    ref_full_plain = re.sub(r"[\u4dc0-\u4dff]", "", ref_full)
+    expected_month_combo = bq._bagua_combo(ref)
+
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2024-01-15",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        codes=["600000"],
+        all_stocks=False,
+    )
+    assert path.exists()
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "meta" in wb.sheetnames
+    assert "stock-all" in wb.sheetnames
+    ws = wb["stock-all"]
+    headers = [c.value for c in ws[1]]
+    assert len(headers) == 12
+    assert headers[:8] == ["code", "name", "week_end", "open", "high", "low", "close", "日柱"]
+    # 周卦列在前(9)、月卦列在后(11)，标签分别含查询周 ISO 周与上一月
+    assert headers[8].startswith("周卦周线-组合(") and "2024-W02" in headers[8], headers[8]
+    assert headers[9] == "爻辞解释"
+    assert headers[10].startswith("月卦月线-组合(") and "2023-12" in headers[10], headers[10]
+    assert headers[11] == "爻辞解释"
+
+    # 月卦数据确实取 2023-12：组合与 2023-12-31 的 MONTH 查询完全一致，
+    # 且与周卦列（2024-W02 的天水讼）不同
+    week_combo = ws.cell(2, 9).value or ""
+    month_combo = ws.cell(2, 11).value or ""
+    assert week_combo, "周卦组合不应为空"
+    assert month_combo, "月卦组合不应为空"
+    assert month_combo.startswith(ref_full_plain), f"{month_combo!r} 应以 {ref_full_plain!r} 开头"
+    assert month_combo == expected_month_combo, f"{month_combo!r} != {expected_month_combo!r}"
+    assert week_combo != month_combo
+
+    # 周卦 week_end 落在 2024-01 第 2 周（2024-01-08 ~ 2024-01-14）
+    week_end = str(ws.cell(2, 3).value or "")
+    assert "2024-01-08" <= week_end <= "2024-01-14", week_end
+
+    # meta 记录 month_asof = 20231231
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta.get("month_asof") == 20231231
+    assert meta.get("query_date") == 20240115
+
+
+def test_export_all_stocks_two_sheets_and_no_gua_symbol(monkeypatch, tmp_path):
+    """全市场导出：同一 Excel 两个 sheet（stock-all / etf-all），卦象组合不含卦符。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+
+    stock_bars = [DayBar(20240103, 6.27, 7.33, 5.90, 5.90, 1.0, 1.0)]
+    etf_days = [
+        20231204, 20231205, 20231206, 20231207, 20231208,
+        20231211, 20231212, 20231213, 20231214, 20231215,
+        20231218, 20231219, 20231220, 20231221, 20231222,
+        20231225, 20231226, 20231227, 20231228, 20231229,
+        20240102, 20240103, 20240104, 20240105,
+    ]
+    # 两只 ETF 用不同的 OHLC，确保各自独立算出卦象（而非共用同一行数据）
+    etf_bars_by_code = {
+        "SSE.ETF.510300": [DayBar(d, 4.05, 4.12, 3.98, 4.06, 1.0, 1.0) for d in etf_days],
+        "SZSE.ETF.159915": [DayBar(d, 2.35, 2.44, 2.31, 2.40, 1.0, 1.0) for d in etf_days],
+    }
+
+    def _fake_load(cfg, std_code, source_key, asof=None):
+        if std_code.startswith(("SSE.ETF.", "SZSE.ETF.")):
+            bars = etf_bars_by_code.get(std_code) or list(etf_bars_by_code.values())[0]
+        else:
+            bars = stock_bars
+        return (
+            bars,
+            {
+                "dataset_id": "mock",
+                "dataset_source": "tdxquant",
+                "dataset_adjustment": "front",
+                "dataset_status": "ready",
+                "covers_asof": True,
+                "candidate_datasets": 1,
+            },
+        )
+
+    monkeypatch.setattr(bq, "_load_dataset_bars", _fake_load)
+    monkeypatch.setattr(
+        bq,
+        "BaguaPlaneSession",
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("no md")),
+    )
+    monkeypatch.setattr(
+        bq,
+        "_resolve_batch_codes",
+        lambda cfg, codes=None, *, all_stocks=False: ["SSE.STK.600000"],
+    )
+    monkeypatch.setattr(
+        bq, "list_etf_std_codes", lambda cfg: ["SSE.ETF.510300", "SZSE.ETF.159915"]
+    )
+
+    cfg = SimpleNamespace(
+        bagua_json=JSON_PATH,
+        storage_root=tmp_path,
+        tdx_root=tmp_path,
+        market_data_root=tmp_path / "md",
+        forecast_root=tmp_path,
+        forecast_weekly_dir=tmp_path,
+        universe_path=tmp_path / "universe.json",
+        adj_root=tmp_path,
+    )
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2024-01-15",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        all_stocks=True,
+    )
+    assert path.exists()
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "stock-all" in wb.sheetnames
+    assert "etf-all" in wb.sheetnames
+    assert "meta" in wb.sheetnames
+    ws_stock = wb["stock-all"]
+    ws_etf = wb["etf-all"]
+    assert ws_stock.max_row >= 2
+    assert ws_etf.max_row >= 2
+    assert len([c.value for c in ws_etf[1]]) == 12
+    # 两个 sheet 的所有单元格均不含卦符（U+4DC0–U+4DFF）
+    for ws in (ws_stock, ws_etf):
+        for row in ws.iter_rows(values_only=True):
+            for cell in row:
+                if cell is not None and re.search(r"[\u4dc0-\u4dff]", str(cell)):
+                    pytest.fail(f"卦符残留: {cell!r}")
+    # ETF 行名称兜底解析（resolve_stock_name 无数据时为空字符串）
+    assert ws_etf.cell(2, 1).value in ("510300", "159915")
+
+    # ---- 补强：etf-all 两行都写入真实卦象，且不含 stock-all 的股票代码 ----
+    etf_rows = list(ws_etf.iter_rows(min_row=2, values_only=True))
+    assert len(etf_rows) == 2, f"etf-all 应写入两行，实际 {len(etf_rows)}"
+    etf_codes = [r[0] for r in etf_rows]
+    assert set(etf_codes) == {"510300", "159915"}, etf_codes
+    # 组合列（周卦=第9列、月卦=第11列）均写入真实卦象，非 error 空行
+    assert all(r[8] for r in etf_rows), f"etf-all 周卦组合列存在空行: {etf_rows}"
+    assert all(r[10] for r in etf_rows), f"etf-all 月卦组合列存在空行: {etf_rows}"
+    # 两只 ETF 数据不同 -> 两行卦象组合互不相同（各自独立计算）
+    assert etf_rows[0][8] != etf_rows[1][8], "两只 ETF 卦象不应相同"
+    # etf-all 不得混入 stock-all 的股票代码
+    stock_codes = {
+        r[0] for r in ws_stock.iter_rows(min_row=2, values_only=True) if r[0]
+    }
+    assert stock_codes.isdisjoint(etf_codes), f"etf-all 混入股票代码: {stock_codes & set(etf_codes)}"
+
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta.get("stock_count") == 1
+    assert meta.get("etf_count") == 2
+    assert meta.get("sheets") == "stock-all,etf-all"
+
+
+def test_export_etf_only_codes_skips_empty_stock_sheet(monkeypatch, tmp_path):
+    """手动 codes 全为 ETF：导出只有 etf-all + meta 两个 sheet（无空 stock-all）。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+
+    etf_days = [
+        20231204, 20231205, 20231206, 20231207, 20231208,
+        20231211, 20231212, 20231213, 20231214, 20231215,
+        20231218, 20231219, 20231220, 20231221, 20231222,
+        20231225, 20231226, 20231227, 20231228, 20231229,
+        20240102, 20240103, 20240104, 20240105,
+    ]
+    etf_bars = [DayBar(d, 4.05, 4.12, 3.98, 4.06, 1.0, 1.0) for d in etf_days]
+    monkeypatch.setattr(
+        bq,
+        "_load_dataset_bars",
+        lambda *_a, **_k: (
+            etf_bars,
+            {
+                "dataset_id": "mock",
+                "dataset_source": "tdxquant",
+                "dataset_adjustment": "front",
+                "dataset_status": "ready",
+                "covers_asof": True,
+                "candidate_datasets": 1,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        bq,
+        "BaguaPlaneSession",
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("no md")),
+    )
+    # 不应调用 _resolve_batch_codes（没有股票 codes）；若被调用会断言失败
+    def _unexpected_resolve(cfg, codes=None, *, all_stocks=False):
+        raise AssertionError("全 ETF codes 不应触发股票解析")
+
+    monkeypatch.setattr(bq, "_resolve_batch_codes", _unexpected_resolve)
+
+    cfg = SimpleNamespace(
+        bagua_json=JSON_PATH,
+        storage_root=tmp_path,
+        tdx_root=tmp_path,
+        market_data_root=tmp_path / "md",
+        forecast_root=tmp_path,
+        forecast_weekly_dir=tmp_path,
+        universe_path=tmp_path / "universe.json",
+        adj_root=tmp_path,
+    )
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2024-01-15",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        codes=["sh510300"],
+        all_stocks=False,
+    )
+    assert path.exists()
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert set(wb.sheetnames) == {"meta", "etf-all"}, wb.sheetnames
+    ws_etf = wb["etf-all"]
+    assert ws_etf.max_row >= 2
+    etf_rows = list(ws_etf.iter_rows(min_row=2, values_only=True))
+    assert len(etf_rows) == 1
+    assert etf_rows[0][0] == "510300"
+    assert etf_rows[0][8], "周卦组合列不应为空"
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta.get("stock_count") == 0
+    assert meta.get("etf_count") == 1
+
+
+def test_export_mixed_codes_with_invalid_dropped(monkeypatch, tmp_path):
+    """手工 codes 混入无法识别的代码（如 "garbage"）时静默丢弃，导出仍成功（回归）。
+
+    修复前：无效代码进入股票池后 ``_resolve_batch_codes`` 抛
+    "no valid stock codes"，导致整个导出失败（ETF+无效代码混输无法导出）。
+    修复后：进入股票池前先经 ``normalize_query_code`` 校验，失败则丢弃。
+    ``_resolve_batch_codes`` 在手工 codes 路径收到的是已过滤后的有效代码
+    （仅字符串规范化、无文件系统访问），这里让它真实执行以覆盖完整链路。
+    """
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+
+    stock_bars = [DayBar(20240103, 6.27, 7.33, 5.90, 5.90, 1.0, 1.0)]
+    etf_days = [
+        20231204, 20231205, 20231206, 20231207, 20231208,
+        20231211, 20231212, 20231213, 20231214, 20231215,
+        20231218, 20231219, 20231220, 20231221, 20231222,
+        20231225, 20231226, 20231227, 20231228, 20231229,
+        20240102, 20240103, 20240104, 20240105,
+    ]
+    etf_bars = [DayBar(d, 4.05, 4.12, 3.98, 4.06, 1.0, 1.0) for d in etf_days]
+
+    def _fake_load(cfg, std_code, source_key, asof=None):
+        if std_code == "SSE.ETF.510300":
+            bars = etf_bars
+        else:
+            bars = stock_bars
+        return (
+            bars,
+            {
+                "dataset_id": "mock",
+                "dataset_source": "tdxquant",
+                "dataset_adjustment": "front",
+                "dataset_status": "ready",
+                "covers_asof": True,
+                "candidate_datasets": 1,
+            },
+        )
+
+    monkeypatch.setattr(bq, "_load_dataset_bars", _fake_load)
+    monkeypatch.setattr(
+        bq,
+        "BaguaPlaneSession",
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("no md")),
+    )
+    monkeypatch.setattr(bq, "load_rizhu_map", lambda _p=None: {"600000": "甲子", "510300": "丙午"})
+
+    cfg = SimpleNamespace(
+        bagua_json=JSON_PATH,
+        storage_root=tmp_path,
+        tdx_root=tmp_path,
+        market_data_root=tmp_path / "md",
+        forecast_root=tmp_path,
+        forecast_weekly_dir=tmp_path,
+        universe_path=tmp_path / "universe.json",
+        adj_root=tmp_path,
+    )
+    # 混输：ETF + 无效代码 + 股票。修复前会抛 "no valid stock codes"。
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2024-01-15",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        codes=["sh510300", "garbage", "600000"],
+        all_stocks=False,
+    )
+    assert path.exists()
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert set(wb.sheetnames) == {"meta", "stock-all", "etf-all"}, wb.sheetnames
+    ws_stock = wb["stock-all"]
+    ws_etf = wb["etf-all"]
+    stock_rows = list(ws_stock.iter_rows(min_row=2, values_only=True))
+    etf_rows = list(ws_etf.iter_rows(min_row=2, values_only=True))
+    # stock-all 有 600000 行、etf-all 有 510300 行，各仅一行（无多余行）
+    assert len(stock_rows) == 1, f"stock-all 应只有 600000 一行，实际 {len(stock_rows)}"
+    assert len(etf_rows) == 1, f"etf-all 应只有 510300 一行，实际 {len(etf_rows)}"
+    assert stock_rows[0][0] == "600000"
+    assert etf_rows[0][0] == "510300"
+    # "garbage" 未出现在任何 sheet 的 code 列
+    for ws in (ws_stock, ws_etf):
+        codes_col = [str(r[0] or "") for r in ws.iter_rows(min_row=2, values_only=True)]
+        assert "garbage" not in codes_col, f"{ws.title} code 列残留无效代码: {codes_col}"
+    # 全表（含 name 等列）也不应残留 garbage 字样
+    for ws in wb.worksheets:
+        for row in ws.iter_rows(values_only=True):
+            for cell in row:
+                if cell is not None and "garbage" in str(cell).lower():
+                    pytest.fail(f"无效代码残留: {cell!r}")
+
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta.get("requested") == 2
+    assert meta.get("stock_count") == 1
+    assert meta.get("etf_count") == 1
+    assert meta.get("sheets") == "stock-all,etf-all"
+
+    # 更严格的回归场景：ETF + 仅无效代码（股票池全部无效）。
+    # 修复前 "garbage" 会无过滤进入股票池，_resolve_batch_codes 对全无效
+    # 池抛 ValueError("no valid stock codes")，导致整个导出失败。
+    path2 = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2024-01-15",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        codes=["sh510300", "garbage"],
+        all_stocks=False,
+    )
+    assert path2.exists()
+
+    wb2 = openpyxl.load_workbook(path2)
+    assert set(wb2.sheetnames) == {"meta", "etf-all"}, wb2.sheetnames
+    etf_rows2 = list(wb2["etf-all"].iter_rows(min_row=2, values_only=True))
+    assert len(etf_rows2) == 1
+    assert etf_rows2[0][0] == "510300"
+    for row in wb2["etf-all"].iter_rows(values_only=True):
+        for cell in row:
+            if cell is not None and "garbage" in str(cell).lower():
+                pytest.fail(f"无效代码残留: {cell!r}")
+    meta2 = {r[0]: r[1] for r in wb2["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta2.get("stock_count") == 0
+    assert meta2.get("etf_count") == 1
+    assert meta2.get("sheets") == "etf-all"

@@ -610,7 +610,10 @@ def data_health(ctx: ApiContext = Depends(get_ctx)) -> dict:
             select_tushare_factor,
         )
 
-        cal = TradeCalendar.load(cfg.calendar_path)
+        try:
+            cal = TradeCalendar.load(cfg.calendar_path)
+        except Exception:
+            cal = TradeCalendar.from_tdx(cfg.tdx_root)
         if cal.dates:
             calendar_dates = [int(d) for d in cal.dates]
             import datetime as _dt
@@ -631,13 +634,18 @@ def data_health(ctx: ApiContext = Depends(get_ctx)) -> dict:
                     _sig = manifest_history_signals(_m)
                     if _sig.max_last_date:
                         data_maxes.append(int(_sig.max_last_date))
-            if not expected or (data_maxes and expected < max(data_maxes)):
+            # only a calendar missing a date the data already has is stale;
+            # data not yet caught up to today is the normal state and must
+            # never discard the calendar for trading-day lag
+            if not expected or (
+                data_maxes and int(cal.dates[-1]) < max(data_maxes)
+            ):
                 from ..data.tushare_product import _last_weekday_on_or_before
                 expected = _last_weekday_on_or_before(completed_int)
                 calendar_stale = True
             if calendar_stale:
                 # stale calendar cannot compute trading-day lag — fall back to
-                # plain day arithmetic against the weekday expected date
+                # workday counting against the weekday expected date
                 calendar_dates = None
     except Exception:
         calendar_dates = None
@@ -929,6 +937,25 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
     if payload.task not in ("tdx", "tushare", "factor", "derive", "ca"):
         raise HTTPException(400, f"未知任务类型: {payload.task}")
 
+    # The EOD auto-sync child writes the same (tushare, none/adj_factor, 1d)
+    # checkpoints and manifests the manual task would touch; refuse to start
+    # while it is alive (the child itself also takes the SyncTaskLock).
+    if payload.task in ("tushare", "factor"):
+        from ..data.sync_lock import _pid_alive
+        eod_state_path = PROJECT_ROOT / "storage" / "astock" / "eod_sync_state.json"
+        try:
+            eod_st = json.loads(eod_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            eod_st = {}
+        eod_pid = int(eod_st.get("sync_pid") or 0)
+        if eod_pid > 0 and _pid_alive(eod_pid):
+            raise HTTPException(
+                409,
+                "EOD 自动同步正在运行"
+                f"（PID={eod_pid}，启动于 {eod_st.get('last_sync_started_at') or '?'}）。"
+                "请等待其结束后再手动同步。",
+            )
+
     if payload.task == "tdx":
         # Tushare-only policy: TDX is disabled in the default sync chain.
         # Return a structured skip WITHOUT touching the TDX client or
@@ -976,6 +1003,14 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
             cmd += ["--fresh"]
         elif payload.resume:
             cmd += ["--resume"]
+        elif _checkpoint_exists(ctx, payload.task):
+            # A checkpoint left by an interrupted run (crash / killed EOD
+            # child) makes the script fail closed with exit 1 unless
+            # --resume/--fresh is passed; auto-resume instead of surprising
+            # the user with a plain "sync failed" from a bare start.
+            cmd += ["--resume"]
+            print(f"[SYNC] 检测到残留 checkpoint（{CHECKPOINT_FILES[payload.task]}），"
+                  "自动附加 --resume")
 
     # Claim under lock so concurrent POSTs cannot both start a sync.
     with _sync_lock:
@@ -1010,6 +1045,19 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
 @router.get("/api/v1/eod-sync/status")
 def eod_sync_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
     """Auto EOD sync config + last trigger record (datastore page status card)."""
+    # The health scan below (tushare_product_data_health) walks every
+    # manifest + blob (seconds on large warehouses) and the config only
+    # changes at process start, so cache the payload for a short TTL.
+    # Note: dynamic fields (last_trigger_date/last_sync_started_at/
+    # manual_running/auto_running) are frozen for the TTL window too —
+    # acceptable for the status card, they self-heal on next expiry.
+    esc = ctx.eod_sync_cache
+    now = _time.time()
+    if (
+        esc.get("payload") is not None
+        and now - esc.get("ts", 0.0) < 30.0
+    ):
+        return esc["payload"]
     import datetime as _dt
     import json as _json
     import os as _os
@@ -1022,6 +1070,33 @@ def eod_sync_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
             state = _json.loads(state_path.read_text(encoding="utf-8"))
     except Exception:
         state = {}
+
+    def _sane_state_value(v):
+        # Future-dated or unparseable records are dirty (a crash can persist
+        # a timestamp for a sync that never ran) and are dropped from the
+        # payload; the caller flags them via state_suspect.
+        if not v:
+            return None
+        s = str(v).strip()
+        try:
+            if len(s) >= 8 and s[:8].isdigit():
+                d = _dt.datetime.strptime(s[:8], "%Y%m%d").date()
+                if d > _dt.date.today():
+                    return None
+            else:
+                dt = _dt.datetime.fromisoformat(s)
+                if dt > _dt.datetime.now() + _dt.timedelta(minutes=10):
+                    return None
+        except ValueError:
+            return None
+        return v
+
+    last_trigger_date = _sane_state_value(state.get("last_trigger_date"))
+    last_sync_started_at = _sane_state_value(state.get("last_sync_started_at"))
+    state_suspect = bool(
+        (state.get("last_trigger_date") and last_trigger_date is None)
+        or (state.get("last_sync_started_at") and last_sync_started_at is None)
+    )
 
     def _flag(name: str, default: str = "1") -> bool:
         return _os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
@@ -1049,17 +1124,22 @@ def eod_sync_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         except Exception:
             auto_running = None
 
-    return {
+    payload = {
         "ok": True,
         "enabled": _flag("ASTOCK_EOD_SYNC_ENABLED", "1"),
         "sync_time": _os.environ.get("ASTOCK_EOD_SYNC_TIME", "18:30"),
         "min_lag_days": int(_os.environ.get("ASTOCK_EOD_SYNC_MIN_LAG_DAYS", "1") or 1),
         "poll_seconds": int(_os.environ.get("ASTOCK_EOD_SYNC_POLL_SECONDS", "1800") or 1800),
         "startup_check": _flag("ASTOCK_EOD_SYNC_STARTUP", "1"),
-        "last_trigger_date": state.get("last_trigger_date"),
-        "last_sync_started_at": state.get("last_sync_started_at"),
+        "last_trigger_date": last_trigger_date,
+        "last_sync_started_at": last_sync_started_at,
         "last_reason": state.get("last_reason"),
+        "last_sync_exit_code": state.get("last_sync_exit_code"),
+        "last_sync_finished_at": state.get("last_sync_finished_at"),
+        "retry_count": state.get("retry_count"),
+        "pending_retry_at": state.get("pending_retry_at"),
         "sync_pid": pid,
+        "state_suspect": state_suspect,
         "auto_running": auto_running,
         "manual_running": manual_running,
         "data_status": health.get("status"),
@@ -1067,6 +1147,12 @@ def eod_sync_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         "expected_latest_trading_day": health.get("expected_latest_trading_day"),
         "state_path": str(state_path),
     }
+    if health:
+        # Only cache a real health snapshot; a transient failure must not
+        # stick for the TTL window.
+        esc["ts"] = now
+        esc["payload"] = payload
+    return payload
 
 @router.get("/api/v1/data-sync/status")
 def data_sync_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
@@ -1191,12 +1277,15 @@ def dashboard_overview(
 
     findings: List[Dict[str, Any]] = []
     try:
-        from ..service.db import experiment_results_table, list_experiments
+        from ..service.db import experiment_findings_batch, list_experiments
 
-        for exp in list_experiments(cfg, limit=50):
-            try:
-                table = experiment_results_table(cfg, exp["experiment_id"])
-            except Exception:
+        exps = list_experiments(cfg, limit=50)
+        # Batch the per-experiment / per-variant SQLite lookups (N+1) into a
+        # handful of IN() queries; same row shape as experiment_results_table.
+        tables = experiment_findings_batch(cfg, [e["experiment_id"] for e in exps])
+        for exp in exps:
+            table = tables.get(exp["experiment_id"])
+            if table is None:
                 continue
             for row in table.get("rows") or []:
                 m = row.get("metrics") or {}

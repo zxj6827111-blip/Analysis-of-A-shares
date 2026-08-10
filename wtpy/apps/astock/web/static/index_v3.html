@@ -30,9 +30,14 @@
       0%{background-position:0% 0}
       100%{background-position:200% 0}
     }
-    #srcFreshnessGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-    @media (max-width:1100px){#srcFreshnessGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-    @media (max-width:640px){#srcFreshnessGrid{grid-template-columns:1fr}}
+    /* 数据新鲜度卡片：拉取源 / 本地合成 两组 */
+    .src-fresh-group-title{display:flex;align-items:baseline;gap:8px;font-size:12px;font-weight:800;color:var(--muted);margin:12px 0 6px}
+    .src-fresh-group-title .hint{font-weight:400;font-size:11px;opacity:.8}
+    .src-fresh-group{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+    .src-fresh-group.prod{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .src-fresh-group.prod .src-fresh-card{min-height:92px}
+    @media (max-width:1100px){.src-fresh-group,.src-fresh-group.prod{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media (max-width:640px){.src-fresh-group,.src-fresh-group.prod{grid-template-columns:1fr}}
     .sched-num.overridden{
       color:var(--muted)!important;opacity:.72;
       border-color:var(--line2)!important;background:#0a1420!important;
@@ -1644,7 +1649,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
           <button type="button" class="btn" id="bqExportBtn" title="导出全市场日/周/月线卦象 Excel">⇩ 全市场导出</button>
           <button type="button" class="btn" id="bqExportOnePeriodBtn" title="导出输入框内股票的日/周/月线卦象 Excel">⇩ 导出查询股票</button>
         </div>
-        <div class="muted" style="font-size:11px;margin-top:8px" id="bqHint">指数/ETF 无复权口径，卦象按未复权(raw)计算；下拉预设可快速填入（也可手动输入 sh000001、sh510300、sz159915 等）。导出为周报格式单表：code/name/week_end/OHLC/日柱/月卦组合/爻辞/周线组合/爻辞。日柱自动读桌面「股票+卦象/日柱(1).xlsx」。Ctrl+F5 强刷后生效。</div>
+        <div class="muted" style="font-size:11px;margin-top:8px" id="bqHint">指数/ETF 无复权口径，卦象按未复权(raw)计算；下拉预设可快速填入（也可手动输入 sh000001、sh510300、sz159915 等）。导出为周报格式：code/name/week_end/OHLC/日柱/周卦组合(标注周)/爻辞/月卦组合(标注月)/爻辞；月卦默认取查询月份的上一个月（如8月查询导出7月月卦），周卦取查询周；全市场导出=同一 Excel 内 A股(stock-all)与全量ETF(etf-all) 两个 sheet，手动代码含 ETF 时也按类型分 sheet；导出卦象不含卦符。日柱自动读桌面「股票+卦象/日柱(1).xlsx」。Ctrl+F5 强刷后生效。</div>
         <div id="bqGuidePanel" style="display:none;border:1px solid var(--line,#2a3a55);border-radius:8px;padding:12px 14px;margin-top:10px;font-size:12px;line-height:1.9;color:#c3d0e0;background:rgba(24,38,60,.35)">
           <div style="font-weight:600;color:#9fc7ff;margin-bottom:6px">四步使用指南</div>
           <ol style="margin:0;padding-left:20px">
@@ -2343,66 +2348,66 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       <div style="font-size:12px"><span id="eodSyncEnabled" class="tag">—</span></div>
       <div class="muted" style="font-size:12px">每日定时 <b id="eodSyncTime">—</b> 自动增量同步</div>
       <div class="muted" style="font-size:12px">上次自动同步 <b id="eodSyncLast">—</b></div>
+      <div class="muted" style="font-size:12px">上次结果 <span id="eodSyncResult">—</span></div>
       <div class="muted" style="font-size:12px">数据状态 <b id="eodSyncDataStatus">—</b></div>
       <button type="button" class="btn" id="btnEodSyncRefresh" title="刷新自动更新状态" style="font-size:12px;padding:3px 10px">↻</button>
     </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-      <button type="button" class="btn btn-primary" id="btnSyncTushare" title="Tushare 原始日线 + 前复权">① 更新Tushare日线</button>
-      <button type="button" class="btn btn-primary" id="btnSyncFactor" title="Tushare 前复权因子 adj_factor">② 更新Tushare前复权因子</button>
-      <button type="button" class="btn btn-primary" id="btnSyncDerive" title="Tushare 原始日线 × 复权因子 → 派生前复权（自动协调正式L1/L2）">③ 派生QFQ</button>
-      <button type="button" class="btn btn-primary" id="btnSyncCA" title="从 Tushare 拉取分红/送转/除权日等公司行为数据">④ 更新CA数据</button>
-      <button type="button" class="btn" id="btnSyncStop" style="display:none;background:rgba(255,79,123,.15);border:1px solid rgba(255,79,123,.5);color:#ff8aa7" title="停止当前同步任务">■ 停止</button>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <span class="src-fresh-group-title" style="margin:0">📥 拉取源</span>
+      <button type="button" class="btn btn-primary" id="btnSyncTushare" title="Tushare 原始日线 + 前复权（每日 18:30 自动执行）">更新Tushare日线</button>
+      <button type="button" class="btn btn-primary" id="btnSyncFactor" title="Tushare 前复权因子 adj_factor（每日 18:30 自动执行）">更新Tushare前复权因子</button>
+      <button type="button" class="btn btn-primary" id="btnSyncCA" title="从 Tushare 拉取分红/送转/除权日等公司行为数据（每个交易日 18:35 自动执行）">更新CA数据</button>
+      <button type="button" class="btn" id="btnSyncStop" style="display:none;margin-left:12px;background:rgba(255,79,123,.15);border:1px solid rgba(255,79,123,.5);color:#ff8aa7" title="停止当前同步任务">■ 停止</button>
     </div>
     <!-- Tushare-only 正式产品链数据到日期 -->
-    <div id="srcFreshnessGrid" style="margin-bottom:14px">
-      <div class="src-fresh-card" data-src="tushare" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
-          <span style="font-size:12px;font-weight:700;color:var(--muted)">① Tushare日线</span>
-          <span class="src-fresh-status" style="font-size:10px"></span>
+    <div id="srcFreshnessGrid">
+      <div class="src-fresh-group-title">📥 从 Tushare 拉取 <span class="hint">每个交易日定时自动增量 · 也可手动更新</span></div>
+      <div class="src-fresh-group">
+        <div class="src-fresh-card" data-src="tushare" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px" title="tushare/none 原始未复权日线（一切数据的地基）">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+            <span style="font-size:12px;font-weight:700;color:var(--muted)">Tushare日线<span style="font-size:10px;opacity:.75">（原始）</span></span>
+            <span class="src-fresh-status" style="font-size:10px"></span>
+          </div>
+          <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
+          <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
         </div>
-        <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
-        <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
+        <div class="src-fresh-card" data-src="factor" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px" title="tushare/adj_factor 复权比例序列（派生正式L1的输入）">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+            <span style="font-size:12px;font-weight:700;color:var(--muted)">Tushare前复权因子<span style="font-size:10px;opacity:.75">（原始）</span></span>
+            <span class="src-fresh-status" style="font-size:10px"></span>
+          </div>
+          <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
+          <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
+        </div>
+        <div class="src-fresh-card" data-src="ca" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px" title="分红/送转/除权日等公司行为事件（每个交易日 18:35 自动增量同步）">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+            <span style="font-size:12px;font-weight:700;color:var(--muted)">CA公司行为<span style="font-size:10px;opacity:.75">（每日自动）</span></span>
+            <span class="src-fresh-status" style="font-size:10px"></span>
+          </div>
+          <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
+          <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
+        </div>
       </div>
-      <div class="src-fresh-card" data-src="factor" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
-          <span style="font-size:12px;font-weight:700;color:var(--muted)">② Tushare前复权因子</span>
-          <span class="src-fresh-status" style="font-size:10px"></span>
+      <div class="src-fresh-group-title">🏭 本地自动合成 <span class="hint">由日线+因子自动派生，跟随源数据更新</span></div>
+      <div class="src-fresh-group prod">
+        <div class="src-fresh-card" data-src="l2_product" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px" title="internal/composite_none 正式未复权面：回测成交/估值 + 卦象默认口径（未复权）">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+            <span style="font-size:12px;font-weight:700;color:var(--muted)">正式L2(未复权)<span style="font-size:10px;opacity:.75">（成交/估值·卦象面）</span></span>
+            <span class="src-fresh-status" style="font-size:10px"></span>
+          </div>
+          <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
+          <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
         </div>
-        <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
-        <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
-      </div>
-      <div class="src-fresh-card" data-src="l2_product" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
-          <span style="font-size:12px;font-weight:700;color:var(--muted)">③ 正式L2(未复权)</span>
-          <span class="src-fresh-status" style="font-size:10px"></span>
+        <div class="src-fresh-card" data-src="l1_product" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px" title="internal/composite_tushare_factor_qfq 正式前复权面：回测信号（时点动态复权）">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+            <span style="font-size:12px;font-weight:700;color:var(--muted)">正式L1(前复权)<span style="font-size:10px;opacity:.75">（信号面）</span></span>
+            <span class="src-fresh-status" style="font-size:10px"></span>
+          </div>
+          <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
+          <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
         </div>
-        <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
-        <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
-      </div>
-      <div class="src-fresh-card" data-src="l1_product" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
-          <span style="font-size:12px;font-weight:700;color:var(--muted)">④ 正式L1(前复权)</span>
-          <span class="src-fresh-status" style="font-size:10px"></span>
-        </div>
-        <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
-        <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
-      </div>
-      <div class="src-fresh-card" data-src="ca" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
-          <span style="font-size:12px;font-weight:700;color:var(--muted)">⑤ CA公司行为</span>
-          <span class="src-fresh-status" style="font-size:10px"></span>
-        </div>
-        <div class="src-fresh-date" style="font-size:22px;font-weight:800;letter-spacing:.02em;line-height:1.15;font-variant-numeric:tabular-nums">—</div>
-        <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
       </div>
     </div>
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-      <label style="font-size:12px;color:var(--muted)">截止日期 <span id="dynamic-cutoff">(正在加载...)</span></label>
-      <input type="date" id="syncEndDate" class="input" style="width:160px;padding:4px 10px;font-size:13px" />
-      <label style="font-size:12px;color:var(--muted)">起始日期(可选)</label>
-      <input type="date" id="syncStartDate" class="input" style="width:160px;padding:4px 10px;font-size:13px" />
-    </div>
-
     <!-- 进度条 -->
     <div id="syncProgressBox" style="display:none;margin-bottom:12px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
@@ -2437,7 +2442,8 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
         <div><b>Failed</b><div style="font-size:22px;font-weight:800;color:var(--red)" id="dsFailed">0</div></div>
         <div><b>Blobs</b><div style="font-size:22px;font-weight:800" id="dsBlobs">0</div></div>
       </div>
-      <div style="overflow-x:auto">
+      <button type="button" class="btn" id="btnToggleDsTable" style="font-size:12px;padding:4px 12px;margin-bottom:10px" title="展开/收起数据集明细表">📋 数据集明细 ▸</button>
+      <div id="dsTableWrap" style="display:none;overflow-x:auto">
         <table class="mini-table" id="dsTable" style="width:100%;font-size:12px">
           <thead><tr><th>Dataset ID</th><th>Source</th><th>Adjustment</th><th>Status</th><th>Symbols</th><th>Bars</th><th>日期范围</th><th>Created</th></tr></thead>
           <tbody id="dsTableBody"></tbody>
@@ -4812,8 +4818,15 @@ async function expCreateAndStart() {
     if (/^\d{8}$/.test(s)) return s.slice(0, 4) + "-" + s.slice(4, 6) + "-" + s.slice(6, 8);
     return s;
   }
+  const DS_WD = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  function dsYmdWd(v) {
+    const s = dsFmtYmdDash(v);
+    if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const d = new Date(parseInt(s.slice(0, 4), 10), parseInt(s.slice(5, 7), 10) - 1, parseInt(s.slice(8, 10), 10));
+    return s + " " + DS_WD[d.getDay()];
+  }
   function dsDateRange(a, b) {
-    const s = dsFmtYmd(a), t = dsFmtYmd(b);
+    const s = dsYmdWd(a), t = dsYmdWd(b);
     if (!s && !t) return "";
     return (s || "—") + "~" + (t || "—");
   }
@@ -4831,12 +4844,19 @@ async function expCreateAndStart() {
     if (!n || !isFinite(n)) return null;
     const today = dsTodayYmdInt();
     if (n >= today) return 0;
-    // rough calendar lag; enough for "stale" coloring
+    // workday (Mon-Fri) count from the day after the cutoff through today;
+    // the cutoff day itself already contains data, so it is not counted
     const y = Math.floor(n / 10000), m = Math.floor((n % 10000) / 100), day = n % 100;
     const a = new Date(y, m - 1, day);
+    a.setDate(a.getDate() + 1);
     const b = new Date();
     b.setHours(0, 0, 0, 0);
-    return Math.max(0, Math.round((b - a) / 86400000));
+    let lag = 0;
+    for (const d = a; d <= b; d.setDate(d.getDate() + 1)) {
+      const wd = d.getDay();
+      if (wd !== 0 && wd !== 6) lag++;
+    }
+    return lag;
   }
   function pickSourceFreshnessClient(datasets) {
     const list = Array.isArray(datasets) ? datasets : [];
@@ -4882,7 +4902,7 @@ async function expCreateAndStart() {
       if (!st || !st.exists) {
         if (dateEl) dateEl.textContent = "未同步";
         if (dateEl) dateEl.style.color = "var(--red)";
-        if (metaEl) metaEl.textContent = "点击「⑤ 更新CA数据」首次拉取";
+        if (metaEl) metaEl.textContent = "点击「更新CA数据」首次拉取";
         if (stEl) stEl.innerHTML = '<span class="tag tag-red">缺失</span>';
         card.style.borderColor = "rgba(255,79,123,.45)";
         return;
@@ -4906,13 +4926,14 @@ async function expCreateAndStart() {
     items.forEach(function(it) { if (it && it.key) byKey[it.key] = it; });
     grid.querySelectorAll(".src-fresh-card").forEach(function(card) {
       const key = card.getAttribute("data-src");
+      if (key === "ca") return; // CA 卡由 loadCAStatus 独立渲染（并发后防止被覆盖为缺失）
       const it = byKey[key] || { status: "missing" };
       const dateEl = card.querySelector(".src-fresh-date");
       const metaEl = card.querySelector(".src-fresh-meta");
       const stEl = card.querySelector(".src-fresh-status");
       const status = it.status || "missing";
       const updated = it.updated_to || it.latest_date || it.data_cutoff_date;
-      const dateStr = dsFmtYmdDash(updated);
+      const dateStr = dsYmdWd(updated);
       const lag = dsLagTradingDays(updated);
       let dateColor = "var(--text)";
       let borderColor = "var(--line2)";
@@ -4992,7 +5013,7 @@ async function expCreateAndStart() {
       const dsid = String(l2.dataset_id);
       const dsShort = dsid.length > 12 ? dsid.slice(0, 12) + "…" : dsid;
       const statusTag = "<span class='tag tag-green' style='font-size:10px;padding:1px 5px'>ready</span>";
-      const dateTxt = dsFmtYmdDash(l2.max_date || l2.data_cutoff_date) || "—";
+      const dateTxt = dsYmdWd(l2.max_date || l2.data_cutoff_date) || "—";
       el.innerHTML = "L2执行数据: internal/composite_none | <span title=\"" + esc(dsid) + "\">" + esc(dsShort) + "</span> | " +
         "日期 " + esc(dateTxt) + " | " + statusTag;
     } catch (e) {
@@ -5200,13 +5221,16 @@ async function expCreateAndStart() {
     const content = $("dsContent");
     if (loading) loading.style.display = "";
     if (content) content.style.display = "none";
+    // Fire the independent status cards first so they render as soon as
+    // their own endpoints respond instead of waiting for the (slow)
+    // market-data/status scan to finish first.
+    try { loadCAStatus(); } catch (eCa) {}
+    try { loadEodSyncStatus(); } catch (eEod) {}
     try {
       const data = await api("/api/v1/market-data/status");
       window.__mdStatus = data || null;
       try { applyMdStatusUi(); } catch (eMd) {}
       try { renderSourceFreshness(data); } catch (eSf) {}
-      try { loadCAStatus(); } catch (eCa) {}
-      try { loadEodSyncStatus(); } catch (eEod) {}
       if (loading) loading.style.display = "none";
       if (content) content.style.display = "";
       if ($("dsRoot")) $("dsRoot").textContent = data.data_root || "—";
@@ -5245,7 +5269,7 @@ async function expCreateAndStart() {
           $("dsLatestLv").innerHTML =
             "<span style='font-size:11px'>" + (esc(prod.dataset_id) || "—") + "</span> " +
             "<span class='tag tag-green' style='font-size:10px;padding:1px 5px'>正式" + (dsL2 ? "L2" : "L1") + "</span>" +
-            " · 日期 " + (dsFmtYmdDash(prod.max_date || prod.data_cutoff_date) || "—");
+            " · 日期 " + (dsYmdWd(prod.max_date || prod.data_cutoff_date) || "—");
         } else {
           $("dsLatestLv").textContent = "—（尚未协调正式产品面）";
         }
@@ -5287,6 +5311,13 @@ async function expCreateAndStart() {
     }
   }
   if ($("btnDsRefresh")) $("btnDsRefresh").onclick = loadDataStoreStatus;
+  // 数据集明细表：默认收起，点击按钮展开/收起
+  if ($("btnToggleDsTable")) $("btnToggleDsTable").onclick = function() {
+    const wrap = $("dsTableWrap");
+    const open = wrap && wrap.style.display !== "none";
+    if (wrap) wrap.style.display = open ? "none" : "";
+    this.textContent = open ? "📋 数据集明细 ▸" : "📋 数据集明细 ▾";
+  };
 
   async function loadEodSyncStatus() {
     try {
@@ -5300,7 +5331,8 @@ async function expCreateAndStart() {
       const last = st.last_sync_started_at || st.last_trigger_date || "尚未自动同步";
       if ($("eodSyncLast")) {
         $("eodSyncLast").textContent = last;
-        $("eodSyncLast").title = (st.last_reason || "") + (st.sync_pid ? " · PID " + st.sync_pid : "");
+        $("eodSyncLast").title = (st.last_reason || "") + (st.sync_pid ? " · PID " + st.sync_pid : "")
+          + (st.state_suspect ? " (时间记录异常)" : "");
       }
       const ds = $("eodSyncDataStatus");
       if (ds) {
@@ -5310,6 +5342,21 @@ async function expCreateAndStart() {
           ds.innerHTML = '<span class="tag tag-orange">滞后 ' + (st.raw_lag != null ? st.raw_lag : "?") + " 天</span>";
         } else {
           ds.textContent = "—";
+        }
+      }
+      // 上次自动同步结果（旧后端无 last_sync_exit_code 时保持 "—"）
+      const rc = st.last_sync_exit_code;
+      const rcEl = $("eodSyncResult");
+      if (rcEl) {
+        if (rc === undefined || rc === null || rc === "") {
+          rcEl.textContent = "—";
+        } else if (rc === 0) {
+          rcEl.innerHTML = '<span class="tag tag-green">成功</span>';
+        } else {
+          const retry = parseInt(st.retry_count || 0, 10);
+          rcEl.innerHTML = '<span class="tag tag-orange" title="退出码 ' + rc
+            + (retry ? ' · 已重试 ' + retry + ' 次' : '') + '">失败(exit=' + rc + ')</span>'
+            + (retry ? '<span class="muted" style="font-size:11px;margin-left:4px">重试中</span>' : "");
         }
       }
       const card = $("eodSyncCard");
@@ -5327,13 +5374,8 @@ async function expCreateAndStart() {
 
   /* ---------- 数据更新 ---------- */
   let _syncPollTimer = null;
-  function syncDateToStr(inputId) {
-    const el = $(inputId);
-    if (!el || !el.value) return null;
-    return parseInt(el.value.replace(/-/g, ""), 10);
-  }
   function setSyncButtonsDisabled(disabled) {
-    ["btnSyncTushare", "btnSyncFactor", "btnSyncDerive", "btnSyncCA"].forEach(function(id) {
+    ["btnSyncTushare", "btnSyncFactor", "btnSyncCA"].forEach(function(id) {
       const b = $(id);
       if (b) b.disabled = disabled;
     });
@@ -5460,11 +5502,9 @@ async function expCreateAndStart() {
     } catch (e) {}
   }
   async function startSync(task) {
-    const endDate = syncDateToStr("syncEndDate");
-    const startDate = syncDateToStr("syncStartDate");
+    // 手动同步始终拉最新增量（end-date=今天、start-date=自动窗口），
+    // 不再暴露截止/起始日期输入
     const body = { task: task };
-    if (endDate) body.end_date = endDate;
-    if (startDate) body.start_date = startDate;
     try {
       setSyncButtonsDisabled(true);
       resetSyncProgress();
@@ -5489,7 +5529,6 @@ async function expCreateAndStart() {
   }
   if ($("btnSyncTushare")) $("btnSyncTushare").onclick = function() { startSync("tushare"); };
   if ($("btnSyncFactor")) $("btnSyncFactor").onclick = function() { startSync("factor"); };
-  if ($("btnSyncDerive")) $("btnSyncDerive").onclick = function() { startSync("derive"); };
   if ($("btnSyncCA")) $("btnSyncCA").onclick = function() { startSync("ca"); };
   if ($("btnSyncStop")) $("btnSyncStop").onclick = async function() {
     if (!confirm("确认停止当前同步任务？已下载的部分会保存，下次启动自动续传。")) return;
@@ -5501,13 +5540,6 @@ async function expCreateAndStart() {
       toast("停止失败: " + e.message);
     }
   };
-  (function initSyncDate() {
-    const el = $("syncEndDate");
-    if (el && !el.value) {
-      const d = new Date();
-      el.value = d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
-    }
-  })();
   (async function checkSyncOnLoad() {
     try {
       const st = await api("/api/v1/data-sync/status");

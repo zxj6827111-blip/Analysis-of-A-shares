@@ -21,6 +21,8 @@
   - 日柱表（桌面 28MB xlsx）解析结果持久化到 `storage/astock/rizhu_cache.json`，冷解析 20s+ 降至毫秒级（进程重启也不再重读）
   - `BaguaPlaneSession` 构建走只读路径（`deep_copy=False`，跳过 13.8 万条 symbol 记录的 deepcopy）
   - 新增诊断接口 `/api/v1/bagua/export/jobs`（列出所有导出/同卦任务状态与进度）
+  - 卦象导出调整：月卦默认取查询月份的上一个月（8月查询导出7月月卦，避免未收官月卦）；周卦维持查询周；导出表列序改为先周卦后月卦，表头标注周/月（如 周卦(2026-W33) / 月卦(2026-07)）
+  - 全市场导出升级：A股与全量ETF（通达信本地目录枚举）合并为同一 Excel 的两个 sheet（stock-all / etf-all）；导出表格的卦象组合与爻辞列去除卦符字符（如 ䷉履卦 → 履卦），减小表格体积
 - **页面刷新性能优化**（F5 长时间加载问题）：
   - `/api/v1/market-data/status` 冷扫描从约 13 秒降至约 0.5 秒：新增 30s 响应缓存 + blob 目录统计独立 300s 缓存（blob 目录约 13.8 万个文件，不再每次全量 stat）；`load_manifest` 新增 `deep_copy=False` 只读路径（跳过对 13.8 万条 symbol 记录的 deepcopy），`market_data_status` 与 `resolve_active_tushare_product_pair` 只读调用复用
   - `/api/v1/version` git 构建信息缓存 TTL 从 5s 提至 300s（消除 Windows 上每次刷新触发 `git status` 的 ~0.6s 阻塞）

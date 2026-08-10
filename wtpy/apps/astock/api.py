@@ -104,10 +104,13 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
       ASTOCK_EOD_SYNC_TIME=HH:MM         (default 18:30)
       ASTOCK_EOD_SYNC_MIN_LAG_DAYS=N     (default 1)
       ASTOCK_EOD_SYNC_POLL_SECONDS=N     (default 1800, min 60)
+      ASTOCK_EOD_SYNC_MAX_RETRIES=N      (default 2, same-day retries after
+                                         a failed run, poll_seconds apart)
     """
     import datetime as _dt
     import json as _json
     import os as _os
+    import threading as _thr
     import time as _time
 
     def _env_flag(name: str, default: str = "1") -> bool:
@@ -130,10 +133,19 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         poll_sec = max(60, int(_os.environ.get("ASTOCK_EOD_SYNC_POLL_SECONDS", "1800")))
     except ValueError:
         poll_sec = 1800
+    try:
+        # same-day retries after a failed run (0 = never retry)
+        max_retries = max(0, int(_os.environ.get("ASTOCK_EOD_SYNC_MAX_RETRIES", "2")))
+    except ValueError:
+        max_retries = 2
     startup_check = _env_flag("ASTOCK_EOD_SYNC_STARTUP", "1")
 
     # persisted trigger record for the UI status card
     state_path = Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+
+    # Watcher threads set this event when a spawned child exits, so the
+    # scheduler wakes up exactly then instead of sleeping to the next day.
+    wake_event = _thr.Event()
 
     last_trigger_day = None
 
@@ -178,6 +190,18 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         except Exception:
             return False
 
+    # Restore the persisted trigger record across restarts: "today already
+    # fired" must survive a service restart (otherwise a restart could fire a
+    # second full chain), while a failed run stays eligible for same-day retry
+    # via the retry_due logic in _check.
+    _st0 = _load_state()
+    if _st0.get("last_trigger_date") == _dt.date.today().strftime("%Y-%m-%d"):
+        last_trigger_day = _dt.date.today()
+    else:
+        # a new day: drop stale retry bookkeeping from yesterday
+        if _st0.get("retry_count") or _st0.get("pending_retry_at"):
+            _save_state({"retry_count": 0, "pending_retry_at": None})
+
     def _trigger(reason: str) -> None:
         nonlocal last_trigger_day
         script = str(Path(__file__).resolve().parents[3] / "scripts" / "sync_market_data.py")
@@ -194,31 +218,114 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         env = dict(_os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
         env["MARKET_DATA_ROOT"] = str(cfg.market_data_root)
-        print(f"[EOD_SYNC] {reason}，自动启动 Tushare 增量同步…")
+
+        # Child output goes to the data-root sync_logs instead of DEVNULL:
+        # the run takes an hour+ and must leave a diagnosable trace (this was
+        # the "EOD sync never seems to do anything" root cause).
+        log_path = None
+        log_fh = None
+        try:
+            log_dir = cfg.market_data_root / "sync_logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / f"eod_sync_{today}.log"
+            log_fh = open(log_path, "a", encoding="utf-8")
+        except Exception as e:
+            print(f"[EOD_SYNC] 无法打开日志文件: {e}，回退到 DEVNULL")
+        print(
+            f"[EOD_SYNC] {reason}，自动启动 Tushare 增量同步… "
+            f"（日志: {log_path or 'DEVNULL'}）"
+        )
+
+        def _watch(proc: subprocess.Popen) -> None:
+            """Wait the child and persist its outcome (exit code, retry due).
+
+            Runs in a daemon thread so a failure is recorded even if the
+            scheduler thread is busy; wakes the scheduler via wake_event.
+            """
+            rc = proc.wait()
+            st = _load_state()
+            prev_retry = int(st.get("retry_count") or 0)
+            finished = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            extra = {
+                "last_sync_exit_code": rc,
+                "last_sync_finished_at": finished,
+                "sync_pid": int(proc.pid or 0),
+            }
+            if rc == 0:
+                extra["retry_count"] = 0
+                extra["pending_retry_at"] = None
+                print("[EOD_SYNC] 同步成功（exit=0）")
+            else:
+                retry = prev_retry + 1
+                extra["retry_count"] = retry
+                extra["pending_retry_at"] = (
+                    _dt.datetime.now() + _dt.timedelta(seconds=poll_sec)
+                ).strftime("%Y-%m-%d %H:%M:%S")
+                if retry <= max_retries:
+                    print(
+                        f"[EOD_SYNC] 同步失败（exit={rc}），"
+                        f"{poll_sec // 60} 分钟后重试（第 {retry}/{max_retries} 次）"
+                    )
+                else:
+                    print(f"[EOD_SYNC] 同步失败（exit={rc}），今日重试次数已用尽")
+            _save_state(extra)
+            wake_event.set()
+
         try:
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env
+                cmd,
+                stdout=log_fh or subprocess.DEVNULL,
+                stderr=subprocess.STDOUT if log_fh else subprocess.DEVNULL,
+                env=env,
             )
-            print(f"[EOD_SYNC] 已启动后台进程 PID={proc.pid}")
-            last_trigger_day = _dt.date.today()
-            _save_state({
-                "last_trigger_date": last_trigger_day.strftime("%Y-%m-%d"),
-                "last_sync_started_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "last_reason": reason,
-                "sync_pid": int(proc.pid or 0),
-            })
         except Exception as e:
+            if log_fh:
+                log_fh.close()
             print(f"[EOD_SYNC] 启动失败: {e}")
+            return
+        if log_fh:
+            # the child keeps the handle; the parent must close its copy
+            log_fh.close()
+        print(f"[EOD_SYNC] 已启动后台进程 PID={proc.pid}")
+        last_trigger_day = _dt.date.today()
+        _save_state({
+            "last_trigger_date": last_trigger_day.strftime("%Y-%m-%d"),
+            "last_sync_started_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_reason": reason,
+            "sync_pid": int(proc.pid or 0),
+            "retry_count": 0,
+            "pending_retry_at": None,
+        })
+        _thr.Thread(
+            target=_watch, args=(proc,), daemon=True, name="astock-eod-sync-watch"
+        ).start()
 
     def _check(label: str) -> bool:
         """Returns True when a sync was triggered."""
         now = _dt.datetime.now()
+        # Same-day retry: today already fired but the run failed and the
+        # retry budget is not exhausted -> allow eod_sync_decide to fire
+        # again (it would otherwise short-circuit on last_trigger_day).
+        effective_last = last_trigger_day
+        st = _load_state()
+        last_rc = st.get("last_sync_exit_code")
+        if (
+            effective_last is not None
+            and effective_last == now.date()
+            and (last_rc or 0) != 0
+            and int(st.get("retry_count") or 0) < max_retries
+        ):
+            effective_last = None
+            print(
+                f"[EOD_SYNC] 上次自动同步失败（exit={last_rc}），"
+                f"重试第 {int(st.get('retry_count') or 0) + 1}/{max_retries} 次"
+            )
         trigger, reason, today_key = eod_sync_decide(
             lag=_lag_days(),
             now=now,
             sync_time=sync_time,
             min_lag=min_lag,
-            last_trigger_day=last_trigger_day,
+            last_trigger_day=effective_last,
         )
         if trigger:
             if _sync_in_progress():
@@ -242,6 +349,26 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             target += _dt.timedelta(days=1)
         _time.sleep(max(1.0, (target - now).total_seconds()))
 
+    def _next_sync_target(now) -> _dt.datetime:
+        """Tomorrow's sync_time (when 'today' is done: success, retries used
+        up, or the scheduler simply loops into the next day)."""
+        try:
+            return (now + _dt.timedelta(days=1)).replace(
+                hour=int(sync_time[:2]), minute=int(sync_time[3:5]),
+                second=0, microsecond=0,
+            )
+        except (ValueError, IndexError):
+            return (now + _dt.timedelta(days=1)).replace(
+                hour=18, minute=30, second=0, microsecond=0
+            )
+
+    def _today_trigger_record() -> dict:
+        st = _load_state()
+        today_key = _dt.date.today().strftime("%Y-%m-%d")
+        if st.get("last_trigger_date") != today_key:
+            return {}
+        return st
+
     if startup_check:
         try:
             _check("启动检查")
@@ -263,12 +390,49 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             if now.strftime("%H:%M") < sync_time:
                 _sleep_until(sync_time)
                 continue
-            fired = _check("收盘后定时检查")
-            if fired:
-                # day done: sleep to tomorrow's sync time
+            st = _today_trigger_record()
+            if not st:
+                # nothing fired today: normal scheduled check
+                fired = _check("收盘后定时检查")
+                wake_event.clear()
+                if fired:
+                    # wait for the watcher to report the outcome, or until
+                    # tomorrow's sync time if it never does
+                    wake_event.wait(timeout=max(1.0, (_next_sync_target(now) - now).total_seconds()))
+                else:
+                    wake_event.wait(timeout=poll_sec)
+                continue
+            if int(st.get("last_sync_exit_code") or 0) == 0:
+                # today's run already succeeded: day done, sleep to tomorrow
                 _sleep_until(sync_time)
+                continue
+            if int(st.get("retry_count") or 0) >= max_retries:
+                # retry budget used up (or retries disabled): day done
+                _sleep_until(sync_time)
+                continue
+            # a run failed and a retry is pending: wait until its due time
+            pending = st.get("pending_retry_at")
+            pend_dt = None
+            if pending:
+                try:
+                    pend_dt = _dt.datetime.strptime(pending, "%Y-%m-%d %H:%M:%S")
+                except (ValueError, TypeError):
+                    pend_dt = None
+            if pend_dt and now < pend_dt:
+                wake_event.clear()
+                wake_event.wait(
+                    timeout=min(poll_sec, max(10.0, (pend_dt - now).total_seconds()))
+                )
+                continue
+            # retry due: _check re-arms the run (data-lag gate still applies)
+            fired = _check("失败重试")
+            wake_event.clear()
+            if fired:
+                wake_event.wait(timeout=max(1.0, (_next_sync_target(now) - now).total_seconds()))
             else:
-                _time.sleep(poll_sec)
+                # data caught up or a manual sync took over: stop retrying
+                _save_state({"retry_count": max_retries, "pending_retry_at": None})
+                _sleep_until(sync_time)
         except Exception as e:
             print(f"[EOD_SYNC] 定时检查异常: {type(e).__name__}: {e}")
             _time.sleep(300)
@@ -342,6 +506,15 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
     print(f"  Tushare product   : {product_line}")
     print("=" * 64)
 
+    if isinstance(ready_count, int) and ready_count == 0 and cfg.market_data_root.exists():
+        # Data root has no usable datasets: freshness cannot be judged, so the
+        # EOD auto-sync will skip. Fail loud instead of silently doing nothing.
+        print("!! 数据根内没有可用数据集（manifests 缺失或全部未 ready）")
+        print("!! 18:30 自动更新会跳过（无法计算数据滞后）。请先手动执行一次同步，或")
+        print(f"!! 运行体检确认数据根格式: python scripts/check_data_root.py"
+              f" --storage-root {cfg.market_data_root}")
+        print("=" * 64)
+
     if guard["blocked"]:
         print("!! STARTUP BLOCKED (production data-root guard)")
         print(f"!! reason  : {guard['reason']}")
@@ -356,7 +529,94 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
 
     # Auto-check CA data freshness on startup; trigger incremental sync if stale (>30 days).
     def _auto_ca_check():
+        """CA 事件自动同步：启动检查（>30 天）+ 每个交易日定时增量同步。
+
+        Originally a one-shot startup check; now also syncs on a daily timer
+        (default 18:35, after the market-data chain) so CA events stay as
+        fresh as the bars. Child output goes to sync_logs/ca_sync_<date>.log
+        and the exit code is persisted to eod_sync_state.json so a failure is
+        visible and simply re-runs next trading day.
+        """
         import datetime as _dt
+        import os as _os
+        import threading as _thr
+        import time as _time
+
+        state_path = Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+
+        def _load_state():
+            try:
+                if state_path.exists():
+                    return json.loads(state_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+            return {}
+
+        def _save_state(extra):
+            try:
+                st = _load_state()
+                st.update(extra)
+                st["updated_at"] = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                state_path.parent.mkdir(parents=True, exist_ok=True)
+                state_path.write_text(
+                    json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+            except Exception:
+                pass
+
+        def _spawn_ca(reason: str) -> None:
+            script = str(Path(__file__).resolve().parents[3] / "scripts" / "sync_ca_events.py")
+            today = int(_dt.date.today().strftime("%Y%m%d"))
+            cmd = [sys.executable, "-u", script, "--mode", "incremental", "--days", "90",
+                   "--storage-root", str(cfg.market_data_root)]
+            env = dict(_os.environ)
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["MARKET_DATA_ROOT"] = str(cfg.market_data_root)
+            log_path = None
+            log_fh = None
+            try:
+                log_dir = cfg.market_data_root / "sync_logs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_path = log_dir / f"ca_sync_{today}.log"
+                log_fh = open(log_path, "a", encoding="utf-8")
+            except Exception as e:
+                print(f"[CA_AUTO] 无法打开日志文件: {e}，回退到 DEVNULL")
+
+            def _watch(proc):
+                rc = proc.wait()
+                _save_state({
+                    "ca_sync_exit_code": rc,
+                    "ca_sync_finished_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "ca_sync_pid": int(proc.pid or 0),
+                })
+                print(
+                    f"[CA_AUTO] CA 同步{'成功' if rc == 0 else f'失败（exit={rc}），次日自动重跑'}"
+                )
+
+            print(f"[CA_AUTO] {reason}，自动启动 CA 增量同步… （日志: {log_path or 'DEVNULL'}）")
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=log_fh or subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT if log_fh else subprocess.DEVNULL,
+                    env=env,
+                )
+            except Exception as e:
+                if log_fh:
+                    log_fh.close()
+                print(f"[CA_AUTO] 启动失败: {e}")
+                return
+            if log_fh:
+                log_fh.close()
+            print(f"[CA_AUTO] 已启动后台进程 PID={proc.pid}")
+            _save_state({
+                "ca_sync_started_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "ca_sync_pid": int(proc.pid or 0),
+            })
+            _thr.Thread(target=_watch, args=(proc,), daemon=True,
+                        name="astock-ca-sync-watch").start()
+
+        # ---- startup check: never synced / stale > 30 days -> sync now ----
         ca_meta = cfg.market_data_root / "ca_events" / "_meta.json"
         need_sync = False
         reason = ""
@@ -381,21 +641,48 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
                 need_sync = True
                 reason = "CA元数据读取失败"
         if need_sync:
-            print(f"[CA_AUTO] {reason}，后台自动启动增量同步…")
-            _CA_SCRIPT = str(Path(__file__).resolve().parents[3] / "scripts" / "sync_ca_events.py")
-            cmd = [sys.executable, "-u", _CA_SCRIPT, "--mode", "incremental", "--days", "90",
-                   "--storage-root", str(cfg.market_data_root)]
-            try:
-                import os as _os
-                env = dict(_os.environ)
-                env["PYTHONIOENCODING"] = "utf-8"
-                env["MARKET_DATA_ROOT"] = str(cfg.market_data_root)
-                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
-                print(f"[CA_AUTO] 已启动后台进程 PID={proc.pid}")
-            except Exception as e:
-                print(f"[CA_AUTO] 启动失败: {e}")
+            _spawn_ca(reason)
         else:
-            print("[CA_AUTO] CA数据在有效期内，跳过自动同步")
+            print("[CA_AUTO] CA数据在有效期内，跳过启动同步")
+
+        # ---- daily timer: every trading day at ASTOCK_CA_SYNC_TIME ----
+        ca_time = _os.environ.get("ASTOCK_CA_SYNC_TIME", "18:35")
+
+        def _sleep_until(hhmm):
+            now = _dt.datetime.now()
+            try:
+                target = now.replace(
+                    hour=int(hhmm[:2]), minute=int(hhmm[3:5]), second=0, microsecond=0
+                )
+            except (ValueError, IndexError):
+                target = now.replace(hour=18, minute=35, second=0, microsecond=0)
+            if target <= now:
+                target += _dt.timedelta(days=1)
+            _time.sleep(max(1.0, (target - now).total_seconds()))
+
+        while True:
+            try:
+                now = _dt.datetime.now()
+                if now.weekday() >= 5:
+                    # weekend: sleep to Monday 00:05
+                    days_until_mon = (7 - now.weekday()) % 7
+                    target = (now + _dt.timedelta(days=days_until_mon)).replace(
+                        hour=0, minute=5, second=0, microsecond=0
+                    )
+                    _time.sleep(max(1.0, (target - now).total_seconds()))
+                    continue
+                if now.strftime("%H:%M") < ca_time:
+                    _sleep_until(ca_time)
+                    continue
+                # a startup-check run earlier today already covered it
+                if _load_state().get("ca_sync_started_at", "")[:10] == now.strftime("%Y-%m-%d"):
+                    _sleep_until(ca_time)
+                    continue
+                _spawn_ca(f"每日定时（{ca_time}）")
+                _sleep_until(ca_time)
+            except Exception as e:
+                print(f"[CA_AUTO] 定时检查异常: {type(e).__name__}: {e}")
+                _time.sleep(300)
 
     import threading as _thr
     _thr.Thread(target=_auto_ca_check, daemon=True).start()

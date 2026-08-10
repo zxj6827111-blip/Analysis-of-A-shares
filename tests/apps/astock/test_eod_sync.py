@@ -98,14 +98,21 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
     calls = []
     class FakeProc:
         pid = 4242
+        def wait(self, timeout=None):
+            return 0  # simulate a successful child run for the watcher thread
     monkeypatch.setattr(
         subprocess, "Popen",
         lambda cmd, **kw: calls.append((cmd, kw)) or FakeProc(),
     )
-    # exit the polling loop right after the startup check
+    # exit the polling loop right after the startup check (the scheduler now
+    # waits on wake_event instead of time.sleep once a run is in flight)
     def _break_sleep(_s):
         raise SystemExit("stop-loop")
     monkeypatch.setattr(_time, "sleep", _break_sleep)
+    monkeypatch.setattr(
+        threading.Event, "wait",
+        lambda self, timeout=None: (_ for _ in ()).throw(SystemExit("stop-loop")),
+    )
 
     with pytest.raises(SystemExit, match="stop-loop"):
         _auto_eod_sync(cfg, ctx)
@@ -145,6 +152,11 @@ def test_auto_eod_sync_skips_when_fresh(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kw: calls.append(cmd))
     monkeypatch.setattr(_time, "sleep", lambda _s: (_ for _ in ()).throw(SystemExit("stop")))
+    # the idle poll now waits on wake_event, not time.sleep
+    monkeypatch.setattr(
+        threading.Event, "wait",
+        lambda self, timeout=None: (_ for _ in ()).throw(SystemExit("stop")),
+    )
 
     with pytest.raises(SystemExit):
         _auto_eod_sync(cfg, ctx)
@@ -189,12 +201,15 @@ def test_eod_sync_status_api(tmp_path, monkeypatch):
     md_root = Path(cfg.market_data_root)
     md_root.mkdir(parents=True, exist_ok=True)
 
-    # write a trigger record so the endpoint shows a last-sync time
+    # write a trigger record so the endpoint shows a last-sync time (past
+    # timestamps only — future-dated records are dropped as dirty)
+    past_at = (_dt.datetime.now() - _dt.timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+    past_day = (_dt.date.today() - _dt.timedelta(days=2)).isoformat()
     state_path = Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(
-        '{"enabled": true, "last_trigger_date": "2026-08-10", '
-        '"last_sync_started_at": "2026-08-10 18:31:00", "last_reason": "raw 数据滞后 1 个交易日", '
+        '{"enabled": true, "last_trigger_date": "' + past_day + '", '
+        '"last_sync_started_at": "' + past_at + '", "last_reason": "raw 数据滞后 1 个交易日", '
         '"sync_time": "18:30", "min_lag_days": 1, "poll_seconds": 1800}',
         encoding="utf-8",
     )
@@ -208,7 +223,229 @@ def test_eod_sync_status_api(tmp_path, monkeypatch):
     assert j.get("ok") is True
     assert j.get("enabled") is True
     assert j.get("sync_time") == "18:30"
-    assert j.get("last_sync_started_at") == "2026-08-10 18:31:00"
-    assert j.get("last_trigger_date") == "2026-08-10"
+    assert j.get("last_sync_started_at") == past_at
+    assert j.get("last_trigger_date") == past_day
+    assert j.get("state_suspect") is False
+    assert "last_sync_exit_code" in j
+    assert "last_sync_finished_at" in j
+    assert "retry_count" in j
+    assert "pending_retry_at" in j
     # data status may be missing on an empty warehouse but never an error
     assert "data_status" in j
+
+
+def test_eod_sync_status_api_sanitizes_future_records(tmp_path, monkeypatch):
+    """Future-dated / unparseable state records are dropped and flagged
+    state_suspect (a crash can persist a timestamp for a sync that never ran)."""
+    import pytest
+
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from wtpy.apps.astock.api import create_app
+    from wtpy.apps.astock.config import get_default_config
+    from wtpy.apps.astock.data import dataset_store as ds_mod
+
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
+
+    storage = tmp_path / "st"
+    storage.mkdir()
+    ind = tmp_path / "ind"
+    ind.mkdir()
+    cfg = get_default_config(storage_root=storage, indicator_dir=ind)
+    md_root = Path(cfg.market_data_root)
+    md_root.mkdir(parents=True, exist_ok=True)
+
+    future_at = (_dt.datetime.now() + _dt.timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+    future_day = (_dt.date.today() + _dt.timedelta(days=1)).isoformat()
+    state_path = Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        '{"enabled": true, "last_trigger_date": "' + future_day + '", '
+        '"last_sync_started_at": "' + future_at + '", "last_reason": "raw 数据滞后 1 个交易日", '
+        '"sync_time": "18:30", "min_lag_days": 1, "poll_seconds": 1800}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ds_mod.DatasetStore, "load_manifest", lambda self, *a, **k: None)
+
+    app = create_app(cfg)
+    client = TestClient(app)
+    r = client.get("/api/v1/eod-sync/status")
+    assert r.status_code == 200
+    j = r.json()
+    assert j.get("last_sync_started_at") is None
+    assert j.get("last_trigger_date") is None
+    assert j.get("state_suspect") is True
+    assert "data_status" in j
+
+
+def test_eod_sync_status_cached_30s(tmp_path, monkeypatch):
+    """Repeated /api/v1/eod-sync/status within 30s reuses the cached payload
+    (the underlying tushare product health scan is not re-run)."""
+    import pytest
+
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from wtpy.apps.astock.api import create_app
+    from wtpy.apps.astock.config import get_default_config
+    from wtpy.apps.astock.data import tushare_product as tp_mod
+
+    # Disable the background auto-sync thread so it cannot race the counter.
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "0")
+
+    storage = tmp_path / "st"
+    storage.mkdir()
+    ind = tmp_path / "ind"
+    ind.mkdir()
+    cfg = get_default_config(storage_root=storage, indicator_dir=ind)
+    md_root = Path(cfg.market_data_root)
+    md_root.mkdir(parents=True, exist_ok=True)
+
+    calls = {"n": 0}
+
+    def _fake_health(*a, **k):
+        calls["n"] += 1
+        return {"status": "healthy", "trading_day_lag": {"raw": 0}}
+
+    app = create_app(cfg)
+    monkeypatch.setattr(tp_mod, "tushare_product_data_health", _fake_health)
+
+    client = TestClient(app)
+    r1 = client.get("/api/v1/eod-sync/status")
+    r2 = client.get("/api/v1/eod-sync/status")
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert calls["n"] == 1
+    assert r2.json()["data_status"] == "healthy"
+
+
+# ------------------------------------------------- data_sync_start guards
+
+def _client_for(tmp_path, monkeypatch):
+    """TestClient with the system route's PROJECT_ROOT pinned to tmp_path so
+    the EOD state file lives under the test tree, never the real repo."""
+    import pytest
+
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from wtpy.apps.astock.api import create_app
+    from wtpy.apps.astock.api_routes import system as system_mod
+    from wtpy.apps.astock.config import get_default_config
+
+    monkeypatch.setattr(system_mod, "PROJECT_ROOT", tmp_path)
+
+    storage = tmp_path / "st"
+    storage.mkdir()
+    ind = tmp_path / "ind"
+    ind.mkdir()
+    cfg = get_default_config(storage_root=storage, indicator_dir=ind)
+    md_root = Path(cfg.market_data_root)
+    md_root.mkdir(parents=True, exist_ok=True)
+    app = create_app(cfg)
+    return TestClient(app), cfg, md_root
+
+
+class _FakeSyncProc:
+    """Stands in for subprocess.Popen in _run_sync_process (empty output)."""
+    pid = 12345
+    returncode = 0
+
+    def __init__(self):
+        import io
+        self.stdout = io.StringIO()
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_data_sync_start_409_while_eod_child_alive(tmp_path, monkeypatch):
+    """Manual tushare/factor start is refused while the EOD child lives;
+    derive/ca are not guarded (they do not touch the same checkpoints)."""
+    import json as _json
+    import os as _os
+
+    client, cfg, md_root = _client_for(tmp_path, monkeypatch)
+
+    state_path = tmp_path / "storage" / "astock" / "eod_sync_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    # this test process is alive, so _pid_alive(os.getpid()) is True
+    state_path.write_text(
+        _json.dumps({
+            "sync_pid": _os.getpid(),
+            "last_sync_started_at": "2026-08-10 18:38:33",
+        }),
+        encoding="utf-8",
+    )
+
+    r = client.post("/api/v1/data-sync/start",
+                    json={"task": "tushare", "end_date": 20260810})
+    assert r.status_code == 409
+    assert "EOD" in r.json().get("detail", "")
+
+    r = client.post("/api/v1/data-sync/start",
+                    json={"task": "factor", "end_date": 20260810})
+    assert r.status_code == 409
+
+    # derive/ca never share the EOD raw/factor surface: no EOD guard
+    r = client.post("/api/v1/data-sync/start",
+                    json={"task": "derive", "end_date": 20260810})
+    assert r.status_code == 200
+
+
+def test_data_sync_start_auto_resumes_leftover_checkpoint(tmp_path, monkeypatch):
+    """A checkpoint left by an interrupted run must not fail closed on a bare
+    manual start: the UI auto-appends --resume for tushare/factor."""
+    import io as _io
+    import subprocess as _sp
+
+    client, cfg, md_root = _client_for(tmp_path, monkeypatch)
+
+    sync_logs = md_root / "sync_logs"
+    sync_logs.mkdir(parents=True, exist_ok=True)
+    (sync_logs / "checkpoint_tushare_incremental_1d.json").write_text(
+        '{"sync_run_id": "abc"}', encoding="utf-8"
+    )
+
+    calls = []
+    monkeypatch.setattr(_sp, "Popen",
+                        lambda cmd, **kw: calls.append(list(cmd)) or _FakeSyncProc())
+
+    r = client.post("/api/v1/data-sync/start",
+                    json={"task": "tushare", "end_date": 20260810})
+    assert r.status_code == 200
+    assert len(calls) == 1
+    assert "--resume" in calls[0]
+    assert "--fresh" not in calls[0]
+
+    # explicit --fresh still wins over the auto --resume
+    calls.clear()
+    r = client.post("/api/v1/data-sync/start",
+                    json={"task": "tushare", "end_date": 20260810, "fresh": True})
+    assert r.status_code == 200
+    assert "--fresh" in calls[0]
+
+    # factor task: same auto-resume, and the required universe file is taken
+    # from the environment when no manifest exists
+    universe = tmp_path / "universe.csv"
+    universe.write_text("ts_code\n000001.SZ\n", encoding="utf-8")
+    monkeypatch.setenv("TUSHARE_FACTOR_UNIVERSE_FILE", str(universe))
+    (sync_logs / "checkpoint_tushare_adj_factor_1d.json").write_text(
+        '{"sync_run_id": "xyz"}', encoding="utf-8"
+    )
+    calls.clear()
+    r = client.post("/api/v1/data-sync/start",
+                    json={"task": "factor", "end_date": 20260810})
+    assert r.status_code == 200
+    assert "--resume" in calls[0]
+    assert "--universe-file" in calls[0]
+
+    # no checkpoint -> no auto --resume
+    (sync_logs / "checkpoint_tushare_incremental_1d.json").unlink()
+    calls.clear()
+    r = client.post("/api/v1/data-sync/start",
+                    json={"task": "tushare", "end_date": 20260810})
+    assert r.status_code == 200
+    assert "--resume" not in calls[0]
+    assert "--fresh" not in calls[0]

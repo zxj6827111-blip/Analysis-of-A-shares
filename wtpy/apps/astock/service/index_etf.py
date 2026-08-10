@@ -216,6 +216,29 @@ def load_index_etf_day_bars(
     return list(bars)
 
 
+def list_etf_std_codes(cfg: AStockConfig) -> List[str]:
+    """枚举通达信本地 day 目录中的全部 ETF 标准代码（SSE.ETF.* / SZSE.ETF.*）。
+
+    经 to_index_etf_std_code 识别后仅保留 .ETF. 段（沪 51/56/58、深 15/16/18），
+    排除指数（SSE.IDX.* / SZSE.IDX.*）与股票；目录缺失或为空时返回空列表。
+    """
+    root = Path(cfg.tdx_root)
+    out: List[str] = []
+    for ex, pat in (("sh", "sh*.day"), ("sz", "sz*.day")):
+        d = root / "vipdoc" / ex / "lday"
+        if not d.is_dir():
+            continue
+        try:
+            names = [p.name[:-4] for p in d.glob(pat)]
+        except OSError:
+            continue
+        for n in names:
+            std = to_index_etf_std_code(n)
+            if std and ".ETF." in std:
+                out.append(std)
+    return sorted(set(out))
+
+
 def _load_warehouse_datasets(cfg: AStockConfig):
     """Load warehouse none/1d manifests once for availability checks.
 
@@ -228,7 +251,10 @@ def _load_warehouse_datasets(cfg: AStockConfig):
         from ..data.repository import MarketDataRepository
 
         repo = MarketDataRepository.from_root(md_root)
-        return repo, [m for m in repo.list_datasets(adjustment="none", period="1d")]
+        # Read-only availability lookups (see _availability_from_warehouse):
+        # skip per-manifest deepcopy (~100k symbol records each on large
+        # warehouses).
+        return repo, [m for m in repo.list_datasets(adjustment="none", period="1d", deep_copy=False)]
     except Exception:
         return None, []
 

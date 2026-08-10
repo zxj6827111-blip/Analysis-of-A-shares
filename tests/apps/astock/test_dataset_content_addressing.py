@@ -67,6 +67,22 @@ class TestContentAddressing:
         assert store.blob_exists(sha) is True
         assert store.blob_exists("fake_sha") is False
 
+    def test_blob_sha_set(self, store):
+        sha = store.store_bars("SSE.STK.600000", _make_bars("SSE.STK.600000"))
+        sha2 = store.store_bars("SZSE.STK.000001", _make_bars("SZSE.STK.000001", n=3))
+        # in-flight write marker must not be reported as a blob
+        (store.blobs_dir / f"{sha}.npz.tmp").write_bytes(b"x")
+        s = store.blob_sha_set()
+        assert sha in s
+        assert sha2 in s
+        assert "fake_sha" not in s
+        assert f"{sha}.npz.tmp" not in s
+        # same store: second call hits the cache and stays consistent
+        assert store.blob_sha_set() == s
+        # empty blobs dir -> empty set (dir is auto-created by __init__)
+        empty = DatasetStore(store.root / "empty_md")
+        assert empty.blob_sha_set() == set()
+
     def test_empty_bars_returns_empty_sha(self, store):
         sha = store.store_bars("SSE.STK.600000", [])
         assert sha == ""

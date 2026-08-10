@@ -13,12 +13,13 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Set
 
 import numpy as np
 
@@ -207,6 +208,13 @@ class DatasetStore:
     _MANIFEST_CACHE = {}
     _MANIFEST_CACHE_LOCK = threading.Lock()
 
+    # Blob set (one scandir of the whole blobs dir) is expensive on large
+    # warehouses (~100k entries) and only changes during sync; cache it keyed
+    # by the dir stat signature with a short TTL (see blob_sha_set).
+    _BLOB_SET_CACHE = {}
+    _BLOB_SET_LOCK = threading.Lock()
+    _BLOB_SET_TTL = 60.0
+
     def __init__(self, root: Path | str):
         self.root = Path(root)
         self.blobs_dir = self.root / "blobs"
@@ -312,6 +320,46 @@ class DatasetStore:
 
     def blob_exists(self, blob_sha256: str) -> bool:
         return (self.blobs_dir / f"{blob_sha256}.npz").exists()
+
+    def blob_sha_set(self) -> Set[str]:
+        """All blob shas present in blobs/ as a set (one scandir per scan).
+
+        Read-only bulk integrity check: replaces per-symbol
+        ``blob_exists`` stat() calls (one filesystem hit per symbol) with a
+        single directory walk + in-memory set lookups. Cached 60s keyed by
+        the blob-dir ``(mtime_ns, size)`` signature (entry changes update
+        the dir mtime), thread-safe. Missing dir -> empty set; scandir
+        failure -> empty set and the failure is never cached.
+        """
+        try:
+            st = self.blobs_dir.stat()
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            sig = None
+        cache_key = str(self.root)
+        now = time.time()
+        with self._BLOB_SET_LOCK:
+            hit = self._BLOB_SET_CACHE.get(cache_key)
+            if (
+                hit is not None
+                and hit[0] == sig
+                and now - hit[2] < self._BLOB_SET_TTL
+            ):
+                return hit[1]
+        shas: Set[str] = set()
+        try:
+            with os.scandir(self.blobs_dir) as it:
+                for entry in it:
+                    if not entry.is_file():
+                        continue
+                    name = entry.name
+                    if name.endswith(".npz"):
+                        shas.add(name[:-4])
+        except OSError:
+            return shas
+        with self._BLOB_SET_LOCK:
+            self._BLOB_SET_CACHE[cache_key] = (sig, shas, now)
+        return shas
 
     def save_manifest(self, manifest: DatasetManifest) -> Path:
         """Atomically write manifest JSON. Returns the manifest path."""
