@@ -8,6 +8,30 @@
 - 每次发版递增版本号（如 2.0 → 2.1 → 2.2），并打 `v{版本号}` 的 git tag
 - 提交后右上角版本号自动显示新版本
 
+## [2.3] - 2026-08-10
+
+### 新增
+- **EOD 自动同步可见性与失败重试**：
+  - 子进程输出落盘 `sync_logs/eod_sync_<date>.log`（此前写入 DEVNULL，"同步似乎什么都没做"的根因）；watcher 线程记录退出码与结束时间
+  - 失败当天以 `ASTOCK_EOD_SYNC_POLL_SECONDS`（默认 30 分钟）间隔自动重试，最多 `ASTOCK_EOD_SYNC_MAX_RETRIES`（默认 2）次；成功即清零
+  - `last_trigger_date` 持久化启动恢复：重启不会重复触发当日全链，也不会丢掉失败重试资格
+  - `/api/v1/eod-sync/status` 新增 `last_sync_exit_code / last_sync_finished_at / retry_count / pending_retry_at / state_suspect`；数据仓库页状态卡显示上次结果（成功/失败+已重试次数）
+  - 启动时校验数据根存在：无可用数据集时醒目提示并给出体检命令，不再静默跳过
+- **手动同步互斥与自动续传**：
+  - tushare raw 增量加入跨进程 `SyncTaskLock` 硬互斥（EOD 自动同步 / UI 按钮 / cron 并发运行禁止重叠）
+  - `data_sync_start` 检测到 EOD 子进程存活返回 409（明确提示等待结束）；反向由脚本内锁兜底
+  - 检测到残留 checkpoint（中断/被杀进程遗留）自动附加 `--resume`，不再以 "sync failed" 形式失败关闭
+- **CA 公司行为每日自动更新**：由「启动时 30 天检查」改为每个交易日 `ASTOCK_CA_SYNC_TIME`（默认 18:35）定时自动增量同步，日志与退出码落盘，失败次日自动重跑
+- **数据中心 UI 分组**：数据卡片按「📥 从 Tushare 拉取 / 🏭 本地自动合成」分组并标注角色（正式L2=成交/估值·卦象面，正式L1=信号面）；去除编号与截止/起始日期输入（手动同步始终拉最新增量）；数据集明细表默认收起
+- **新增 `scripts/check_data_root.py` 数据根体检**：检查预置数据根能否被系统直接识别（manifests/blobs/各数据面状态/滞后/完整度），退出码 0=可用、1=不可用、2=可用但不完整
+
+### 修复
+- 自动同步启动失败（Popen 异常）不再被当作"当日已完成"：写入非 0 退出码并进入重试闭环
+- 服务重启后不再绕过 30 分钟重试间隔立即重试（`pending_retry_at` 未到不触发）
+- EOD 与 CA 两个 watcher 线程并发写 `eod_sync_state.json` 加锁并原子替换，避免丢失更新/损坏 JSON
+- 测试不再污染真实 `storage/astock/eod_sync_state.json`（新增 `ASTOCK_EOD_STATE_PATH` 隔离；曾因写入未来日期导致次日自动同步被误判"已触发"而跳过）
+- 数据健康日历判断修正：仅当数据日期超过日历最后一天才判日历过期（数据未追平今天属正常态）
+
 ## [2.2] - 2026-08-10
 
 ### 新增
