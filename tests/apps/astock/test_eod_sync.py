@@ -82,6 +82,9 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
     monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
     monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "00:00")
     monkeypatch.setenv("TUSHARE_TOKEN", "test_token_123")
+    # state file lives under the test tree, never the real repo storage/
+    state_path = tmp_path / "eod_sync_state.json"
+    monkeypatch.setenv("ASTOCK_EOD_STATE_PATH", str(state_path))
 
     cfg, ctx = _make_cfg_ctx(tmp_path)
 
@@ -125,8 +128,7 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
     assert "--token" in cmd and "test_token_123" in cmd
     assert "--storage-root" in cmd and str(tmp_path) in cmd
 
-    # trigger record is persisted for the UI status card (repo storage dir)
-    state_path = Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+    # trigger record is persisted for the UI status card (isolated state path)
     assert state_path.exists(), f"state file not written: {state_path}"
     import json as _json
     st = _json.loads(state_path.read_text(encoding="utf-8"))
@@ -144,6 +146,7 @@ def test_auto_eod_sync_skips_when_fresh(monkeypatch, tmp_path):
 
     monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
     monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "00:00")
+    monkeypatch.setenv("ASTOCK_EOD_STATE_PATH", str(tmp_path / "eod_sync_state.json"))
 
     cfg, ctx = _make_cfg_ctx(tmp_path)
     monkeypatch.setattr(
@@ -179,6 +182,107 @@ def test_auto_eod_sync_disabled_by_env(monkeypatch, tmp_path):
     assert calls == []
 
 
+def test_auto_eod_sync_spawn_failure_records_failed_state(monkeypatch, tmp_path):
+    """Popen raising must persist a non-zero exit record (never look "done").
+
+    Regression: before the fix a spawn failure was only printed, so the day
+    looked successful (missing last_sync_exit_code reads as 0) and the
+    scheduler slept until tomorrow instead of retrying.
+    """
+    import json as _json
+    import subprocess
+    import time as _time
+
+    import wtpy.apps.astock.api as api_mod
+    from wtpy.apps.astock.api import _auto_eod_sync
+
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "00:00")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_POLL_SECONDS", "60")
+    state_path = tmp_path / "eod_sync_state.json"
+    monkeypatch.setenv("ASTOCK_EOD_STATE_PATH", str(state_path))
+
+    cfg, ctx = _make_cfg_ctx(tmp_path)
+    monkeypatch.setattr(
+        api_mod, "eod_sync_decide", lambda **k: (True, "lag=3 个交易日", tmp_path)
+    )
+    monkeypatch.setattr(
+        subprocess, "Popen",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("boom")),
+    )
+    # stop the loop right after the startup check fires
+    monkeypatch.setattr(_time, "sleep", lambda _s: (_ for _ in ()).throw(SystemExit("stop-loop")))
+    monkeypatch.setattr(
+        threading.Event, "wait",
+        lambda self, timeout=None: (_ for _ in ()).throw(SystemExit("stop-loop")),
+    )
+
+    with pytest.raises(SystemExit, match="stop-loop"):
+        _auto_eod_sync(cfg, ctx)
+
+    st = _json.loads(state_path.read_text(encoding="utf-8"))
+    assert st.get("last_trigger_date") == _dt.date.today().strftime("%Y-%m-%d")
+    assert st.get("last_sync_exit_code") != 0, "spawn failure must not look successful"
+    assert st.get("retry_count") == 1
+    assert st.get("pending_retry_at"), "retry must be re-armed for later"
+
+    # startup check fires exactly once: the failed day must not re-fire in a
+    # tight loop (the retry path waits for pending_retry_at instead)
+    assert state_path.exists()
+
+
+def test_auto_eod_sync_retry_respects_pending_interval(monkeypatch, tmp_path):
+    """_check must not retry before pending_retry_at (restart bypass fix)."""
+    import json as _json
+
+    import wtpy.apps.astock.api as api_mod
+
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
+    state_path = tmp_path / "eod_sync_state.json"
+    monkeypatch.setenv("ASTOCK_EOD_STATE_PATH", str(state_path))
+
+    future_pend = (_dt.datetime.now() + _dt.timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
+    state_path.write_text(_json.dumps({
+        "last_trigger_date": _dt.date.today().strftime("%Y-%m-%d"),
+        "last_sync_started_at": "2026-08-10 18:31:00",
+        "last_sync_exit_code": 1,
+        "retry_count": 1,
+        "pending_retry_at": future_pend,
+    }), encoding="utf-8")
+
+    # state says "failed today, retry 1/2 pending in the future": the startup
+    # check must NOT clear the daily-once guard (would retry immediately,
+    # bypassing the poll interval). Capture the last_trigger_day the decide
+    # callback receives: with the fix it stays today; without it, the retry
+    # branch would pass None and re-fire.
+    captured = {}
+    def _capture_decide(**k):
+        captured["last_trigger_day"] = k.get("last_trigger_day")
+        return (False, "no-trigger", None)
+    monkeypatch.setattr(api_mod, "eod_sync_decide", _capture_decide)
+
+    # drive the scheduler loop: let the pending-wait branch run once, then stop
+    import time as _time
+    import threading as _thr
+    waits = {"n": 0}
+    real_wait = _thr.Event.wait
+    def _fake_wait(self, timeout=None):
+        waits["n"] += 1
+        if waits["n"] >= 2:
+            raise SystemExit("stop-loop")
+        return real_wait(self, timeout=0.01)
+    monkeypatch.setattr(_thr.Event, "wait", _fake_wait)
+
+    from wtpy.apps.astock.api import _auto_eod_sync
+    cfg, ctx = _make_cfg_ctx(tmp_path)
+    with pytest.raises(SystemExit, match="stop-loop"):
+        _auto_eod_sync(cfg, ctx)
+
+    assert captured.get("last_trigger_day") == _dt.date.today(), (
+        "retry must not fire before pending_retry_at (daily-once guard kept)"
+    )
+
+
 def test_eod_sync_status_api(tmp_path, monkeypatch):
     """/api/v1/eod-sync/status returns config + last trigger + data status."""
     import pytest
@@ -187,11 +291,15 @@ def test_eod_sync_status_api(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from wtpy.apps.astock.api import create_app
+    from wtpy.apps.astock.api_routes import system as system_mod
     from wtpy.apps.astock.config import get_default_config
     from wtpy.apps.astock.data import dataset_store as ds_mod
 
     monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
     monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "18:30")
+    # eod_sync/status resolves the state file via PROJECT_ROOT: pin it to the
+    # test tree so the real repo storage/ is never read or written.
+    monkeypatch.setattr(system_mod, "PROJECT_ROOT", tmp_path)
 
     storage = tmp_path / "st"
     storage.mkdir()
@@ -205,7 +313,7 @@ def test_eod_sync_status_api(tmp_path, monkeypatch):
     # timestamps only — future-dated records are dropped as dirty)
     past_at = (_dt.datetime.now() - _dt.timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
     past_day = (_dt.date.today() - _dt.timedelta(days=2)).isoformat()
-    state_path = Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+    state_path = tmp_path / "storage" / "astock" / "eod_sync_state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(
         '{"enabled": true, "last_trigger_date": "' + past_day + '", '
@@ -243,10 +351,12 @@ def test_eod_sync_status_api_sanitizes_future_records(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from wtpy.apps.astock.api import create_app
+    from wtpy.apps.astock.api_routes import system as system_mod
     from wtpy.apps.astock.config import get_default_config
     from wtpy.apps.astock.data import dataset_store as ds_mod
 
     monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
+    monkeypatch.setattr(system_mod, "PROJECT_ROOT", tmp_path)
 
     storage = tmp_path / "st"
     storage.mkdir()
@@ -258,7 +368,7 @@ def test_eod_sync_status_api_sanitizes_future_records(tmp_path, monkeypatch):
 
     future_at = (_dt.datetime.now() + _dt.timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
     future_day = (_dt.date.today() + _dt.timedelta(days=1)).isoformat()
-    state_path = Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+    state_path = tmp_path / "storage" / "astock" / "eod_sync_state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(
         '{"enabled": true, "last_trigger_date": "' + future_day + '", '
@@ -288,11 +398,14 @@ def test_eod_sync_status_cached_30s(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from wtpy.apps.astock.api import create_app
+    from wtpy.apps.astock.api_routes import system as system_mod
     from wtpy.apps.astock.config import get_default_config
     from wtpy.apps.astock.data import tushare_product as tp_mod
 
     # Disable the background auto-sync thread so it cannot race the counter.
     monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "0")
+    # state file resolved via PROJECT_ROOT: keep it inside the test tree
+    monkeypatch.setattr(system_mod, "PROJECT_ROOT", tmp_path)
 
     storage = tmp_path / "st"
     storage.mkdir()

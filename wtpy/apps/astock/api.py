@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -51,6 +52,11 @@ _ALL_ROUTERS = (
     bagua.router,
     system.router,
 )
+
+# Shared cross-thread lock for eod_sync_state.json writes: the EOD watcher
+# thread and the CA auto-sync thread both persist to the same state file
+# (read-modify-write without a lock could lose updates or corrupt the JSON).
+_EOD_STATE_LOCK = threading.Lock()
 
 
 def eod_sync_decide(
@@ -141,7 +147,12 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
     startup_check = _env_flag("ASTOCK_EOD_SYNC_STARTUP", "1")
 
     # persisted trigger record for the UI status card
-    state_path = Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+    # (ASTOCK_EOD_STATE_PATH overrides the default repo path — tests use it
+    # to keep the real state file untouched)
+    state_path_env = _os.environ.get("ASTOCK_EOD_STATE_PATH")
+    state_path = Path(state_path_env) if state_path_env else (
+        Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+    )
 
     # Watcher threads set this event when a spawned child exits, so the
     # scheduler wakes up exactly then instead of sleeping to the next day.
@@ -159,20 +170,23 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
 
     def _save_state(extra: Optional[Dict[str, Any]] = None) -> None:
         try:
-            st = _load_state()
-            st.update({
-                "enabled": True,
-                "sync_time": sync_time,
-                "min_lag_days": min_lag,
-                "poll_seconds": poll_sec,
-                "updated_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            })
-            if extra:
-                st.update(extra)
-            state_path.parent.mkdir(parents=True, exist_ok=True)
-            state_path.write_text(
-                _json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
+            with _EOD_STATE_LOCK:
+                st = _load_state()
+                st.update({
+                    "enabled": True,
+                    "sync_time": sync_time,
+                    "min_lag_days": min_lag,
+                    "poll_seconds": poll_sec,
+                    "updated_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                })
+                if extra:
+                    st.update(extra)
+                state_path.parent.mkdir(parents=True, exist_ok=True)
+                _tmp = state_path.with_suffix(".json.tmp")
+                _tmp.write_text(
+                    _json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                _tmp.replace(state_path)  # atomic: readers never see a torn file
         except Exception:
             pass
 
@@ -282,6 +296,21 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             if log_fh:
                 log_fh.close()
             print(f"[EOD_SYNC] 启动失败: {e}")
+            # Spawn failure is treated like a child failure: persist a non-zero
+            # exit record and wake the scheduler so the same retry loop (30 min
+            # later) takes over — otherwise the day would silently look "done".
+            _save_state({
+                "last_trigger_date": _dt.date.today().strftime("%Y-%m-%d"),
+                "last_sync_started_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_reason": f"{reason}（启动失败）",
+                "last_sync_exit_code": -1,
+                "last_sync_finished_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "retry_count": int(_load_state().get("retry_count") or 0) + 1,
+                "pending_retry_at": (
+                    _dt.datetime.now() + _dt.timedelta(seconds=poll_sec)
+                ).strftime("%Y-%m-%d %H:%M:%S"),
+            })
+            wake_event.set()
             return
         if log_fh:
             # the child keeps the handle; the parent must close its copy
@@ -300,6 +329,20 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             target=_watch, args=(proc,), daemon=True, name="astock-eod-sync-watch"
         ).start()
 
+    def _retry_due(st: dict, now: _dt.datetime) -> bool:
+        """True when no pending retry timestamp exists or it has already passed.
+
+        Keeps a service restart from retrying immediately (it would otherwise
+        bypass the poll_seconds retry interval set by the watcher thread).
+        """
+        pend = st.get("pending_retry_at")
+        if not pend:
+            return True
+        try:
+            return now >= _dt.datetime.strptime(pend, "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            return True
+
     def _check(label: str) -> bool:
         """Returns True when a sync was triggered."""
         now = _dt.datetime.now()
@@ -314,6 +357,7 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             and effective_last == now.date()
             and (last_rc or 0) != 0
             and int(st.get("retry_count") or 0) < max_retries
+            and _retry_due(st, now)
         ):
             effective_last = None
             print(
@@ -542,7 +586,10 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
         import threading as _thr
         import time as _time
 
-        state_path = Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+        state_path_env = _os.environ.get("ASTOCK_EOD_STATE_PATH")
+        state_path = Path(state_path_env) if state_path_env else (
+            Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
+        )
 
         def _load_state():
             try:
@@ -554,13 +601,16 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
 
         def _save_state(extra):
             try:
-                st = _load_state()
-                st.update(extra)
-                st["updated_at"] = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                state_path.parent.mkdir(parents=True, exist_ok=True)
-                state_path.write_text(
-                    json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
+                with _EOD_STATE_LOCK:
+                    st = _load_state()
+                    st.update(extra)
+                    st["updated_at"] = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    state_path.parent.mkdir(parents=True, exist_ok=True)
+                    _tmp = state_path.with_suffix(".json.tmp")
+                    _tmp.write_text(
+                        json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8"
+                    )
+                    _tmp.replace(state_path)  # atomic: readers never see a torn file
             except Exception:
                 pass
 
