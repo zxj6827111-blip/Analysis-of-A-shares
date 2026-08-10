@@ -264,6 +264,13 @@ def test_auto_eod_sync_retry_respects_pending_interval(monkeypatch, tmp_path):
     # drive the scheduler loop: let the pending-wait branch run once, then stop
     import time as _time
     import threading as _thr
+    # The scheduler sleeps until sync_time (default 18:30) when the clock is
+    # before it — CI runs at any hour, so never sleep for real. Without this
+    # the loop would sleep to 18:30 UTC and the suite would hang for hours.
+    monkeypatch.setattr(
+        _time, "sleep",
+        lambda _s: (_ for _ in ()).throw(SystemExit("stop-loop")),
+    )
     waits = {"n": 0}
     real_wait = _thr.Event.wait
     def _fake_wait(self, timeout=None):
