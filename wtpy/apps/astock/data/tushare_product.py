@@ -26,7 +26,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -272,7 +272,9 @@ def _is_tushare_raw_base_candidate(m: DatasetManifest) -> bool:
     return True
 
 
-def select_tushare_base(store: DatasetStore) -> Optional[DatasetManifest]:
+def select_tushare_base(
+    store: DatasetStore, *, deep_copy: bool = True
+) -> Optional[DatasetManifest]:
     """Latest ready complete ``tushare/none`` full-market base.
 
     Orphan windows (16-row truncations, incremental windows without a parent
@@ -280,13 +282,16 @@ def select_tushare_base(store: DatasetStore) -> Optional[DatasetManifest]:
     cutoff, then the fullest symbol pool and the most rows.
     """
     candidates: List[DatasetManifest] = []
+    blob_set: Optional[Set[str]] = None
     for mid in store.list_manifests():
-        m = store.load_manifest(mid)
+        m = store.load_manifest(mid, deep_copy=deep_copy)
         if m is None:
             continue
         if not _is_tushare_raw_base_candidate(m):
             continue
-        if any(r.blob_sha256 and not store.blob_exists(r.blob_sha256)
+        if blob_set is None:
+            blob_set = store.blob_sha_set()
+        if any(r.blob_sha256 and r.blob_sha256 not in blob_set
                for r in m.symbols):
             continue
         candidates.append(m)
@@ -303,11 +308,14 @@ def select_tushare_base(store: DatasetStore) -> Optional[DatasetManifest]:
     )
 
 
-def select_tushare_factor(store: DatasetStore) -> Optional[DatasetManifest]:
+def select_tushare_factor(
+    store: DatasetStore, *, deep_copy: bool = True
+) -> Optional[DatasetManifest]:
     """Latest ready tushare/adj_factor dataset (dataset_type=factor)."""
     candidates = []
+    blob_set: Optional[Set[str]] = None
     for mid in store.list_manifests():
-        m = store.load_manifest(mid)
+        m = store.load_manifest(mid, deep_copy=deep_copy)
         if m is None:
             continue
         if m.source != FACTOR_SOURCE or (m.adjustment or "") != FACTOR_ADJUSTMENT:
@@ -316,7 +324,9 @@ def select_tushare_factor(store: DatasetStore) -> Optional[DatasetManifest]:
             continue
         if m.status != "ready":
             continue
-        if any(r.blob_sha256 and not store.blob_exists(r.blob_sha256)
+        if blob_set is None:
+            blob_set = store.blob_sha_set()
+        if any(r.blob_sha256 and r.blob_sha256 not in blob_set
                for r in m.symbols):
             continue
         candidates.append(m)
@@ -461,11 +471,13 @@ def _recompute_factor_freshness(
     }
 
 
-def select_delisted_pool(store: DatasetStore) -> List[DatasetManifest]:
+def select_delisted_pool(
+    store: DatasetStore, *, deep_copy: bool = True
+) -> List[DatasetManifest]:
     """Ready tushare/none delisted-supplement datasets (newest first)."""
     out = []
     for mid in store.list_manifests():
-        m = store.load_manifest(mid)
+        m = store.load_manifest(mid, deep_copy=deep_copy)
         if m is None:
             continue
         if not _is_delisted_supplement_dataset(m):
@@ -1267,8 +1279,8 @@ def _validate_pair_core(
                     f"L2 base and supplement parents are identical: "
                     f"{parent_ids[0]}"
                 )
-            base_m = store.load_manifest(parent_ids[0]) if parent_ids[0] else None
-            supp_m = store.load_manifest(parent_ids[1]) if parent_ids[1] else None
+            base_m = store.load_manifest(parent_ids[0], deep_copy=deep_copy) if parent_ids[0] else None
+            supp_m = store.load_manifest(parent_ids[1], deep_copy=deep_copy) if parent_ids[1] else None
             if base_m is None:
                 issues.append(f"L2 base manifest missing: {parent_ids[0]}")
             if supp_m is None:
@@ -1322,7 +1334,11 @@ def validate_tushare_product_pair(
             issues.append(f"l2 manifest missing: {l2_dataset_id}")
 
     if l1 is None:
-        pair = resolve_active_tushare_product_pair(store)
+        # Read-only validation path: never mutates the resolved manifests,
+        # so skip the per-manifest deepcopy (large warehouses: ~100k symbol
+        # records each). Callers only consume ok/issues (and optionally the
+        # pair fields) without mutating the shared cache objects.
+        pair = resolve_active_tushare_product_pair(store, deep_copy=False)
         if pair is None:
             issues.append("no ready formal L1 product dataset")
             return {"ok": False, "issues": issues, "pair": None}
@@ -1333,7 +1349,9 @@ def validate_tushare_product_pair(
     if l2 is None:
         issues.append("formal L2 dataset could not be resolved")
 
-    _ok, core_issues = _validate_pair_core(store, l1, l2)
+    # Read-only core re-check (parent manifests are only inspected, never
+    # mutated), so skip deepcopy of the factor/raw/base/supplement parents.
+    _ok, core_issues = _validate_pair_core(store, l1, l2, deep_copy=False)
     issues.extend(core_issues)
 
     pair = None
@@ -1888,6 +1906,34 @@ def _last_weekday_on_or_before(ymd: int) -> int:
     return int(d.strftime("%Y%m%d"))
 
 
+def _workday_span(start_ymd: int, end_ymd: int) -> int:
+    """Workdays (Mon-Fri) in (start, end]: start excluded, end included."""
+    import datetime as _dt
+
+    if start_ymd >= end_ymd:
+        return 0
+    try:
+        start = _dt.date(
+            start_ymd // 10000,
+            (start_ymd // 100) % 100,
+            max(start_ymd % 100, 1),
+        )
+        end = _dt.date(
+            end_ymd // 10000,
+            (end_ymd // 100) % 100,
+            max(end_ymd % 100, 1),
+        )
+    except ValueError:
+        return 2 ** 31
+    count = 0
+    cur = start + _dt.timedelta(days=1)
+    while cur <= end:
+        if cur.weekday() < 5:
+            count += 1
+        cur += _dt.timedelta(days=1)
+    return count
+
+
 def tushare_product_data_health(
     store: DatasetStore,
     *,
@@ -1900,10 +1946,10 @@ def tushare_product_data_health(
     Never uses the universe file maximum date as the formal product date:
     raw / factor / L1 / L2 each report their own real dataset date.
     """
-    base = select_tushare_base(store)
-    factor = select_tushare_factor(store)
-    delisted_pool = select_delisted_pool(store)
-    pair = resolve_active_tushare_product_pair(store)
+    base = select_tushare_base(store, deep_copy=False)
+    factor = select_tushare_factor(store, deep_copy=False)
+    delisted_pool = select_delisted_pool(store, deep_copy=False)
+    pair = resolve_active_tushare_product_pair(store, deep_copy=False)
 
     def _ds_info(m: Optional[DatasetManifest], key: str, label: str) -> Dict[str, Any]:
         if m is None:
@@ -1977,7 +2023,7 @@ def tushare_product_data_health(
             if idx is not None:
                 return max(0, len(days) - 1 - idx)
             return None
-        return max(0, expected - int(actual))
+        return max(0, _workday_span(int(actual), expected))
 
     lag_raw = _lag(raw_max)
     lag_factor = _lag(factor_max)

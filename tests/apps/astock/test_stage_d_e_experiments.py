@@ -184,6 +184,49 @@ def test_create_experiment_soft_cap(cfg: AStockConfig):
     assert table["n"] == 2
 
 
+def test_experiment_findings_batch_matches_results_table(cfg: AStockConfig):
+    """Batch dashboard loader returns exactly the experiment_results_table rows."""
+    exp = create_experiment_from_grid(
+        cfg,
+        name="batch-eq",
+        rule_ids=["a"],
+        gua_keys=["none", "best3"],
+        weekday_keys=["all_signal_tn12"],
+        stop_loss_list=[None],
+        max_variants=50,
+        codes=["sh600000"],
+        start=20240101,
+        end=20240131,
+    )
+    exp_id = exp["experiment_id"]
+    variants = exp["variants"]
+    assert len(variants) == 2
+    for i, v in enumerate(variants):
+        rid = f"bt_batch_{i}"
+        append_run_index(
+            cfg,
+            {
+                "run_id": rid,
+                "title": f"batch run {i}",
+                "status": "ok",
+                "param_hash": v["param_hash"],
+                "metrics": {
+                    "total_return": 0.1 + i,
+                    "win_rate": 0.55 + i * 0.1,
+                    "max_drawdown": -0.05 - i * 0.01,
+                    "n_round_trips": 3 + i,
+                },
+            },
+        )
+        exp_db.update_variant(cfg, v["variant_id"], run_id=rid, status="ok")
+    single = exp_db.experiment_results_table(cfg, exp_id)
+    batch = exp_db.experiment_findings_batch(cfg, [exp_id])
+    assert exp_id in batch
+    assert batch[exp_id] == single
+    # missing ids are simply absent, never an error
+    assert exp_db.experiment_findings_batch(cfg, ["exp_missing_1"]) == {}
+
+
 def test_param_hash_dedup_lookup(cfg: AStockConfig):
     params = {"rule_ids": ["x"], "period": "DAY", "hold": 1}
     ph = exp_db.param_hash(params)

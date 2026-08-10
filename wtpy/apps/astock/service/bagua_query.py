@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import threading
 import time as _bq_time
+from datetime import date as _ymd_date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -38,6 +39,7 @@ from ..data.affine_adjust import build_affine_series
 from .index_etf import (
     classify_symbol,
     display_code as display_index_etf_code,
+    list_etf_std_codes,
     load_index_etf_day_bars,
     resolve_index_etf_name,
     to_index_etf_std_code,
@@ -68,6 +70,22 @@ def _parse_ymd(value: Union[str, int, None]) -> int:
     if d < 19900101 or d > 21001231:
         raise ValueError(f"invalid date: {value}")
     return d
+
+
+def _prev_month_end(ymd: int) -> int:
+    """上一个月最后一天 (YYYYMMDD int)。用于月卦默认取查询月份的上一个月。"""
+    y, m = ymd // 10000, (ymd // 100) % 100
+    if m == 1:
+        y, m = y - 1, 12
+    else:
+        m -= 1
+    if m in (1, 3, 5, 7, 8, 10, 12):
+        d = 31
+    elif m in (4, 6, 9, 11):
+        d = 30
+    else:
+        d = 29 if (y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)) else 28
+    return y * 10000 + m * 100 + d
 
 
 def normalize_period(period: Optional[str]) -> str:
@@ -1501,23 +1519,6 @@ def find_same_rizhu(
     }
 
 
-# Weekly-report style single-sheet export (matches stock-all layout).
-_WEEKLY_EXPORT_HEADERS = [
-    "code",
-    "name",
-    "week_end",
-    "open",
-    "high",
-    "low",
-    "close",
-    "日柱",
-    "月卦月线-组合",
-    "爻辞解释",
-    "本周周线-组合",
-    "爻辞解释",
-]
-
-
 def _yao_prefix_digit(yao_order: Any) -> str:
     """Weekly 变卦 prefix: 1..5 = 初..五, 0 = 上爻 (yao_order 6)."""
     try:
@@ -1590,8 +1591,15 @@ def _resolve_biangua_fullname(b: Dict[str, Any]) -> str:
     return m.get(short, short)
 
 
+def _strip_gua_symbols(s: Any) -> str:
+    """去掉卦象符号字符（U+4DC0–U+4DFF），导出表不再包含卦符。"""
+    if not s:
+        return ""
+    return re.sub(r"[\u4dc0-\u4dff]", "", str(s)).strip()
+
+
 def _bagua_combo(row: Optional[Dict[str, Any]]) -> str:
-    """Build ``本卦|N-变卦`` like weekly_analysis 组合 column (full names with 卦符)."""
+    """Build ``本卦|N-变卦`` like weekly_analysis 组合 column (no 卦符)."""
     if not row or row.get("error") or not row.get("ok", True):
         return ""
     s = row.get("summary") or {}
@@ -1618,8 +1626,10 @@ def _bagua_combo(row: Optional[Dict[str, Any]]) -> str:
     else:
         right = ""
     if ben and right:
-        return f"{ben}|{right}"
-    return ben or right
+        out = f"{ben}|{right}"
+    else:
+        out = ben or right
+    return _strip_gua_symbols(out)
 
 
 def _bagua_yao_explain(row: Optional[Dict[str, Any]]) -> str:
@@ -1627,14 +1637,16 @@ def _bagua_yao_explain(row: Optional[Dict[str, Any]]) -> str:
         return ""
     s = row.get("summary") or {}
     b = row.get("bagua") or {}
-    return str(
-        s.get("market_judgement")
-        or b.get("market_judgement")
-        or b.get("market_summary")
-        or b.get("yao_ci")
-        or b.get("line_text")
-        or ""
-    ).strip()
+    return _strip_gua_symbols(
+        str(
+            s.get("market_judgement")
+            or b.get("market_judgement")
+            or b.get("market_summary")
+            or b.get("yao_ci")
+            or b.get("line_text")
+            or ""
+        )
+    )
 
 
 def _fmt_ymd_dash(ymd: Any) -> str:
@@ -1647,6 +1659,27 @@ def _fmt_ymd_dash(ymd: Any) -> str:
         else:
             return s
     return f"{n // 10000:04d}-{(n // 100) % 100:02d}-{n % 100:02d}"
+
+
+def _week_iso_label(ymd: Any) -> str:
+    """bar 结束日 -> ISO 周标签，如 2026-08-14 -> '2026-W33'；解析失败返回 ''。"""
+    s = _fmt_ymd_dash(ymd)
+    try:
+        y, m, d = (int(p) for p in s.split("-"))
+        iso = _ymd_date(y, m, d).isocalendar()
+    except Exception:
+        return ""
+    return f"{iso.year}-W{iso.week:02d}"
+
+
+def _month_label(ymd: Any) -> str:
+    """bar 结束日 -> 月份标签，如 2026-07-31 -> '2026-07'；解析失败返回 ''。"""
+    s = _fmt_ymd_dash(ymd)
+    try:
+        y, m, _d = (int(p) for p in s.split("-"))
+    except Exception:
+        return ""
+    return f"{y}-{m:02d}"
 
 
 def _code6_from_any(code: Any) -> str:
@@ -1822,7 +1855,7 @@ def _weekly_style_row(
     rizhu: str = "",
     fallback_code: str = "",
 ) -> List[Any]:
-    """One stock row in weekly_analysis stock-all layout."""
+    """One stock row in weekly_analysis stock-all layout (周卦列在前、月卦列在后)."""
     base = week_row if (week_row and not week_row.get("error")) else month_row
     bar = (week_row or {}).get("bar") or (base or {}).get("bar") or {}
     code = (
@@ -1848,10 +1881,10 @@ def _weekly_style_row(
         bar.get("low") if bar else "",
         bar.get("close") if bar else "",
         rizhu or "",
-        _bagua_combo(month_row),
-        _bagua_yao_explain(month_row),
         _bagua_combo(week_row),
         _bagua_yao_explain(week_row),
+        _bagua_combo(month_row),
+        _bagua_yao_explain(month_row),
     ]
 
 
@@ -1891,6 +1924,7 @@ def _query_bagua_periods_for_code(
     adjust: str,
     session: Optional["BaguaPlaneSession"] = None,
     calc: Optional[BaguaCalculator] = None,
+    asof_map: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Compute bagua for one stock across multiple periods (one bar load)."""
     out: Dict[str, Dict[str, Any]] = {}
@@ -1898,11 +1932,12 @@ def _query_bagua_periods_for_code(
     # Still one warehouse load per period internally — but shared session avoids
     # re-indexing. For true single-load, call query once per period with session.
     for per in periods:
+        per_asof = asof_map.get(per, asof) if asof_map else asof
         try:
             out[per] = query_bagua(
                 cfg,
                 code=code,
-                date=asof,
+                date=per_asof,
                 period=per,
                 adjust=adjust,
                 session=session,
@@ -1927,7 +1962,7 @@ def _query_bagua_periods_for_code(
                 "display": display_code_with_name(disp, name) if name else disp,
                 "std_code": std,
                 "symbol_type": classify_symbol(code),
-                "query_date": asof,
+                "query_date": per_asof,
                 "period": per,
                 "adjust": adjust,
                 "error": str(e),
@@ -1969,6 +2004,97 @@ def _autofit_columns(ws: Any, *, max_width: float = 90.0, min_width: float = 8.0
         ws.column_dimensions[letter].width = min(max(best, min_width), max_width)
 
 
+def _export_sheet_rows(
+    cfg: AStockConfig,
+    *,
+    pool: Sequence[str],
+    asof: int,
+    query_pers: Sequence[str],
+    adjust: str,
+    session: Optional["BaguaPlaneSession"],
+    calc: BaguaCalculator,
+    asof_map: Dict[str, int],
+    rizhu_map: Dict[str, str],
+    on_progress: Optional[Any],
+    base_idx: int,
+    total: int,
+    totals: Dict[str, int],
+    resolve_names: bool = False,
+) -> Tuple[List[List[Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Query bagua for one code pool and build weekly-style sheet rows.
+
+    Returns (rows, first_week_row, first_month_row). ``base_idx`` offsets this
+    pool inside the combined progress bar and ``total`` is the combined pool
+    size. ``resolve_names`` fills empty name cells via ``resolve_stock_name``
+    (used for ETF rows, where display names are sparse).
+    """
+    sheet_rows: List[List[Any]] = []
+    first_week_row: Optional[Dict[str, Any]] = None
+    first_month_row: Optional[Dict[str, Any]] = None
+    for k, raw_code in enumerate(pool, 1):
+        idx = base_idx + k
+        per_rows = _query_bagua_periods_for_code(
+            cfg,
+            code=raw_code,
+            asof=asof,
+            periods=query_pers,
+            adjust=adjust,
+            session=session,
+            calc=calc,
+            asof_map=asof_map,
+        )
+        week_row = per_rows.get("WEEK")
+        month_row = per_rows.get("MONTH")
+        if first_week_row is None and week_row and not week_row.get("error"):
+            first_week_row = week_row
+        if first_month_row is None and month_row and not month_row.get("error"):
+            first_month_row = month_row
+        c6 = _code6_from_any(
+            (week_row or {}).get("code")
+            or (month_row or {}).get("code")
+            or raw_code
+        )
+        rizhu = rizhu_map.get(c6, "") if c6 else ""
+        if rizhu:
+            totals["rizhu_hit"] += 1
+        ok_w = bool(week_row and week_row.get("ok") and not week_row.get("error"))
+        ok_m = bool(month_row and month_row.get("ok") and not month_row.get("error"))
+        if ok_w or ok_m:
+            totals["ok"] += 1
+        else:
+            totals["error"] += 1
+        row = _weekly_style_row(
+            week_row=week_row,
+            month_row=month_row,
+            rizhu=rizhu,
+            fallback_code=raw_code,
+        )
+        if resolve_names and c6 and not row[1] and ".ETF." in str(raw_code):
+            try:
+                row[1] = resolve_stock_name(cfg, c6) or ""
+            except Exception:
+                pass
+        sheet_rows.append(row)
+        if on_progress is not None and (idx == total or idx % 25 == 0 or idx == 1):
+            try:
+                on_progress(
+                    {
+                        "phase": "query",
+                        "period": "WEEK+MONTH",
+                        "period_index": 1,
+                        "period_count": 1,
+                        "done": idx,
+                        "total": total,
+                        "ok_count": totals["ok"],
+                        "error_count": totals["error"],
+                        "code": raw_code,
+                    }
+                )
+            except Exception:
+                pass
+    return sheet_rows, first_week_row, first_month_row
+
+
 def export_bagua_multi_period_xlsx(
     cfg: AStockConfig,
     *,
@@ -1982,14 +2108,28 @@ def export_bagua_multi_period_xlsx(
     on_progress: Optional[Any] = None,
     rizhu_path: Optional[Path] = None,
 ) -> Path:
-    """Export bagua in weekly_analysis stock-all single-sheet layout.
+    """Export bagua in weekly_analysis stock-all layout, one sheet per pool.
+
+    Full-market export (``all_stocks=True``) writes two sheets into the same
+    workbook:
+      - ``stock-all``: A-share universe rows
+      - ``etf-all``   : every ETF enumerated from the TDX local day files
+    Manual ``codes`` are split by symbol type — stocks stay in ``stock-all``,
+    index/ETF codes go to ``etf-all``.
+
+    ``limit`` is a total row cap applied as stock-first: stocks fill the cap
+    before ETFs are included (a cap ≤ stock count yields no etf-all sheet).
+    Manual codes that cannot be recognized are silently dropped.
 
     Columns:
       code, name, week_end, open, high, low, close, 日柱,
-      月卦月线-组合, 爻辞解释, 本周周线-组合, 爻辞解释
+      周卦周线-组合(周标签), 爻辞解释, 月卦月线-组合(月标签), 爻辞解释
 
-    Always computes WEEK + MONTH (DAY is ignored for this layout). 日柱 is
-    joined from Desktop ``股票+卦象/日柱(1).xlsx`` when available.
+    周卦在前、月卦在后；表头标注周卦所在周（ISO 周）与月卦所在月份。
+    月卦默认取查询月份的上一个月（如8月查询导出7月月卦，避免未收官月卦），
+    周卦取查询日期所在周。Always computes WEEK + MONTH (DAY is ignored for
+    this layout). 日柱 is joined from Desktop ``股票+卦象/日柱(1).xlsx`` when
+    available. 导出卦象组合已去除卦符字符（U+4DC0–U+4DFF）。
     """
     import time
 
@@ -2016,12 +2156,44 @@ def export_bagua_multi_period_xlsx(
             seen_p.add(n)
 
     asof = _parse_ymd(date)
+    month_asof = _prev_month_end(asof)
     adj = normalize_adjust_mode(adjust)
     use_all = bool(all_stocks)
-    code_list = _resolve_batch_codes(cfg, codes, all_stocks=use_all)
+    stock_pool: List[str] = []
+    etf_pool: List[str] = []
+    if use_all:
+        stock_pool = _resolve_batch_codes(cfg, None, all_stocks=True)
+        etf_pool = list_etf_std_codes(cfg)
+    else:
+        stock_raw: List[str] = []
+        etf_raw: List[str] = []
+        for c in (codes or []):
+            c = str(c).strip()
+            if not c:
+                continue
+            if classify_symbol(c) in ("index", "etf"):
+                etf_raw.append(c)
+            else:
+                try:
+                    normalize_query_code(c)
+                except ValueError:
+                    continue  # 无法识别的代码静默丢弃（与全量列表行为一致）
+                stock_raw.append(c)
+        if stock_raw:
+            stock_pool = _resolve_batch_codes(cfg, stock_raw, all_stocks=False)
+        seen_etf: set = set()
+        for c in etf_raw:
+            std = to_index_etf_std_code(c)
+            if std and std not in seen_etf:
+                seen_etf.add(std)
+                etf_pool.append(std)
+        if not stock_pool and not etf_pool:
+            raise ValueError("codes or all_stocks required")
     if limit is not None:
-        code_list = code_list[: int(limit)]
-    if not code_list:
+        lim = int(limit)
+        stock_pool = stock_pool[:lim]
+        etf_pool = etf_pool[: max(0, lim - len(stock_pool))]
+    if not stock_pool and not etf_pool:
         raise ValueError("codes or all_stocks required")
 
     if not cfg.bagua_json:
@@ -2052,80 +2224,85 @@ def export_bagua_multi_period_xlsx(
     )
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    sheet_rows: List[List[Any]] = []
-    totals = {"requested": len(code_list), "ok": 0, "error": 0, "rizhu_hit": 0}
-    total = len(code_list)
-    query_pers = ["WEEK", "MONTH"]
+    pools: List[Tuple[str, List[str], bool]] = []
+    if stock_pool:
+        pools.append(("stock-all", stock_pool, False))
+    if etf_pool:
+        pools.append(("etf-all", etf_pool, True))
 
-    for idx, raw_code in enumerate(code_list, 1):
-        per_rows = _query_bagua_periods_for_code(
+    totals = {
+        "requested": len(stock_pool) + len(etf_pool),
+        "ok": 0,
+        "error": 0,
+        "rizhu_hit": 0,
+    }
+    total = totals["requested"]
+    query_pers = ["WEEK", "MONTH"]
+    asof_map = {"WEEK": asof, "MONTH": month_asof}
+    sheet_rows_by_name: Dict[str, List[List[Any]]] = {}
+    first_rows: Dict[str, Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]] = {}
+    base_idx = 0
+    for sheet_name, pool, resolve_names in pools:
+        rows, fw, fm = _export_sheet_rows(
             cfg,
-            code=raw_code,
+            pool=pool,
             asof=asof,
-            periods=query_pers,
+            query_pers=query_pers,
             adjust=adj,
             session=session,
             calc=calc,
+            asof_map=asof_map,
+            rizhu_map=rizhu_map,
+            on_progress=on_progress,
+            base_idx=base_idx,
+            total=total,
+            totals=totals,
+            resolve_names=resolve_names,
         )
-        week_row = per_rows.get("WEEK")
-        month_row = per_rows.get("MONTH")
-        c6 = _code6_from_any(
-            (week_row or {}).get("code")
-            or (month_row or {}).get("code")
-            or raw_code
-        )
-        rizhu = rizhu_map.get(c6, "") if c6 else ""
-        if rizhu:
-            totals["rizhu_hit"] += 1
-        ok_w = bool(week_row and week_row.get("ok") and not week_row.get("error"))
-        ok_m = bool(month_row and month_row.get("ok") and not month_row.get("error"))
-        if ok_w or ok_m:
-            totals["ok"] += 1
-        else:
-            totals["error"] += 1
-        sheet_rows.append(
-            _weekly_style_row(
-                week_row=week_row,
-                month_row=month_row,
-                rizhu=rizhu,
-                fallback_code=raw_code,
-            )
-        )
-        if on_progress is not None and (idx == total or idx % 25 == 0 or idx == 1):
-            try:
-                on_progress(
-                    {
-                        "phase": "query",
-                        "period": "WEEK+MONTH",
-                        "period_index": 1,
-                        "period_count": 1,
-                        "done": idx,
-                        "total": total,
-                        "ok_count": totals["ok"],
-                        "error_count": totals["error"],
-                        "code": raw_code,
-                    }
-                )
-            except Exception:
-                pass
+        base_idx += len(pool)
+        sheet_rows_by_name[sheet_name] = rows
+        first_rows[sheet_name] = (fw, fm)
 
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "stock-all"
-    ws.append(_WEEKLY_EXPORT_HEADERS)
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-    for row in sheet_rows:
-        ws.append(row)
-    _autofit_columns(ws)
-    # combo columns (月卦月线-组合 / 本周周线-组合) need extra room
     from openpyxl.utils import get_column_letter
 
-    for i, hdr in enumerate(_WEEKLY_EXPORT_HEADERS, 1):
-        if "组合" in hdr:
-            letter = get_column_letter(i)
-            cur = ws.column_dimensions[letter].width or 0
-            ws.column_dimensions[letter].width = max(cur, 32)
+    for si, (sheet_name, _pool, _rn) in enumerate(pools):
+        rows = sheet_rows_by_name[sheet_name]
+        fw, fm = first_rows[sheet_name]
+        ws = wb.active if si == 0 else wb.create_sheet(sheet_name)
+        ws.title = sheet_name
+        week_label = _week_iso_label(
+            ((fw or {}).get("bar") or {}).get("end_date") or asof
+        )
+        month_label = _month_label(
+            ((fm or {}).get("bar") or {}).get("end_date") or month_asof
+        )
+        headers = [
+            "code",
+            "name",
+            "week_end",
+            "open",
+            "high",
+            "low",
+            "close",
+            "日柱",
+            f"周卦周线-组合({week_label})",
+            "爻辞解释",
+            f"月卦月线-组合({month_label})",
+            "爻辞解释",
+        ]
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+        for row in rows:
+            ws.append(row)
+        _autofit_columns(ws)
+        # combo columns (周卦周线-组合 / 月卦月线-组合) need extra room
+        for i, hdr in enumerate(headers, 1):
+            if "组合" in hdr:
+                letter = get_column_letter(i)
+                cur = ws.column_dimensions[letter].width or 0
+                ws.column_dimensions[letter].width = max(cur, 32)
 
     meta = wb.create_sheet("meta", 0)
     meta.append(["key", "value"])
@@ -2134,10 +2311,15 @@ def export_bagua_multi_period_xlsx(
     for k, v in [
         ("layout", "weekly_analysis stock-all"),
         ("query_date", asof),
+        ("month_asof", month_asof),
+        ("note", "MONTH 列取查询月份的上一个月（如8月查询导出7月月卦）；WEEK 列取查询日期所在周"),
         ("periods", "WEEK,MONTH"),
         ("adjust", adj),
         ("all_stocks", use_all),
         ("requested", totals["requested"]),
+        ("stock_count", len(stock_pool)),
+        ("etf_count", len(etf_pool)),
+        ("sheets", ",".join(name for name, _p, _r in pools)),
         ("ok_total", totals["ok"]),
         ("error_total", totals["error"]),
         ("rizhu_hit", totals["rizhu_hit"]),

@@ -8,6 +8,30 @@
 - 每次发版递增版本号（如 2.0 → 2.1 → 2.2），并打 `v{版本号}` 的 git tag
 - 提交后右上角版本号自动显示新版本
 
+## [2.3] - 2026-08-10
+
+### 新增
+- **EOD 自动同步可见性与失败重试**：
+  - 子进程输出落盘 `sync_logs/eod_sync_<date>.log`（此前写入 DEVNULL，"同步似乎什么都没做"的根因）；watcher 线程记录退出码与结束时间
+  - 失败当天以 `ASTOCK_EOD_SYNC_POLL_SECONDS`（默认 30 分钟）间隔自动重试，最多 `ASTOCK_EOD_SYNC_MAX_RETRIES`（默认 2）次；成功即清零
+  - `last_trigger_date` 持久化启动恢复：重启不会重复触发当日全链，也不会丢掉失败重试资格
+  - `/api/v1/eod-sync/status` 新增 `last_sync_exit_code / last_sync_finished_at / retry_count / pending_retry_at / state_suspect`；数据仓库页状态卡显示上次结果（成功/失败+已重试次数）
+  - 启动时校验数据根存在：无可用数据集时醒目提示并给出体检命令，不再静默跳过
+- **手动同步互斥与自动续传**：
+  - tushare raw 增量加入跨进程 `SyncTaskLock` 硬互斥（EOD 自动同步 / UI 按钮 / cron 并发运行禁止重叠）
+  - `data_sync_start` 检测到 EOD 子进程存活返回 409（明确提示等待结束）；反向由脚本内锁兜底
+  - 检测到残留 checkpoint（中断/被杀进程遗留）自动附加 `--resume`，不再以 "sync failed" 形式失败关闭
+- **CA 公司行为每日自动更新**：由「启动时 30 天检查」改为每个交易日 `ASTOCK_CA_SYNC_TIME`（默认 18:35）定时自动增量同步，日志与退出码落盘，失败次日自动重跑
+- **数据中心 UI 分组**：数据卡片按「📥 从 Tushare 拉取 / 🏭 本地自动合成」分组并标注角色（正式L2=成交/估值·卦象面，正式L1=信号面）；去除编号与截止/起始日期输入（手动同步始终拉最新增量）；数据集明细表默认收起
+- **新增 `scripts/check_data_root.py` 数据根体检**：检查预置数据根能否被系统直接识别（manifests/blobs/各数据面状态/滞后/完整度），退出码 0=可用、1=不可用、2=可用但不完整
+
+### 修复
+- 自动同步启动失败（Popen 异常）不再被当作"当日已完成"：写入非 0 退出码并进入重试闭环
+- 服务重启后不再绕过 30 分钟重试间隔立即重试（`pending_retry_at` 未到不触发）
+- EOD 与 CA 两个 watcher 线程并发写 `eod_sync_state.json` 加锁并原子替换，避免丢失更新/损坏 JSON
+- 测试不再污染真实 `storage/astock/eod_sync_state.json`（新增 `ASTOCK_EOD_STATE_PATH` 隔离；曾因写入未来日期导致次日自动同步被误判"已触发"而跳过）
+- 数据健康日历判断修正：仅当数据日期超过日历最后一天才判日历过期（数据未追平今天属正常态）
+
 ## [2.2] - 2026-08-10
 
 ### 新增
@@ -21,6 +45,8 @@
   - 日柱表（桌面 28MB xlsx）解析结果持久化到 `storage/astock/rizhu_cache.json`，冷解析 20s+ 降至毫秒级（进程重启也不再重读）
   - `BaguaPlaneSession` 构建走只读路径（`deep_copy=False`，跳过 13.8 万条 symbol 记录的 deepcopy）
   - 新增诊断接口 `/api/v1/bagua/export/jobs`（列出所有导出/同卦任务状态与进度）
+  - 卦象导出调整：月卦默认取查询月份的上一个月（8月查询导出7月月卦，避免未收官月卦）；周卦维持查询周；导出表列序改为先周卦后月卦，表头标注周/月（如 周卦(2026-W33) / 月卦(2026-07)）
+  - 全市场导出升级：A股与全量ETF（通达信本地目录枚举）合并为同一 Excel 的两个 sheet（stock-all / etf-all）；导出表格的卦象组合与爻辞列去除卦符字符（如 ䷉履卦 → 履卦），减小表格体积
 - **页面刷新性能优化**（F5 长时间加载问题）：
   - `/api/v1/market-data/status` 冷扫描从约 13 秒降至约 0.5 秒：新增 30s 响应缓存 + blob 目录统计独立 300s 缓存（blob 目录约 13.8 万个文件，不再每次全量 stat）；`load_manifest` 新增 `deep_copy=False` 只读路径（跳过对 13.8 万条 symbol 记录的 deepcopy），`market_data_status` 与 `resolve_active_tushare_product_pair` 只读调用复用
   - `/api/v1/version` git 构建信息缓存 TTL 从 5s 提至 300s（消除 Windows 上每次刷新触发 `git status` 的 ~0.6s 阻塞）

@@ -89,6 +89,35 @@ def test_display_code_index_etf():
     assert ie.display_code("SZSE.ETF.159915") == "sz159915"
 
 
+def test_list_etf_std_codes_filters_index(tmp_path):
+    """全市场 ETF 枚举（list_etf_std_codes）只保留 .ETF. 段。
+
+    指数（SSE.IDX.* / SZSE.IDX.*）与股票不得混入 ETF 池；结果按标准代码
+    排序返回。cfg 参数只用到 cfg.tdx_root。
+    """
+    sh = tmp_path / "vipdoc" / "sh" / "lday"
+    sz = tmp_path / "vipdoc" / "sz" / "lday"
+    sh.mkdir(parents=True)
+    sz.mkdir(parents=True)
+    for name in ("sh000001.day", "sh510050.day", "sh600000.day"):
+        (sh / name).write_bytes(b"")  # 上证指数 / 沪深300ETF / 浦发银行
+    for name in ("sz399001.day", "sz159915.day"):
+        (sz / name).write_bytes(b"")  # 深证成指 / 创业板ETF
+
+    cfg = make_cfg(tdx_root=tmp_path)
+    codes = ie.list_etf_std_codes(cfg)
+    # sorted(set(out))：字母序，"SSE.ETF.510050" 先于 "SZSE.ETF.159915"
+    assert codes == ["SSE.ETF.510050", "SZSE.ETF.159915"]
+    assert all(".ETF." in c for c in codes)
+    assert not any(".IDX." in c for c in codes)
+
+    # 目录缺失/为空 -> 空列表（不抛异常）
+    assert ie.list_etf_std_codes(make_cfg(tdx_root=tmp_path / "missing")) == []
+    empty = tmp_path / "empty"
+    (empty / "vipdoc" / "sh" / "lday").mkdir(parents=True)
+    assert ie.list_etf_std_codes(make_cfg(tdx_root=empty)) == []
+
+
 def test_normalize_query_code_via_bagua_query():
     assert bq.normalize_query_code("sh000001") == "SSE.IDX.000001"
     assert bq.normalize_query_code("sz399001") == "SZSE.IDX.399001"
@@ -378,7 +407,7 @@ def test_query_bagua_index_etf_warehouse_with_formal_pair(tmp_path, monkeypatch)
         l2_dataset_id=formal_l2,
     )
     monkeypatch.setattr(tp, "resolve_active_tushare_product_pair",
-                        lambda store: fake_pair)
+                        lambda store, **k: fake_pair)
 
     cfg = make_cfg(market_data_root=tmp_path / "market_data",
                    tdx_root=tmp_path / "nope")
