@@ -3403,11 +3403,18 @@ def _sync_dataset(
     def _finalize_bars(
         norm_sym: str, bars: List[MarketBar], use_start: Optional[int]
     ) -> List[MarketBar]:
-        """Optionally prepend parent history when doing a true incremental window."""
+        """Optionally prepend parent history when doing a true incremental window.
+
+        Always returns bars in ASCENDING trade_date order: Tushare daily
+        endpoints return descending rows, and storing them as-is produced
+        blobs in descending order with inverted per-symbol first/last dates,
+        which silently broke the product-chain freshness gates and the
+        searchsorted-based QFQ derivation (L1/L2 never published).
+        """
         if not bars:
             return bars
         if not parent_dataset_id or use_start is None:
-            return bars
+            return sorted(bars, key=lambda b: b.trade_date)
         try:
             parent_bars = MarketDataRepository(store).load_bars(
                 dataset_id=parent_dataset_id,
@@ -3416,7 +3423,7 @@ def _sync_dataset(
         except Exception:
             parent_bars = []
         if not parent_bars:
-            return bars
+            return sorted(bars, key=lambda b: b.trade_date)
         return _merge_bar_lists(parent_bars, bars)
 
     def _empty_record(norm_sym: str) -> SymbolRecord:
