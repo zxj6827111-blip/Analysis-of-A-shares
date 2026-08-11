@@ -296,6 +296,23 @@ class TushareProvider:
         bars: List[MarketBar] = []
         if symbol is None:
             symbol = request.symbols[0]
+
+        def _num(v, default: float = 0.0) -> float:
+            """Coerce a value to float; None / NaN / blank -> default.
+
+            Tushare index_daily/fund_daily may carry null OHLC on some
+            historical rows (e.g. SH indices around 2004-12), which after
+            paged-frame merging surface as None and crash float(None). Bars
+            still have a close, so OHLC falls back to close; vol/amount to 0.
+            """
+            if v is None:
+                return default
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return default
+            return f if f == f else default  # NaN -> default
+
         for _, row in df.iterrows():
             try:
                 trade_date = int(str(row["trade_date"]))
@@ -305,17 +322,18 @@ class TushareProvider:
                 continue
             if request.end_date and trade_date > request.end_date:
                 continue
+            close = _num(row.get("close"))
             bars.append(
                 MarketBar(
                     symbol=symbol,
                     trade_date=trade_date,
                     period=request.period.value,
-                    open=float(row.get("open", 0)),
-                    high=float(row.get("high", 0)),
-                    low=float(row.get("low", 0)),
-                    close=float(row.get("close", 0)),
-                    volume=float(row.get("vol", row.get("volume", 0))),
-                    amount=float(row.get("amount", 0)),
+                    open=_num(row.get("open"), close),
+                    high=_num(row.get("high"), close),
+                    low=_num(row.get("low"), close),
+                    close=close,
+                    volume=_num(row.get("vol", row.get("volume"))),
+                    amount=_num(row.get("amount")),
                     source=DataSource.TUSHARE.value,
                     adjustment=adjustment.value,
                     anchor_date=request.anchor_date,
