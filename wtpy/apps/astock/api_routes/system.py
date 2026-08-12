@@ -140,6 +140,15 @@ def _run_sync_process(ctx: ApiContext, cmd: List[str], task_name: str) -> None:
             elif _sync_state.get("stop_requested"):
                 _sync_state["status"] = "stopped"
                 _sync_state["error"] = "用户手动停止"
+            elif proc.returncode == 2:
+                # 2 = warning/partial (e.g. reconcile waiting_for_parent, or a
+                # non-ready factor surface). Business-incomplete but not a
+                # hard failure — the UI shows the concrete reason instead of a
+                # blanket "出错" (EOD retry still treats rc!=0 as failed).
+                _sync_state["status"] = "warning"
+                _sync_state["error"] = (
+                    "exit code 2 (warning): 数据不完整，请查看日志了解原因"
+                )
             else:
                 # Any non-zero exit code means the sync did not fully succeed
                 # (1 = business failure such as expired token / missing parent,
@@ -934,7 +943,7 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
     end_date = payload.end_date or today
     start_date = payload.start_date
 
-    if payload.task not in ("tdx", "tushare", "factor", "derive", "ca"):
+    if payload.task not in ("tdx", "tushare", "factor", "derive", "ca", "reconcile"):
         raise HTTPException(400, f"未知任务类型: {payload.task}")
 
     # The EOD auto-sync child writes the same (tushare, none/adj_factor, 1d)
@@ -991,6 +1000,12 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
         _CA_SCRIPT = str(PROJECT_ROOT / "scripts" / "sync_ca_events.py")
         cmd = [sys.executable, "-u", _CA_SCRIPT, "--mode", "incremental", "--days", "90",
                "--storage-root", str(cfg.market_data_root)]
+    elif payload.task == "reconcile":
+        # Manual product merge (UI「手动合并计算」): backfill the delisted
+        # pool (zero-config Gate B2) then reconcile the formal L1/L2 pair.
+        # Runs offline against local data except the delisted roster fetch.
+        cmd = [sys.executable, "-u", SYNC_SCRIPT, "--source", "internal",
+               "--mode", "reconcile", "--cutoff", str(end_date)]
     else:
         # Rebuild the composite signal plane (L1) from the latest ready
         # composite_none x adj_factor parents (script auto-resolves parents).

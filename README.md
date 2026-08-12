@@ -126,6 +126,12 @@ TUSHARE_TOKEN=your_token_here
 
 > **注意**：`ASTOCK_ENV=production` 时，若 `MARKET_DATA_ROOT` 未设置或指向项目内部存储，系统会拒绝启动（防呆设计）。仅调试时可设 `ASTOCK_ALLOW_INTERNAL_DATA_ROOT=1` 临时放行。
 
+**服务器部署要点**（Linux + PM2/systemd，详见 `deploy/`）：
+
+- **`TUSHARE_TOKEN` 必配**：tushare 数据同步/因子同步依赖 Tushare Token，缺失将同步失败。可在启动前 `export TUSHARE_TOKEN=你的token`（PM2 启动时自动透传宿主环境变量），或写入 `deploy/astock.env`（`install_astock.sh` 生成，systemd 模式自动读取）
+- **服务器时区**：建议设置 `TZ=Asia/Shanghai`（北京时间）。EOD 自动同步按服务器本地时间 18:30 触发，时区错位会导致自动更新时机错位。`install_astock.sh` 生成的 `deploy/astock.env` 与 `deploy/ecosystem.config.cjs` 均已内置 `TZ=Asia/Shanghai`
+- **首次同步自动生成退市池**：手动点击「更新Tushare日线」或等待 EOD 自动同步，会自动补全退市股票数据（无需人工准备候选清单），随后自动合成正式 L1/L2 数据面；若个别股票合并失败，可在数据中心页点击「手动合并计算」查看失败原因或立即触发重算
+
 ### 4. 验证安装
 
 ```shell

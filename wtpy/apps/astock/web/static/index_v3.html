@@ -2388,7 +2388,9 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
           <div class="src-fresh-meta" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.45">未加载</div>
         </div>
       </div>
-      <div class="src-fresh-group-title">🏭 本地自动合成 <span class="hint">由日线+因子自动派生，跟随源数据更新</span></div>
+      <div class="src-fresh-group-title">🏭 本地自动合成 <span class="hint">由日线+因子自动派生，跟随源数据更新</span>
+        <button type="button" class="btn btn-primary" id="btnSyncReconcile" title="手动触发正式 L1/L2 合成计算（自动合并不了时使用；会先自动补全退市数据，再构建 L2/L1）" style="float:right;font-size:12px;padding:3px 12px">手动合并计算</button>
+      </div></div>
       <div class="src-fresh-group prod">
         <div class="src-fresh-card" data-src="l2_product" style="background:#0a1420;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;min-height:92px" title="internal/composite_none 正式未复权面：回测成交/估值 + 卦象默认口径（未复权）">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
@@ -5375,7 +5377,7 @@ async function expCreateAndStart() {
   /* ---------- 数据更新 ---------- */
   let _syncPollTimer = null;
   function setSyncButtonsDisabled(disabled) {
-    ["btnSyncTushare", "btnSyncFactor", "btnSyncCA"].forEach(function(id) {
+    ["btnSyncTushare", "btnSyncFactor", "btnSyncCA", "btnSyncReconcile"].forEach(function(id) {
       const b = $(id);
       if (b) b.disabled = disabled;
     });
@@ -5397,6 +5399,8 @@ async function expCreateAndStart() {
       badge.innerHTML = '<span class="tag tag-red">出错</span>';
     } else if (status === "eod") {
       badge.innerHTML = '<span class="tag tag-orange" title="收盘后自动同步正在运行，请等待其结束后再手动更新">自动同步中</span>';
+    } else if (status === "warning") {
+      badge.innerHTML = '<span class="tag tag-orange" title="任务完成但数据不完整，请查看日志了解原因">警告</span>';
     } else {
       badge.innerHTML = '<span class="tag" style="background:#1d2d44;color:#91a2bb">空闲</span>';
     }
@@ -5408,7 +5412,7 @@ async function expCreateAndStart() {
     box.textContent = lines.join("\n");
     box.scrollTop = box.scrollHeight;
   }
-  const _TASK_LABEL = { tushare: "Tushare日线", factor: "Tushare前复权因子", derive: "派生QFQ", ca: "CA公司行为" };
+  const _TASK_LABEL = { tushare: "Tushare日线", factor: "Tushare前复权因子", derive: "派生QFQ", ca: "CA公司行为", reconcile: "本地合成" };
   function renderSyncProgress(st) {
     const box = $("syncProgressBox");
     const bar = $("syncProgressBar");
@@ -5456,6 +5460,16 @@ async function expCreateAndStart() {
       label.style.color = "var(--red)";
       pct.style.color = "var(--red)";
       detail.textContent = st.error || "未知错误";
+    } else if (st.status === "warning") {
+      // exit 2: 数据不完整（如合成等待因子/退市池），不是硬失败——显示具体原因
+      box.style.display = "";
+      bar.style.animation = "";
+      bar.style.background = "linear-gradient(90deg,#ffad33,#ffc766)";
+      pct.textContent = "⚠";
+      label.textContent = taskName + " 警告";
+      label.style.color = "var(--orange)";
+      pct.style.color = "var(--orange)";
+      detail.textContent = st.error || "数据不完整，请查看日志";
     } else if (st.status === "stopped" || st.status === "stopping") {
       box.style.display = "";
       bar.style.animation = "";
@@ -5497,6 +5511,8 @@ async function expCreateAndStart() {
           loadDataStoreStatus();
         } else if (st.status === "error") {
           toast("同步出错: " + (st.error || st.task));
+        } else if (st.status === "warning") {
+          toast("同步警告: " + (st.error || "数据不完整，请查看日志"));
         } else if (st.status === "stopped") {
           toast("已停止: " + (_TASK_LABEL[st.task] || st.task) + "（可续传）");
         }
@@ -5539,6 +5555,7 @@ async function expCreateAndStart() {
     }
   }
   if ($("btnSyncTushare")) $("btnSyncTushare").onclick = function() { startSync("tushare"); };
+  if ($("btnSyncReconcile")) $("btnSyncReconcile").onclick = function() { startSync("reconcile"); };
   if ($("btnSyncFactor")) $("btnSyncFactor").onclick = function() { startSync("factor"); };
   if ($("btnSyncCA")) $("btnSyncCA").onclick = function() { startSync("ca"); };
   if ($("btnSyncStop")) $("btnSyncStop").onclick = async function() {

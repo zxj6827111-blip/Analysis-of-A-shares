@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 import time
 from collections import defaultdict
@@ -588,6 +590,89 @@ def sync_tushare_incremental(
     return result
 
 
+def _run_delisted_pool_sync(store: DatasetStore, args) -> dict:
+    """Zero-config delisted pool sync (Gate B2 ``--auto-candidates``).
+
+    Spawns ``scripts/sync_tushare_delisted.py --auto-candidates --publish``
+    as a child process (same subprocess pattern as the CA sync). The child's
+    checkpoint under ``<root>/raw/tushare/delisted_daily`` makes repeated runs
+    incremental — only newly delisted symbols (not yet in the pool) are
+    downloaded, so an existing pool costs one roster request plus a compare.
+    Returns a structured step result; the reconcile that runs afterwards stays
+    authoritative for the formal L1/L2 gate.
+    """
+    script = str(Path(__file__).resolve().parent / "sync_tushare_delisted.py")
+    state_dir = store.root / "raw" / "tushare" / "delisted_daily"
+    cmd = [
+        sys.executable, "-u", script, "--auto-candidates", "--publish",
+        "--state-dir", str(state_dir),
+        "--cutoff", str(int(time.strftime("%Y%m%d"))),
+    ]
+    token = getattr(args, "token", None)
+    if token:
+        cmd += ["--token", token]
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["MARKET_DATA_ROOT"] = str(store.root)
+    try:
+        # Stream the child's output line-by-line so the UI log shows the
+        # per-symbol download progress in real time (a buffered run() would
+        # keep the log silent for the whole 10-30 min pool backfill).
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", env=env,
+            cwd=str(Path(__file__).resolve().parent.parent),
+        )
+        for line in proc.stdout:
+            print(f"  [delisted] {line.rstrip()}")
+        proc.wait()
+        returncode = proc.returncode
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "error": f"spawn failed: {exc}"}
+    if returncode != 0:
+        return {
+            "status": "error",
+            "exit_code": returncode,
+            "error": "delisted pool sync failed (see [delisted] lines above)",
+        }
+    return {"status": "ok", "exit_code": 0}
+
+
+def sync_tushare_reconcile(args, store: DatasetStore) -> dict:
+    """Manual/CLI product reconcile: delisted pool -> formal L2 -> formal L1.
+
+    ``--source internal --mode reconcile`` runs the same delisted-pool
+    auto-backfill the sync chain uses, then the full product reconcile
+    (builds composite_none, derives composite_tushare_factor_qfq and validates
+    lineage/freshness). The UI「手动合并计算」button maps to this task so a
+    blocked automatic merge can be retried (or its reason inspected) on demand.
+    """
+    print("  [reconcile] step 1/2: delisted pool auto-backfill ...")
+    delisted = _run_delisted_pool_sync(store, args)
+    if delisted.get("status") != "ok":
+        print(f"  [reconcile] delisted step FAILED: {delisted.get('error', '')}")
+    print("  [reconcile] step 2/2: product reconcile (L2 + L1) ...")
+    print("[SYNC_PROGRESS] done=1 total=2 phase=delisted_pool")
+    rec = _reconcile_after_sync(store)
+    print("[SYNC_PROGRESS] done=2 total=2 phase=reconcile")
+    result: dict = {
+        "status": "success",
+        "delisted": delisted,
+        "reconcile": rec,
+    }
+    _apply_reconcile_status(result)
+    if delisted.get("status") != "ok" and result["status"] == "success":
+        # A failed delisted step cannot leave the product chain "success":
+        # reconcile would have reported waiting_for_parent anyway, but keep
+        # the classification honest if it ever passes without the pool.
+        result["status"] = "warning"
+        result["warning"] = (
+            "delisted step failed; product chain may be incomplete: "
+            f"{delisted.get('error', '')}"
+        )
+    return result
+
+
 def sync_tushare_chain(args, store: DatasetStore) -> dict:
     """Zero-config default chain (task=tushare): raw -> factor -> reconcile.
 
@@ -671,11 +756,31 @@ def sync_tushare_chain(args, store: DatasetStore) -> dict:
         )
         return chain
 
+    # ---- delisted pool step: zero-config Gate B2 auto-backfill ----
+    # The reconcile below hard-requires a ready delisted pool (fresh installs
+    # have none, and nothing else publishes it), so the chain backfills it
+    # before the product gate. The child's checkpoint keeps this incremental.
+    chain["delisted"] = _run_delisted_pool_sync(store, args)
+    if chain["delisted"].get("status") != "ok":
+        print(
+            f"  [chain] delisted step FAILED (exit "
+            f"{chain['delisted'].get('exit_code', '?')}): "
+            f"{chain['delisted'].get('error', '')}"
+        )
+
     # ---- final reconcile over the updated parents ----
     chain["reconcile"] = _reconcile_after_sync(store)
     chain["factor_dataset_id"] = factor_result.get("dataset_id")
     chain["status"] = "success"
     _apply_reconcile_status(chain)
+    if chain["delisted"].get("status") != "ok" and chain["status"] == "success":
+        # A failed delisted step must never leave the chain "success" (the
+        # reconcile would report waiting_for_parent anyway without the pool).
+        chain["status"] = "warning"
+        chain["warning"] = (
+            "delisted step failed; product chain may be incomplete: "
+            f"{chain['delisted'].get('error', '')}"
+        )
     return chain
 
 
@@ -3855,7 +3960,8 @@ def main():
                         choices=["tdxquant", "tushare", "tdx_local", "local_vendor",
                                  "internal", "all"])
     parser.add_argument("--mode", default="full",
-                        choices=["full", "incremental", "rebuild", "audit", "derive"],
+                        choices=["full", "incremental", "rebuild", "audit",
+                                 "derive", "reconcile"],
                         help="full (default) / incremental: 存在完整父数据集时"
                              "只拉修正窗口并合并（无父则全量）; rebuild: 忽略"
                              "父数据集强制全量重建历史; audit/derive: diagnostics")
@@ -4300,8 +4406,11 @@ def main():
         elif src == "local_vendor":
             r = sync_local_vendor_full(args, store)
         elif src == "internal":
-            r = {"status": "failed",
-                 "error": "source=internal only supports --mode derive"}
+            if args.mode == "reconcile":
+                r = sync_tushare_reconcile(args, store)
+            else:
+                r = {"status": "failed",
+                     "error": "source=internal only supports --mode derive/reconcile"}
         else:
             r = {"status": "failed", "error": f"unknown source: {src}"}
 

@@ -362,6 +362,11 @@ class TestZeroConfigChain:
         smd = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(smd)
         monkeypatch.setattr(smd, "get_storage_root", lambda: Path(tmp_path))
+        # the chain's delisted-pool step spawns a child process (network);
+        # these unit tests exercise the chain orchestration only
+        monkeypatch.setattr(
+            smd, "_run_delisted_pool_sync",
+            lambda store, args: {"status": "ok", "exit_code": 0})
         return smd
 
     def _raw_ok(self, reconcile_status="waiting_for_parent"):
