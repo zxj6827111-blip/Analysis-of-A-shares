@@ -5395,6 +5395,8 @@ async function expCreateAndStart() {
       badge.innerHTML = '<span class="tag tag-green">完成</span>';
     } else if (status === "error") {
       badge.innerHTML = '<span class="tag tag-red">出错</span>';
+    } else if (status === "eod") {
+      badge.innerHTML = '<span class="tag tag-orange" title="收盘后自动同步正在运行，请等待其结束后再手动更新">自动同步中</span>';
     } else {
       badge.innerHTML = '<span class="tag" style="background:#1d2d44;color:#91a2bb">空闲</span>';
     }
@@ -5522,9 +5524,18 @@ async function expCreateAndStart() {
       pollSyncStatus();
     } catch (e) {
       setSyncButtonsDisabled(false);
-      toast("启动失败: " + e.message);
-      updateSyncBadge("idle", null);
+      // 失败路径必须同步清理日志框与进度残留，否则"启动中…"会永久残留
+      // （用户会误以为卡死；toast 只有 2.8 秒，看不到被拒原因）
+      $("syncLogBox").style.display = "none";
+      $("syncLogBox").textContent = "";
+      resetSyncProgress();
+      $("syncProgressLabel").textContent = "";
+      $("syncProgressDetail").textContent = "";
+      $("syncProgressPct").textContent = "0%";
       $("syncProgressBox").style.display = "none";
+      // EOD 自动同步占用同步通道时，badge 给出持久状态（不依赖一闪而过的 toast）
+      updateSyncBadge(/EOD 自动同步正在运行/.test(e.message) ? "eod" : "idle", null);
+      toast("启动失败: " + e.message);
     }
   }
   if ($("btnSyncTushare")) $("btnSyncTushare").onclick = function() { startSync("tushare"); };
