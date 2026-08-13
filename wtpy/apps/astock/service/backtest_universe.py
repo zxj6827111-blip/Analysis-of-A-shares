@@ -36,6 +36,12 @@ def _astock_code_sha() -> str:
 
 DEMO_CODES = ["SSE.STK.600000", "SZSE.STK.000001"]
 
+# universe.json 是 TDX 导入时代的产物；Tushare-only 新部署永远不会生成它，
+# 缺失时回退到 2 只演示代码会让"导出全市场/同卦扫描"只剩 600000/000001。
+# 兜底：从数据根的 tushare raw manifest 推导全市场（60s TTL 缓存）。
+_universe_fallback_cache: dict = {"key": None, "ts": 0.0, "codes": None}
+_UNIVERSE_FALLBACK_TTL = 60.0
+
 FULL_MARKET_TOKENS = frozenset(
     {
         "*",
@@ -71,7 +77,7 @@ def select_universe(cfg: AStockConfig, codes: Optional[Union[Sequence[str], str]
     def _full() -> List[str]:
         if cfg.universe_path.exists():
             return AShareUniverse.load(cfg.universe_path).codes()
-        return list(DEMO_CODES)
+        return _universe_from_data_root(cfg)
 
     if codes is None:
         return _full()
@@ -90,3 +96,62 @@ def select_universe(cfg: AStockConfig, codes: Optional[Union[Sequence[str], str]
         else:
             out.append(to_std_code(c))
     return out if out else _full()
+
+
+def _universe_from_data_root(cfg: AStockConfig) -> List[str]:
+    """Derive the full-market list from the Tushare raw baseline.
+
+    Tushare-only deployments never produce the TDX-era ``universe.json``;
+    without this fallback every "全市场" scope silently degrades to the two
+    demo codes (600000/000001). The raw manifest is content-addressed, so the
+    symbol set only changes when a new baseline is published; a short TTL
+    cache keeps repeated calls (export / same-gua scans) off the manifest
+    walk. Returns DEMO_CODES when the data root has no usable baseline.
+    """
+    import time as _time
+
+    try:
+        key = str(cfg.market_data_root.resolve())
+        cache = _universe_fallback_cache
+        now = _time.time()
+        if cache["key"] == key and now - cache["ts"] < _UNIVERSE_FALLBACK_TTL:
+            return list(cache["codes"])
+    except Exception:
+        key = ""
+        cache = {}
+        now = 0.0
+    try:
+        from ..data.dataset_store import DatasetStore
+
+        store = DatasetStore(cfg.market_data_root)
+        best = None
+        for mid in store.list_manifests():
+            m = store.load_manifest(mid)
+            if not m or m.source != "tushare" or (m.adjustment or "") != "none":
+                continue
+            if (m.period or "1d") != "1d" or m.status != "ready":
+                continue
+            if (m.universe_type or "").startswith("b1_delisted"):
+                # 退市池也是 tushare/none/1d/ready，但只是补充面，不是全市场
+                continue
+            if best is None or int(m.data_cutoff_date or 0) > int(
+                best.data_cutoff_date or 0
+            ):
+                best = m
+        if best is not None:
+            syms = sorted(
+                {
+                    s.symbol
+                    for s in best.symbols
+                    if s.quality == "ok" and s.blob_sha256
+                }
+            )
+            if syms:
+                if cache:
+                    cache["key"] = key
+                    cache["ts"] = now
+                    cache["codes"] = list(syms)
+                return syms
+    except Exception:
+        pass
+    return list(DEMO_CODES)

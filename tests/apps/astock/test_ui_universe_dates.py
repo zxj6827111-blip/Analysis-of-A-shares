@@ -112,3 +112,113 @@ def test_api_calendar_and_full_market_flag(tmp_path: Path):
     from wtpy.apps.astock.api import STATIC_DIR
 
     assert "startYear" in (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+
+def _publish_raw_base(store, symbols: dict) -> None:
+    """Minimal tushare/none ready baseline (mirrors reconcile test helper)."""
+    import numpy as np
+
+    from wtpy.apps.astock.data.dataset_store import (
+        DatasetManifest,
+        SymbolRecord,
+    )
+
+    records = []
+    total = 0
+    for sym, arrays in symbols.items():
+        sha = store.store_bar_arrays(sym, arrays)
+        d = arrays["trade_date"]
+        records.append(
+            SymbolRecord(
+                symbol=sym, blob_sha256=sha,
+                first_date=int(d[0]), last_date=int(d[-1]),
+                row_count=len(d), quality="ok",
+            )
+        )
+        total += len(d)
+    m = DatasetManifest(
+        dataset_id=f"tushare_none_1d_20260812_{abs(hash(sym)) % 999999:x}",
+        source="tushare",
+        adjustment="none",
+        period="1d",
+        status="ready",
+        data_cutoff_date=20260812,
+        symbols=records,
+        symbol_count=len(records),
+        row_count=total,
+    )
+    store.publish(m)
+
+
+def test_full_market_falls_back_to_raw_manifest_without_universe_json(
+        tmp_path: Path, monkeypatch
+    ):
+    """Tushare-only fresh installs never produce universe.json; the full
+    market must be derived from the raw baseline instead of collapsing to
+    the two demo codes (600000/000001)."""
+    import numpy as np
+
+    from wtpy.apps.astock.data.dataset_store import DatasetStore
+
+    storage = tmp_path / "st"
+    storage.mkdir()
+    md = tmp_path / "md"
+    md.mkdir()
+    # no universe.json on purpose; MARKET_DATA_ROOT env drives the data root
+    monkeypatch.setenv("MARKET_DATA_ROOT", str(md))
+    cfg = get_default_config(storage_root=storage)
+
+    def _bar_dict(n_rows: int = 300) -> dict:
+        import datetime as _dt
+
+        d0 = _dt.datetime.strptime("20260101", "%Y%m%d").date()
+        dates = np.array(
+            [int((d0 + _dt.timedelta(days=i)).strftime("%Y%m%d"))
+             for i in range(n_rows)],
+            dtype=np.int64,
+        )
+        close = np.linspace(10.0, 12.0, n_rows)
+        return {
+            "trade_date": dates,
+            "open": close - 0.5,
+            "high": close + 0.3,
+            "low": close - 0.8,
+            "close": close,
+            "volume": np.full(n_rows, 1_000_000.0),
+            "amount": np.full(n_rows, 10_000_000.0),
+        }
+
+    store = DatasetStore(md)
+    _publish_raw_base(
+        store,
+        {sym: _bar_dict() for sym in (
+            "SSE.STK.600000", "SSE.STK.600004", "SZSE.STK.000001",
+        )},
+    )
+
+    from wtpy.apps.astock.service.backtest_universe import select_universe
+
+    full = select_universe(cfg, None)
+    # derives from the raw baseline (all 3 symbols), not the demo pair
+    assert "SSE.STK.600000" in full
+    assert len(full) >= 3
+
+
+def test_full_market_empty_data_root_falls_back_to_demo(
+        tmp_path: Path, monkeypatch
+    ):
+    """No universe.json AND no usable raw baseline -> demo codes, never crash."""
+    storage = tmp_path / "st"
+    storage.mkdir()
+    md = tmp_path / "md"
+    md.mkdir()
+    monkeypatch.setenv("MARKET_DATA_ROOT", str(md))
+    cfg = get_default_config(storage_root=storage)
+
+    from wtpy.apps.astock.service.backtest_universe import (
+        DEMO_CODES,
+        select_universe,
+    )
+
+    full = select_universe(cfg, None)
+    assert set(full) == set(DEMO_CODES)

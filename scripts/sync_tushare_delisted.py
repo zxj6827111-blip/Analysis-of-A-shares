@@ -51,9 +51,20 @@ from wtpy.apps.astock.data.sync_lock import (  # noqa: E402
     SyncTaskLock,
 )
 
-MARKET_DATA_ROOT = Path(
-    os.environ.get("MARKET_DATA_ROOT", r"E:\AStockData\datasets\market_data")
-)
+def resolve_market_data_root() -> Optional[Path]:
+    """Resolve the market data root from ``MARKET_DATA_ROOT`` env.
+
+    Returns None when unset — callers must fail loudly instead of falling
+    back to a hardcoded Windows path (which silently breaks Linux/fresh
+    installs). Sync chains always set the env var; standalone users must
+    export it.
+    """
+    env_val = os.environ.get("MARKET_DATA_ROOT", "").strip()
+    if env_val:
+        return Path(env_val)
+    return None
+
+
 DEFAULT_STATE_DIR = Path(r"E:\AStockData\raw\tushare\delisted_daily")
 CALL_INTERVAL_SEC = 0.35
 MAX_RETRIES = 4
@@ -263,6 +274,13 @@ def main() -> int:
 
     if bool(args.candidates) == bool(args.auto_candidates):
         ap.error("exactly one of --candidates / --auto-candidates is required")
+    md_root = resolve_market_data_root()
+    if md_root is None:
+        print(
+            "ERROR: MARKET_DATA_ROOT 环境变量未设置，无法确定数据根。\n"
+            "  请 export MARKET_DATA_ROOT=<数据根目录>（或由同步链自动传入）后重试。"
+        )
+        return 1
     cutoff = args.cutoff or int(time.strftime("%Y%m%d"))
     state_dir = Path(args.state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -292,7 +310,7 @@ def main() -> int:
     print(f"candidates in scope: {len(cand_list)}")
 
     lock = SyncTaskLock(
-        MARKET_DATA_ROOT,
+        md_root,
         source="tushare_delisted",
         adjustment="none",
         period="1d",
@@ -349,7 +367,7 @@ def main() -> int:
             print(f"REFUSING publish: {len(failed)} failed symbols: {failed[:10]}")
             result["publish_refused"] = f"failed_symbols={len(failed)}"
         elif args.publish:
-            store = DatasetStore(MARKET_DATA_ROOT)
+            store = DatasetStore(md_root)
             records: List[SymbolRecord] = []
             provenance_symbols: Dict[str, dict] = {}
             total_rows = 0

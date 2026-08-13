@@ -380,3 +380,76 @@ def test_exit_code_1_classified_as_error(monkeypatch):
 def test_exit_code_0_classified_as_done(monkeypatch):
     st = _run_sync_process_with(monkeypatch, returncode=0)
     assert st["status"] == "done"
+
+
+# ---------------------------------------------------------------------------
+# 传统 --candidates 路径回归 + --cutoff 显式参数 + MARKET_DATA_ROOT 缺失
+# ---------------------------------------------------------------------------
+
+def test_manual_candidates_legacy_path_with_cutoff(tmp_path, monkeypatch):
+    """--candidates 传统路径必须保持可用：读人工 CSV、--cutoff 显式传参、
+    不触发 auto 候选（--auto-candidates 缺失时不该调用网络名单）。"""
+    import pandas as pd
+
+    cand = tmp_path / "candidates.csv"
+    cand.write_text(
+        "ts_code,requested_start,requested_end\n"
+        "600001.SH,19970101,20041230\n",
+        encoding="utf-8-sig",
+    )
+    monkeypatch.setenv("MARKET_DATA_ROOT", str(tmp_path / "md"))
+
+    class FakePro:
+        def daily(self, ts_code, end_date):
+            return pd.DataFrame()  # 空响应 -> NO_DATA，快速走完
+
+    class FakeTs:
+        def pro_api(self, token=None):
+            return FakePro()
+
+    monkeypatch.setitem(sys.modules, "tushare", FakeTs())
+    mod = _delisted()
+    monkeypatch.setattr(
+        mod, "auto_generate_candidates",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("auto candidates must not run in manual mode")),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["sync_tushare_delisted.py", "--candidates", str(cand),
+         "--cutoff", "20260801", "--state-dir", str(tmp_path / "st"),
+         "--publish"],
+    )
+    assert mod.main() == 0
+    import json
+
+    st = json.loads((tmp_path / "st" / "sync_state.json").read_text(
+        encoding="utf-8"))
+    entry = st["symbols"]["600001.SH"]
+    assert entry["status"] == "no_data"
+
+
+def test_market_data_root_missing_fails_loudly(tmp_path, monkeypatch, capsys):
+    """MARKET_DATA_ROOT 未设置 -> exit 1 + 明确提示（不再落到 Windows 默认路径）。"""
+    monkeypatch.delenv("MARKET_DATA_ROOT", raising=False)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["sync_tushare_delisted.py", "--candidates", str(tmp_path / "c.csv"),
+         "--publish"],
+    )
+    assert _delisted().main() == 1
+    out = capsys.readouterr().out
+    assert "MARKET_DATA_ROOT" in out
+
+
+def test_auto_candidates_requires_market_data_root(tmp_path, monkeypatch, capsys):
+    """--auto-candidates 同样先校验数据根（env 缺失时在拉名单前失败）。"""
+    monkeypatch.delenv("MARKET_DATA_ROOT", raising=False)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["sync_tushare_delisted.py", "--auto-candidates",
+         "--state-dir", str(tmp_path / "st")],
+    )
+    assert _delisted().main() == 1
+    out = capsys.readouterr().out
+    assert "MARKET_DATA_ROOT" in out
