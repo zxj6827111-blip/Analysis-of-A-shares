@@ -144,8 +144,9 @@ def _infer_index_etf_parent(
         cutoff = int(m.data_cutoff_date or 0)
         if cutoff <= 0:
             continue
+        # priority 越小越优(tushare 同源优先),取负后参与"越大越优"比较
         key = (
-            0 if m.source == "tushare" else 1,  # 同源优先
+            -(0 if m.source == "tushare" else 1),  # 同源优先
             cutoff,
             int(m.symbol_count or 0),
             int(m.row_count or 0),
@@ -1002,6 +1003,22 @@ def sync_tushare_index_etf_incremental(args, store: DatasetStore) -> dict:
 
     print(f"Incremental sync for {len(symbols)} index/ETF symbols from Tushare...")
     sync_run_id = make_sync_run_id("tushare_ie")
+
+    # 与股票链同源互斥策略:指数/ETF 增量独占 (tushare_index_etf, none, 1d)
+    # scope,防止 EOD 自动同步、CLI 手动运行并发写同一 checkpoint/数据集。
+    # 与股票链的 (tushare, none, 1d) 锁不同 scope,链内串行执行不冲突。
+    from wtpy.apps.astock.data.sync_lock import SyncTaskLock, SyncLockHeldError
+    lock = SyncTaskLock(
+        store.root, source="tushare_index_etf", adjustment="none", period="1d",
+        sync_run_id=sync_run_id,
+    )
+    try:
+        lock.acquire()
+    except SyncLockHeldError as e:
+        print(f"ERROR: {e}")
+        print("Another index/ETF sync task on this data root is running. "
+              "Concurrent tasks with the same scope are forbidden.")
+        return {"status": "failed", "error": "concurrent_lock", "holder": e.holder}
 
     # 首次同步时仓库没有 tushare 指数/ETF 数据集:自动以 TDX 本地入库的
     # tdxlocal/none/1d 数据作为父,增量只拉父截止之后的窗口并与全历史

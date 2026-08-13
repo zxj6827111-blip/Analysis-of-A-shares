@@ -625,8 +625,25 @@ def data_health(ctx: ApiContext = Depends(get_ctx)) -> dict:
         try:
             cal = TradeCalendar.load(cfg.calendar_path)
         except Exception:
-            cal = TradeCalendar.from_tdx(cfg.tdx_root)
-        if cal.dates:
+            try:
+                cal = TradeCalendar.from_tdx(cfg.tdx_root)
+            except Exception:
+                # 无 TDX 部署(服务器没有通达信):从最新 ready 数据集推导
+                # 交易日历(与回测 repo 模式同一来源,缓存于 storage/calendars)。
+                cal = None
+                try:
+                    from ..data.calendar import build_calendar_from_dataset
+
+                    _base_m = select_tushare_base(store)
+                    if _base_m is not None:
+                        cal, _ = build_calendar_from_dataset(
+                            store,
+                            _base_m.dataset_id,
+                            cache_dir=Path(cfg.storage_root) / "calendars",
+                        )
+                except Exception:
+                    cal = None
+        if cal is not None and cal.dates:
             calendar_dates = [int(d) for d in cal.dates]
             import datetime as _dt
 

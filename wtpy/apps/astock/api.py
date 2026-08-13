@@ -128,8 +128,13 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         print("[EOD_SYNC] 已禁用（ASTOCK_EOD_SYNC_ENABLED=0），跳过自动更新")
         return
     if not cfg.market_data_root.exists():
-        print("[EOD_SYNC] 数据目录不存在，跳过自动更新")
-        return
+        # 首次部署时仓库根可能尚未创建:先尝试创建(ensure_dirs 已覆盖,
+        # 这里双保险),创建失败才跳过——否则自动同步会静默失效。
+        try:
+            cfg.market_data_root.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f"[EOD_SYNC] 数据目录创建失败（{cfg.market_data_root}）: {e}，跳过自动更新")
+            return
 
     sync_time = _os.environ.get("ASTOCK_EOD_SYNC_TIME", "18:30")
     try:
@@ -197,7 +202,33 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         from .data.tushare_product import tushare_product_data_health
 
         health = tushare_product_data_health(DatasetStore(cfg.market_data_root))
-        return health.get("trading_day_lag", {}).get("raw")
+        lag = health.get("trading_day_lag", {}).get("raw")
+        if lag is None and _repo_empty():
+            # 全新仓库:没有任何 ready 数据集,数据完全缺失。lag 无法
+            # 计算,但"无数据"即"滞后无穷"——返回大数让 eod_sync_decide
+            # 正常触发首次全量(否则自动同步永远不会开始,服务器首次
+            # 部署后只能手动同步)。
+            return 9999
+        return lag
+
+    def _repo_empty() -> bool:
+        """True when the data root holds no ready dataset at all.
+
+        A fresh server deployment has an empty (or missing) warehouse: lag
+        cannot be computed, but there is nothing to be "fresh" about — the
+        first sync must run in full-history mode regardless of the clock.
+        """
+        try:
+            from .data.dataset_store import DatasetStore
+
+            store = DatasetStore(cfg.market_data_root)
+            for mid in store.list_manifests():
+                m = store.load_manifest(mid, deep_copy=False)
+                if m is not None and m.status == "ready":
+                    return False
+            return True
+        except Exception:
+            return False
 
     def _sync_in_progress() -> bool:
         try:

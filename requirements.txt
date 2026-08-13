@@ -12,3 +12,4 @@ python-multipart
 deap
 websockets>=10.4
 pypinyin
+tushare>=1.4.0
