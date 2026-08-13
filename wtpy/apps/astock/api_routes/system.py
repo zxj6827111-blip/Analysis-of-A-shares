@@ -514,7 +514,10 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         _pick_source_freshness(
             "tushare", "Tushare日线",
             lambda d: d.source == "tushare" and d.adjustment == "none"
-            and getattr(d, "period", "1d") in ("1d", "", None),
+            and getattr(d, "period", "1d") in ("1d", "", None)
+            # 退市池补充面也是 tushare/none/1d/ready，但不能冒充原始日线
+            # （否则最新退市池会覆盖 raw 日线卡片，如 333 只显示为全市场）
+            and not (d.universe_type or "").startswith("b1_delisted"),
         ),
         _pick_source_freshness(
             "factor", "Tushare前复权因子",

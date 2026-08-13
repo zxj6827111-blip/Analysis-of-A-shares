@@ -106,6 +106,8 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
 
     Env switches (all optional):
       ASTOCK_EOD_SYNC_ENABLED=0|1        (default 1)
+      ASTOCK_EOD_SYNC_INDEX_ETF=0|1      (default 1: 股票链后顺序执行
+                                         指数/ETF 增量同步)
       ASTOCK_EOD_SYNC_STARTUP=0|1        (default 1, run once on startup)
       ASTOCK_EOD_SYNC_TIME=HH:MM         (default 18:30)
       ASTOCK_EOD_SYNC_MIN_LAG_DAYS=N     (default 1)
@@ -229,6 +231,19 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         token = _os.environ.get("TUSHARE_TOKEN", "").strip()
         if token:
             cmd += ["--token", token]
+        # 指数/ETF 增量链:股票链成功后顺序执行(同一次自动同步内),避免
+        # 并发争抢 Tushare 频率限制。指数/ETF 无复权,与股票链互不影响。
+        cmd_ie = None
+        if _env_flag("ASTOCK_EOD_SYNC_INDEX_ETF", "1"):
+            cmd_ie = [
+                sys.executable, "-u", script,
+                "--source", "tushare", "--asset-class", "all",
+                "--mode", "incremental",
+                "--end-date", str(today), "--fresh",
+                "--storage-root", str(cfg.market_data_root),
+            ]
+            if token:
+                cmd_ie += ["--token", token]
         env = dict(_os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
         env["MARKET_DATA_ROOT"] = str(cfg.market_data_root)
@@ -257,6 +272,32 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             scheduler thread is busy; wakes the scheduler via wake_event.
             """
             rc = proc.wait()
+            if rc == 0 and cmd_ie:
+                print("[EOD_SYNC] 股票同步完成，启动指数/ETF 增量同步…")
+                log_fh2 = None
+                try:
+                    log_fh2 = open(log_path, "a", encoding="utf-8")
+                except Exception:
+                    log_fh2 = None
+                try:
+                    proc2 = subprocess.Popen(
+                        cmd_ie,
+                        stdout=log_fh2 or subprocess.DEVNULL,
+                        stderr=subprocess.STDOUT if log_fh2 else subprocess.DEVNULL,
+                        env=env,
+                    )
+                    rc2 = proc2.wait()
+                except Exception as e:
+                    print(f"[EOD_SYNC] 指数/ETF 同步启动失败: {e}")
+                    rc2 = -1
+                finally:
+                    if log_fh2:
+                        log_fh2.close()
+                if rc2 != 0:
+                    print(f"[EOD_SYNC] 指数/ETF 同步失败（exit={rc2}）")
+                    rc = rc2
+                else:
+                    print("[EOD_SYNC] 指数/ETF 同步完成")
             st = _load_state()
             prev_retry = int(st.get("retry_count") or 0)
             finished = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
