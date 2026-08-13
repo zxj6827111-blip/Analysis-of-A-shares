@@ -305,6 +305,24 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         bsc["size"] = _size
 
     _date_range_cache: Dict[str, Tuple[Optional[int], Optional[int]]] = {}
+    _has_stocks_cache: Dict[str, bool] = {}
+
+    def _dataset_has_stocks(d) -> bool:
+        """True when the dataset contains at least one A-share stock symbol.
+
+        ETF/指数数据集与全市场股票共用 tushare/none/1d scope（manifest 无
+        universe_type 标记），但「Tushare日线」卡是股票地基，纯 ETF/指数
+        增量数据集（如手动 ETF 同步产出的 2500 只）不能覆盖它——否则 raw
+        卡会显示 2500 只 ETF 冒充全市场。按符号构成区分，memoize 避免每个
+        候选数据集反复遍历全部 symbol 记录。
+        """
+        key = getattr(d, "dataset_id", None)
+        if key is not None and key in _has_stocks_cache:
+            return _has_stocks_cache[key]
+        res = any(".STK." in (s.symbol or "") for s in d.symbols)
+        if key is not None:
+            _has_stocks_cache[key] = res
+        return res
 
     def _date_range(d):
         """min/max symbol dates; memoized per dataset_id because this walks
@@ -517,7 +535,10 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
             and getattr(d, "period", "1d") in ("1d", "", None)
             # 退市池补充面也是 tushare/none/1d/ready，但不能冒充原始日线
             # （否则最新退市池会覆盖 raw 日线卡片，如 333 只显示为全市场）
-            and not (d.universe_type or "").startswith("b1_delisted"),
+            and not (d.universe_type or "").startswith("b1_delisted")
+            # 纯 ETF/指数数据集与股票共用同一 scope，同样不能冒充股票地基
+            # （手动 ETF 增量同步若比股票新一天，会覆盖 raw 卡为 2500 只）
+            and _dataset_has_stocks(d),
         ),
         _pick_source_freshness(
             "factor", "Tushare前复权因子",

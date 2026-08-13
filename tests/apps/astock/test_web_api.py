@@ -848,17 +848,30 @@ def test_market_status_factor_tile_prefers_latest_partial_with_freshness(tmp_pat
     )
     # Raw tile must KEEP ready-first: a newer raw partial must not displace
     # the ready raw surface (raw has no freshness semantics).
+    # 注意：真实 raw 数据集必须带 STK 符号（纯 ETF/指数数据集不能冒充
+    # 股票地基），这里补上真实 symbols，否则会被 raw 卡的资产类别过滤排除。
+    from wtpy.apps.astock.data.dataset_store import SymbolRecord
+
+    def _raw_symbols():
+        return [SymbolRecord(
+            symbol="SSE.STK.600000", blob_sha256="x" * 64,
+            first_date=20240101, last_date=20260804, row_count=100,
+            quality="ok",
+        )]
+
     store.save_manifest(DatasetManifest(
         dataset_id="tushare_none_1d_raw_ready", source="tushare",
         adjustment="none", period="1d", status="ready",
         dataset_type="bars", data_cutoff_date=20260804,
         symbol_count=1, row_count=100, created_at="raw_ready",
+        symbols=_raw_symbols(),
     ))
     store.save_manifest(DatasetManifest(
         dataset_id="tushare_none_1d_raw_partial", source="tushare",
         adjustment="none", period="1d", status="partial",
         dataset_type="bars", data_cutoff_date=20260805,
         symbol_count=1, row_count=100, created_at="raw_partial",
+        symbols=_raw_symbols(),
     ))
 
     client = TestClient(create_app(cfg))

@@ -222,3 +222,96 @@ def test_full_market_empty_data_root_falls_back_to_demo(
 
     full = select_universe(cfg, None)
     assert set(full) == set(DEMO_CODES)
+
+
+def test_full_market_derivation_excludes_etf_only_dataset(
+        tmp_path: Path, monkeypatch
+    ):
+    """纯 ETF 数据集（cutoff 更新）不能冒充全市场股票基线。
+
+    全市场导出/同卦扫描依赖 raw manifest 推导 universe；ETF 增量同步若比
+    股票新一天，会按"最新 cutoff"抢占基线，导致 universe 全是 ETF 符号。
+    """
+    import numpy as np
+
+    from wtpy.apps.astock.data.dataset_store import DatasetStore
+
+    storage = tmp_path / "st"
+    storage.mkdir()
+    md = tmp_path / "md"
+    md.mkdir()
+    monkeypatch.setenv("MARKET_DATA_ROOT", str(md))
+    cfg = get_default_config(storage_root=storage)
+
+    def _bar_dict(n_rows: int = 300) -> dict:
+        import datetime as _dt
+
+        d0 = _dt.datetime.strptime("20260101", "%Y%m%d").date()
+        dates = np.array(
+            [int((d0 + _dt.timedelta(days=i)).strftime("%Y%m%d"))
+             for i in range(n_rows)],
+            dtype=np.int64,
+        )
+        close = np.linspace(10.0, 12.0, n_rows)
+        return {
+            "trade_date": dates,
+            "open": close - 0.5,
+            "high": close + 0.3,
+            "low": close - 0.8,
+            "close": close,
+            "volume": np.full(n_rows, 1_000_000.0),
+            "amount": np.full(n_rows, 10_000_000.0),
+        }
+
+    store = DatasetStore(md)
+    # 股票基线（较旧）
+    _publish_raw_base(
+        store,
+        {sym: _bar_dict() for sym in (
+            "SSE.STK.600000", "SSE.STK.600004", "SZSE.STK.000001",
+        )},
+    )
+    # 纯 ETF 数据集（cutoff 更新），需要覆盖 manifest 的 cutoff 字段
+    import datetime as _dt
+    from wtpy.apps.astock.data.dataset_store import (
+        DatasetManifest,
+        SymbolRecord,
+    )
+
+    d0 = _dt.datetime.strptime("20260101", "%Y%m%d").date()
+    dates = np.array(
+        [int((d0 + _dt.timedelta(days=i)).strftime("%Y%m%d"))
+         for i in range(300)],
+        dtype=np.int64,
+    )
+    close = np.linspace(5.0, 6.0, 300)
+    etf_arrays = {
+        "trade_date": dates, "open": close - 0.1, "high": close + 0.1,
+        "low": close - 0.2, "close": close,
+        "volume": np.full(300, 1_000_000.0),
+        "amount": np.full(300, 10_000_000.0),
+    }
+    recs = []
+    for sym in ("SSE.ETF.510300", "SSE.ETF.510500"):
+        sha = store.store_bar_arrays(sym, etf_arrays)
+        recs.append(
+            SymbolRecord(
+                symbol=sym, blob_sha256=sha,
+                first_date=int(dates[0]), last_date=int(dates[-1]),
+                row_count=300, quality="ok",
+            )
+        )
+    store.publish(DatasetManifest(
+        dataset_id="tushare_none_1d_20260813_etf",
+        source="tushare", adjustment="none", period="1d", status="ready",
+        data_cutoff_date=20260813, symbols=recs,
+        symbol_count=len(recs), row_count=600,
+    ))
+
+    from wtpy.apps.astock.service.backtest_universe import select_universe
+
+    full = select_universe(cfg, None)
+    assert "SSE.STK.600000" in full
+    # 不能混入任何 ETF 符号
+    assert all(".STK." in c for c in full)
+    assert not any(".ETF." in c for c in full)

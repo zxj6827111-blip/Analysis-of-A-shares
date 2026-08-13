@@ -134,6 +134,10 @@ def _universe_from_data_root(cfg: AStockConfig) -> List[str]:
             if (m.universe_type or "").startswith("b1_delisted"):
                 # 退市池也是 tushare/none/1d/ready，但只是补充面，不是全市场
                 continue
+            if not any(".STK." in (s.symbol or "") for s in m.symbols):
+                # 纯 ETF/指数数据集与股票共用 tushare/none/1d scope，但不是
+                # 全市场股票基线（否则 ETF 增量同步比股票新一天会污染 universe）
+                continue
             if best is None or int(m.data_cutoff_date or 0) > int(
                 best.data_cutoff_date or 0
             ):
