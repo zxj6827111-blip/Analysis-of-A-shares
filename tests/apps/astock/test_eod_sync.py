@@ -10,10 +10,57 @@ from types import SimpleNamespace
 
 import pytest
 
-from wtpy.apps.astock.api import eod_sync_decide
+from wtpy.apps.astock.api import _effective_data_lag, eod_sync_decide
 
 
 # ------------------------------------------------------------ decide (pure)
+
+def test_effective_data_lag_uses_max_of_raw_and_factor():
+    """raw 最新(lag=0)但 factor 落后(lag=2)时,必须报告 2 而非 0。"""
+    health = {
+        "trading_day_lag": {"raw": 0, "factor": 2},
+        "expected_latest_trading_day": 20260813,
+        "formal_l2": {"max_date": 20260813},
+        "formal_l1": {"max_date": 20260813},
+    }
+    assert _effective_data_lag(health) == 2
+
+
+def test_effective_data_lag_retries_when_formal_pair_lags_but_raw_fresh():
+    """2026-08-13 事故场景: raw/factor 最新,但正式 L1/L2 停在旧日期。
+
+    factor 限流导致 reconcile 被 fail-closed 跳过,正式面落后一天;旧逻辑
+    只看 raw lag(=0)会静默放弃重试。修复后至少报 1,触发当天重试。
+    """
+    health = {
+        "trading_day_lag": {"raw": 0, "factor": 0},
+        "expected_latest_trading_day": 20260813,
+        "formal_l2": {"max_date": 20260812},
+        "formal_l1": {"max_date": 20260812},
+    }
+    assert _effective_data_lag(health) == 1
+
+
+def test_effective_data_lag_zero_when_everything_current():
+    health = {
+        "trading_day_lag": {"raw": 0, "factor": 0},
+        "expected_latest_trading_day": 20260813,
+        "formal_l2": {"max_date": 20260813},
+        "formal_l1": {"max_date": 20260813},
+    }
+    assert _effective_data_lag(health) == 0
+
+
+def test_effective_data_lag_raw_only_without_formal():
+    health = {
+        "trading_day_lag": {"raw": 1, "factor": None},
+    }
+    assert _effective_data_lag(health) == 1
+
+
+def test_effective_data_lag_none_when_empty():
+    assert _effective_data_lag({}) is None
+
 
 def test_eod_sync_decide_triggers_on_weekday_after_time():
     wed = _dt.datetime(2026, 8, 12, 18, 40)  # Wednesday

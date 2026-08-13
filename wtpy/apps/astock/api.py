@@ -90,6 +90,35 @@ def eod_sync_decide(
     return True, f"raw 数据滞后 {lag} 个交易日", today
 
 
+def _effective_data_lag(health: dict) -> Optional[int]:
+    """Whole-chain data lag, not just raw.
+
+    ``tushare_product_data_health`` returns a ``trading_day_lag`` map plus
+    ``formal_l1``/``formal_l2`` surfaces. The EOD scheduler must treat the
+    whole product chain as "fresh" only when raw AND factor AND the formal
+    L1/L2 pair are all current: raw can be fresh while factor hit a rate
+    limit (partial) and the formal pair silently stayed on an old date —
+    in that case the retry must still fire (2026-08-13 事故根因)。
+    """
+    tl = health.get("trading_day_lag") or {}
+    lag = tl.get("raw")
+    factor_lag = tl.get("factor")
+    if factor_lag is not None:
+        lag = max(lag or 0, factor_lag)
+    expected = health.get("expected_latest_trading_day")
+    if expected:
+        formal_max = None
+        for key in ("formal_l2", "formal_l1"):
+            md = (health.get(key) or {}).get("max_date")
+            if md:
+                formal_max = md if formal_max is None else max(formal_max, int(md))
+        if formal_max is not None and int(formal_max) < int(expected):
+            # 正式 L1/L2 落后于预期交易日:至少记为 1 个交易日滞后,
+            # 足以让 eod_sync_decide 触发重试(精确 lag 值对重试无影响)。
+            lag = max(lag or 0, 1)
+    return lag
+
+
 def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
     """Startup + scheduled EOD auto-sync of Tushare market data.
 
@@ -202,7 +231,7 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         from .data.tushare_product import tushare_product_data_health
 
         health = tushare_product_data_health(DatasetStore(cfg.market_data_root))
-        lag = health.get("trading_day_lag", {}).get("raw")
+        lag = _effective_data_lag(health)
         if lag is None and _repo_empty():
             # 全新仓库:没有任何 ready 数据集,数据完全缺失。lag 无法
             # 计算,但"无数据"即"滞后无穷"——返回大数让 eod_sync_decide
