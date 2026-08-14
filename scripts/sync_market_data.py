@@ -66,6 +66,11 @@ def _infer_incremental_resume(
     """
     import datetime as _dt
 
+    from wtpy.apps.astock.data.tushare_product import (
+        DELISTED_UNIVERSE_TYPE,
+        INDEX_ETF_UNIVERSE_TYPE,
+    )
+
     best_id: Optional[str] = None
     best_cut = 0
     cands: List[DatasetManifest] = []
@@ -75,6 +80,18 @@ def _infer_incremental_resume(
             continue
         if m.source != source or m.adjustment != adjustment or m.status != "ready":
             continue
+        # 指数/ETF-only 数据集（--asset-class index|etf|all 产物）与股票共用
+        # tushare/none/1d scope，但符号与股票不匹配，被选作父后历史合并为空。
+        # 新数据带 universe_type 标记可直接排除；历史数据靠符号占多数兜底，
+        # 与 _infer_index_etf_parent 的过滤完全对称。
+        if (m.universe_type or "") in (DELISTED_UNIVERSE_TYPE, INDEX_ETF_UNIVERSE_TYPE):
+            continue
+        syms = [r.symbol for r in (m.symbols or [])]
+        if not syms:
+            continue
+        stk = sum(1 for s in syms if ".STK." in s)
+        if stk * 2 < len(syms):
+            continue  # 纯指数/ETF 数据集不当作股票链父
         c = int(m.data_cutoff_date or 0)
         if c <= 0:
             continue
@@ -971,6 +988,7 @@ def sync_tushare_index_etf_full(args, store: DatasetStore) -> dict:
             start_date=args.start_date,
             end_date=args.end_date,
             anchor_date=args.anchor_date,
+            universe_type="index_etf",
         )
         results[f"{adj.value}_{period.value}"] = ds_result
         print(
@@ -1073,6 +1091,7 @@ def sync_tushare_index_etf_incremental(args, store: DatasetStore) -> dict:
             parent_dataset_id=parent_id,
             checkpoint_path=ck_path,
             resume_records=resume_records,
+            universe_type="index_etf",
         )
         results[f"{adj.value}_{period.value}"] = ds_result
 
@@ -3493,6 +3512,7 @@ def _sync_dataset(
     rebuild_symbols: Optional[set] = None,
     checkpoint_path: Optional[Path] = None,
     resume_records: Optional[Dict[str, dict]] = None,
+    universe_type: str = "",
 ) -> dict:
     t0 = time.time()
     cutoff_str = str(end_date or time.strftime("%Y%m%d"))
@@ -3520,6 +3540,7 @@ def _sync_dataset(
         provider_version=provider.provider_version(),
         sync_run_id=sync_run_id,
         parent_dataset_id=parent_dataset_id,
+        universe_type=universe_type,
         status="building",
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
     )

@@ -8,6 +8,32 @@
 - 每次发版递增版本号（如 2.0 → 2.1 → 2.2），并打 `v{版本号}` 的 git tag
 - 提交后右上角版本号自动显示新版本
 
+## [2.6] - 2026-08-15
+
+### 修复
+- **股票链增量同步父数据集选择排除指数/ETF 集**：
+  - 根因：`_infer_incremental_resume` 选父只用行数+符号数启发式；纯 ETF/指数数据集（`--asset-class index|etf|all` 产物）与股票共用 `tushare/none/1d` scope 且行数达标，被选为股票增量同步的父后历史合并为空（符号 IDX/ETF 与 STK 不匹配），每日增量变孤儿窗口，reconcile 的 base 检查拒绝发布 → 正式 L1/L2 冻结在最后一个全量 base（生产 2026-08-11 起，8-14 晚 raw/factor 已到 0814 但 L1/L2 停在 0810）
+  - `_infer_incremental_resume` 排除 `universe_type=index_etf` 标记与纯指数/ETF 符号集，与 `_infer_index_etf_parent` 过滤完全对称
+  - `_sync_dataset` 新增 `universe_type` 参数并写入 manifest；ETF 链 full/incremental 产物打 `index_etf` 标记（结构化标记，替代符号名启发式）
+  - `_is_tushare_raw_base_candidate` 结构化排除 `index_etf` 标记（正式 L1/L2 base 选择双保险）
+  - 新增回归测试 `tests/apps/astock/test_sync_resume_parent.py`（复现生产故障场景）
+
+## [2.5] - 2026-08-14
+
+### 新增
+- **Tushare 成分股数据源**：指数/ETF 成分股查询改由 Tushare 提供（`tushare_constituents.py`），替代通达信本地数据；服务器无 TDX 部署可用
+- **全市场导出池从数据仓库推导**：导出 ETF 池与全市场股票池统一从 raw 数据根推导；剔除仅含 ETF 的数据集
+- **退市股票池自动回补与手动产品合并**：`sync_tushare_delisted.py` 增量自动回补；数据中心新增手动合并产品入口
+- **Tushare 依赖正式声明**：`requirements.txt`/`setup.py` 补 `tushare>=1.4.0`（此前仅本机手动安装，服务器部署会导致链路失败）
+- **服务端部署就绪性**：`deploy/install_astock.sh`、`deploy/astock.env.example`；日历缺失时 Tushare 兜底；首日全量同步与 ETF 锁
+
+### 修复
+- **Tushare bar 顺序归一**：`_sync_dataset` 落盘前按 trade_date 升序排序（Tushare daily 返回倒序，曾导致 blob 倒序、freshness 门与 QFQ 推导失效）
+- **Tushare null/NaN OHLC 容错**：指数/基金日线历史空值回落 close、成交量/金额归零，不再崩溃
+- **Tushare 全链节流与重试**：跨进程共享限流门（rate gate），整链滞后时退避重试
+- **同步状态卡显示**：EOD 自动同步徽标与上次结果展示修复
+- **正式面基线排除 ETF-only 数据集**：raw base 选择排除不含股票符号的数据集
+
 ## [2.3] - 2026-08-10
 
 ### 新增
