@@ -64,6 +64,12 @@ FACTOR_ADJUSTMENT = "adj_factor"
 # (published by scripts/sync_tushare_delisted.py, Gate B2).
 DELISTED_UNIVERSE_TYPE = "b1_delisted_supplement"
 
+# Index/ETF-only tushare/none datasets are tagged with this universe_type
+# (published by the --asset-class index|etf|all sync chain). The tag lets
+# parent/base selection exclude them structurally instead of inferring the
+# instrument kind from symbol names everywhere.
+INDEX_ETF_UNIVERSE_TYPE = "index_etf"
+
 # Complement dataset identity
 COMPLEMENT_SOURCE = "internal"
 COMPLEMENT_ADJUSTMENT = "delisted_complement"
@@ -264,10 +270,12 @@ def _is_tushare_raw_base_candidate(m: DatasetManifest) -> bool:
         return False
     if _is_delisted_supplement_dataset(m):
         return False
-    # 纯 ETF/指数数据集与全市场股票共用 tushare/none/1d scope（manifest 无
-    # universe_type 标记），但 raw base 是股票地基。ETF 增量同步若比股票
-    # 新一天（cutoff 更晚），会按"最新 cutoff"抢占 base，导致正式 L1/L2
-    # 基于 2500 只 ETF 而非全市场股票重建——必须排除不含股票符号的数据集。
+    # 纯 ETF/指数数据集与全市场股票共用 tushare/none/1d scope，但 raw base
+    # 是股票地基。ETF 增量同步若比股票新一天（cutoff 更晚），会按"最新
+    # cutoff"抢占 base，导致正式 L1/L2 基于 ETF 而非全市场股票重建。
+    # 新数据带 universe_type 标记可结构化排除；历史数据靠符号检查兜底。
+    if (m.universe_type or "") == INDEX_ETF_UNIVERSE_TYPE:
+        return False
     if not any(".STK." in (r.symbol or "") for r in m.symbols):
         return False
     sig = manifest_history_signals(m)
