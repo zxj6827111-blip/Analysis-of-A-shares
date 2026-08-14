@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Dict, Optional
 
-APP_VERSION = "2.3"
+APP_VERSION = "2.5"
 
 # git build info changes only on commit; a long TTL keeps page refreshes
 # from re-running `git status` (which takes ~0.5s on Windows).

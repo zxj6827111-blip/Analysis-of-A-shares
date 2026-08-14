@@ -1253,7 +1253,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       <input id="quickCode" placeholder="个股快速查询 600000/平安银行" onkeydown="if(event.key==='Enter'){var v=this.value.trim();if(v)location.href='/quick.html?code='+encodeURIComponent(v)}">
     </div>
     <div class="api-ok" id="apiStatus"><span class="api-dot pending" id="apiDot"></span><span id="apiStatusText">连接中</span></div>
-    <span class="edition" id="appVersion">V2.0</span>
+    <span class="edition" id="appVersion">V2.5</span>
   </div>
 </header>
 
@@ -2810,12 +2810,12 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     }
     try {
       const v = await api("/api/v1/version");
-      el.textContent = "V" + (v.version || "2.0");
+      el.textContent = "V" + (v.version || "2.5");
       if (v.build && v.build.dirty) {
         el.classList.add("dirty");
       }
     } catch (e) {
-      el.textContent = "V2.0";
+      el.textContent = "V2.5";
     }
   }
 
