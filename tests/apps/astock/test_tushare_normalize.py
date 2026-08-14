@@ -351,11 +351,20 @@ class TestTushareThrottle:
         p = TushareProvider(token="x")
         assert p._rate_per_min == 300
 
-    def test_throttle_paces_calls_to_budget(self, monkeypatch):
-        """_throttle must sleep so the long-run rate never exceeds rate_per_min."""
+    def test_throttle_shared_across_instances(self, monkeypatch):
+        """股票链与 factor 链是不同 TushareProvider 实例，必须共享一个速率闸。
+
+        否则股票链刚打完 300/min 的窗口，factor 链立刻用新实例继续打，
+        叠加后撞 500/min 限流（2026-08-13 补跑 factor 尾部 27 只限流失败）。
+        """
         import time as _time
 
-        p = TushareProvider(token="x", rate_per_min=120)  # interval = 0.5s
+        from wtpy.apps.astock.data.providers.tushare import (
+            _GLOBAL_RATE_GATE,
+            _GlobalRateGate,
+        )
+        # 用独立 gate 实例测共享行为（避免污染模块级单例）
+        gate = _GlobalRateGate()
         fake = {"now": 1000.0}
         sleeps = []
         monkeypatch.setattr(_time, "time", lambda: fake["now"])
@@ -363,20 +372,25 @@ class TestTushareThrottle:
             _time, "sleep",
             lambda s: (sleeps.append(s), fake.__setitem__("now", fake["now"] + s)),
         )
-        p._throttle()  # first call: last_call_ts=0, now=1000 -> no wait
+        p1 = TushareProvider(token="x", rate_per_min=120)
+        p2 = TushareProvider(token="x", rate_per_min=120)
+        # 两个实例分别第一次调用：第二次必须被 gate 挡住（间隔 0.5s）
+        gate.throttle(p1._rate_per_min)
         assert sleeps == []
-        p._throttle()  # second call immediately after: must wait ~0.5s
+        gate.throttle(p2._rate_per_min)
         assert len(sleeps) == 1
         assert abs(sleeps[0] - 0.5) < 1e-6
 
     def test_throttle_disabled_at_zero(self, monkeypatch):
         import time as _time
 
-        p = TushareProvider(token="x", rate_per_min=0)
+        from wtpy.apps.astock.data.providers.tushare import _GlobalRateGate
+
+        gate = _GlobalRateGate()
         monkeypatch.setattr(_time, "time", lambda: 0.0)
         sleeps = []
         monkeypatch.setattr(_time, "sleep", lambda s: sleeps.append(s))
-        p._throttle()
+        gate.throttle(0)
         assert sleeps == []
 
     def test_call_with_retry_throttles_before_each_attempt(self, provider, monkeypatch):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Dict, List, Optional
 
@@ -119,6 +120,37 @@ def _symbol_kind(symbol: str) -> str:
     return "stock"
 
 
+class _GlobalRateGate:
+    """Process-wide Tushare rate gate shared by every TushareProvider.
+
+    Tushare 限流是全局 token 级(500/min 滑动窗口),而 EOD 链中股票链和
+    factor 链各自 new 一个 TushareProvider:若每个实例独立节流,股票链刚
+    打完 300/min 的窗口,factor 链立刻用新实例继续打,叠加后必然撞 500/min
+    限流(2026-08-13 事故: factor 批量路径第一天就 RateLimited 并 fallback
+    到 per-symbol,尾部 27 只仍失败)。所有实例必须共享同一个速率闸。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._last_call_ts = 0.0
+
+    def throttle(self, rate_per_min: int) -> None:
+        rpm = max(0, int(rate_per_min or 0))
+        if rpm <= 0:
+            return
+        interval = 60.0 / rpm
+        with self._lock:
+            now = time.time()
+            wait = interval - (now - self._last_call_ts)
+            if wait > 0:
+                time.sleep(wait)
+                now = time.time()
+            self._last_call_ts = now
+
+
+_GLOBAL_RATE_GATE = _GlobalRateGate()
+
+
 class TushareProvider:
     """Fetches bars from Tushare pro API."""
 
@@ -140,26 +172,16 @@ class TushareProvider:
             except (TypeError, ValueError):
                 rpm = DEFAULT_RATE_PER_MIN
         self._rate_per_min = max(0, int(rpm or 0))
-        self._last_call_ts = 0.0
 
     def _throttle(self) -> None:
         """Enforce the global per-minute call budget before each API call.
 
-        A naive `sleep(interval)` between calls caps the *steady-state* rate,
-        but a burst (e.g. the per-symbol daily loop) can still exceed the
-        Tushare 500/min sliding window. Sleep to the exact next allowed slot
-        based on the last call timestamp so the long-run rate never exceeds
-        `_rate_per_min`.
+        Delegates to the process-wide rate gate so the EOD raw + factor chains
+        (separate provider instances) share one budget — otherwise the factor
+        chain starts right after the raw chain burned the sliding window and
+        trips Tushare's 500/min limit (2026-08-13 事故根因)。
         """
-        rpm = self._rate_per_min
-        if rpm <= 0:
-            return
-        interval = 60.0 / rpm
-        now = time.time()
-        wait = interval - (now - self._last_call_ts)
-        if wait > 0:
-            time.sleep(wait)
-        self._last_call_ts = time.time()
+        _GLOBAL_RATE_GATE.throttle(self._rate_per_min)
 
     def _ensure_initialized(self) -> None:
         if self._initialized:
