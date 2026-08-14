@@ -90,6 +90,35 @@ def eod_sync_decide(
     return True, f"raw 数据滞后 {lag} 个交易日", today
 
 
+def _effective_data_lag(health: dict) -> Optional[int]:
+    """Whole-chain data lag, not just raw.
+
+    ``tushare_product_data_health`` returns a ``trading_day_lag`` map plus
+    ``formal_l1``/``formal_l2`` surfaces. The EOD scheduler must treat the
+    whole product chain as "fresh" only when raw AND factor AND the formal
+    L1/L2 pair are all current: raw can be fresh while factor hit a rate
+    limit (partial) and the formal pair silently stayed on an old date —
+    in that case the retry must still fire (2026-08-13 事故根因)。
+    """
+    tl = health.get("trading_day_lag") or {}
+    lag = tl.get("raw")
+    factor_lag = tl.get("factor")
+    if factor_lag is not None:
+        lag = max(lag or 0, factor_lag)
+    expected = health.get("expected_latest_trading_day")
+    if expected:
+        formal_max = None
+        for key in ("formal_l2", "formal_l1"):
+            md = (health.get(key) or {}).get("max_date")
+            if md:
+                formal_max = md if formal_max is None else max(formal_max, int(md))
+        if formal_max is not None and int(formal_max) < int(expected):
+            # 正式 L1/L2 落后于预期交易日:至少记为 1 个交易日滞后,
+            # 足以让 eod_sync_decide 触发重试(精确 lag 值对重试无影响)。
+            lag = max(lag or 0, 1)
+    return lag
+
+
 def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
     """Startup + scheduled EOD auto-sync of Tushare market data.
 
@@ -106,6 +135,8 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
 
     Env switches (all optional):
       ASTOCK_EOD_SYNC_ENABLED=0|1        (default 1)
+      ASTOCK_EOD_SYNC_INDEX_ETF=0|1      (default 1: 股票链后顺序执行
+                                         指数/ETF 增量同步)
       ASTOCK_EOD_SYNC_STARTUP=0|1        (default 1, run once on startup)
       ASTOCK_EOD_SYNC_TIME=HH:MM         (default 18:30)
       ASTOCK_EOD_SYNC_MIN_LAG_DAYS=N     (default 1)
@@ -126,8 +157,13 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         print("[EOD_SYNC] 已禁用（ASTOCK_EOD_SYNC_ENABLED=0），跳过自动更新")
         return
     if not cfg.market_data_root.exists():
-        print("[EOD_SYNC] 数据目录不存在，跳过自动更新")
-        return
+        # 首次部署时仓库根可能尚未创建:先尝试创建(ensure_dirs 已覆盖,
+        # 这里双保险),创建失败才跳过——否则自动同步会静默失效。
+        try:
+            cfg.market_data_root.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f"[EOD_SYNC] 数据目录创建失败（{cfg.market_data_root}）: {e}，跳过自动更新")
+            return
 
     sync_time = _os.environ.get("ASTOCK_EOD_SYNC_TIME", "18:30")
     try:
@@ -195,7 +231,33 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         from .data.tushare_product import tushare_product_data_health
 
         health = tushare_product_data_health(DatasetStore(cfg.market_data_root))
-        return health.get("trading_day_lag", {}).get("raw")
+        lag = _effective_data_lag(health)
+        if lag is None and _repo_empty():
+            # 全新仓库:没有任何 ready 数据集,数据完全缺失。lag 无法
+            # 计算,但"无数据"即"滞后无穷"——返回大数让 eod_sync_decide
+            # 正常触发首次全量(否则自动同步永远不会开始,服务器首次
+            # 部署后只能手动同步)。
+            return 9999
+        return lag
+
+    def _repo_empty() -> bool:
+        """True when the data root holds no ready dataset at all.
+
+        A fresh server deployment has an empty (or missing) warehouse: lag
+        cannot be computed, but there is nothing to be "fresh" about — the
+        first sync must run in full-history mode regardless of the clock.
+        """
+        try:
+            from .data.dataset_store import DatasetStore
+
+            store = DatasetStore(cfg.market_data_root)
+            for mid in store.list_manifests():
+                m = store.load_manifest(mid, deep_copy=False)
+                if m is not None and m.status == "ready":
+                    return False
+            return True
+        except Exception:
+            return False
 
     def _sync_in_progress() -> bool:
         try:
@@ -229,6 +291,19 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         token = _os.environ.get("TUSHARE_TOKEN", "").strip()
         if token:
             cmd += ["--token", token]
+        # 指数/ETF 增量链:股票链成功后顺序执行(同一次自动同步内),避免
+        # 并发争抢 Tushare 频率限制。指数/ETF 无复权,与股票链互不影响。
+        cmd_ie = None
+        if _env_flag("ASTOCK_EOD_SYNC_INDEX_ETF", "1"):
+            cmd_ie = [
+                sys.executable, "-u", script,
+                "--source", "tushare", "--asset-class", "all",
+                "--mode", "incremental",
+                "--end-date", str(today), "--fresh",
+                "--storage-root", str(cfg.market_data_root),
+            ]
+            if token:
+                cmd_ie += ["--token", token]
         env = dict(_os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
         env["MARKET_DATA_ROOT"] = str(cfg.market_data_root)
@@ -257,6 +332,32 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             scheduler thread is busy; wakes the scheduler via wake_event.
             """
             rc = proc.wait()
+            if rc == 0 and cmd_ie:
+                print("[EOD_SYNC] 股票同步完成，启动指数/ETF 增量同步…")
+                log_fh2 = None
+                try:
+                    log_fh2 = open(log_path, "a", encoding="utf-8")
+                except Exception:
+                    log_fh2 = None
+                try:
+                    proc2 = subprocess.Popen(
+                        cmd_ie,
+                        stdout=log_fh2 or subprocess.DEVNULL,
+                        stderr=subprocess.STDOUT if log_fh2 else subprocess.DEVNULL,
+                        env=env,
+                    )
+                    rc2 = proc2.wait()
+                except Exception as e:
+                    print(f"[EOD_SYNC] 指数/ETF 同步启动失败: {e}")
+                    rc2 = -1
+                finally:
+                    if log_fh2:
+                        log_fh2.close()
+                if rc2 != 0:
+                    print(f"[EOD_SYNC] 指数/ETF 同步失败（exit={rc2}）")
+                    rc = rc2
+                else:
+                    print("[EOD_SYNC] 指数/ETF 同步完成")
             st = _load_state()
             prev_retry = int(st.get("retry_count") or 0)
             finished = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")

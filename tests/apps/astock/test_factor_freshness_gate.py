@@ -594,6 +594,11 @@ class TestAutoFactorUniverse:
             lambda store, dry_run=False: {"status": "published", "missing": [],
                                           "issues": [], "l1_dataset_id": "l1",
                                           "l2_dataset_id": "l2"})
+        # 本测试只验证 factor universe 生成链路;delisted 步骤(自动补全退市池)
+        # 会真实 spawn 子进程访问 Tushare,CI 无 token 环境必须 mock 掉。
+        monkeypatch.setattr(
+            smd, "_run_delisted_pool_sync",
+            lambda store, args: {"status": "ok", "exit_code": 0})
         monkeypatch.setattr(
             smd, "_latest_factor_universe_file_path", lambda store: None)
         args = SimpleNamespace(

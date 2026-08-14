@@ -140,6 +140,15 @@ def _run_sync_process(ctx: ApiContext, cmd: List[str], task_name: str) -> None:
             elif _sync_state.get("stop_requested"):
                 _sync_state["status"] = "stopped"
                 _sync_state["error"] = "用户手动停止"
+            elif proc.returncode == 2:
+                # 2 = warning/partial (e.g. reconcile waiting_for_parent, or a
+                # non-ready factor surface). Business-incomplete but not a
+                # hard failure — the UI shows the concrete reason instead of a
+                # blanket "出错" (EOD retry still treats rc!=0 as failed).
+                _sync_state["status"] = "warning"
+                _sync_state["error"] = (
+                    "exit code 2 (warning): 数据不完整，请查看日志了解原因"
+                )
             else:
                 # Any non-zero exit code means the sync did not fully succeed
                 # (1 = business failure such as expired token / missing parent,
@@ -296,6 +305,24 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         bsc["size"] = _size
 
     _date_range_cache: Dict[str, Tuple[Optional[int], Optional[int]]] = {}
+    _has_stocks_cache: Dict[str, bool] = {}
+
+    def _dataset_has_stocks(d) -> bool:
+        """True when the dataset contains at least one A-share stock symbol.
+
+        ETF/指数数据集与全市场股票共用 tushare/none/1d scope（manifest 无
+        universe_type 标记），但「Tushare日线」卡是股票地基，纯 ETF/指数
+        增量数据集（如手动 ETF 同步产出的 2500 只）不能覆盖它——否则 raw
+        卡会显示 2500 只 ETF 冒充全市场。按符号构成区分，memoize 避免每个
+        候选数据集反复遍历全部 symbol 记录。
+        """
+        key = getattr(d, "dataset_id", None)
+        if key is not None and key in _has_stocks_cache:
+            return _has_stocks_cache[key]
+        res = any(".STK." in (s.symbol or "") for s in d.symbols)
+        if key is not None:
+            _has_stocks_cache[key] = res
+        return res
 
     def _date_range(d):
         """min/max symbol dates; memoized per dataset_id because this walks
@@ -505,7 +532,13 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         _pick_source_freshness(
             "tushare", "Tushare日线",
             lambda d: d.source == "tushare" and d.adjustment == "none"
-            and getattr(d, "period", "1d") in ("1d", "", None),
+            and getattr(d, "period", "1d") in ("1d", "", None)
+            # 退市池补充面也是 tushare/none/1d/ready，但不能冒充原始日线
+            # （否则最新退市池会覆盖 raw 日线卡片，如 333 只显示为全市场）
+            and not (d.universe_type or "").startswith("b1_delisted")
+            # 纯 ETF/指数数据集与股票共用同一 scope，同样不能冒充股票地基
+            # （手动 ETF 增量同步若比股票新一天，会覆盖 raw 卡为 2500 只）
+            and _dataset_has_stocks(d),
         ),
         _pick_source_freshness(
             "factor", "Tushare前复权因子",
@@ -613,8 +646,25 @@ def data_health(ctx: ApiContext = Depends(get_ctx)) -> dict:
         try:
             cal = TradeCalendar.load(cfg.calendar_path)
         except Exception:
-            cal = TradeCalendar.from_tdx(cfg.tdx_root)
-        if cal.dates:
+            try:
+                cal = TradeCalendar.from_tdx(cfg.tdx_root)
+            except Exception:
+                # 无 TDX 部署(服务器没有通达信):从最新 ready 数据集推导
+                # 交易日历(与回测 repo 模式同一来源,缓存于 storage/calendars)。
+                cal = None
+                try:
+                    from ..data.calendar import build_calendar_from_dataset
+
+                    _base_m = select_tushare_base(store)
+                    if _base_m is not None:
+                        cal, _ = build_calendar_from_dataset(
+                            store,
+                            _base_m.dataset_id,
+                            cache_dir=Path(cfg.storage_root) / "calendars",
+                        )
+                except Exception:
+                    cal = None
+        if cal is not None and cal.dates:
             calendar_dates = [int(d) for d in cal.dates]
             import datetime as _dt
 
@@ -934,7 +984,7 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
     end_date = payload.end_date or today
     start_date = payload.start_date
 
-    if payload.task not in ("tdx", "tushare", "factor", "derive", "ca"):
+    if payload.task not in ("tdx", "tushare", "factor", "derive", "ca", "reconcile"):
         raise HTTPException(400, f"未知任务类型: {payload.task}")
 
     # The EOD auto-sync child writes the same (tushare, none/adj_factor, 1d)
@@ -991,6 +1041,12 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
         _CA_SCRIPT = str(PROJECT_ROOT / "scripts" / "sync_ca_events.py")
         cmd = [sys.executable, "-u", _CA_SCRIPT, "--mode", "incremental", "--days", "90",
                "--storage-root", str(cfg.market_data_root)]
+    elif payload.task == "reconcile":
+        # Manual product merge (UI「手动合并计算」): backfill the delisted
+        # pool (zero-config Gate B2) then reconcile the formal L1/L2 pair.
+        # Runs offline against local data except the delisted roster fetch.
+        cmd = [sys.executable, "-u", SYNC_SCRIPT, "--source", "internal",
+               "--mode", "reconcile", "--cutoff", str(end_date)]
     else:
         # Rebuild the composite signal plane (L1) from the latest ready
         # composite_none x adj_factor parents (script auto-resolves parents).

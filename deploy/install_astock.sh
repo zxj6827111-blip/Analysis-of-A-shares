@@ -140,8 +140,26 @@ ASTOCK_PORT=$PORT
 ASTOCK_STORAGE=$STORAGE
 ASTOCK_TDX_ROOT=${TDX_ROOT}
 PYTHONPATH=$APP_ROOT
+TZ=Asia/Shanghai
 EOF
 echo "[OK] wrote $ENV_FILE"
+
+# ---- TUSHARE_TOKEN 检查（缺失仅警告，不阻断安装）----
+if [[ -z "${TUSHARE_TOKEN:-}" ]] && ! grep -q '^TUSHARE_TOKEN=' "$ENV_FILE" 2>/dev/null; then
+  echo
+  echo "============================================================"
+  echo "[WARN] 未检测到 TUSHARE_TOKEN（环境变量与 $ENV_FILE 中均未配置）"
+  echo "[WARN] tushare 数据同步 / 因子同步将失败！"
+  echo "[WARN]"
+  echo "[WARN] 配置方式（二选一）："
+  echo "[WARN]   1) 写入 $ENV_FILE 一行: TUSHARE_TOKEN=你的token"
+  echo "[WARN]   2) 启动前导出: export TUSHARE_TOKEN=你的token"
+  echo "[WARN]"
+  echo "[WARN] Token 获取: https://tushare.pro 个人主页"
+  echo "[WARN] 不影响本次安装，可稍后补配后重启服务。"
+  echo "============================================================"
+  echo
+fi
 
 # 启动参数
 EXTRA_ARGS="--host $HOST --port $PORT --storage $STORAGE"
@@ -175,6 +193,8 @@ module.exports = {
       env: {
         PYTHONPATH: "$APP_ROOT",
         PYTHONUNBUFFERED: "1",
+        TZ: "Asia/Shanghai",
+        TUSHARE_TOKEN: process.env.TUSHARE_TOKEN || "",
       },
       // 避免与现有 PM2 应用争抢：固定名，不 watch
       watch: false,

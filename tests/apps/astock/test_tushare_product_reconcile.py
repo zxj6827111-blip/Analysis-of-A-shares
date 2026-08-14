@@ -362,6 +362,11 @@ class TestZeroConfigChain:
         smd = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(smd)
         monkeypatch.setattr(smd, "get_storage_root", lambda: Path(tmp_path))
+        # the chain's delisted-pool step spawns a child process (network);
+        # these unit tests exercise the chain orchestration only
+        monkeypatch.setattr(
+            smd, "_run_delisted_pool_sync",
+            lambda store, args: {"status": "ok", "exit_code": 0})
         return smd
 
     def _raw_ok(self, reconcile_status="waiting_for_parent"):
@@ -1737,6 +1742,35 @@ class TestDefaultSelection:
         assert qfq_meta["dataset_id"] == pair.l1_dataset_id
         assert raw_meta["bootstrap_fallback"] is False
         assert qfq_meta["bootstrap_fallback"] is False
+
+    def test_select_tushare_base_excludes_etf_only_dataset(self, store):
+        """纯 ETF 数据集不能作为 raw base——即使 cutoff 比股票更新。
+
+        ETF 增量同步与全市场股票共用 tushare/none/1d scope，manifest 无
+        universe_type 标记；若按"最新 cutoff"选 base，2500 只 ETF 会抢占
+        全市场股票基线，导致正式 L1/L2 基于错误口径重建。
+        """
+        # 全市场股票基线（较旧 cutoff）
+        _publish_bars(
+            store, "tushare_none_1d_20260812_full",
+            "tushare", "none", _full_base_arrays(),
+            data_cutoff_date=20260812,
+        )
+        # 纯 ETF 数据集（较新 cutoff，符号不含 .STK.）
+        etf_arrays = {
+            f"SSE.ETF.{510000 + i}": _arrays(300, 5.0, 20240101)
+            for i in range(120)
+        }
+        _publish_bars(
+            store, "tushare_none_1d_20260813_etf",
+            "tushare", "none", etf_arrays,
+            data_cutoff_date=20260813,
+        )
+
+        base = select_tushare_base(store, deep_copy=False)
+        assert base is not None
+        assert base.dataset_id == "tushare_none_1d_20260812_full"
+        assert any(".STK." in (s.symbol or "") for s in base.symbols)
 
     def test_bagua_query_default_is_tushare_qfq(self):
         from wtpy.apps.astock.api_routes.bagua import (

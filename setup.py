@@ -33,7 +33,10 @@ REQUIRED = [
     'uvicorn',
     'deap',
     'websockets>=10.4',
-    'openpyxl'
+    'openpyxl',
+    # Tushare-only 数据策略:股票/ETF/指数同步与成分股查询均依赖 tushare,
+    # 未声明会导致服务器部署后全部 Tushare 链路失败(本机是手动安装的)。
+    'tushare>=1.4.0',
 ]
 
 # What packages are optional?

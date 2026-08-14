@@ -1165,6 +1165,39 @@ def _resolve_batch_codes(
     return out
 
 
+def _enumerate_export_etf_pool(cfg: AStockConfig) -> List[str]:
+    """ETF pool for full-market exports: warehouse first, TDX fallback.
+
+    The Tushare-only deployment has NO local TDX day files, so enumerating
+    ``vipdoc/.../lday`` (list_etf_std_codes) yields an empty (or near-empty)
+    ``etf-all`` export sheet. Prefer the ETF symbols present in the ready
+    tushare/none warehouse datasets (blob-backed), falling back to TDX day
+    files only when the warehouse has none.
+    """
+    try:
+        from ..data.repository import MarketDataRepository
+
+        md_root = getattr(cfg, "market_data_root", None)
+        if md_root and Path(md_root).exists():
+            repo = MarketDataRepository.from_root(md_root)
+            etfs: set = set()
+            for m in repo.list_datasets(
+                source="tushare", adjustment="none", period="1d",
+                deep_copy=False,
+            ):
+                if m.status != "ready":
+                    continue
+                for r in m.symbols:
+                    if r.blob_sha256 and ".ETF." in r.symbol:
+                        etfs.add(r.symbol)
+            if etfs:
+                return sorted(etfs)
+    except Exception:
+        pass
+    # TDX 兜底(本地有通达信盘后数据时)
+    return list_etf_std_codes(cfg)
+
+
 def batch_query_bagua(
     cfg: AStockConfig,
     *,
@@ -2163,7 +2196,7 @@ def export_bagua_multi_period_xlsx(
     etf_pool: List[str] = []
     if use_all:
         stock_pool = _resolve_batch_codes(cfg, None, all_stocks=True)
-        etf_pool = list_etf_std_codes(cfg)
+        etf_pool = _enumerate_export_etf_pool(cfg)
     else:
         stock_raw: List[str] = []
         etf_raw: List[str] = []

@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import AStockConfig
 from ..data.tdx_reader import DayBar, TdxDayReader
+from ..data.tushare_constituents import TushareConstituentsError
 
 # ---------------------------------------------------------------------------
 # Preset watchlists
@@ -474,16 +475,82 @@ def load_block_constituents(cfg: AStockConfig) -> Dict[str, List[Tuple[int, str]
         return dict(out)
 
 
+def _constituents_provider(cfg: AStockConfig):
+    """Lazy Tushare constituents provider (cache under storage/cache/constituents).
+
+    The project is Tushare-only: servers without a 通达信 client use this
+    as the formal constituents data source; TDX block files remain a
+    fallback for local deployments that still download them.
+    """
+    import os as _os
+
+    from ..data.tushare_constituents import TushareConstituentsProvider
+
+    return TushareConstituentsProvider(
+        token=_os.environ.get("TUSHARE_TOKEN", "").strip() or None,
+        cache_dir=Path(cfg.storage_root) / "cache" / "constituents",
+    )
+
+
+def _weight_members(snap: List[Dict]) -> List[Tuple[int, str]]:
+    """index_weight rows -> [(mkt, code6)]; mkt: 1=SSE, 0=SZSE.
+
+    ``con_code`` arrives as ``300750.SZ`` (with exchange suffix); the
+    suffix is stripped to keep a bare 6-digit code.
+    """
+    out: List[Tuple[int, str]] = []
+    for row in snap or []:
+        code = str(row.get("con_code") or "").strip()
+        code = code.split(".")[0] if "." in code else code
+        if len(code) != 6 or not code.isdigit():
+            continue
+        out.append((1 if code[0] in ("6", "9") else 0, code))
+    return out
+
+
 def index_constituents(
     cfg: AStockConfig,
     std_code: str,
     *,
     limit: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Constituent stocks of an index std code (e.g. SSE.IDX.000300)."""
+    """Constituent stocks of an index std code (e.g. SSE.IDX.000300).
+
+    Tushare ``index_weight`` is the formal source (works without TDX); the
+    TDX ``infoharbor_block`` ZS_ blocks remain a fallback.
+    """
     disp = display_code(std_code)
     code6 = std_code.split(".")[-1]
     name = _INDEX_CODE_TO_NAME.get(code6) or resolve_index_etf_name(std_code)
+
+    # ---- Tushare 数据源(正式) ----
+    tushare_source = ""
+    try:
+        prov = _constituents_provider(cfg)
+        suffix = "SH" if std_code.startswith("SSE.IDX") else "SZ"
+        snap_date, snap = prov.fetch_index_constituents(f"{code6}.{suffix}")
+        members = _weight_members(snap)
+        items = _members_to_entries(cfg, members)
+        if limit is not None:
+            items = items[: max(0, int(limit))]
+        return {
+            "ok": True,
+            "code": disp,
+            "name": name or "",
+            "symbol_type": "index",
+            "std_code": std_code,
+            "tracked_index": code6,
+            "tracked_index_name": name or "",
+            "count": len(members),
+            "constituents": items,
+            "source": f"tushare:index_weight@{snap_date}",
+            "note": "",
+            "tushare_error": None,
+        }
+    except Exception as _e:
+        tushare_source = str(_e)
+
+    # ---- TDX 兜底(本地有通达信盘后数据时) ----
     blocks = load_block_constituents(cfg)
     members = blocks.get(name, []) if name else []
     source = f"tdx_infoharbor_block:ZS_{name}" if name else ""
@@ -508,6 +575,7 @@ def index_constituents(
         "constituents": items,
         "source": source,
         "note": note,
+        "tushare_error": tushare_source or None,
     }
 
 
@@ -517,10 +585,65 @@ def etf_constituents(
     *,
     limit: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Constituent stocks of an ETF via its tracked index."""
+    """Constituent stocks of an ETF via its tracked index.
+
+    Tushare ``fund_basic.benchmark`` (keyword-matched to the tracked index)
+    + ``index_weight`` is the formal source; TDX ``specetfdata`` /
+    ``infoharbor_block`` remain a fallback.
+    """
     disp = display_code(std_code)
     code6 = std_code.split(".")[-1]
     etf_name = resolve_index_etf_name(std_code)
+
+    # ---- Tushare 数据源(正式) ----
+    tushare_source = ""
+    try:
+        prov = _constituents_provider(cfg)
+        suffix = "SH" if std_code.startswith("SSE.ETF") else "SZ"
+        ts_code = f"{code6}.{suffix}"
+        track_map = prov.fetch_etf_track_map()
+        hit = track_map.get(ts_code)
+        if hit is None:
+            # 新 ETF 可能不在当日缓存里:每日最多强制刷新一次映射
+            # (避免每个未映射 ETF 的每次查询都全量拉 fund_basic)。
+            track_map = prov.fetch_etf_track_map(force=prov.should_force_refresh())
+            hit = track_map.get(ts_code)
+        if hit:
+            key, idx_codes = hit
+            # 同名指数可能有多个代码,逐个尝试直到有 index_weight 数据
+            # (如 创业板 395004.SZ 无数据,创业板指 399006.SZ 有)。
+            resolved_code, snap_date, snap = prov.fetch_index_constituents_multi(
+                idx_codes
+            )
+            members = _weight_members(snap)
+            items = _members_to_entries(cfg, members)
+            if limit is not None:
+                items = items[: max(0, int(limit))]
+            tracked6 = resolved_code.split(".")[0]
+            return {
+                "ok": True,
+                "code": disp,
+                "name": etf_name or "",
+                "symbol_type": "etf",
+                "std_code": std_code,
+                "tracked_index": tracked6,
+                "tracked_index_name": key,
+                "count": len(members),
+                "constituents": items,
+                "source": (
+                    f"tushare:fund_basic.benchmark({ts_code}->{resolved_code});"
+                    f"index_weight@{snap_date}"
+                ),
+                "note": "",
+                "tushare_error": None,
+            }
+        raise TushareConstituentsError(
+            f"fund_basic.benchmark 未匹配到跟踪指数: {ts_code}"
+        )
+    except Exception as _e:
+        tushare_source = str(_e)
+
+    # ---- TDX 兜底(本地有通达信盘后数据时) ----
     spec = load_spec_etf_map(cfg)
     tracked = spec.get(code6)
     idx_std = f"SSE.IDX.{tracked}" if tracked and tracked.startswith("0") else (
@@ -555,6 +678,7 @@ def etf_constituents(
         "constituents": items,
         "source": source,
         "note": note,
+        "tushare_error": tushare_source or None,
     }
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Dict, List, Optional
 
@@ -28,6 +29,13 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 BASE_BACKOFF_SEC = 1.0
 RATE_LIMIT_BACKOFF_SEC = 5.0
+
+# Tushare 普通积分限频 500 次/分钟(全局 token 级滑动窗口)。股票链 none+qfq
+# 两个 phase 共 5000+ 只逐只调用,无节流连打必然触发限流,进而拖垮紧随其后
+# 的 adj_factor 链(见 2026-08-13 EOD 事故: raw 成功但 factor 限流 partial,
+# 正式 L1/L2 被 fail-closed 跳过)。默认 300/min 留出约 40% 余量给偶发重试
+# 与限流窗口抖动;可用 TUSHARE_RATE_PER_MIN 覆盖。
+DEFAULT_RATE_PER_MIN = 300
 
 # Tushare pro.daily / index_daily / fund_daily cap a single call at 6000 rows
 # (~25 years of daily bars). One-shot full-history requests used to be silently
@@ -112,14 +120,68 @@ def _symbol_kind(symbol: str) -> str:
     return "stock"
 
 
+class _GlobalRateGate:
+    """Process-wide Tushare rate gate shared by every TushareProvider.
+
+    Tushare 限流是全局 token 级(500/min 滑动窗口),而 EOD 链中股票链和
+    factor 链各自 new 一个 TushareProvider:若每个实例独立节流,股票链刚
+    打完 300/min 的窗口,factor 链立刻用新实例继续打,叠加后必然撞 500/min
+    限流(2026-08-13 事故: factor 批量路径第一天就 RateLimited 并 fallback
+    到 per-symbol,尾部 27 只仍失败)。所有实例必须共享同一个速率闸。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._last_call_ts = 0.0
+
+    def throttle(self, rate_per_min: int) -> None:
+        rpm = max(0, int(rate_per_min or 0))
+        if rpm <= 0:
+            return
+        interval = 60.0 / rpm
+        with self._lock:
+            now = time.time()
+            wait = interval - (now - self._last_call_ts)
+            if wait > 0:
+                time.sleep(wait)
+                now = time.time()
+            self._last_call_ts = now
+
+
+_GLOBAL_RATE_GATE = _GlobalRateGate()
+
+
 class TushareProvider:
     """Fetches bars from Tushare pro API."""
 
-    def __init__(self, token: Optional[str] = None):
+    def __init__(self, token: Optional[str] = None, rate_per_min: Optional[int] = None):
         self._token = token
         self._pro = None
         self._ts = None
         self._initialized = False
+        # 全局限速:所有 Tushare 调用都经过 _call_with_retry,在那里统一节流。
+        # rate 解析顺序:显式参数 > TUSHARE_RATE_PER_MIN 环境变量 > 默认值。
+        # 0 表示显式禁用节流(不能用 `or DEFAULT` 兜底,0 是合法值)。
+        rpm = rate_per_min
+        if rpm is None:
+            import os as _os
+
+            env_val = _os.environ.get("TUSHARE_RATE_PER_MIN")
+            try:
+                rpm = int(env_val) if env_val else DEFAULT_RATE_PER_MIN
+            except (TypeError, ValueError):
+                rpm = DEFAULT_RATE_PER_MIN
+        self._rate_per_min = max(0, int(rpm or 0))
+
+    def _throttle(self) -> None:
+        """Enforce the global per-minute call budget before each API call.
+
+        Delegates to the process-wide rate gate so the EOD raw + factor chains
+        (separate provider instances) share one budget — otherwise the factor
+        chain starts right after the raw chain burned the sliding window and
+        trips Tushare's 500/min limit (2026-08-13 事故根因)。
+        """
+        _GLOBAL_RATE_GATE.throttle(self._rate_per_min)
 
     def _ensure_initialized(self) -> None:
         if self._initialized:
@@ -346,6 +408,7 @@ class TushareProvider:
     def _call_with_retry(self, fn, **kwargs):
         last_err: Optional[Exception] = None
         for attempt in range(MAX_RETRIES):
+            self._throttle()
             try:
                 return fn(**kwargs)
             except PermissionDenied:

@@ -264,6 +264,12 @@ def _is_tushare_raw_base_candidate(m: DatasetManifest) -> bool:
         return False
     if _is_delisted_supplement_dataset(m):
         return False
+    # 纯 ETF/指数数据集与全市场股票共用 tushare/none/1d scope（manifest 无
+    # universe_type 标记），但 raw base 是股票地基。ETF 增量同步若比股票
+    # 新一天（cutoff 更晚），会按"最新 cutoff"抢占 base，导致正式 L1/L2
+    # 基于 2500 只 ETF 而非全市场股票重建——必须排除不含股票符号的数据集。
+    if not any(".STK." in (r.symbol or "") for r in m.symbols):
+        return False
     sig = manifest_history_signals(m)
     if sig.symbol_count < MIN_BASE_SYMBOL_COUNT:
         return False

@@ -1772,12 +1772,18 @@ def run_backtest(
                 "calendar_path": str(cfg.calendar_path),
             }
         except Exception:
-            cal = TradeCalendar.from_tdx(cfg.tdx_root)
-            calendar_meta = {
-                "calendar_source": "legacy_tdx_index",
-                "calendar_path": str(cfg.tdx_root),
-            }
-        if cal.dates:
+            try:
+                cal = TradeCalendar.from_tdx(cfg.tdx_root)
+                calendar_meta = {
+                    "calendar_source": "legacy_tdx_index",
+                    "calendar_path": str(cfg.tdx_root),
+                }
+            except Exception:
+                # 无 TDX 部署且无 calendar.json:回退数据集推导日历,
+                # 与 repo 模式同一来源;仍失败则置空(不崩溃)。
+                cal = None
+                calendar_meta = {"calendar_source": "unavailable"}
+        if cal is not None and cal.dates:
             calendar_meta["calendar_first"] = int(cal.dates[0])
             calendar_meta["calendar_last"] = int(cal.dates[-1])
             calendar_meta["calendar_count"] = len(cal.dates)
@@ -1785,7 +1791,7 @@ def run_backtest(
     # Gate C D6 §5: signals earlier than the calendar's first day must be
     # EXCLUDED explicitly — never squeezed onto the first trading day.
     # Repo mode only; legacy mode keeps its historical behavior (isolated).
-    if _use_repository_l1 and cal.dates and events:
+    if _use_repository_l1 and cal is not None and cal.dates and events:
         _cal_first = int(cal.dates[0])
         _n_before = sum(1 for e in events if int(getattr(e, "date", 0)) < _cal_first)
         if _n_before:

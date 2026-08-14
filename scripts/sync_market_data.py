@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 import time
 from collections import defaultdict
@@ -33,6 +35,7 @@ from wtpy.apps.astock.data.dataset_store import (
 from wtpy.apps.astock.data.providers.base import (
     AdjustmentMode,
     BarPeriod,
+    DataNotDownloaded,
     DataSource,
     MarketBar,
     MarketDataRequest,
@@ -104,6 +107,57 @@ def _infer_incremental_resume(
     d = _dt.datetime.strptime(str(best_cut), "%Y%m%d").date()
     d -= _dt.timedelta(days=20)
     return int(d.strftime("%Y%m%d")), best_id
+
+
+def _infer_index_etf_parent(
+    store: DatasetStore,
+) -> Tuple[Optional[int], Optional[str]]:
+    """Find the best ready dataset to seed index/ETF incremental history.
+
+    Prefers the newest ready tushare index/ETF dataset (same source), and
+    falls back to a tdx_local index/ETF dataset so the FIRST Tushare
+    incremental sync merges the TDX full history instead of refetching it.
+    Index/ETF have no 复权, so tdx_local raw and tushare fund_daily /
+    index_daily raw share the same price basis and merge safely.
+
+    Only datasets whose symbols are mainly index/ETF qualify — a stock
+    dataset is never chosen as parent. Returns (start_date, dataset_id),
+    start_date = latest cutoff minus a 20-day safety margin.
+    """
+    import datetime as _dt
+
+    best: Optional[Tuple[tuple, str, int]] = None
+    for mid in store.list_manifests():
+        m = store.load_manifest(mid)
+        if not m or m.status != "ready":
+            continue
+        if m.source not in ("tushare", "tdx_local"):
+            continue
+        if m.adjustment != AdjustmentMode.NONE.value or m.period != "1d":
+            continue
+        syms = [r.symbol for r in (m.symbols or [])]
+        if not syms:
+            continue
+        ie = sum(1 for s in syms if ".ETF." in s or ".IDX." in s)
+        if ie * 2 < len(syms):
+            continue  # 股票数据集不当作指数/ETF 父
+        cutoff = int(m.data_cutoff_date or 0)
+        if cutoff <= 0:
+            continue
+        # priority 越小越优(tushare 同源优先),取负后参与"越大越优"比较
+        key = (
+            -(0 if m.source == "tushare" else 1),  # 同源优先
+            cutoff,
+            int(m.symbol_count or 0),
+            int(m.row_count or 0),
+        )
+        if best is None or key > best[0]:
+            best = (key, m.dataset_id, cutoff)
+    if best is None:
+        return None, None
+    d = _dt.datetime.strptime(str(best[2]), "%Y%m%d").date()
+    d -= _dt.timedelta(days=20)
+    return int(d.strftime("%Y%m%d")), best[1]
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -588,6 +642,89 @@ def sync_tushare_incremental(
     return result
 
 
+def _run_delisted_pool_sync(store: DatasetStore, args) -> dict:
+    """Zero-config delisted pool sync (Gate B2 ``--auto-candidates``).
+
+    Spawns ``scripts/sync_tushare_delisted.py --auto-candidates --publish``
+    as a child process (same subprocess pattern as the CA sync). The child's
+    checkpoint under ``<root>/raw/tushare/delisted_daily`` makes repeated runs
+    incremental — only newly delisted symbols (not yet in the pool) are
+    downloaded, so an existing pool costs one roster request plus a compare.
+    Returns a structured step result; the reconcile that runs afterwards stays
+    authoritative for the formal L1/L2 gate.
+    """
+    script = str(Path(__file__).resolve().parent / "sync_tushare_delisted.py")
+    state_dir = store.root / "raw" / "tushare" / "delisted_daily"
+    cmd = [
+        sys.executable, "-u", script, "--auto-candidates", "--publish",
+        "--state-dir", str(state_dir),
+        "--cutoff", str(int(time.strftime("%Y%m%d"))),
+    ]
+    token = getattr(args, "token", None)
+    if token:
+        cmd += ["--token", token]
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["MARKET_DATA_ROOT"] = str(store.root)
+    try:
+        # Stream the child's output line-by-line so the UI log shows the
+        # per-symbol download progress in real time (a buffered run() would
+        # keep the log silent for the whole 10-30 min pool backfill).
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", env=env,
+            cwd=str(Path(__file__).resolve().parent.parent),
+        )
+        for line in proc.stdout:
+            print(f"  [delisted] {line.rstrip()}")
+        proc.wait()
+        returncode = proc.returncode
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "error": f"spawn failed: {exc}"}
+    if returncode != 0:
+        return {
+            "status": "error",
+            "exit_code": returncode,
+            "error": "delisted pool sync failed (see [delisted] lines above)",
+        }
+    return {"status": "ok", "exit_code": 0}
+
+
+def sync_tushare_reconcile(args, store: DatasetStore) -> dict:
+    """Manual/CLI product reconcile: delisted pool -> formal L2 -> formal L1.
+
+    ``--source internal --mode reconcile`` runs the same delisted-pool
+    auto-backfill the sync chain uses, then the full product reconcile
+    (builds composite_none, derives composite_tushare_factor_qfq and validates
+    lineage/freshness). The UI「手动合并计算」button maps to this task so a
+    blocked automatic merge can be retried (or its reason inspected) on demand.
+    """
+    print("  [reconcile] step 1/2: delisted pool auto-backfill ...")
+    delisted = _run_delisted_pool_sync(store, args)
+    if delisted.get("status") != "ok":
+        print(f"  [reconcile] delisted step FAILED: {delisted.get('error', '')}")
+    print("  [reconcile] step 2/2: product reconcile (L2 + L1) ...")
+    print("[SYNC_PROGRESS] done=1 total=2 phase=delisted_pool")
+    rec = _reconcile_after_sync(store)
+    print("[SYNC_PROGRESS] done=2 total=2 phase=reconcile")
+    result: dict = {
+        "status": "success",
+        "delisted": delisted,
+        "reconcile": rec,
+    }
+    _apply_reconcile_status(result)
+    if delisted.get("status") != "ok" and result["status"] == "success":
+        # A failed delisted step cannot leave the product chain "success":
+        # reconcile would have reported waiting_for_parent anyway, but keep
+        # the classification honest if it ever passes without the pool.
+        result["status"] = "warning"
+        result["warning"] = (
+            "delisted step failed; product chain may be incomplete: "
+            f"{delisted.get('error', '')}"
+        )
+    return result
+
+
 def sync_tushare_chain(args, store: DatasetStore) -> dict:
     """Zero-config default chain (task=tushare): raw -> factor -> reconcile.
 
@@ -671,11 +808,31 @@ def sync_tushare_chain(args, store: DatasetStore) -> dict:
         )
         return chain
 
+    # ---- delisted pool step: zero-config Gate B2 auto-backfill ----
+    # The reconcile below hard-requires a ready delisted pool (fresh installs
+    # have none, and nothing else publishes it), so the chain backfills it
+    # before the product gate. The child's checkpoint keeps this incremental.
+    chain["delisted"] = _run_delisted_pool_sync(store, args)
+    if chain["delisted"].get("status") != "ok":
+        print(
+            f"  [chain] delisted step FAILED (exit "
+            f"{chain['delisted'].get('exit_code', '?')}): "
+            f"{chain['delisted'].get('error', '')}"
+        )
+
     # ---- final reconcile over the updated parents ----
     chain["reconcile"] = _reconcile_after_sync(store)
     chain["factor_dataset_id"] = factor_result.get("dataset_id")
     chain["status"] = "success"
     _apply_reconcile_status(chain)
+    if chain["delisted"].get("status") != "ok" and chain["status"] == "success":
+        # A failed delisted step must never leave the chain "success" (the
+        # reconcile would report waiting_for_parent anyway without the pool).
+        chain["status"] = "warning"
+        chain["warning"] = (
+            "delisted step failed; product chain may be incomplete: "
+            f"{chain['delisted'].get('error', '')}"
+        )
     return chain
 
 
@@ -687,10 +844,16 @@ def sync_tdx_local_full(args, store: DatasetStore) -> dict:
         print(f"ERROR: TDX root not found: {args.tdx_root}")
         return {"status": "failed", "error": "tdx_root_missing"}
 
-    symbols = _resolve_symbols(args, provider)
-    if not symbols:
-        universe = provider.fetch_universe(include_bse=args.include_bse)
-        symbols = [e.symbol for e in universe]
+    asset = (getattr(args, "asset_class", "stocks") or "stocks").lower()
+    if asset in ("index", "etf", "all"):
+        # 指数/ETF 不在 AShareUniverse(股票) 枚举范围内,单独从 TDX day
+        # 目录枚举,使 TDX 全历史可作为 Tushare 指数/ETF 增量的父数据集。
+        symbols = _resolve_tdx_index_etf_symbols(args, asset)
+    else:
+        symbols = _resolve_symbols(args, provider)
+        if not symbols:
+            universe = provider.fetch_universe(include_bse=args.include_bse)
+            symbols = [e.symbol for e in universe]
 
     print(f"Syncing {len(symbols)} symbols from TDX local (full mode)...")
     sync_run_id = make_sync_run_id("tdxlocal")
@@ -738,6 +901,40 @@ def _resolve_index_etf_symbols(args, provider) -> List[str]:
     if asset == "etf":
         return [e.symbol for e in universe if ".ETF." in e.symbol]
     return [e.symbol for e in universe]
+
+
+def _resolve_tdx_index_etf_symbols(args, asset: str) -> List[str]:
+    """Enumerate index/ETF symbols present in TDX local day dirs.
+
+    Used by --source tdx_local --asset-class index|etf|all: scans
+    vipdoc/{sh,sz}/lday for SSE.IDX.* / SZSE.IDX.* / SSE.ETF.* /
+    SZSE.ETF.* codes (AShareUniverse excludes them), so the TDX full
+    history can seed a warehouse parent dataset for the Tushare
+    index/ETF incremental chain.
+    """
+    from wtpy.apps.astock.service.index_etf import to_index_etf_std_code
+
+    out: List[str] = []
+    tdx_root = Path(args.tdx_root)
+    for ex in ("sh", "sz"):
+        d = tdx_root / "vipdoc" / ex / "lday"
+        if not d.is_dir():
+            continue
+        try:
+            names = [p.name[:-4] for p in d.glob(f"{ex}*.day")]
+        except OSError:
+            continue
+        for n in names:
+            std = to_index_etf_std_code(n)
+            if not std:
+                continue
+            if ".IDX." in std:
+                if asset in ("index", "all"):
+                    out.append(std)
+            elif ".ETF." in std:
+                if asset in ("etf", "all"):
+                    out.append(std)
+    return sorted(set(out))
 
 
 def _index_etf_configs() -> List[tuple]:
@@ -807,6 +1004,34 @@ def sync_tushare_index_etf_incremental(args, store: DatasetStore) -> dict:
     print(f"Incremental sync for {len(symbols)} index/ETF symbols from Tushare...")
     sync_run_id = make_sync_run_id("tushare_ie")
 
+    # 与股票链同源互斥策略:指数/ETF 增量独占 (tushare_index_etf, none, 1d)
+    # scope,防止 EOD 自动同步、CLI 手动运行并发写同一 checkpoint/数据集。
+    # 与股票链的 (tushare, none, 1d) 锁不同 scope,链内串行执行不冲突。
+    from wtpy.apps.astock.data.sync_lock import SyncTaskLock, SyncLockHeldError
+    lock = SyncTaskLock(
+        store.root, source="tushare_index_etf", adjustment="none", period="1d",
+        sync_run_id=sync_run_id,
+    )
+    try:
+        lock.acquire()
+    except SyncLockHeldError as e:
+        print(f"ERROR: {e}")
+        print("Another index/ETF sync task on this data root is running. "
+              "Concurrent tasks with the same scope are forbidden.")
+        return {"status": "failed", "error": "concurrent_lock", "holder": e.holder}
+
+    # 首次同步时仓库没有 tushare 指数/ETF 数据集:自动以 TDX 本地入库的
+    # tdxlocal/none/1d 数据作为父,增量只拉父截止之后的窗口并与全历史
+    # 合并(指数/ETF 无复权,TDX 原始价与 fund_daily/index_daily 口径
+    # 一致),避免对全历史做 Tushare 重下;之后同源 tushare 数据集优先。
+    parent_start, parent_id = _infer_index_etf_parent(store)
+    if parent_id:
+        src = "tdx_local" if parent_id.startswith("tdxlocal") else "tushare"
+        print(f"  [auto] parent dataset {parent_id} ({src}), "
+              f"window start={parent_start}")
+        if args.start_date is None:
+            args.start_date = parent_start
+
     asset = (getattr(args, "asset_class", "index") or "index").lower()
     ck_path = store.sync_logs_dir / f"checkpoint_tushare_index_etf_{asset}_1d.json"
     ck = None
@@ -845,6 +1070,7 @@ def sync_tushare_index_etf_incremental(args, store: DatasetStore) -> dict:
             start_date=args.start_date,
             end_date=args.end_date,
             anchor_date=args.anchor_date,
+            parent_dataset_id=parent_id,
             checkpoint_path=ck_path,
             resume_records=resume_records,
         )
@@ -3531,14 +3757,48 @@ def _sync_dataset(
                     except ProviderError as e2:
                         failed += 1
                         errors.append({"symbol": norm_sym, "error": str(e2)})
-                        symbol_records.append(
-                            SymbolRecord(
-                                symbol=norm_sym,
-                                blob_sha256="",
-                                quality="error",
-                                error=str(e2),
+                        parent_rec = parent_records.get(norm_sym)
+                        if parent_rec is not None:
+                            # Tushare 无该品种日线(积分/覆盖不足):保留
+                            # TDX 父历史,品种不因增量失败而丢数据。
+                            failed -= 1
+                            success += 1
+                            total_rows += int(parent_rec.row_count or 0)
+                            symbol_records.append(
+                                SymbolRecord(
+                                    symbol=norm_sym,
+                                    blob_sha256=parent_rec.blob_sha256,
+                                    first_date=parent_rec.first_date,
+                                    last_date=parent_rec.last_date,
+                                    row_count=int(parent_rec.row_count or 0),
+                                    quality="ok",
+                                    window_status="parent_retained_tushare_unavailable",
+                                )
                             )
-                        )
+                        elif isinstance(e2, DataNotDownloaded):
+                            # 数据源无该品种数据(指数/ETF 常见:新上市/已
+                            # 退市/Tushare 未收录):记 no_data 而非 error,
+                            # 避免整库被 publish 降级 partial。
+                            failed -= 1
+                            no_data += 1
+                            no_data_no_parent += 1
+                            symbol_records.append(
+                                SymbolRecord(
+                                    symbol=norm_sym,
+                                    blob_sha256="",
+                                    quality="no_data",
+                                    error=str(e2),
+                                )
+                            )
+                        else:
+                            symbol_records.append(
+                                SymbolRecord(
+                                    symbol=norm_sym,
+                                    blob_sha256="",
+                                    quality="error",
+                                    error=str(e2),
+                                )
+                            )
             _emit_progress()
             _persist_checkpoint()
         _emit_progress(force=True)
@@ -3578,14 +3838,47 @@ def _sync_dataset(
             except ProviderError as e:
                 failed += 1
                 errors.append({"symbol": norm_sym, "error": str(e)})
-                symbol_records.append(
-                    SymbolRecord(
-                        symbol=norm_sym,
-                        blob_sha256="",
-                        quality="error",
-                        error=str(e),
+                parent_rec = parent_records.get(norm_sym)
+                if parent_rec is not None:
+                    # Tushare 无该品种日线(积分/覆盖不足):保留 TDX 父历史。
+                    failed -= 1
+                    success += 1
+                    total_rows += int(parent_rec.row_count or 0)
+                    symbol_records.append(
+                        SymbolRecord(
+                            symbol=norm_sym,
+                            blob_sha256=parent_rec.blob_sha256,
+                            first_date=parent_rec.first_date,
+                            last_date=parent_rec.last_date,
+                            row_count=int(parent_rec.row_count or 0),
+                            quality="ok",
+                            window_status="parent_retained_tushare_unavailable",
+                        )
                     )
-                )
+                elif isinstance(e, DataNotDownloaded):
+                    # 数据源无该品种数据(指数/ETF 常见:新上市/已退市/
+                    # Tushare 未收录):记 no_data 而非 error,避免整库被
+                    # publish 降级 partial。
+                    failed -= 1
+                    no_data += 1
+                    no_data_no_parent += 1
+                    symbol_records.append(
+                        SymbolRecord(
+                            symbol=norm_sym,
+                            blob_sha256="",
+                            quality="no_data",
+                            error=str(e),
+                        )
+                    )
+                else:
+                    symbol_records.append(
+                        SymbolRecord(
+                            symbol=norm_sym,
+                            blob_sha256="",
+                            quality="error",
+                            error=str(e),
+                        )
+                    )
             _emit_progress()
             if (success + failed + no_data) % 50 == 0:
                 _persist_checkpoint()
@@ -3612,7 +3905,13 @@ def _sync_dataset(
         RAW_NO_DATA_MAX_COUNT,
         max(2, int(RAW_NO_DATA_MAX_RATIO * len(symbols))),
     )
-    if no_data_no_parent > max_no_data:
+    # 指数/ETF 数据集豁免:品种数量有限且许多品种无 Tushare 日线是常态
+    # (新上市/已退市/Tushare 未收录),不因个别无数据而降级 partial。
+    _ie_sym_cnt = sum(
+        1 for r in symbol_records if ".ETF." in r.symbol or ".IDX." in r.symbol
+    )
+    _is_index_etf_dataset = symbol_records and _ie_sym_cnt * 2 >= len(symbol_records)
+    if no_data_no_parent > max_no_data and not _is_index_etf_dataset:
         manifest.status = "partial"
         print(f"  STRICT POLICY -> partial: no_data_without_parent="
               f"{no_data_no_parent} > {max_no_data} allowed")
@@ -3855,7 +4154,8 @@ def main():
                         choices=["tdxquant", "tushare", "tdx_local", "local_vendor",
                                  "internal", "all"])
     parser.add_argument("--mode", default="full",
-                        choices=["full", "incremental", "rebuild", "audit", "derive"],
+                        choices=["full", "incremental", "rebuild", "audit",
+                                 "derive", "reconcile"],
                         help="full (default) / incremental: 存在完整父数据集时"
                              "只拉修正窗口并合并（无父则全量）; rebuild: 忽略"
                              "父数据集强制全量重建历史; audit/derive: diagnostics")
@@ -4300,8 +4600,11 @@ def main():
         elif src == "local_vendor":
             r = sync_local_vendor_full(args, store)
         elif src == "internal":
-            r = {"status": "failed",
-                 "error": "source=internal only supports --mode derive"}
+            if args.mode == "reconcile":
+                r = sync_tushare_reconcile(args, store)
+            else:
+                r = {"status": "failed",
+                     "error": "source=internal only supports --mode derive/reconcile"}
         else:
             r = {"status": "failed", "error": f"unknown source: {src}"}
 

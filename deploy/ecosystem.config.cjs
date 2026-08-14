@@ -30,6 +30,8 @@ module.exports = {
       env: {
         PYTHONPATH: process.env.ASTOCK_APP_ROOT || __dirname + "/..",
         PYTHONUNBUFFERED: "1",
+        TZ: "Asia/Shanghai",
+        TUSHARE_TOKEN: process.env.TUSHARE_TOKEN || "",
       },
       watch: false,
       time: true,

@@ -327,6 +327,87 @@ class TestTushareNormalization:
             assert "my_secret_token_xyz" not in str(e)
 
 
+class TestTushareThrottle:
+    """全局限速：EOD 股票链 none+qfq 5000+ 只逐只调用无节流会触发 Tushare
+    500/min 限流并拖垮 adj_factor 链（2026-08-13 事故根因）。"""
+
+    def test_default_rate_from_constant(self, monkeypatch):
+        monkeypatch.delenv("TUSHARE_RATE_PER_MIN", raising=False)
+        p = TushareProvider(token="x")
+        assert p._rate_per_min == 300
+
+    def test_env_rate_overrides_default(self, monkeypatch):
+        monkeypatch.setenv("TUSHARE_RATE_PER_MIN", "120")
+        p = TushareProvider(token="x")
+        assert p._rate_per_min == 120
+
+    def test_explicit_rate_wins(self, monkeypatch):
+        monkeypatch.setenv("TUSHARE_RATE_PER_MIN", "120")
+        p = TushareProvider(token="x", rate_per_min=60)
+        assert p._rate_per_min == 60
+
+    def test_invalid_env_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TUSHARE_RATE_PER_MIN", "not-a-number")
+        p = TushareProvider(token="x")
+        assert p._rate_per_min == 300
+
+    def test_throttle_shared_across_instances(self, monkeypatch):
+        """股票链与 factor 链是不同 TushareProvider 实例，必须共享一个速率闸。
+
+        否则股票链刚打完 300/min 的窗口，factor 链立刻用新实例继续打，
+        叠加后撞 500/min 限流（2026-08-13 补跑 factor 尾部 27 只限流失败）。
+        """
+        import time as _time
+
+        from wtpy.apps.astock.data.providers.tushare import (
+            _GLOBAL_RATE_GATE,
+            _GlobalRateGate,
+        )
+        # 用独立 gate 实例测共享行为（避免污染模块级单例）
+        gate = _GlobalRateGate()
+        fake = {"now": 1000.0}
+        sleeps = []
+        monkeypatch.setattr(_time, "time", lambda: fake["now"])
+        monkeypatch.setattr(
+            _time, "sleep",
+            lambda s: (sleeps.append(s), fake.__setitem__("now", fake["now"] + s)),
+        )
+        p1 = TushareProvider(token="x", rate_per_min=120)
+        p2 = TushareProvider(token="x", rate_per_min=120)
+        # 两个实例分别第一次调用：第二次必须被 gate 挡住（间隔 0.5s）
+        gate.throttle(p1._rate_per_min)
+        assert sleeps == []
+        gate.throttle(p2._rate_per_min)
+        assert len(sleeps) == 1
+        assert abs(sleeps[0] - 0.5) < 1e-6
+
+    def test_throttle_disabled_at_zero(self, monkeypatch):
+        import time as _time
+
+        from wtpy.apps.astock.data.providers.tushare import _GlobalRateGate
+
+        gate = _GlobalRateGate()
+        monkeypatch.setattr(_time, "time", lambda: 0.0)
+        sleeps = []
+        monkeypatch.setattr(_time, "sleep", lambda s: sleeps.append(s))
+        gate.throttle(0)
+        assert sleeps == []
+
+    def test_call_with_retry_throttles_before_each_attempt(self, provider, monkeypatch):
+        """_call_with_retry must call _throttle before every attempt."""
+        import time as _time
+
+        provider._rate_per_min = 0
+        throttled = {"n": 0}
+        monkeypatch.setattr(provider, "_throttle", lambda: throttled.__setitem__("n", throttled["n"] + 1))
+        provider._pro.daily.side_effect = Exception("limit 频率超限")
+        monkeypatch.setattr(_time, "sleep", lambda s: None)  # skip backoff sleep
+        with pytest.raises(Exception):
+            provider._call_with_retry(provider._pro.daily, ts_code="600000.SH")
+        # MAX_RETRIES(3) attempts, each preceded by one throttle
+        assert throttled["n"] == 3
+
+
 @pytest.mark.live_tushare
 class TestTushareLive:
     """Live tests requiring real Tushare token. Run with: pytest -m live_tushare"""

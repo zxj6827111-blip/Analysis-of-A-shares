@@ -2,6 +2,9 @@
 missing from local_vendor, and publish them as an immutable dataset.
 
 Only the B1-approved candidate list is downloaded — never the whole market.
+``--auto-candidates`` (zero-config) derives that list from Tushare's official
+``stock_basic list_status='D'`` delisted-stock roster, so fresh installs get
+the delisted pool without any hand-maintained candidate file.
 
 Features: Windows-safe task lock, per-symbol checkpoint with atomic writes,
 resume, rate limiting with exponential backoff, 6000-row pagination, strict
@@ -11,6 +14,8 @@ x1000), per-symbol provenance, token never printed.
 Usage:
   python scripts/sync_tushare_delisted.py --candidates <b1_candidates.csv> \
       [--limit N] [--symbols 600001.SH,300104.SZ] [--publish] [--fresh-symbol X]
+  python scripts/sync_tushare_delisted.py --auto-candidates --publish \
+      [--state-dir <dir>] [--cutoff YYYYMMDD]
 """
 
 from __future__ import annotations
@@ -46,9 +51,20 @@ from wtpy.apps.astock.data.sync_lock import (  # noqa: E402
     SyncTaskLock,
 )
 
-MARKET_DATA_ROOT = Path(
-    os.environ.get("MARKET_DATA_ROOT", r"E:\AStockData\datasets\market_data")
-)
+def resolve_market_data_root() -> Optional[Path]:
+    """Resolve the market data root from ``MARKET_DATA_ROOT`` env.
+
+    Returns None when unset — callers must fail loudly instead of falling
+    back to a hardcoded Windows path (which silently breaks Linux/fresh
+    installs). Sync chains always set the env var; standalone users must
+    export it.
+    """
+    env_val = os.environ.get("MARKET_DATA_ROOT", "").strip()
+    if env_val:
+        return Path(env_val)
+    return None
+
+
 DEFAULT_STATE_DIR = Path(r"E:\AStockData\raw\tushare\delisted_daily")
 CALL_INTERVAL_SEC = 0.35
 MAX_RETRIES = 4
@@ -181,11 +197,74 @@ def sync_symbol(pro, ts_code: str, cand: dict, state_dir: Path, cutoff: int) -> 
     return entry
 
 
+def auto_generate_candidates(token: str, state_dir: Path) -> Path:
+    """Zero-config candidate list from Tushare's official delisted roster.
+
+    Fetches ``stock_basic list_status='D'`` via :class:`TushareProvider` and
+    writes a candidate CSV compatible with ``--candidates``
+    (``ts_code/requested_start/requested_end`` columns, list_date/delist_date
+    as YYYYMMDD ints). Deterministic content hash keeps repeated runs on the
+    same roster idempotent. Returns the generated CSV path.
+    """
+    from wtpy.apps.astock.data.providers.tushare import TushareProvider
+
+    provider = TushareProvider(token=token or None)
+    entries = provider.fetch_universe(include_delisted=True)
+    delisted = [e for e in entries if e.status == "delisted"]
+    if not delisted:
+        raise RuntimeError(
+            "Tushare 退市名单为空（stock_basic list_status='D' 无数据）"
+        )
+    rows = []
+    skipped = []
+    for e in delisted:
+        ts_code = TushareProvider._to_ts_code(e.symbol)
+        try:
+            ts_code_to_canonical(ts_code)
+        except ValueError:
+            # roster 里偶有非规范代码（如 T 前缀退市整理标记），
+            # 下载阶段 ts_code_to_canonical 会崩溃——过滤而不是带病下载
+            skipped.append(ts_code)
+            continue
+        rows.append(
+            {
+                "ts_code": ts_code,
+                "requested_start": int(e.list_date or 0),
+                "requested_end": int(e.delist_date or 0),
+            }
+        )
+    if skipped:
+        print(
+            f"[auto] skipped {len(skipped)} non-canonical codes: "
+            f"{skipped[:10]}"
+        )
+    rows.sort(key=lambda r: r["ts_code"])
+    payload = pd.DataFrame(rows).to_csv(index=False)
+    sha8 = hashlib.sha256(payload.encode("utf-8-sig")).hexdigest()[:8]
+    path = state_dir / f"candidates_auto_{sha8}.csv"
+    if not path.exists():
+        path.write_text(payload, encoding="utf-8-sig")
+    print(
+        f"[auto] delisted candidates: {len(rows)} symbols "
+        f"<- stock_basic list_status='D' ({path.name})"
+    )
+    return path
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--candidates", required=True)
+    ap.add_argument("--candidates", default="",
+                    help="manual B1 candidate CSV (mutually exclusive with "
+                         "--auto-candidates)")
+    ap.add_argument("--auto-candidates", action="store_true",
+                    help="derive the candidate list from stock_basic "
+                         "list_status='D' (zero-config, no manual CSV)")
+    ap.add_argument("--token", default="",
+                    help="Tushare API token (prefer ts.get_token()); required "
+                         "for --auto-candidates when not configured elsewhere")
     ap.add_argument("--state-dir", default=str(DEFAULT_STATE_DIR))
-    ap.add_argument("--cutoff", type=int, default=20260717)
+    ap.add_argument("--cutoff", type=int, default=0,
+                    help="data cutoff YYYYMMDD (default: today)")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--symbols", default="")
     ap.add_argument("--publish", action="store_true")
@@ -193,10 +272,35 @@ def main() -> int:
     ap.add_argument("--report-path", default="")
     args = ap.parse_args()
 
+    if bool(args.candidates) == bool(args.auto_candidates):
+        ap.error("exactly one of --candidates / --auto-candidates is required")
+    md_root = resolve_market_data_root()
+    if md_root is None:
+        print(
+            "ERROR: MARKET_DATA_ROOT 环境变量未设置，无法确定数据根。\n"
+            "  请 export MARKET_DATA_ROOT=<数据根目录>（或由同步链自动传入）后重试。"
+        )
+        return 1
+    cutoff = args.cutoff or int(time.strftime("%Y%m%d"))
     state_dir = Path(args.state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
+    if args.auto_candidates:
+        try:
+            candidates_csv = auto_generate_candidates(args.token, state_dir)
+        except Exception as exc:  # noqa: BLE001
+            # AuthenticationError etc. -> a readable failure instead of a
+            # bare traceback; every fresh install hits this when TUSHARE_TOKEN
+            # was never configured.
+            print(
+                f"ERROR: 自动生成退市候选失败: {type(exc).__name__}: {exc}\n"
+                "  请确认已配置 TUSHARE_TOKEN（README 部署章节），"
+                "或改用 --candidates 传入人工候选清单。"
+            )
+            return 1
+    else:
+        candidates_csv = Path(args.candidates)
 
-    cands = pd.read_csv(args.candidates)
+    cands = pd.read_csv(candidates_csv)
     if args.symbols:
         wanted = set(args.symbols.split(","))
         cands = cands[cands["ts_code"].isin(wanted)]
@@ -206,7 +310,7 @@ def main() -> int:
     print(f"candidates in scope: {len(cand_list)}")
 
     lock = SyncTaskLock(
-        MARKET_DATA_ROOT,
+        md_root,
         source="tushare_delisted",
         adjustment="none",
         period="1d",
@@ -221,7 +325,7 @@ def main() -> int:
     try:
         import tushare as ts
 
-        pro = ts.pro_api()
+        pro = ts.pro_api(args.token or None)
 
         state = load_state(state_dir)
         done_statuses = (tds.STATUS_VALIDATED, tds.STATUS_NO_DATA, tds.STATUS_PUBLISHED)
@@ -233,7 +337,7 @@ def main() -> int:
                 n_done += 1
                 continue
             print(f"[{i + 1}/{len(cand_list)}] {ts_code} ...")
-            entry = sync_symbol(pro, ts_code, cand, state_dir, args.cutoff)
+            entry = sync_symbol(pro, ts_code, cand, state_dir, cutoff)
             if prev and prev.get("status") == tds.STATUS_FAILED:
                 entry["retry_count"] = int(prev.get("retry_count", 0)) + 1
             state["symbols"][ts_code] = entry
@@ -263,7 +367,7 @@ def main() -> int:
             print(f"REFUSING publish: {len(failed)} failed symbols: {failed[:10]}")
             result["publish_refused"] = f"failed_symbols={len(failed)}"
         elif args.publish:
-            store = DatasetStore(MARKET_DATA_ROOT)
+            store = DatasetStore(md_root)
             records: List[SymbolRecord] = []
             provenance_symbols: Dict[str, dict] = {}
             total_rows = 0
@@ -286,7 +390,7 @@ def main() -> int:
                     }
                     continue
                 raw_path = state_dir / "raw" / f"{ts_code.replace('.', '_')}.csv"
-                merged = tds.clip_to_cutoff(pd.read_csv(raw_path), args.cutoff)
+                merged = tds.clip_to_cutoff(pd.read_csv(raw_path), cutoff)
                 merged, repaired_dates = tds.repair_ohlc_envelope(merged)
                 if repaired_dates and (
                     len(repaired_dates) / len(merged) > tds.OHLC_REPAIR_MAX_RATIO
@@ -352,9 +456,9 @@ def main() -> int:
             canonical_pre = json.dumps(
                 {
                     "source": "tushare_delisted", "adjustment": "none",
-                    "period": "1d", "cutoff": args.cutoff,
+                    "period": "1d", "cutoff": cutoff,
                     "candidates_sha": hashlib.sha256(
-                        Path(args.candidates).read_bytes()
+                        candidates_csv.read_bytes()
                     ).hexdigest(),
                     "symbols": sorted(r.symbol for r in records),
                 },
@@ -362,7 +466,7 @@ def main() -> int:
             )
             pre_sha = hashlib.sha256(canonical_pre.encode()).hexdigest()
             dataset_id = make_dataset_id(
-                "tushare_delisted", "none", "1d", str(args.cutoff), pre_sha
+                "tushare_delisted", "none", "1d", str(cutoff), pre_sha
             )
             if store.load_manifest(dataset_id) is not None:
                 print(f"dataset already published: {dataset_id} (idempotent no-op)")
@@ -374,7 +478,7 @@ def main() -> int:
                     source="tushare",
                     adjustment="none",
                     period="1d",
-                    data_cutoff_date=args.cutoff,
+                    data_cutoff_date=cutoff,
                     snapshot_date=int(time.strftime("%Y%m%d")),
                     provider_version="tushare_pro_daily",
                     sync_run_id=sync_run_id,
@@ -400,9 +504,9 @@ def main() -> int:
                     ],
                     provenance={
                         "gate": "B2",
-                        "candidates_file": str(args.candidates),
+                        "candidates_file": str(candidates_csv),
                         "candidates_sha256": hashlib.sha256(
-                            Path(args.candidates).read_bytes()
+                            candidates_csv.read_bytes()
                         ).hexdigest(),
                         "unit_transform": tds.UNIT_TRANSFORM_VERSION,
                         "api_name": tds.API_NAME,

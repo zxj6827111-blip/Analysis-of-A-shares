@@ -350,6 +350,11 @@ class TestChainRawPartial:
             lambda store, dry_run=False: {"status": "published", "missing": [],
                                           "issues": [], "l1_dataset_id": "l1",
                                           "l2_dataset_id": "l2"})
+        # the chain's delisted-pool step spawns a child process (network);
+        # these unit tests exercise the chain orchestration only
+        monkeypatch.setattr(
+            smd, "_run_delisted_pool_sync",
+            lambda store, args: {"status": "ok", "exit_code": 0})
         monkeypatch.setattr(
             smd, "_latest_factor_universe_file_path", lambda store: "/tmp/uni.csv")
         args = SimpleNamespace(
@@ -440,6 +445,11 @@ class TestChainSingleReconcile:
                                  "datasets": {}})
         monkeypatch.setattr(
             smd, "_latest_factor_universe_file_path", lambda store: "/tmp/uni.csv")
+        # the chain's delisted-pool step spawns a child process (network);
+        # these unit tests exercise the chain orchestration only
+        monkeypatch.setattr(
+            smd, "_run_delisted_pool_sync",
+            lambda store, args: {"status": "ok", "exit_code": 0})
 
         class _HealthPro:
             def health_check(self):
