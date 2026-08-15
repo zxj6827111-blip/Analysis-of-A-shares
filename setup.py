@@ -37,6 +37,8 @@ REQUIRED = [
     # Tushare-only 数据策略:股票/ETF/指数同步与成分股查询均依赖 tushare,
     # 未声明会导致服务器部署后全部 Tushare 链路失败(本机是手动安装的)。
     'tushare>=1.4.0',
+    # overlay_v1 存储:稳定基准 blob + DuckDB 版本化增量(DeltaStore)
+    'duckdb>=1.1.0,<2',
 ]
 
 # What packages are optional?

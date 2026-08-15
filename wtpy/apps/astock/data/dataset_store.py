@@ -135,6 +135,21 @@ class DatasetManifest:
     price_precision_policy: str = ""
     volume_policy: str = ""
     amount_policy: str = ""
+    # ---- overlay / delta storage (blob_snapshot is the legacy default) ----
+    # storage_mode: "blob_snapshot" (legacy: full-history NPZ blobs per symbol)
+    #               | "overlay_v1" (stable base blob + DuckDB versioned delta)
+    storage_mode: str = "blob_snapshot"
+    # base dataset (full-history raw bars) the delta overlays
+    base_dataset_id: str = ""
+    base_manifest_sha256: str = ""
+    # which delta store (DuckDB) holds the incremental rows for this surface
+    delta_store_id: str = ""
+    # newest committed batch watermark this view may read (inclusive, YYYYMMDD)
+    delta_watermark: Optional[int] = None
+    factor_watermark: Optional[int] = None
+    # view_type: "l2_virtual_composite" | "l1_virtual_qfq" | "raw_virtual"
+    #            | "" (legacy materialized snapshot)
+    view_type: str = ""
     symbols: List[SymbolRecord] = field(default_factory=list)
 
     def to_dict(self) -> dict:

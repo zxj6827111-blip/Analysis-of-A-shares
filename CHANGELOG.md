@@ -8,6 +8,52 @@
 - 每次发版递增版本号（如 2.0 → 2.1 → 2.2），并打 `v{版本号}` 的 git tag
 - 提交后右上角版本号自动显示新版本
 
+## [2.9] - 2026-08-15
+
+### 新增
+- **AStock 行情仓库增量化（overlay_v1）**：例行 EOD 不再每日重写完整行情
+  NPZ，改为「稳定基准 blob + DuckDB 版本化增量 + 虚拟 L1/L2 视图」，
+  目标将服务器每日净增长控制在 10MB 以内：
+  - `DeltaStore`（`data/delta_store.py`）：DuckDB 三表 `sync_batches` /
+    `daily_bars` / `adj_factors`，主数据按 symbol + trade_date + batch_seq
+    追加不覆盖；同一窗口重复执行幂等；指定 watermark 读取最新可见版本，
+    保留数据修订与回测复现
+  - `DatasetManifest` 扩展 `storage_mode` / `base_dataset_id` /
+    `delta_watermark` / `factor_watermark` / `view_type` 等字段，旧 manifest
+    缺省 `blob_snapshot` 完全兼容
+  - `MarketDataRepository` 新增 `load_bar_arrays()` / `load_bars_batch()`；
+    `load_bars()` 兼容包装；overlay 模式下正式 L1/L2 `latest` 解析到虚拟
+    视图，旧显式 dataset id 继续读原 blob
+  - 虚拟 L2 = active 基准 + delisted 基准组合股票池 + DuckDB 增量覆盖同日
+    数据；虚拟 L1/QFQ = raw × adj_factor_asof/anchor 运行时派生（保持
+    4dp 四舍五入、缺因子、leading-gap 规则）
+  - EOD 写入：`sync_market_data.py --write-mode delta` 增量事务（短连接、
+    单写者、delta 写锁），健康校验成功后才原子发布 overlay watermark；
+    发布失败 batch 保持不可见由 72h 治理清理
+  - 迁移工具 `scripts/migrate_market_data_overlay.py --plan/--apply/--status`：
+    自动选择最新 ready 基准（拒绝 partial/孤儿窗口）
+  - 治理工具 `scripts/govern_market_data.py`：`--audit`（磁盘/24h 增长/
+    新增 NPZ/水印滞后/孤儿）、`--pin/--unpin/--list-pins`、`--consolidate`
+    （60 交易日或 512MB 触发基准合并并重置增量）
+  - GC 扩展：overlay 基准按 latest/pin/基准依赖/在途任务计算保留闭包；
+    overlay 引用缺失时 fail-closed 拒绝运行
+  - 健康接口/EOD 状态：overlay 模式下 freshness 改由 watermark 计算，
+    并附带 storage_mode / 基准 id / delta 大小 / watermark 等治理指标
+  - 依赖新增 `duckdb>=1.1.0,<2`（requirements.txt / setup.py / 部署自动
+    安装）
+- 新增测试：`test_overlay_delta.py`（增量幂等/修订/watermark 回放/停牌空
+  窗口/事务失败/重复日期/因子 anchor 变化/旧 blob 兼容）、
+  `test_overlay_eod_chain.py`（EOD delta 链端到端）、`test_overlay_gc.py`
+  （GC 保留闭包 + fail-closed）、`test_overlay_tools.py`（迁移/治理工具）
+- 新增对拍验证脚本 `scripts/verify_overlay_parity.py`：200 股 × 3 交易日
+  模拟 EOD，虚拟 L2 逐 bar 与完整快照对拍（40600 bars 全对）、L1 QFQ
+  逐 bar 一致、0 新增 NPZ
+- 性能：500 股批量 L2 读取 ≈0.4x、批量 L1/QFQ ≈0.7x 于旧完整 blob 读取
+
+### 运维
+- overlay 启用：`ASTOCK_MARKET_STORAGE_MODE=overlay_v1` + 先跑迁移 --apply
+- 回滚：清空该 env 并重启服务（基准 blob 在观察期不修改、不删除）
+
 ## [2.8] - 2026-08-15
 
 ### 修复

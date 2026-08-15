@@ -225,6 +225,28 @@ class AStockConfig:
         return not str(md).startswith(str(sr))
 
     @property
+    def market_storage_mode(self) -> str:
+        """Overlay storage switch: "" (legacy blob snapshots) | "overlay_v1".
+
+        Controlled by ASTOCK_MARKET_STORAGE_MODE. In overlay_v1 mode the
+        repository serves virtual L1/L2 views assembled from the stable base
+        blobs + DuckDB versioned delta rows; legacy explicit dataset ids keep
+        reading their original blobs.
+        """
+        return (
+            os.environ.get("ASTOCK_MARKET_STORAGE_MODE", "").strip().lower()
+        )
+
+    @property
+    def market_storage_overlay_enabled(self) -> bool:
+        return self.market_storage_mode == "overlay_v1"
+
+    @property
+    def delta_root(self) -> Path:
+        """DuckDB delta + overlay registry root under the market data root."""
+        return self.market_data_root / "delta"
+
+    @property
     def minute_vendor_root(self) -> Optional[Path]:
         """Root of the vendor-exported minute CSV archives (60-minute bars).
 

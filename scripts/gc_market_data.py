@@ -69,6 +69,15 @@ def main() -> int:
             print(f"\nREFUSED: live sync task holds a lock: {plan.blocked_by_live_lock}")
             print("Wait for the sync to finish, or use --no-live-lock-check.")
             return 2
+        if plan.blocked_by_overlay_manifest_missing:
+            print(
+                f"\nREFUSED: overlay registry references a missing base dataset: "
+                f"{plan.blocked_by_overlay_manifest_missing}"
+            )
+            print("Restore the manifest (or re-run "
+                  "scripts/migrate_market_data_overlay.py --plan/--apply) "
+                  "before GC.")
+            return 3
 
         if not plan.candidates:
             print("\nNothing to collect.")

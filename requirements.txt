@@ -13,3 +13,4 @@ deap
 websockets>=10.4
 pypinyin
 tushare>=1.4.0
+duckdb>=1.1.0,<2

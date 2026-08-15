@@ -4112,6 +4112,325 @@ def _apply_reconcile_status(result: dict) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# overlay_v1 delta write mode (EOD)
+#
+# --write-mode delta replaces the legacy full-blob-rewrite EOD with:
+#   fetch 20-day window -> commit changed rows (one transaction per kind)
+#   -> health check -> atomic watermark publish.
+# No new raw/qfq/L1/L2 snapshot blobs are produced; the repository serves
+# the virtual L1/L2 views over the stable base blobs + the DuckDB delta.
+# ---------------------------------------------------------------------------
+
+
+def _overlay_or_error(store: DatasetStore) -> "OverlayView":
+    from wtpy.apps.astock.data.overlay import OverlayNotReadyError, OverlayView
+
+    view = OverlayView.from_root(store.root, required=False)
+    if view is None:
+        raise OverlayNotReadyError(
+            "overlay_v1 is not enabled on this data root "
+            "(run migrate_market_data_overlay.py --apply first)"
+        )
+    return view
+
+
+def _days_ago(n: int) -> int:
+    import datetime
+
+    return int(
+        (datetime.date.today() - datetime.timedelta(days=n)).strftime("%Y%m%d")
+    )
+
+
+def _window_start_from_cutoff(cutoff: int, margin_days: int = 20) -> int:
+    import datetime
+
+    d = datetime.datetime.strptime(str(cutoff), "%Y%m%d").date()
+    return int((d - datetime.timedelta(days=margin_days)).strftime("%Y%m%d"))
+
+
+def _fetch_raw_window_rows(
+    provider,
+    symbols: List[str],
+    *,
+    start_date: int,
+    end_date: int,
+    batch_size: int = 10,
+) -> Dict[str, List[Tuple]]:
+    """Fetch the correction window for many symbols.
+
+    Returns {normalized_symbol: [(trade_date, o, h, l, c, v, a), ...]} with
+    rows sorted ascending. Batch path with per-symbol fallback on provider
+    errors (mirrors ``_sync_dataset``); symbols with no data are absent.
+    """
+    rows: Dict[str, List[Tuple]] = {}
+    caps = provider.capabilities()
+    use_batch = bool(caps.supports_batch and batch_size > 1)
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i : i + batch_size]
+        try:
+            req = MarketDataRequest(
+                symbols=batch,
+                period=BarPeriod.DAY,
+                adjustment=AdjustmentMode.NONE,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            bars = provider.fetch_bars(req)
+            for b in bars:
+                sym = _normalize_symbol(b.symbol)
+                rows.setdefault(sym, []).append(
+                    (int(b.trade_date), float(b.open), float(b.high),
+                     float(b.low), float(b.close), float(b.volume),
+                     float(b.amount))
+                )
+        except ProviderError:
+            if not use_batch:
+                raise
+            for sym in batch:
+                try:
+                    req = MarketDataRequest(
+                        symbols=[sym],
+                        period=BarPeriod.DAY,
+                        adjustment=AdjustmentMode.NONE,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                    bars = provider.fetch_bars(req)
+                    for b in bars:
+                        s2 = _normalize_symbol(b.symbol)
+                        rows.setdefault(s2, []).append(
+                            (int(b.trade_date), float(b.open), float(b.high),
+                             float(b.low), float(b.close), float(b.volume),
+                             float(b.amount))
+                        )
+                except ProviderError:
+                    continue
+    for sym in rows:
+        rows[sym].sort(key=lambda r: r[0])
+    return rows
+
+
+def sync_tushare_incremental_delta(args, store: DatasetStore) -> dict:
+    """Raw-bar EOD delta update for an enabled overlay warehouse.
+
+    Fetch the 20-day correction window and commit changed rows to the DuckDB
+    delta (no full-history blobs rewritten, no new manifest). The overlay
+    watermark is NOT advanced here — ``sync_tushare_chain_delta`` commits the
+    factor surface too and publishes both watermarks atomically.
+    """
+    from wtpy.apps.astock.data.providers.tushare import TushareProvider
+    from wtpy.apps.astock.data.delta_writer import DeltaEodWriter
+    from wtpy.apps.astock.data.sync_lock import SyncTaskLock, SyncLockHeldError
+
+    view = _overlay_or_error(store)
+    provider = TushareProvider(token=args.token)
+    if not provider.health_check():
+        return {"status": "failed", "error": "api_unavailable"}
+
+    symbols = _resolve_symbols(args, provider)
+    if not symbols:
+        base = view.active_base()
+        symbols = [r.symbol for r in base.symbols if r.blob_sha256]
+    symbols = sorted(set(_normalize_symbol(s) for s in symbols))
+    if not symbols:
+        return {"status": "failed", "error": "no_symbols"}
+
+    base = view.active_base()
+    base_cutoff = int(base.data_cutoff_date or 0)
+    window_start = int(args.start_date or _window_start_from_cutoff(base_cutoff))
+    cutoff = int(args.end_date or time.strftime("%Y%m%d"))
+
+    sync_run_id = make_sync_run_id("tushare_delta")
+    lock = SyncTaskLock(store.root, source="tushare", adjustment="none",
+                        period="1d", sync_run_id=sync_run_id)
+    try:
+        lock.acquire()
+    except SyncLockHeldError as e:
+        return {"status": "failed", "error": "concurrent_lock", "holder": e.holder}
+
+    try:
+        print(f"  [delta] fetching {len(symbols)} symbols window "
+              f"{window_start}..{cutoff} ...", flush=True)
+        t0 = time.time()
+        window_rows = _fetch_raw_window_rows(
+            provider, symbols,
+            start_date=window_start, end_date=cutoff,
+            batch_size=int(getattr(args, "batch_size", None) or 10),
+        )
+        # only symbols that actually changed/new in the window become rows;
+        # symbols absent from the window (suspended) contribute nothing
+        rows: Dict[str, List[Tuple]] = {
+            sym: rws for sym, rws in window_rows.items() if rws
+        }
+        writer = DeltaEodWriter(store)
+
+        def _commit() -> dict:
+            batch = writer.commit_bars(
+                sync_run_id=sync_run_id,
+                source=DataSource.TUSHARE.value,
+                base_dataset_id=base.dataset_id,
+                cutoff=cutoff,
+                rows=rows,
+            )
+            return batch
+
+        batch = writer.run_locked(_commit)
+        elapsed = time.time() - t0
+        print(
+            f"  [delta] raw batch committed: new_rows={batch['new_rows']} "
+            f"skipped={batch['skipped_rows']} ({elapsed:.1f}s)",
+            flush=True,
+        )
+        result = {
+            "status": "success",
+            "sync_run_id": sync_run_id,
+            "write_mode": "delta",
+            "window_start": window_start,
+            "cutoff": cutoff,
+            "symbols_fetched": len(symbols),
+            "symbols_with_rows": len(rows),
+            "new_rows": batch["new_rows"],
+            "skipped_rows": batch["skipped_rows"],
+            "dataset_id": base.dataset_id,
+            "base_cutoff": base_cutoff,
+            "delta_watermark_published": False,
+        }
+        result["reconcile"] = {
+            "status": "deferred",
+            "reason": "chain_reconcile_at_end",
+            "note": "overlay virtual L1/L2 views reflect the delta automatically",
+        }
+        return result
+    finally:
+        lock.release()
+
+
+def sync_tushare_chain_delta(args, store: DatasetStore) -> dict:
+    """overlay_v1 EOD chain: raw delta + factor delta + atomic publish.
+
+    No product derivation, no full-history blob rewrites. The formal L1/L2
+    virtual views read the merged base+delta surface directly.
+    """
+    from wtpy.apps.astock.data.delta_writer import DeltaEodWriter
+    from wtpy.apps.astock.data.providers.tushare import TushareProvider
+    from wtpy.apps.astock.data.sync_lock import SyncTaskLock, SyncLockHeldError
+
+    view = _overlay_or_error(store)
+    raw_step = sync_tushare_incremental_delta(args, store)
+    if raw_step.get("status") != "success":
+        return raw_step
+
+    # ---- factor delta ----
+    provider = TushareProvider(token=args.token)
+    try:
+        provider._ensure_initialized()
+    except Exception as e:
+        return {
+            "status": "failed",
+            "error": f"token_or_init_failed:{type(e).__name__}",
+            "raw": raw_step,
+        }
+    fac_base = view.factor_base()
+    fac_cutoff = int(args.end_date or time.strftime("%Y%m%d"))
+    fac_start = int(
+        args.start_date or _window_start_from_cutoff(
+            int(fac_base.data_cutoff_date or 0)
+        )
+    )
+    symbols = _resolve_symbols(args, provider)
+    if not symbols:
+        symbols = [r.symbol for r in fac_base.symbols if r.blob_sha256]
+
+    sync_run_id = make_sync_run_id("tsfactor_delta")
+    lock = SyncTaskLock(store.root, source="tushare", adjustment="adj_factor",
+                        period="1d", sync_run_id=sync_run_id)
+    try:
+        lock.acquire()
+    except SyncLockHeldError as e:
+        return {"status": "failed", "error": "concurrent_lock",
+                "holder": e.holder, "raw": raw_step}
+
+    try:
+        stats = {"api_calls": 0, "rate_limited": 0, "provider_failed": 0}
+        rate_per_min = max(1, int(getattr(args, "rate_per_min", None) or 400))
+        window_map = _fetch_factor_window_by_trade_date(
+            provider, fac_start, fac_cutoff, stats, len(symbols), rate_per_min
+        )
+        factor_rows: Dict[str, List[Tuple]] = {}
+        done_count = 0
+        for sym in symbols:
+            df = None
+            if window_map is not None:
+                df = window_map.get(sym)
+            if df is None or df.empty:
+                continue
+            df = df[["trade_date", "adj_factor"]].dropna()
+            df["trade_date"] = df["trade_date"].astype(str).astype(int)
+            df = df[df["trade_date"] <= fac_cutoff]
+            df = df.sort_values("trade_date")
+            df = df.drop_duplicates(subset="trade_date", keep="last")
+            bad = df[df["adj_factor"] <= 0]
+            if len(bad) > 0 or len(df) == 0:
+                continue
+            factor_rows[sym] = [
+                (int(r.trade_date), float(r.adj_factor))
+                for r in df.itertuples(index=False)
+            ]
+            done_count += 1
+
+        writer = DeltaEodWriter(store)
+
+        def _commit_and_publish() -> dict:
+            fac_batch = writer.commit_factors(
+                sync_run_id=sync_run_id,
+                source=DataSource.TUSHARE.value,
+                factor_base_dataset_id=fac_base.dataset_id,
+                cutoff=fac_cutoff,
+                rows=factor_rows,
+            )
+            published = writer.publish(
+                delta_watermark=int(args.end_date or time.strftime("%Y%m%d")),
+                factor_watermark=fac_cutoff,
+            )
+            return {"factor_batch": fac_batch, "publish": published}
+
+        out = writer.run_locked(_commit_and_publish)
+        print(
+            f"  [delta] factor batch committed: "
+            f"new_rows={out['factor_batch']['new_rows']} "
+            f"skipped={out['factor_batch']['skipped_rows']}",
+            flush=True,
+        )
+        print(
+            f"  [delta] overlay published: delta_wm="
+            f"{out['publish']['delta_watermark']} factor_wm="
+            f"{out['publish']['factor_watermark']}",
+            flush=True,
+        )
+        return {
+            "status": "success",
+            "sync_run_id": raw_step.get("sync_run_id"),
+            "write_mode": "delta",
+            "raw": raw_step,
+            "factor": {
+                "status": "success",
+                "new_rows": out["factor_batch"]["new_rows"],
+                "skipped_rows": out["factor_batch"]["skipped_rows"],
+                "symbols_with_rows": len(factor_rows),
+            },
+            "publish": out["publish"],
+            "reconcile": {
+                "status": "up_to_date",
+                "reason": "virtual_views_auto",
+                "note": "no materialized L1/L2 snapshots in overlay_v1 mode",
+            },
+        }
+    finally:
+        lock.release()
+
+
 def _aggregate_dataset_status(results: Dict[str, dict]) -> Tuple[str, str]:
     """Aggregate per-dataset results into a top-level (status, detail).
 
@@ -4312,6 +4631,14 @@ def main():
                         help="Seconds to pause between tdxquant batches (throttle)")
     parser.add_argument("--skip-ca-detect", action="store_true",
                         help="Skip per-symbol CA detection in incremental mode (much faster)")
+    parser.add_argument("--write-mode", default=None,
+                        choices=["delta"],
+                        help="overlay_v1 EOD: --write-mode delta commits raw+factor "
+                             "DuckDB delta rows and atomically publishes the overlay "
+                             "watermark instead of rewriting full-history blobs. "
+                             "Requires an overlay-enabled data root "
+                             "(migrate_market_data_overlay.py --apply). "
+                             "index/ETF 增量在 overlay 模式下仍走旧 blob 路径。")
 
     args = parser.parse_args()
 
@@ -4653,7 +4980,16 @@ def main():
                 r = sync_tdxquant_incremental(args, store)
         elif src == "tushare":
             asset = (args.asset_class or "stocks").lower()
-            if asset in ("index", "etf", "all"):
+            write_mode = str(getattr(args, "write_mode", "") or "").lower()
+            if write_mode == "delta":
+                # overlay_v1 EOD: raw+factor delta commit + atomic publish.
+                # index/ETF 增量在 overlay 模式仍走旧 blob 路径(它们每天
+                # 重写的体积远小于股票全历史),由 --asset-class 分支处理。
+                if asset in ("index", "etf", "all"):
+                    r = sync_tushare_index_etf_incremental(args, store)
+                else:
+                    r = sync_tushare_chain_delta(args, store)
+            elif asset in ("index", "etf", "all"):
                 if args.adjustment == "adj_factor":
                     r = {"status": "failed",
                          "error": "adj_factor sync does not apply to index/ETF "

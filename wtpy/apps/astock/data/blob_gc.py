@@ -63,12 +63,17 @@ class GcPlan:
     referenced_checkpoint_blobs: int = 0
     disk_blob_count: int = 0
     blocked_by_live_lock: Optional[str] = None
+    blocked_by_overlay_manifest_missing: Optional[str] = None
     retained_manifest_count: int = 0
     warnings: List[str] = field(default_factory=list)
 
     @property
     def reclaimable_bytes(self) -> int:
         return sum(c.size_bytes for c in self.candidates)
+
+    @property
+    def blocked(self) -> bool:
+        return bool(self.blocked_by_live_lock or self.blocked_by_overlay_manifest_missing)
 
     def summarize(self) -> dict:
         return {
@@ -80,6 +85,9 @@ class GcPlan:
             "reclaimable_bytes": self.reclaimable_bytes,
             "reclaimable_gib": round(self.reclaimable_bytes / 1024**3, 4),
             "blocked_by_live_lock": self.blocked_by_live_lock,
+            "blocked_by_overlay_manifest_missing": (
+                self.blocked_by_overlay_manifest_missing
+            ),
             "warnings": self.warnings,
         }
 
@@ -196,6 +204,35 @@ def _checkpoint_blob_shas(store: DatasetStore) -> Set[str]:
     return out
 
 
+def _overlay_referenced_manifest_ids(store: DatasetStore) -> Set[str]:
+    """Dataset ids the overlay registry depends on (base blobs must survive GC).
+
+    The overlay state (delta/overlay_state.json) names the stable base /
+    delisted base / factor bases whose blobs the virtual L1/L2 views merge
+    with the DuckDB delta. These manifests may have no other manifest
+    reference (their virtual views are periodically expired), so GC must keep
+    their blobs or the whole overlay surface breaks.
+    """
+    ids: Set[str] = set()
+    state_path = store.root / "delta" / "overlay_state.json"
+    if not state_path.exists():
+        return ids
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ids
+    for key in (
+        "base_dataset_id",
+        "delisted_base_dataset_id",
+        "factor_base_dataset_id",
+        "supplement_factor_base_dataset_id",
+    ):
+        v = str(data.get(key) or "")
+        if v:
+            ids.add(v)
+    return ids
+
+
 def build_gc_plan(
     store: DatasetStore,
     *,
@@ -231,6 +268,30 @@ def build_gc_plan(
     plan.referenced_manifest_blobs = len(retained_manifest_blobs)
 
     # Defensive: lineage ids that have no manifest on disk are anomalies.
+    missing_lineage = [lid for lid in lineage_ids if lid not in set(manifest_ids)]
+    if missing_lineage:
+        plan.warnings.append(
+            f"manifests reference missing lineage datasets: {missing_lineage[:5]}"
+        )
+
+    # Overlay base references: keep every blob of the overlay-registered base
+    # datasets even when their virtual views have been expired. A MISSING base
+    # is a hard block: GC must never run against a broken overlay baseline
+    # (the missing manifest means we cannot enumerate its blobs, and
+    # collecting them as orphans would corrupt the whole overlay surface) —
+    # mirroring the live-lock guard, the plan is returned empty.
+    overlay_ids = _overlay_referenced_manifest_ids(store)
+    for oid in sorted(overlay_ids):
+        om = store.load_manifest(oid, deep_copy=False)
+        if om is None:
+            plan.blocked_by_overlay_manifest_missing = oid
+            plan.warnings.append(
+                f"overlay state references missing base dataset: {oid} "
+                f"(GC refused)"
+            )
+            return plan
+        retained_manifest_blobs |= _extract_manifest_blob_shas(om.to_dict())
+        lineage_ids.add(oid)
     missing_lineage = [lid for lid in lineage_ids if lid not in set(manifest_ids)]
     if missing_lineage:
         plan.warnings.append(

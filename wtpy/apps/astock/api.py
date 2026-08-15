@@ -282,17 +282,28 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         nonlocal last_trigger_day
         script = str(Path(__file__).resolve().parents[3] / "scripts" / "sync_market_data.py")
         today = int(_dt.date.today().strftime("%Y%m%d"))
+        # overlay_v1 仓库:例行 EOD 走 delta 链(raw+factor 增量写 DuckDB,
+        # 原子发布 watermark),不再每日重写完整行情 NPZ。回滚方式:关掉
+        # ASTOCK_MARKET_STORAGE_MODE 后恢复旧 --mode incremental。
+        overlay_mode = bool(
+            (_os.environ.get("ASTOCK_MARKET_STORAGE_MODE", "").strip().lower())
+            == "overlay_v1"
+        )
+        sync_mode = "delta" if overlay_mode else "incremental"
         cmd = [
             sys.executable, "-u", script,
-            "--source", "tushare", "--mode", "incremental",
+            "--source", "tushare", "--mode", sync_mode,
             "--end-date", str(today), "--fresh",
             "--storage-root", str(cfg.market_data_root),
         ]
+        if overlay_mode:
+            cmd += ["--write-mode", "delta"]
         token = _os.environ.get("TUSHARE_TOKEN", "").strip()
         if token:
             cmd += ["--token", token]
         # 指数/ETF 增量链:股票链成功后顺序执行(同一次自动同步内),避免
         # 并发争抢 Tushare 频率限制。指数/ETF 无复权,与股票链互不影响。
+        # overlay_v1 下指数/ETF 仍走旧 blob 增量路径(体积远小于股票全历史)。
         cmd_ie = None
         if _env_flag("ASTOCK_EOD_SYNC_INDEX_ETF", "1"):
             cmd_ie = [
@@ -846,6 +857,15 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
 
             if not cfg.market_data_root.exists():
                 print("[TUSHARE_PRODUCT] data root missing; waiting for sync")
+                return
+            if cfg.market_storage_overlay_enabled:
+                # overlay_v1: 正式 L1/L2 是运行时虚拟视图(基准 blob + DuckDB
+                # 增量),不再物化快照;跳过产品派生,避免每日重建完整行情 NPZ。
+                print(
+                    "[TUSHARE_PRODUCT] overlay_v1 active: virtual L1/L2 views "
+                    "reflect the delta automatically; skipping materialized "
+                    "reconcile"
+                )
                 return
             result = reconcile_tushare_product_datasets(
                 DatasetStore(cfg.market_data_root)

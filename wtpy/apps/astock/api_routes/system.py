@@ -975,6 +975,8 @@ def api_db_stats(ctx: ApiContext = Depends(get_ctx)) -> dict:
 
 @router.post("/api/v1/data-sync/start")
 def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) -> dict:
+    import os as _os
+
     cfg = ctx.cfg
     _sync_state = ctx.sync_state
     _sync_proc = ctx.sync_proc
@@ -1021,8 +1023,17 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
         # Zero-config default chain (handled inside the script for the same
         # CLI args cron jobs already use): raw incremental -> adj_factor
         # incremental -> product reconcile. Only the full formal L1/L2 chain
-        # reports success.
-        cmd = [sys.executable, "-u", SYNC_SCRIPT, "--source", "tushare", "--mode", "incremental", "--end-date", str(end_date)]
+        # reports success. overlay_v1 仓库:例行同步走 delta 链(增量写
+        # DuckDB + 原子发布 watermark),不再每日重写完整行情 NPZ。
+        overlay_mode = bool(
+            (_os.environ.get("ASTOCK_MARKET_STORAGE_MODE", "").strip().lower())
+            == "overlay_v1"
+        )
+        mode = "delta" if overlay_mode else "incremental"
+        cmd = [sys.executable, "-u", SYNC_SCRIPT, "--source", "tushare",
+               "--mode", mode, "--end-date", str(end_date)]
+        if overlay_mode:
+            cmd += ["--write-mode", "delta"]
         if start_date:
             cmd += ["--start-date", str(start_date)]
     elif payload.task == "factor":
