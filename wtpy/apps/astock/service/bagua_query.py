@@ -737,8 +737,10 @@ def _adjust_day_bars(
             meta["asof_date"] = asof
         return out, meta
 
+    from ..data.dataset_store import DatasetStore as _BqDS
     series = build_factor_series(
-        std_code, dates, adj_root=cfg.adj_root, prefer_baostock=True
+        std_code, dates, adj_root=cfg.adj_root, prefer_baostock=True,
+        store=_BqDS(cfg.market_data_root),
     )
     fac = np.array(series.factors, dtype=float)
     meta["factor_source"] = series.source

@@ -73,9 +73,30 @@ class RuleService:
         reg.save(self.user_registry_path)
 
     def load_full_registry(self) -> IndicatorRegistry:
-        """Bootstrap system indicators + merge user rules."""
+        """Bootstrap system indicators + merge user rules.
+
+        min60_available is True when the warehouse holds a minute_vendor/60m
+        dataset (true 60-minute bars imported from the vendor CSV archives).
+        With it, #MIN60 formulas compile to native minute mode instead of the
+        day-line MACD research proxy.
+        """
+        min60_available = False
         try:
-            reg = IndicatorRegistry.bootstrap(self.cfg.indicator_dir, self.cfg.mapping_path)
+            from ..data.dataset_store import DatasetStore
+            store = DatasetStore(self.cfg.market_data_root)
+            for mid in store.list_manifests():
+                m = store.load_manifest(mid, deep_copy=False)
+                if m and m.source == "minute_vendor" and m.period == "60m" \
+                        and m.status == "ready" and m.symbol_count and m.symbol_count > 0:
+                    min60_available = True
+                    break
+        except Exception:
+            min60_available = False
+        try:
+            reg = IndicatorRegistry.bootstrap(
+                self.cfg.indicator_dir, self.cfg.mapping_path,
+                min60_available=min60_available,
+            )
         except Exception:
             reg = IndicatorRegistry([BAGUA_SPEC])
         user = self._load_user_registry()

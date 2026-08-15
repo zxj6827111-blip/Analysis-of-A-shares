@@ -279,6 +279,7 @@ def compute_indicator_signal(
     bars: Dict[str, np.ndarray],
     *,
     cross_period_data: Optional[Dict[str, np.ndarray]] = None,
+    minute_mode: bool = False,
 ) -> Tuple[Optional[np.ndarray], Optional[str]]:
     if spec.compile_status != "ready":
         return None, f"indicator not ready: {spec.compile_status} ({spec.failure_reason})"
@@ -287,16 +288,29 @@ def compute_indicator_signal(
     cross = dict(cross_period_data or {})
     # Research path: fill #MIN60 MACD refs with day-line DIF/DEA proxy.
     if "MIN60" in (spec.dependencies or []):
-        if not getattr(spec, "uses_min60_day_proxy", False) and not (
+        if minute_mode or (spec.parameters or {}).get("min60_native"):
+            # True 60-minute data: #MIN60 refs resolve from the minute series
+            # itself (MACD over the intraday close), not the day-line proxy.
+            from .indicators.min60_proxy import day_macd_dif_dea
+            closes = bars.get("close")
+            if closes is None:
+                return None, "minute_mode MIN60 requires close series"
+            dif, dea = day_macd_dif_dea(np.asarray(closes, dtype=np.float64))
+            cross["MACD.DIF#MIN60"] = dif
+            cross["MACD.DEA#MIN60"] = dea
+            cross["DIF#MIN60"] = dif
+            cross["DEA#MIN60"] = dea
+        elif not getattr(spec, "uses_min60_day_proxy", False) and not (
             (spec.parameters or {}).get("min60_day_proxy")
         ):
             return None, "MIN60 dependency blocks signal generation without day proxy"
-        from .indicators.min60_proxy import build_min60_day_proxy_cross, merge_cross_period
-        try:
-            proxy = build_min60_day_proxy_cross(bars)
-        except Exception as e:  # noqa: BLE001
-            return None, f"MIN60 day proxy failed: {e}"
-        cross = merge_cross_period(cross, proxy)
+        else:
+            from .indicators.min60_proxy import build_min60_day_proxy_cross, merge_cross_period
+            try:
+                proxy = build_min60_day_proxy_cross(bars)
+            except Exception as e:  # noqa: BLE001
+                return None, f"MIN60 day proxy failed: {e}"
+            cross = merge_cross_period(cross, proxy)
     result = run_formula(
         spec.formula_text,
         bars,

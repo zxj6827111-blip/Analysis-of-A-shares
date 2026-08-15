@@ -355,8 +355,10 @@ def collect_indicator_signals_with_bagua(
                         asof_date=end if end else (day_raw[-1].date if day_raw else None),
                     )
                 else:
+                    from ..data.dataset_store import DatasetStore as _GuaDS
                     series = build_factor_series(
-                        code, dates, adj_root=cfg.adj_root, prefer_baostock=True
+                        code, dates, adj_root=cfg.adj_root, prefer_baostock=True,
+                        store=_GuaDS(cfg.market_data_root),
                     )
                     import numpy as np
 

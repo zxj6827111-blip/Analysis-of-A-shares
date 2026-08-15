@@ -726,12 +726,49 @@ def run_backtest(
     use_signal_cache = bool(getattr(req, "use_signal_cache", False))
 
     def _min60_bars_for_code(code, start_, end_):
-        """60-min bars: vendor CSV first, .lc1 fallback; explicit truncation.
+        """60-min bars: warehouse dataset first, vendor CSV/.lc1 fallback.
 
-        Returns (bars, source). source == "csv_truncated" means the vendor
-        CSV archives stop at MIN_VENDOR_60MIN_MAX_DATE and no .lc1 covers the
-        requested range — the caller must reject (never silently truncate).
+        Preference order:
+          1. minute_vendor/60m ready dataset in the warehouse (the imported
+             blob+manifest form — this is the production surface).
+          2. Vendor CSV archives directly (research/dev when the import has
+             not been run yet).
+          3. .lc1 binary minute files (last resort).
+        Returns (bars, source); source == "csv_truncated" means only CSV
+        covers the range and it stops at MIN_VENDOR_60MIN_MAX_DATE — the
+        caller must reject (never silently truncate).
         """
+        if _repo is not None:
+            try:
+                from ..data.repository import DatasetNotFoundError as _M60NF
+                _m60_ds = _repo.resolve_latest_ready(
+                    source="minute_vendor", adjustment="none", period="60m"
+                )
+                if _m60_ds is not None:
+                    _mbars = _repo.load_bars(
+                        dataset_id=_m60_ds.dataset_id,
+                        symbol=code,
+                        start_date=start_,
+                        end_date=end_,
+                    )
+                    if _mbars:
+                        from ..data.tdx_reader import DayBar as _MinDayBar
+                        bars = [
+                            _MinDayBar(
+                                date=b.trade_date,
+                                open=b.open,
+                                high=b.high,
+                                low=b.low,
+                                close=b.close,
+                                amount=b.amount,
+                                volume=b.volume,
+                                reserved=b.trade_date // 100,
+                            )
+                            for b in _mbars
+                        ]
+                        return bars, "warehouse"
+            except Exception:
+                pass  # fall through to CSV / .lc1
         bars, src = load_min60_daybars_any(
             cfg.tdx_root,
             cfg.minute_vendor_root,
@@ -935,7 +972,11 @@ def run_backtest(
                     )
                 factor_series.append(series)
             else:
-                series = build_factor_series(code, dates, adj_root=cfg.adj_root, prefer_baostock=True)
+                from ..data.dataset_store import DatasetStore as _LegacyDS
+                series = build_factor_series(
+                    code, dates, adj_root=cfg.adj_root, prefer_baostock=True,
+                    store=_LegacyDS(cfg.market_data_root),
+                )
                 factor_series.append(series)
                 import numpy as np
 
@@ -1054,6 +1095,11 @@ def run_backtest(
             m60 = _apply_min60_qfq(m60, fs, end)
             bars = min60_bars_to_arrays(m60)
             trade_dates = bars.get("trade_date")
+            # 按日去重策略（显式约定）：同一交易日内多个 60 分钟信号（同一
+            # 股票）在下方 SignalEvent 构造时都以真实交易日 d_out 聚合为同一天，
+            # strategy_engine 的 sig_map 按 (date, code) 去重 → 同日只买一次
+            # （"当天首次命中触发，当日执行"）。这不是静默丢信号——4 个 60min
+            # bar 各自产生的信号全部进入 n_events，仅在成交侧按日合并。
         else:
             p_bars_ind = build_period_bars(day_for_ind, period, asof=asof, weekly_bar_mode=_weekly_bar_mode)
             p_bars_raw = build_period_bars(day_raw, period, asof=asof, weekly_bar_mode=_weekly_bar_mode)
@@ -1063,7 +1109,10 @@ def run_backtest(
             trade_dates = None
         sigs = []
         for spec in trade_specs:
-            sig, err = compute_indicator_signal(spec, bars)
+            sig, err = compute_indicator_signal(
+                spec, bars,
+                minute_mode=(period == "MIN60"),
+            )
             if err:
                 errors.append({"code": code, "indicator": spec.id, "error": err})
                 continue

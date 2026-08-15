@@ -418,12 +418,38 @@ def build_factor_series(
     force_identity: bool = False,
     refresh: bool = False,
     history_start: str = BAOSTOCK_HISTORY_START,
+    store: Optional["DatasetStore"] = None,
 ) -> FactorSeries:
     """Load or fetch factors for dates; persist under adj_root.
 
     Always queries Baostock from history_start (not local first bar) so the
     last pre-history event can seed the first local segment.
+
+    ``store`` (repository mode): when given and a ready tushare/adj_factor
+    dataset exists, the factor series is built from the immutable warehouse
+    dataset first (offline, BSE included). Only when the warehouse has no
+    ready factor dataset, or the symbol is absent from it, does the legacy
+    Baostock / cache path run. Passing no ``store`` keeps the exact legacy
+    behaviour — explicit legacy callers (卦象 bagua plane, old CLI) are
+    unchanged.
     """
+    if store is not None:
+        try:
+            from .repository import MarketDataRepository
+
+            _repo = MarketDataRepository(store)
+            _fm = _repo.resolve_latest_ready(
+                source="tushare", adjustment="adj_factor", period="1d"
+            )
+            if _fm is not None:
+                series = build_factor_series_from_dataset(
+                    store, _fm, std_code, dates
+                )
+                if series is not None and series.quality == "complete":
+                    return series
+        except Exception:
+            pass  # fall back to the legacy path below
+
     adj_root = Path(adj_root)
     adj_root.mkdir(parents=True, exist_ok=True)
     dates_i = [int(d) for d in dates]

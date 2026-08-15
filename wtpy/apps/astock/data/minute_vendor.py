@@ -240,6 +240,69 @@ class MinuteVendorReader:
                 continue
         return [by_date[d] for d in sorted(by_date.keys())]
 
+    def fetch_chunk(
+        self,
+        symbols: Sequence[str],
+        *,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+    ) -> Dict[str, List[DayBar]]:
+        """ZIP-first batch read for a chunk of canonical symbols.
+
+        Each archive ZIP is opened once and every CSV entry is checked against
+        the chunk's target file names — O(num_zips) opens instead of
+        O(symbols × num_zips). Returns {canonical_symbol: [DayBar, ...]}.
+        """
+        target: Dict[str, str] = {}
+        for s in symbols:
+            vc = canonical_to_vendor_code(s)
+            target[vc] = s
+            target[vc.split(".")[0]] = s  # not used; kept for clarity
+        # Build a filename -> canonical map for the chunk.
+        fname_map: Dict[str, str] = {}
+        for s in symbols:
+            vc = canonical_to_vendor_code(s)
+            fname_map[vc + ".csv"] = s
+            fname_map[vc + "_"] = s  # year-suffixed variant prefix
+
+        result: Dict[str, Dict[int, DayBar]] = {s: {} for s in symbols}
+        for tag, z in self._zips:
+            try:
+                for name, raw in _iter_zip_entries(z, target=None):
+                    base = Path(name).name
+                    canonical = None
+                    if base in fname_map:
+                        canonical = fname_map[base]
+                    else:
+                        for prefix in (base[:-4].rsplit("_", 1)[0],):
+                            if prefix + ".csv" in fname_map:
+                                canonical = fname_map[prefix + ".csv"]
+                                break
+                    if canonical is None:
+                        # year-suffixed names like sh600000_2025.csv
+                        stem = base[:-4]
+                        for suf in ("_2025", "_2026", "_2024", "_2023",
+                                    "_2022", "_2021", "_2020", "_2019", "_2018",
+                                    "_2017", "_2016", "_2015", "_2014", "_2013",
+                                    "_2012", "_2011", "_2010", "_2009", "_2008",
+                                    "_2007", "_2006", "_2005", "_2004", "_2003",
+                                    "_2002", "_2001", "_2000"):
+                            if stem.endswith(suf):
+                                vc = stem[: -len(suf)]
+                                if vc + ".csv" in fname_map:
+                                    canonical = fname_map[vc + ".csv"]
+                                break
+                    if canonical is None:
+                        continue
+                    for b in self._parse_csv(raw, start=start, end=end):
+                        result[canonical][b.date] = b
+            except (zipfile.BadZipFile, OSError):
+                continue
+        out: Dict[str, List[DayBar]] = {}
+        for s in symbols:
+            out[s] = [result[s][d] for d in sorted(result[s].keys())]
+        return out
+
     def coverage_summary(self, sample: Sequence[str]) -> dict:
         """Quick coverage for UI banner: how many sample codes have data."""
         ok = 0

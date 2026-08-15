@@ -13,6 +13,7 @@ from typing import List, Optional, Sequence
 from .config import AStockConfig, get_default_config
 from .data.calendar import TradeCalendar
 from .data.data_store import DataStore, sha256_file, atomic_write_json
+from .data.dataset_store import DatasetStore
 from .data.catalog import rebuild_catalog_from_storage, selected_universe_sha, file_sha_or_empty
 from .indicators.tn6_importer import (
     load_source_map, save_source_map, file_sha256, prune_invalid_source_map,
@@ -355,7 +356,10 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
                 continue
         day_raw_map[code] = day_raw
         dates = [b.date for b in day_raw]
-        series = build_factor_series(code, dates, adj_root=cfg.adj_root, prefer_baostock=True)
+        series = build_factor_series(
+            code, dates, adj_root=cfg.adj_root, prefer_baostock=True,
+            store=DatasetStore(cfg.market_data_root),
+        )
         factor_series.append(series)
         import numpy as np
         fac = np.array(series.factors, dtype=float)

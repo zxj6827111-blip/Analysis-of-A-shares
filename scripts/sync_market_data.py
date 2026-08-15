@@ -177,6 +177,46 @@ def _infer_index_etf_parent(
     return int(d.strftime("%Y%m%d")), best[1]
 
 
+def _infer_hybrid_resume(
+    store: DatasetStore,
+) -> Tuple[Optional[int], Optional[str]]:
+    """Hybrid-seed resume parent: the latest ready local_vendor/none/1d set.
+
+    hybrid_seeded_v1 policy: the daily Tushare incremental chain seeds its
+    history from the local_vendor full import (2000-20260717) instead of
+    refetching the whole history from Tushare. The parent merge uses the
+    generic ``_merge_bar_lists`` path in ``_sync_dataset`` (source-agnostic:
+    unadjusted OHLCV is identical across the two sources — verified by the
+    overlap audit), so no code change is needed on the write side.
+
+    This is OPT-IN via --hybrid-seed: without it the chain keeps the pure
+    tushare parent (tushare_only_v1). Rolling back = drop the flag (and, if
+    needed, publish a fresh pure-tushare full). Returns (start_date, id) with
+    a 20-day safety margin, mirroring _infer_incremental_resume.
+    """
+    import datetime as _dt
+
+    best_id: Optional[str] = None
+    best_cut = 0
+    for mid in store.list_manifests():
+        m = store.load_manifest(mid, deep_copy=False)
+        if not m or m.status != "ready":
+            continue
+        if m.source != "local_vendor" or m.adjustment != "none" or m.period != "1d":
+            continue
+        c = int(m.data_cutoff_date or 0)
+        if c <= 0:
+            continue
+        if c > best_cut:
+            best_cut = c
+            best_id = m.dataset_id
+    if best_id is None:
+        return None, None
+    d = _dt.datetime.strptime(str(best_cut), "%Y%m%d").date()
+    d -= _dt.timedelta(days=20)
+    return int(d.strftime("%Y%m%d")), best_id
+
+
 def _normalize_symbol(symbol: str) -> str:
     """Normalize any symbol format to SSE.STK.600000 / SZSE.STK.000001 / BSE.STK.430047.
 
@@ -569,12 +609,26 @@ def sync_tushare_incremental(
     # Resume from the latest ready dataset (merging its history) unless the
     # user pins a start date; without this, incremental == full-history
     # refetch (6000-row cap truncates) or a window-only orphan dataset.
+    # --hybrid-seed (hybrid_seeded_v1): the local_vendor full import becomes
+    # the incremental parent, so the daily chain continues its history from
+    # the vendor CSV archives instead of refetching it from Tushare.
+    hybrid_seed = bool(getattr(args, "hybrid_seed", False))
     resume: Dict[str, Tuple[Optional[int], Optional[str]]] = {}
     for adj in (AdjustmentMode.NONE, AdjustmentMode.QFQ):
         if args.start_date is None:
-            inferred, parent_id = _infer_incremental_resume(
-                store, source=DataSource.TUSHARE.value, adjustment=adj.value
-            )
+            if hybrid_seed and adj == AdjustmentMode.NONE:
+                inferred, parent_id = _infer_hybrid_resume(store)
+                if inferred:
+                    print(f"  [hybrid-seed] resuming {adj.value}/1d from "
+                          f"local_vendor parent {parent_id} (cutoff-20d={inferred})")
+                else:
+                    inferred, parent_id = _infer_incremental_resume(
+                        store, source=DataSource.TUSHARE.value, adjustment=adj.value
+                    )
+            else:
+                inferred, parent_id = _infer_incremental_resume(
+                    store, source=DataSource.TUSHARE.value, adjustment=adj.value
+                )
             if inferred:
                 print(f"  [auto] no --start-date given: resuming {adj.value}/1d "
                       f"from {inferred} (latest ready cutoff - 20d)")
@@ -4197,6 +4251,10 @@ def main():
     parser.add_argument("--incoming-root", default=None,
                         help="Path to local vendor incoming ZIPs (for --source local_vendor)")
     parser.add_argument("--token", default=None, help="Tushare token (prefer ts.get_token())")
+    parser.add_argument("--hybrid-seed", action="store_true",
+                        help="hybrid_seeded_v1: seed Tushare daily incremental history "
+                             "from the ready local_vendor/none/1d full import (OPT-IN; "
+                             "without it the chain stays tushare_only_v1)")
     parser.add_argument("--storage-root", default=None)
     parser.add_argument("--dataset-id", default=None, help="For audit mode")
     parser.add_argument("--dry-run", action="store_true",
