@@ -224,6 +224,22 @@ class AStockConfig:
         sr = self.storage_root.resolve()
         return not str(md).startswith(str(sr))
 
+    @property
+    def minute_vendor_root(self) -> Optional[Path]:
+        """Root of the vendor-exported minute CSV archives (60-minute bars).
+
+        Resolution order: MINUTE_VENDOR_ROOT env > LOCAL_VENDOR_RAW_ROOT env
+        > None (minute CSV unavailable → MIN60 falls back to .lc1 files).
+        The reader walks this root for 沪深分钟数据/Stock_60min_2000-now and
+        京市分钟数据/StockJ_60min_2005-now, so either the minute-data root or
+        the local-vendor incoming root works.
+        """
+        for key in ("MINUTE_VENDOR_ROOT", "LOCAL_VENDOR_RAW_ROOT"):
+            v = os.environ.get(key, "").strip()
+            if v:
+                return Path(v)
+        return None
+
     def ensure_dirs(self) -> None:
         for p in [
             self.storage_root,

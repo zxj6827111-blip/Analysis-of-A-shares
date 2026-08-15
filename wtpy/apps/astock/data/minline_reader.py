@@ -236,6 +236,49 @@ def load_min60_daybars(
     return aggregate_min60(mins)
 
 
+#: Latest trading day covered by the vendor-exported 60-minute CSV archives.
+#: Requests beyond this date must be rejected explicitly (never silently
+#: truncated) unless .lc1 files provide newer coverage.
+MIN_VENDOR_60MIN_MAX_DATE = 20260717
+
+
+def load_min60_daybars_any(
+    tdx_root: Path,
+    minute_vendor_root: Optional[Path],
+    std_code: str,
+    *,
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+) -> Tuple[List[DayBar], str]:
+    """Load 60-minute bars: vendor CSV archives first, .lc1 binary fallback.
+
+    Returns ``(bars, source)`` where source is one of:
+      - "vendor_csv": bars came from the exported minute CSV archives;
+      - "tdx_lc1":    bars came from local .lc1 binary minute files;
+      - "none":       no data anywhere.
+
+    CSV coverage ends at MIN_VENDOR_60MIN_MAX_DATE; callers that request a
+    later end date must reject (or note) the truncation explicitly rather
+    than silently returning a partial series.
+    """
+    from .minute_vendor import MinuteVendorReader
+
+    if minute_vendor_root is not None:
+        try:
+            reader = MinuteVendorReader(minute_vendor_root)
+            if reader.health_check():
+                bars = reader.read_symbol_minutes(std_code, start=start, end=end)
+                if bars:
+                    return bars, "vendor_csv"
+        except Exception:
+            pass  # fall through to .lc1
+
+    mins = read_symbol_minutes(tdx_root, std_code, start=start, end=end)
+    if not mins:
+        return [], "none"
+    return aggregate_min60(mins), "tdx_lc1"
+
+
 def min60_coverage_summary(tdx_root: Path, sample_codes: Sequence[str]) -> dict:
     """Quick coverage for UI banner."""
     ok = 0

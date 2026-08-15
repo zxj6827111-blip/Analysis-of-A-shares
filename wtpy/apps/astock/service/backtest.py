@@ -24,7 +24,12 @@ from ..data.calendar import TradeCalendar
 from ..data.catalog import selected_universe_sha
 from ..data.data_store import DataStore
 from ..data.tdx_reader import TdxDayReader
-from ..data.minline_reader import load_min60_daybars, min60_bars_to_arrays
+from ..data.minline_reader import (
+    MIN_VENDOR_60MIN_MAX_DATE,
+    load_min60_daybars,
+    load_min60_daybars_any,
+    min60_bars_to_arrays,
+)
 from ..indicators.registry import IndicatorRegistry
 from ..indicators.tn6_importer import load_source_map, resolve_formula_audit
 from ..strategy import (
@@ -720,6 +725,68 @@ def run_backtest(
     execution_cache_hit = False
     use_signal_cache = bool(getattr(req, "use_signal_cache", False))
 
+    def _min60_bars_for_code(code, start_, end_):
+        """60-min bars: vendor CSV first, .lc1 fallback; explicit truncation.
+
+        Returns (bars, source). source == "csv_truncated" means the vendor
+        CSV archives stop at MIN_VENDOR_60MIN_MAX_DATE and no .lc1 covers the
+        requested range — the caller must reject (never silently truncate).
+        """
+        bars, src = load_min60_daybars_any(
+            cfg.tdx_root,
+            cfg.minute_vendor_root,
+            code,
+            start=start_,
+            end=end_,
+        )
+        if src == "vendor_csv" and end_ and int(end_) > MIN_VENDOR_60MIN_MAX_DATE:
+            lc1 = load_min60_daybars(cfg.tdx_root, code, start=start_, end=end_)
+            if lc1:
+                return lc1, "tdx_lc1"
+            return None, "csv_truncated"
+        return bars, src
+
+    def _apply_min60_qfq(m60, fs, end_):
+        """Scale raw 60-min bars by the day-aligned factor series (qfq).
+
+        Same math as the composite derivation: ratio(t) = factor_asof(t) /
+        anchor_factor (last factor on or before the run end). Bars whose day
+        has no factor keep the anchor ratio. With no usable factor series the
+        bars stay unadjusted (identical to the pre-change behaviour).
+        """
+        if not m60 or fs is None:
+            return m60
+        dates = [int(d) for d in (getattr(fs, "dates", None) or [])]
+        factors = getattr(fs, "factors", None) or []
+        if not dates or not factors or len(dates) != len(factors):
+            return m60
+        import bisect as _bisect
+        idx = _bisect.bisect_right(dates, int(end_ or 0)) - 1
+        if idx < 0:
+            return m60
+        anchor = float(factors[idx])
+        if anchor <= 0:
+            return m60
+        from ..data.tdx_reader import DayBar as _MinDayBar
+        fmap = {d: float(f) for d, f in zip(dates, factors) if float(f) > 0}
+        out = []
+        for b in m60:
+            fac = fmap.get(int(b.reserved)) if b.reserved else None
+            ratio = (fac if fac else anchor) / anchor
+            out.append(
+                _MinDayBar(
+                    date=b.date,
+                    open=b.open * ratio,
+                    high=b.high * ratio,
+                    low=b.low * ratio,
+                    close=b.close * ratio,
+                    amount=b.amount,
+                    volume=b.volume,
+                    reserved=b.reserved,
+                )
+            )
+        return out
+
     def _load_maps_and_maybe_signals(*, compute_signals: bool) -> List[SignalEvent]:
         """Always fill raw/adj/period maps + factor_series; optionally emit events."""
         local_events: List[SignalEvent] = []
@@ -911,9 +978,18 @@ def run_backtest(
                     period_raw_map[code] = day_raw
                     period_signal_map[code] = day_for_ind
                 elif period == "MIN60":
-                    m60 = load_min60_daybars(cfg.tdx_root, code, start=start, end=end)
+                    m60, _msrc = _min60_bars_for_code(code, start, end)
                     period_raw_map[code] = m60 or []
                     period_signal_map[code] = m60 or []
+                    if _msrc == "csv_truncated":
+                        errors.append({
+                            "code": code,
+                            "indicator": "*",
+                            "error": (
+                                f"分钟CSV截止{MIN_VENDOR_60MIN_MAX_DATE}且无.lc1覆盖，"
+                                f"请求end={end}超出（不静默截断）"
+                            ),
+                        })
                 else:
                     period_raw_map[code] = build_period_bars(day_raw, period, asof=asof, weekly_bar_mode=_weekly_bar_mode)
                     period_signal_map[code] = build_period_bars(
@@ -922,11 +998,12 @@ def run_backtest(
                 continue
 
             local_events.extend(
-                _events_for_code(code, day_raw, day_for_ind, asof)
+                _events_for_code(code, day_raw, day_for_ind, asof,
+                                 fs=factor_series[idx] if idx < len(factor_series) else None)
             )
         return local_events
 
-    def _events_for_code(code, day_raw, day_for_ind, asof) -> List[SignalEvent]:
+    def _events_for_code(code, day_raw, day_for_ind, asof, fs=None) -> List[SignalEvent]:
         """Indicator signals for one code from already-built bar lanes."""
         local_events: List[SignalEvent] = []
         if period == "DWM":
@@ -956,12 +1033,17 @@ def run_backtest(
         if period == "MIN60":
             m60 = period_raw_map.get(code)
             if m60 is None:
-                m60 = load_min60_daybars(
-                    cfg.tdx_root,
-                    code,
-                    start=start,
-                    end=end,
-                )
+                m60, _msrc = _min60_bars_for_code(code, start, end)
+                if _msrc == "csv_truncated":
+                    errors.append({
+                        "code": code,
+                        "indicator": "*",
+                        "error": (
+                            f"分钟CSV截止{MIN_VENDOR_60MIN_MAX_DATE}且无.lc1覆盖，"
+                            f"请求end={end}超出（不静默截断）"
+                        ),
+                    })
+                    return local_events
                 period_raw_map[code] = m60 or []
                 period_signal_map[code] = m60 or []
             elif code not in period_signal_map:
@@ -969,6 +1051,7 @@ def run_backtest(
             if not m60:
                 errors.append({"code": code, "indicator": "*", "error": "无60分钟线数据(.lc1)"})
                 return local_events
+            m60 = _apply_min60_qfq(m60, fs, end)
             bars = min60_bars_to_arrays(m60)
             trade_dates = bars.get("trade_date")
         else:
@@ -1049,7 +1132,8 @@ def run_backtest(
             else:
                 day_for_ind = standard_qfq_map.get(code) or day_raw
             asof = day_raw[-1].date if day_raw else None
-            local_events.extend(_events_for_code(code, day_raw, day_for_ind, asof))
+            local_events.extend(_events_for_code(code, day_raw, day_for_ind, asof,
+                                                 fs=factor_series[idx] if idx < len(factor_series) else None))
         return local_events
 
     def _make_signal_cache_key(factor_manifest: str) -> str:
