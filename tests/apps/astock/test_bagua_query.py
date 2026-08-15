@@ -1312,3 +1312,150 @@ def test_export_mixed_codes_with_invalid_dropped(monkeypatch, tmp_path):
     assert meta2.get("stock_count") == 0
     assert meta2.get("etf_count") == 1
     assert meta2.get("sheets") == "etf-all"
+
+
+# ---- 日柱补齐：上市日期推算 60 甲子 ----
+
+def test_rizhu_from_list_date_known_values():
+    """60 甲子推算与 日柱(1).xlsx 已知值对拍（口径=上市日当天干支）。"""
+    cases = [
+        (18991222, "甲子"),  # 锚点
+        (19911104, "戊寅"),  # 已知对拍值
+        (19910403, "癸卯"),  # 000001 平安银行
+        (19991110, "丙寅"),  # 600000 浦发银行
+        (20050223, "戊寅"),  # 510050 上证50ETF
+        (20120528, "己丑"),  # 510300 沪深300ETF
+        (20201116, "癸亥"),  # 588000 科创50ETF
+        (20250613, "癸丑"),  # 688795 摩尔线程
+        (20250620, "庚申"),  # 600930 华电新能
+    ]
+    for ymd, expect in cases:
+        assert bq._rizhu_from_list_date(ymd) == expect, (ymd, expect)
+
+
+def test_ensure_rizhu_coverage_cache_hit_no_fetch(monkeypatch, tmp_path):
+    """缓存命中时不再调 Tushare，直接推算补齐缺失代码。"""
+    monkeypatch.setattr(bq, "_LIST_DATES_CACHE", {})
+    monkeypatch.setattr(bq, "_rizhu_list_dates_cache_path", lambda: tmp_path / "c.json")
+    monkeypatch.setattr(
+        bq,
+        "_load_list_date_cache",
+        lambda: ({"600930": 20250620}, {"510300": 20120528}),
+    )
+    called = {"n": 0}
+
+    def boom(*_a, **_k):
+        called["n"] += 1
+        raise AssertionError("不应调用 Tushare")
+
+    monkeypatch.setattr(bq, "_fetch_list_dates_from_tushare", boom)
+    got = bq.ensure_rizhu_coverage(
+        SimpleNamespace(), ["600930", "510300", "600000"], {"600000": "甲子"}
+    )
+    assert got == {"600930": "庚申", "510300": "己丑"}
+    assert called["n"] == 0
+
+
+def test_ensure_rizhu_coverage_fetch_and_persist(monkeypatch, tmp_path):
+    """缓存缺失时拉 Tushare 并落盘，之后走缓存。"""
+    monkeypatch.setattr(bq, "_LIST_DATES_CACHE", {})
+    cache_file = tmp_path / "c.json"
+    monkeypatch.setattr(bq, "_rizhu_list_dates_cache_path", lambda: cache_file)
+    monkeypatch.setattr(
+        bq,
+        "_fetch_list_dates_from_tushare",
+        lambda _cfg: ({"600930": 20250620}, {"510300": 20120528}),
+    )
+    got = bq.ensure_rizhu_coverage(SimpleNamespace(), ["600930", "510300"], {})
+    assert got == {"600930": "庚申", "510300": "己丑"}
+    # 已持久化，二次调用不再触发网络
+    monkeypatch.setattr(
+        bq, "_fetch_list_dates_from_tushare",
+        lambda _cfg: (_ for _ in ()).throw(AssertionError("不应二次拉取")),
+    )
+    got2 = bq.ensure_rizhu_coverage(SimpleNamespace(), ["600930", "510300"], {})
+    assert got2 == {"600930": "庚申", "510300": "己丑"}
+
+
+def test_ensure_rizhu_coverage_tushare_failure_degrades(monkeypatch, tmp_path):
+    """Tushare 不可用时静默降级：已缓存的部分返回，其余放弃，不抛异常。"""
+    monkeypatch.setattr(bq, "_LIST_DATES_CACHE", {})
+    monkeypatch.setattr(bq, "_rizhu_list_dates_cache_path", lambda: tmp_path / "c.json")
+    monkeypatch.setattr(
+        bq,
+        "_load_list_date_cache",
+        lambda: ({"600930": 20250620}, {}),
+    )
+    monkeypatch.setattr(
+        bq, "_fetch_list_dates_from_tushare",
+        lambda _cfg: (_ for _ in ()).throw(RuntimeError("network down")),
+    )
+    got = bq.ensure_rizhu_coverage(
+        SimpleNamespace(), ["600930", "510300", "000001"], {"000001": "癸卯"}
+    )
+    assert got == {"600930": "庚申"}  # 仅缓存覆盖的
+
+
+def test_export_fills_rizhu_for_new_stock_and_etf(monkeypatch, tmp_path):
+    """导出时次新股与 ETF 的日柱列被补齐（Excel 表外代码）。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    bars = [DayBar(20240103, 6.27, 7.33, 5.90, 5.90, 1.0, 1.0)]
+    monkeypatch.setattr(
+        bq,
+        "_load_dataset_bars",
+        lambda *_a, **_k: (
+            bars,
+            {
+                "dataset_id": "mock",
+                "dataset_source": "tdxquant",
+                "dataset_adjustment": "front",
+                "dataset_status": "ready",
+                "covers_asof": True,
+                "candidate_datasets": 1,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        bq,
+        "BaguaPlaneSession",
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("no md")),
+    )
+    monkeypatch.setattr(bq, "load_rizhu_map", lambda _p=None: {"000001": "癸卯"})
+    monkeypatch.setattr(bq, "_LIST_DATES_CACHE", {})
+    monkeypatch.setattr(bq, "_rizhu_list_dates_cache_path", lambda: tmp_path / "c.json")
+    monkeypatch.setattr(
+        bq,
+        "_fetch_list_dates_from_tushare",
+        lambda _cfg: ({"600930": 20250620}, {"510300": 20120528}),
+    )
+    cfg = SimpleNamespace(
+        bagua_json=JSON_PATH,
+        storage_root=tmp_path,
+        tdx_root=tmp_path,
+        market_data_root=tmp_path / "md",
+        forecast_root=tmp_path,
+        forecast_weekly_dir=tmp_path,
+        universe_path=tmp_path / "universe.json",
+        adj_root=tmp_path,
+    )
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2024-01-03",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        codes=["600930", "sh510300"],
+        all_stocks=False,
+    )
+    assert path.exists()
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    rizhu_by_code = {}
+    for sn in ("stock-all", "etf-all"):
+        for row in wb[sn].iter_rows(min_row=2, values_only=True):
+            rizhu_by_code[row[0]] = row[7]  # 日柱列
+    assert rizhu_by_code.get("600930") == "庚申", rizhu_by_code
+    assert rizhu_by_code.get("510300") == "己丑", rizhu_by_code
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta.get("rizhu_note", "").startswith("Excel 日柱表优先"), meta
