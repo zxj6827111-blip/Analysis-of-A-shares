@@ -8,6 +8,15 @@
 - 每次发版递增版本号（如 2.0 → 2.1 → 2.2），并打 `v{版本号}` 的 git tag
 - 提交后右上角版本号自动显示新版本
 
+## [2.8] - 2026-08-15
+
+### 修复
+- **卦象导出 name 列在 Tushare-only 部署下全空**：
+  - 根因：`resolve_stock_name` 的三个数据源（universe.json / TDX infoharbor / forecast weekly 快照）在 Tushare-only 服务器上均不存在，导致导出 name 列全空（etf-all 仅剩硬编码 watchlist 的 10 个知名宽基有名字）
+  - `ensure_name_coverage`：复用日柱补齐的 Tushare 元数据拉取（`stock_basic`/`fund_basic` 的 name 与 list_date 同源），对 `resolve_stock_name` 返回空的代码按 code6 兜底补齐中文名
+  - 元数据缓存升级 schema v2：`rizhu_list_dates.json` 同时落盘 `stocks`/`etfs`（list_date）与 `stock_names`/`etf_names`（名称），向后兼容 v1 缓存；name 与日柱共用一次拉取，不重复触网
+  - 导出 meta 新增 `name_note` 说明 name 列补齐口径
+
 ## [2.7] - 2026-08-15
 
 ### 新增
