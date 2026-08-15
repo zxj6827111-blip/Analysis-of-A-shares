@@ -1881,6 +1881,164 @@ def load_rizhu_map(path: Optional[Path] = None) -> Dict[str, str]:
     return dict(out)
 
 
+# ---- 日柱补齐：Excel 表外的次新股 / ETF 按上市日期推算 60 甲子 ----
+
+_GAN = "甲乙丙丁戊己庚辛壬癸"
+_ZHI = "子丑寅卯辰巳午未申酉戌亥"
+_RIZHU_ANCHOR = _ymd_date(1899, 12, 22)  # 甲子日
+
+
+def _rizhu_from_list_date(ymd: int) -> str:
+    """上市日期 → 日干支（60 甲子），口径与 日柱(1).xlsx 一致（上市日当天干支）。"""
+    d = _ymd_date(ymd // 10000, (ymd // 100) % 100, ymd % 100)
+    n = (d - _RIZHU_ANCHOR).days % 60
+    return _GAN[n % 10] + _ZHI[n % 12]
+
+
+def _rizhu_list_dates_cache_path() -> Path:
+    return Path(__file__).resolve().parents[4] / "storage" / "astock" / "rizhu_list_dates.json"
+
+
+_LIST_DATES_CACHE: Dict[str, Any] = {}
+
+
+def _load_list_date_cache() -> Tuple[Dict[str, int], Dict[str, int]]:
+    """读 code6 -> list_date 的股票/ETF 缓存（rizhu_list_dates.json）。"""
+    cached = _LIST_DATES_CACHE.get("data")
+    if cached is not None:
+        return cached[0], cached[1]
+    import json as _json
+
+    try:
+        j = _json.loads(_rizhu_list_dates_cache_path().read_text(encoding="utf-8"))
+        stocks = {str(k): int(v) for k, v in j.get("stocks", {}).items()}
+        etfs = {str(k): int(v) for k, v in j.get("etfs", {}).items()}
+        _LIST_DATES_CACHE["data"] = (stocks, etfs)
+        return stocks, etfs
+    except Exception:
+        return {}, {}
+
+
+def _save_list_date_cache(stocks: Dict[str, int], etfs: Dict[str, int]) -> None:
+    import json as _json
+
+    try:
+        p = _rizhu_list_dates_cache_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            _json.dumps(
+                {
+                    "schema_version": 1,
+                    "fetched_at": _bq_time.strftime("%Y-%m-%d"),
+                    "stocks": stocks,
+                    "etfs": etfs,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        _LIST_DATES_CACHE["data"] = (stocks, etfs)
+    except Exception:
+        pass
+
+
+def _code6_from_entry(entry: Any, kind: Optional[str] = None) -> Optional[str]:
+    """从 UniverseEntry.symbol（SSE.STK.600000 / SSE.ETF.510300）取 6 位数字码。
+
+    股票/ETF 与指数的代码段存在重叠（000001 同时是上证指数与平安银行），
+    因此按 kind 过滤，绝不把指数当作股票/ETF。
+    """
+    sym = str(getattr(entry, "symbol", "") or "")
+    parts = sym.split(".")
+    if len(parts) != 3:
+        return None
+    if kind and parts[1] != kind:
+        return None
+    code = parts[2]
+    return code if code.isdigit() and len(code) == 6 else None
+
+
+def _fetch_list_dates_from_tushare(
+    cfg: AStockConfig,
+) -> Tuple[Dict[str, int], Dict[str, int]]:
+    """全量拉取 A 股与 ETF 的上市日期（stock_basic / fund_basic）。
+
+    复用 TushareProvider 的限流/重试/类型化异常；token 取环境变量，
+    未配置时由 provider 回退 ts.get_token()。指数被 _code6_from_entry 过滤。
+    """
+    import os as _os
+
+    from ..data.providers.base import ProviderUnavailable
+    from ..data.providers.tushare import TushareProvider
+
+    token = _os.environ.get("TUSHARE_TOKEN") or _os.environ.get("TS_TOKEN") or None
+    try:
+        provider = TushareProvider(token=token)
+        stocks: Dict[str, int] = {}
+        etfs: Dict[str, int] = {}
+        for e in provider.fetch_universe():
+            c6 = _code6_from_entry(e, "STK")
+            if c6 and getattr(e, "list_date", None):
+                stocks[c6] = int(e.list_date)
+        for e in provider.fetch_index_etf_universe():
+            c6 = _code6_from_entry(e, "ETF")
+            if c6 and getattr(e, "list_date", None):
+                etfs[c6] = int(e.list_date)
+        return stocks, etfs
+    except Exception as exc:
+        raise ProviderUnavailable(f"tushare list-date fetch failed: {exc}") from exc
+
+
+def ensure_rizhu_coverage(
+    cfg: AStockConfig,
+    needed_codes: Sequence[str],
+    existing: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """用上市日期推算补齐 code6 -> 日柱（Excel 表外的次新股 / ETF）。
+
+    只处理 needed_codes 中尚未有日柱的代码（existing 里的 code6 跳过）；
+    优先命中本地上市日期缓存，未命中才调 Tushare 全量刷新并落盘；
+    Tushare 不可用时静默降级返回 {}，导出结果与不补齐时一致，
+    不因网络问题中断导出。
+    """
+    base = existing or {}
+    missing: set = set()
+    for c in needed_codes:
+        c6 = _code6_from_any(c)
+        if c6 and c6 not in base:
+            missing.add(c6)
+    if not missing:
+        return {}
+
+    cached_stocks, cached_etfs = _load_list_date_cache()
+    known = dict(cached_stocks)
+    known.update(cached_etfs)
+
+    out: Dict[str, str] = {}
+    still_missing: set = set()
+    for c6 in sorted(missing):
+        ld = known.get(c6)
+        if ld:
+            out[c6] = _rizhu_from_list_date(ld)
+        else:
+            still_missing.add(c6)
+    if not still_missing:
+        return out
+
+    try:
+        stocks, etfs = _fetch_list_dates_from_tushare(cfg)
+    except Exception:
+        return out
+    merged_stocks = {**cached_stocks, **stocks}
+    merged_etfs = {**cached_etfs, **etfs}
+    _save_list_date_cache(merged_stocks, merged_etfs)
+    for c6 in still_missing:
+        ld = merged_stocks.get(c6) or merged_etfs.get(c6)
+        if ld:
+            out[c6] = _rizhu_from_list_date(ld)
+    return out
+
+
 def _weekly_style_row(
     *,
     week_row: Optional[Dict[str, Any]],
@@ -2246,6 +2404,12 @@ def export_bagua_multi_period_xlsx(
 
     rizhu_map = load_rizhu_map(rizhu_path)
     rizhu_src = _RIZHU_CACHE.get("path") or ""
+    # Excel 表外的次新股 / ETF 按上市日期推算补齐日柱，保证导出列完整
+    # （ensure 在前，Excel 表值优先，不被推算结果覆盖）
+    rizhu_map = {
+        **ensure_rizhu_coverage(cfg, [*stock_pool, *etf_pool], rizhu_map),
+        **rizhu_map,
+    }
 
     export_root = Path(cfg.storage_root) / "bagua_exports"
     export_root.mkdir(parents=True, exist_ok=True)
@@ -2357,6 +2521,7 @@ def export_bagua_multi_period_xlsx(
         ("error_total", totals["error"]),
         ("rizhu_hit", totals["rizhu_hit"]),
         ("rizhu_source", rizhu_src),
+        ("rizhu_note", "Excel 日柱表优先；次新股/ETF 按上市日期推算 60 甲子补齐"),
         ("exported_at", stamp),
     ]:
         meta.append([k, v])
