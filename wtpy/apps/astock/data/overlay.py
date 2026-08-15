@@ -81,6 +81,29 @@ class OverlayView:
     _factor_series_cache: Dict[tuple, Optional[Tuple[np.ndarray, np.ndarray]]] = field(default_factory=dict)
     #: decompressed factor-blob arrays keyed by blob sha256
     _factor_blob_cache: Dict[str, Dict[str, np.ndarray]] = field(default_factory=dict)
+    #: full visible delta bars/factors keyed by watermark (one query each)
+    _delta_bars_cache: Dict[int, Dict] = field(default_factory=dict)
+    _delta_factors_cache: Dict[int, Dict] = field(default_factory=dict)
+    #: pool record list keyed by (base_dataset_id, delisted_base_dataset_id)
+    _pool_records_cache: Dict[tuple, List[SymbolRecord]] = field(default_factory=dict)
+
+    def _delta_bars(self, watermark: int) -> Dict:
+        cached = self._delta_bars_cache.get(watermark)
+        if cached is None:
+            cached = self.delta.load_all_visible_bars(watermark)
+            if len(self._delta_bars_cache) >= 8:
+                self._delta_bars_cache.clear()
+            self._delta_bars_cache[watermark] = cached
+        return cached
+
+    def _delta_factors(self, watermark: int) -> Dict:
+        cached = self._delta_factors_cache.get(watermark)
+        if cached is None:
+            cached = self.delta.load_all_visible_factors(watermark)
+            if len(self._delta_factors_cache) >= 8:
+                self._delta_factors_cache.clear()
+            self._delta_factors_cache[watermark] = cached
+        return cached
 
     def __post_init__(self) -> None:
         if self.delta is None:
@@ -127,7 +150,7 @@ class OverlayView:
     def _base_manifest(self, dataset_id: str) -> DatasetManifest:
         if not dataset_id:
             raise OverlayNotReadyError("overlay base_dataset_id is empty")
-        m = self.store.load_manifest(dataset_id)
+        m = self.store.load_manifest(dataset_id, deep_copy=False)
         if m is None:
             raise OverlayNotReadyError(
                 f"overlay base dataset missing: {dataset_id}"
@@ -165,8 +188,17 @@ class OverlayView:
         return sorted(syms)
 
     def _pool_records(self) -> List[SymbolRecord]:
-        """Merge base + delisted symbol records (base wins on collision)."""
+        """Merge base + delisted symbol records (base wins on collision).
+
+        Cached by (base, delisted) id: whole-market per-symbol loads call this
+        once per symbol, and rebuilding a 5000-symbol dict per symbol is a
+        needless O(n²) cost.
+        """
         base = self.active_base()
+        key = (base.dataset_id, self.overlay.delisted_base_dataset_id)
+        cached = self._pool_records_cache.get(key)
+        if cached is not None:
+            return cached
         records: Dict[str, SymbolRecord] = {}
         for r in base.symbols:
             if r.blob_sha256:
@@ -176,6 +208,33 @@ class OverlayView:
             for r in delisted.symbols:
                 if r.blob_sha256 and r.symbol not in records:
                     records[r.symbol] = r
+        out = [records[s] for s in sorted(records)]
+        if len(self._pool_records_cache) >= 4:
+            self._pool_records_cache.clear()
+        self._pool_records_cache[key] = out
+        return out
+
+    def _pool_records_with_delta(self) -> List[SymbolRecord]:
+        """Pool records plus symbols that exist ONLY in the delta (IPOs).
+
+        A delta-only symbol carries no base blob; it is surfaced so the
+        virtual manifest lists the true current board (and whole-board
+        ``symbol=None`` loads do not drop new listings). Reads for such a
+        symbol come entirely from its delta rows.
+        """
+        records: Dict[str, SymbolRecord] = {
+            r.symbol: r for r in self._pool_records()
+        }
+        try:
+            delta_only = self.delta.distinct_symbols(self.delta_watermark)
+        except Exception:
+            delta_only = set()
+        for sym in sorted(delta_only):
+            if sym not in records:
+                records[sym] = SymbolRecord(
+                    symbol=sym, blob_sha256="", row_count=0, quality="ok",
+                    window_status="delta_only",
+                )
         return [records[s] for s in sorted(records)]
 
     # ------------------------------------------------------------------
@@ -189,13 +248,13 @@ class OverlayView:
         older id keep replaying the exact watermark they resolved).
         """
         base = self.active_base()
-        records = self._pool_records()
         dataset_id = (
             f"{VIRTUAL_L2_PREFIX}_{base.dataset_id}_wm{self.delta_watermark:08d}"
         )
         existing = self.store.load_manifest(dataset_id)
         if existing is not None:
             return existing
+        records = self._pool_records_with_delta()
         cutoff = int(base.data_cutoff_date or 0)
         manifest = DatasetManifest(
             dataset_id=dataset_id,
@@ -269,7 +328,7 @@ class OverlayView:
             max((int(r.last_date or 0) for r in fac.symbols if r.last_date),
                 default=0),
         )
-        records = self._pool_records()
+        records = self._pool_records_with_delta()
         manifest = DatasetManifest(
             dataset_id=dataset_id,
             source="internal",
@@ -344,18 +403,20 @@ class OverlayView:
     ) -> Optional[Dict[str, np.ndarray]]:
         """Merged raw OHLCV arrays for one symbol (base + delta overlay).
 
-        Returns None when the symbol is not in the pool. Rows outside
+        Returns None when the symbol has neither a base blob nor delta rows.
+        A symbol present ONLY in the delta (e.g. an IPO listed after the base
+        snapshot) is served from the delta rows. Rows outside
         [start_date, end_date] are dropped before returning.
         """
         wm = int(watermark if watermark is not None else self.delta_watermark)
         rec = self._pool_record(symbol)
-        if rec is None:
-            return None
         base_arr = None
-        if rec.blob_sha256 and self.store.blob_exists(rec.blob_sha256):
+        if rec is not None and rec.blob_sha256 and self.store.blob_exists(
+            rec.blob_sha256
+        ):
             base_arr = self.store.load_bars(rec.blob_sha256)
-        delta_map = self.delta.load_visible_bars([rec.symbol], wm)
-        merged = _merge_base_and_delta(base_arr, delta_map.get(rec.symbol))
+        delta_map = self._delta_bars(wm)
+        merged = _merge_base_and_delta(base_arr, delta_map.get(symbol))
         if merged is None:
             return None
         return _slice_arrays(merged, start_date, end_date)
@@ -370,20 +431,24 @@ class OverlayView:
     ) -> Dict[str, Optional[Dict[str, np.ndarray]]]:
         """Batch merged raw arrays — one delta query for all symbols.
 
-        Returns {symbol: merged arrays or None}. Symbols not in the pool are
-        absent from the result.
+        Returns {symbol: merged arrays or None}. A symbol is dropped from the
+        result only when it has neither a base blob nor delta rows; delta-only
+        symbols (IPOs) are merged from their delta rows. The query covers ALL
+        requested symbols (not just the base pool), so a single call can serve
+        every symbol in a whole-market run.
         """
         wm = int(watermark if watermark is not None else self.delta_watermark)
         pool = {r.symbol: r for r in self._pool_records()}
-        present = [s for s in symbols if s in pool]
         out: Dict[str, Optional[Dict[str, np.ndarray]]] = {}
-        if not present:
+        if not symbols:
             return out
-        delta_map = self.delta.load_visible_bars(present, wm)
-        for sym in present:
-            rec = pool[sym]
+        delta_map = self._delta_bars(wm)
+        for sym in symbols:
+            rec = pool.get(sym)
             base_arr = None
-            if rec.blob_sha256 and self.store.blob_exists(rec.blob_sha256):
+            if rec is not None and rec.blob_sha256 and self.store.blob_exists(
+                rec.blob_sha256
+            ):
                 base_arr = self.store.load_bars(rec.blob_sha256)
             merged = _merge_base_and_delta(base_arr, delta_map.get(sym))
             if merged is None:
@@ -420,7 +485,7 @@ class OverlayView:
         self, symbol: str, *, watermark: int
     ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         main = self.factor_base()
-        delta_map = self.delta.load_visible_factors([symbol], watermark)
+        delta_map = self._delta_factors(watermark)
         arr = self._factor_base_arrays(main, symbol)
         merged = _merge_factor_base_and_delta(arr, delta_map.get(symbol))
         if merged is not None:
@@ -470,7 +535,7 @@ class OverlayView:
         """
         wm = int(watermark if watermark is not None else self.factor_watermark)
         main = self.factor_base()
-        delta_map = self.delta.load_visible_factors(list(symbols), wm)
+        delta_map = self._delta_factors(wm)
         out: Dict[str, Optional[Tuple[np.ndarray, np.ndarray]]] = {}
         for sym in symbols:
             key = (sym, wm)
@@ -762,14 +827,17 @@ def _slice_arrays(
     start_date: Optional[int],
     end_date: Optional[int],
 ) -> Dict[str, np.ndarray]:
+    """Filter rows to [start_date, end_date]; no filter -> return as-is.
+
+    The no-filter fast path avoids a per-symbol fancy-index copy (whole-market
+    loads would otherwise re-copy every array for every symbol).
+    """
+    if start_date is None and end_date is None:
+        return arr
     d = arr["trade_date"]
     mask = np.ones(len(d), dtype=bool)
     if start_date is not None:
         mask &= d >= int(start_date)
     if end_date is not None:
         mask &= d <= int(end_date)
-    if not np.any(mask):
-        # keep an empty but well-formed arrays dict so callers can cheaply
-        # iterate zero rows
-        return {k: v[mask] for k, v in arr.items()}
     return {k: v[mask] for k, v in arr.items()}

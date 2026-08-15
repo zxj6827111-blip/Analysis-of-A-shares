@@ -318,3 +318,43 @@ class TestOverlayRepository:
             dataset_id=l1.dataset_id, symbols=["SSE.STK.600000"]
         )["SSE.STK.600000"]
         assert arr["close"][0] > 0
+
+    def test_delta_only_symbol_is_served(self, tmp_path):
+        """A symbol present ONLY in the delta (IPO listed after the base
+        snapshot) must be readable — never silently dropped."""
+        store = build_overlay_warehouse(tmp_path)
+        repo = MarketDataRepository(store)
+        # commit a new symbol into the delta (not in the base pool)
+        from wtpy.apps.astock.data.delta_store import load_overlay_state
+        from wtpy.apps.astock.data.delta_store import save_overlay_state
+
+        base = store.load_manifest(
+            load_overlay_state(tmp_path).base_dataset_id
+        )
+        ds = __import__(
+            "wtpy.apps.astock.data.delta_store", fromlist=["DeltaStore"]
+        ).DeltaStore(tmp_path)
+        ds.commit_batch(
+            batch_id="ipo", kind="bars", source="tushare", adjustment="none",
+            period="1d", base_dataset_id=base.dataset_id, watermark=20240109,
+            rows={"SSE.STK.600999": [(20240109, 5.0, 5.5, 4.9, 5.2,
+                                      100.0, 1000.0)]},
+        )
+        st = load_overlay_state(tmp_path)
+        st.delta_watermark = 20240109
+        save_overlay_state(tmp_path, st)
+
+        l2 = repo.resolve_latest_ready(
+            source="internal", adjustment="composite_none", period="1d"
+        )
+        # the virtual pool lists the new symbol
+        assert "SSE.STK.600999" in [r.symbol for r in l2.symbols]
+        # per-symbol read serves it from the delta
+        bars = repo.load_bars(dataset_id=l2.dataset_id, symbol="SSE.STK.600999")
+        assert len(bars) == 1
+        assert bars[0].trade_date == 20240109
+        assert abs(bars[0].close - 5.2) < 1e-9
+        # whole-board load (symbol=None) also includes it
+        all_bars = repo.load_bars(dataset_id=l2.dataset_id)
+        assert "SSE.STK.600999" in {b.symbol for b in all_bars}
+

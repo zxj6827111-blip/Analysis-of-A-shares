@@ -44,16 +44,10 @@ class DatasetNotReadyError(Exception):
 class MarketDataRepository:
     """Reads bars exclusively from local immutable datasets."""
 
-    #: per-repository overlay view (lazy); virtual L1/L2 resolution
+    #: per-repository overlay view (lazy); virtual L1/L2 resolution.
+    #: Class-level default only — the first access assigns an instance attr.
     _overlay = None
     _overlay_lock = threading.Lock()
-    #: simple per-dataset LRU of merged/derived arrays keyed by
-    #: (dataset_id, symbol, start_date, end_date)
-    _array_cache: Dict[tuple, Dict[str, np.ndarray]] = {}
-    _array_cache_order: Dict[tuple, int] = {}
-    _array_cache_counter = 0
-    _array_cache_lock = threading.Lock()
-    _ARRAY_CACHE_MAX = 4096
 
     def __init__(self, store: DatasetStore):
         self._store = store
@@ -85,32 +79,6 @@ class MarketDataRepository:
             if view is not None:
                 self._overlay = view
             return view
-
-    def _cached_arrays(
-        self, key: tuple, loader
-    ) -> Optional[Dict[str, np.ndarray]]:
-        with self._array_cache_lock:
-            hit = self._array_cache.get(key)
-            if hit is not None:
-                self._array_cache_order[key] = self._array_cache_counter
-                self._array_cache_counter += 1
-                return hit
-        arr = loader()
-        if arr is None:
-            return None
-        with self._array_cache_lock:
-            if key not in self._array_cache:
-                if len(self._array_cache) >= self._ARRAY_CACHE_MAX:
-                    victim = min(
-                        self._array_cache_order,
-                        key=self._array_cache_order.get,
-                    )
-                    self._array_cache.pop(victim, None)
-                    self._array_cache_order.pop(victim, None)
-                self._array_cache[key] = arr
-                self._array_cache_order[key] = self._array_cache_counter
-                self._array_cache_counter += 1
-        return arr
 
     @staticmethod
     def _symbol_kind_std(code: str, suffix: str) -> str:
@@ -384,7 +352,7 @@ class MarketDataRepository:
         from the merged base+delta surface (raw/composite views) or the
         runtime-derived QFQ view instead of per-symbol blobs.
         """
-        manifest = self.get_dataset(dataset_id)
+        manifest = self.get_dataset(dataset_id, deep_copy=False)
         allowed = ("ready",) if not allow_partial else ("ready", "partial")
         if manifest.status not in allowed:
             raise DatasetNotReadyError(
@@ -457,7 +425,28 @@ class MarketDataRepository:
                 f"dataset {manifest.dataset_id} is overlay_v1 but the overlay "
                 f"is not enabled on this data root"
             )
-        symbols = [symbol] if symbol else [r.symbol for r in manifest.symbols if r.blob_sha256]
+
+        # per-symbol fast path: skip the batch dict wrapper + a second
+        # manifest load (whole-market loops call this once per symbol).
+        if symbol is not None:
+            if manifest.view_type == "l1_virtual_qfq":
+                arr = view.qfq_arrays(
+                    symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    raw_watermark=manifest.delta_watermark,
+                    factor_watermark=manifest.factor_watermark,
+                )
+            else:
+                arr = view.merged_raw_arrays(
+                    symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    watermark=manifest.delta_watermark,
+                )
+            return self._bars_from_arrays(manifest, symbol, arr)
+
+        symbols = [r.symbol for r in manifest.symbols]
         arrays_map = self.load_bar_arrays(
             dataset_id=manifest.dataset_id,
             symbols=symbols,
@@ -466,31 +455,36 @@ class MarketDataRepository:
         )
         bars: List[MarketBar] = []
         for sym in symbols:
-            arr = arrays_map.get(sym)
-            if arr is None or len(arr["trade_date"]) == 0:
-                continue
-            n = len(arr["trade_date"])
-            for i in range(n):
-                bars.append(
-                    MarketBar(
-                        symbol=sym,
-                        trade_date=int(arr["trade_date"][i]),
-                        period=manifest.period,
-                        open=float(arr["open"][i]),
-                        high=float(arr["high"][i]),
-                        low=float(arr["low"][i]),
-                        close=float(arr["close"][i]),
-                        volume=float(arr["volume"][i]),
-                        amount=float(arr["amount"][i]),
-                        source=manifest.source,
-                        adjustment=manifest.adjustment,
-                        anchor_date=manifest.anchor_date,
-                        snapshot_date=manifest.snapshot_date,
-                        data_cutoff_date=manifest.data_cutoff_date,
-                        provider_version=manifest.provider_version,
-                    )
-                )
+            bars.extend(self._bars_from_arrays(manifest, sym, arrays_map.get(sym)))
         return bars
+
+    @staticmethod
+    def _bars_from_arrays(
+        manifest: DatasetManifest, sym: str, arr
+    ) -> List[MarketBar]:
+        if arr is None or len(arr["trade_date"]) == 0:
+            return []
+        n = len(arr["trade_date"])
+        return [
+            MarketBar(
+                symbol=sym,
+                trade_date=int(arr["trade_date"][i]),
+                period=manifest.period,
+                open=float(arr["open"][i]),
+                high=float(arr["high"][i]),
+                low=float(arr["low"][i]),
+                close=float(arr["close"][i]),
+                volume=float(arr["volume"][i]),
+                amount=float(arr["amount"][i]),
+                source=manifest.source,
+                adjustment=manifest.adjustment,
+                anchor_date=manifest.anchor_date,
+                snapshot_date=manifest.snapshot_date,
+                data_cutoff_date=manifest.data_cutoff_date,
+                provider_version=manifest.provider_version,
+            )
+            for i in range(n)
+        ]
 
     def load_bar_arrays(
         self,
@@ -511,7 +505,7 @@ class MarketDataRepository:
           - l1_virtual_qfq                    : runtime QFQ derivation
         Blob manifests read their per-symbol blobs (no delta).
         """
-        manifest = self.get_dataset(dataset_id)
+        manifest = self.get_dataset(dataset_id, deep_copy=False)
         allowed = ("ready",) 
         if manifest.status not in allowed:
             raise DatasetNotReadyError(
@@ -527,7 +521,7 @@ class MarketDataRepository:
                     f"dataset {dataset_id} is overlay_v1 but overlay not enabled"
                 )
             targets = list(symbols) if symbols else [
-                r.symbol for r in manifest.symbols if r.blob_sha256
+                r.symbol for r in manifest.symbols
             ]
             if not targets:
                 return {}
@@ -582,7 +576,7 @@ class MarketDataRepository:
             start_date=start_date,
             end_date=end_date,
         )
-        manifest = self.get_dataset(dataset_id)
+        manifest = self.get_dataset(dataset_id, deep_copy=False)
         out: Dict[str, Optional[List[MarketBar]]] = {}
         for sym, arr in arrays_map.items():
             if arr is None or len(arr["trade_date"]) == 0:
@@ -731,6 +725,8 @@ def _slice_arrays(
     start_date: Optional[int],
     end_date: Optional[int],
 ) -> Dict[str, np.ndarray]:
+    if start_date is None and end_date is None:
+        return arr
     d = arr["trade_date"]
     mask = np.ones(len(d), dtype=bool)
     if start_date is not None:

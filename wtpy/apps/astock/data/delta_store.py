@@ -42,7 +42,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -77,6 +77,16 @@ class DeltaWriteError(RuntimeError):
     """A delta batch failed to commit; nothing was written."""
 
 
+#: module-level read-only connection pool keyed by (thread_id, db_path).
+#: DuckDB forbids mixing read-only and read-write connections to the same
+#: file within one process, and opening a connection costs ~20ms — so readers
+#: reuse ONE read-only connection per (thread, file), and any read-write
+#: ``connect()`` releases it first (consolidate / tests mix both in one
+#: thread).
+_READ_CONN_POOL: Dict[tuple, tuple] = {}
+_READ_CONN_LOCK = threading.Lock()
+
+
 class DeltaStore:
     """Versioned incremental store on top of a DuckDB file."""
 
@@ -96,12 +106,70 @@ class DeltaStore:
         Readers pass read_only=True so a long-lived server process can share
         the file with the single-writer EOD child without lock contention
         (DuckDB allows one read-write writer + any number of read-only
-        readers on the same file).
+        readers on the same file). A read-write open first releases any
+        pooled read-only connection for this file in the current thread
+        (DuckDB forbids mixing the two configurations).
         """
         import duckdb
 
         self.delta_dir.mkdir(parents=True, exist_ok=True)
+        if not read_only:
+            self._release_read_conn()
         return duckdb.connect(str(self.db_path), read_only=read_only)
+
+    def _db_sig(self):
+        """Stat signature of the DB file (None when it does not exist yet)."""
+        try:
+            st = self.db_path.stat()
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None
+
+    def _read_conn_key(self):
+        return (threading.get_ident(), str(self.db_path))
+
+    def _get_read_conn(self):
+        """Pooled read-only connection, invalidated on file change.
+
+        A DuckDB read-only connection pins the database state it opened; the
+        EOD writer (a separate process) changes the file mtime on commit, so
+        the signature is re-checked on every access and the connection is
+        reopened when the file moved. The pool is per (thread, file) so
+        threads never share a DuckDB connection (which is not thread-safe),
+        while different DeltaStore instances on the same file in one thread
+        still share one connection.
+        """
+        key = self._read_conn_key()
+        sig = self._db_sig()
+        with _READ_CONN_LOCK:
+            entry = _READ_CONN_POOL.get(key)
+            if entry is not None and entry[0] == sig:
+                return entry[1]
+            if entry is not None:
+                old = entry[1]
+                _READ_CONN_POOL.pop(key, None)
+            else:
+                old = None
+        if old is not None:
+            try:
+                old.close()
+            except Exception:
+                pass
+        conn = self.connect(read_only=True)
+        with _READ_CONN_LOCK:
+            _READ_CONN_POOL[key] = (sig, conn)
+        return conn
+
+    def _release_read_conn(self):
+        """Close any pooled read-only connection for this file in this thread."""
+        key = self._read_conn_key()
+        with _READ_CONN_LOCK:
+            entry = _READ_CONN_POOL.pop(key, None)
+        if entry is not None:
+            try:
+                entry[1].close()
+            except Exception:
+                pass
 
     def init_schema(self) -> None:
         with self.connect() as conn:
@@ -365,32 +433,32 @@ class DeltaStore:
         if not self.db_path.exists() or not symbols:
             return {}
         out: Dict[str, Dict[int, Tuple]] = {}
-        with self.connect(read_only=True) as conn:
-            clauses = ["store_id = ?", "watermark <= ?"]
-            params: List = [self.store_id, int(watermark)]
-            if min_date is not None:
-                clauses.append("trade_date >= ?")
-                params.append(int(min_date))
-            if max_date is not None:
-                clauses.append("trade_date <= ?")
-                params.append(int(max_date))
-            for i in range(0, len(symbols), 900):
-                chunk = list(symbols[i : i + 900])
-                ph = ",".join("?" * len(chunk))
-                rows = conn.execute(
-                    f"SELECT symbol, trade_date, open, high, low, close, "
-                    f"volume, amount FROM daily_bars "
-                    f"WHERE {(' AND ').join(clauses)} AND symbol IN ({ph}) "
-                    f"QUALIFY row_number() OVER "
-                    f"(PARTITION BY symbol, trade_date ORDER BY batch_seq DESC) = 1",
-                    [*params, *chunk],
-                ).fetchall()
-                for r in rows:
-                    sym = str(r[0])
-                    out.setdefault(sym, {})[int(r[1])] = (
-                        float(r[2]), float(r[3]), float(r[4]),
-                        float(r[5]), float(r[6]), float(r[7]),
-                    )
+        conn = self._get_read_conn()
+        clauses = ["store_id = ?", "watermark <= ?"]
+        params: List = [self.store_id, int(watermark)]
+        if min_date is not None:
+            clauses.append("trade_date >= ?")
+            params.append(int(min_date))
+        if max_date is not None:
+            clauses.append("trade_date <= ?")
+            params.append(int(max_date))
+        for i in range(0, len(symbols), 900):
+            chunk = list(symbols[i : i + 900])
+            ph = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT symbol, trade_date, open, high, low, close, "
+                f"volume, amount FROM daily_bars "
+                f"WHERE {(' AND ').join(clauses)} AND symbol IN ({ph}) "
+                f"QUALIFY row_number() OVER "
+                f"(PARTITION BY symbol, trade_date ORDER BY batch_seq DESC) = 1",
+                [*params, *chunk],
+            ).fetchall()
+            for r in rows:
+                sym = str(r[0])
+                out.setdefault(sym, {})[int(r[1])] = (
+                    float(r[2]), float(r[3]), float(r[4]),
+                    float(r[5]), float(r[6]), float(r[7]),
+                )
         return out
 
     def load_visible_factors(
@@ -402,19 +470,85 @@ class DeltaStore:
         if not self.db_path.exists() or not symbols:
             return {}
         out: Dict[str, Dict[int, float]] = {}
-        with self.connect(read_only=True) as conn:
-            for i in range(0, len(symbols), 900):
-                chunk = list(symbols[i : i + 900])
-                ph = ",".join("?" * len(chunk))
-                rows = conn.execute(
-                    f"SELECT symbol, trade_date, adj_factor FROM adj_factors "
-                    f"WHERE store_id = ? AND watermark <= ? AND symbol IN ({ph}) "
-                    f"QUALIFY row_number() OVER "
-                    f"(PARTITION BY symbol, trade_date ORDER BY batch_seq DESC) = 1",
-                    [self.store_id, int(watermark), *chunk],
-                ).fetchall()
-                for r in rows:
-                    out.setdefault(str(r[0]), {})[int(r[1])] = float(r[2])
+        conn = self._get_read_conn()
+        for i in range(0, len(symbols), 900):
+            chunk = list(symbols[i : i + 900])
+            ph = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT symbol, trade_date, adj_factor FROM adj_factors "
+                f"WHERE store_id = ? AND watermark <= ? AND symbol IN ({ph}) "
+                f"QUALIFY row_number() OVER "
+                f"(PARTITION BY symbol, trade_date ORDER BY batch_seq DESC) = 1",
+                [self.store_id, int(watermark), *chunk],
+            ).fetchall()
+            for r in rows:
+                out.setdefault(str(r[0]), {})[int(r[1])] = float(r[2])
+        return out
+
+    def distinct_symbols(self, watermark: int, kind: str = KIND_BARS) -> Set[str]:
+        """All symbols that have at least one delta row up to ``watermark``.
+
+        Used to surface symbols that exist ONLY in the delta (e.g. IPOs whose
+        base snapshot predates their listing) so the virtual pool does not
+        silently drop them.
+        """
+        if not self.db_path.exists():
+            return set()
+        table = "adj_factors" if kind == KIND_FACTOR else "daily_bars"
+        conn = self._get_read_conn()
+        rows = conn.execute(
+            f"SELECT DISTINCT symbol FROM {table} "
+            f"WHERE store_id = ? AND watermark <= ?",
+            [self.store_id, int(watermark)],
+        ).fetchall()
+        return {str(r[0]) for r in rows}
+
+    def load_all_visible_bars(
+        self, watermark: int
+    ) -> Dict[str, Dict[int, Tuple[float, float, float, float, float, float]]]:
+        """All visible bar rows up to ``watermark`` in one query.
+
+        The delta surface is small by design (target < 10MB/day), so a
+        whole-market backtest can afford to pull every visible delta row into
+        memory ONCE and then serve per-symbol merges from that dict — this is
+        what keeps per-symbol ``load_bars`` from opening a connection or
+        running SQL per symbol.
+        """
+        if not self.db_path.exists():
+            return {}
+        out: Dict[str, Dict[int, Tuple]] = {}
+        conn = self._get_read_conn()
+        rows = conn.execute(
+            "SELECT symbol, trade_date, open, high, low, close, volume, "
+            "amount FROM daily_bars WHERE store_id = ? AND watermark <= ? "
+            "QUALIFY row_number() OVER (PARTITION BY symbol, trade_date "
+            "ORDER BY batch_seq DESC) = 1",
+            [self.store_id, int(watermark)],
+        ).fetchall()
+        for r in rows:
+            out.setdefault(str(r[0]), {})[int(r[1])] = (
+                float(r[2]), float(r[3]), float(r[4]),
+                float(r[5]), float(r[6]), float(r[7]),
+            )
+        return out
+
+    def load_all_visible_factors(
+        self, watermark: int
+    ) -> Dict[str, Dict[int, float]]:
+        """All visible factor rows up to ``watermark`` in one query."""
+        if not self.db_path.exists():
+            return {}
+        out: Dict[str, Dict[int, float]] = {}
+        conn = self._get_read_conn()
+        rows = conn.execute(
+            "SELECT symbol, trade_date, adj_factor FROM adj_factors "
+            "WHERE store_id = ? AND watermark <= ? "
+            "QUALIFY row_number() OVER (PARTITION BY symbol, trade_date "
+            "ORDER BY batch_seq DESC) = 1",
+            [self.store_id, int(watermark)],
+        ).fetchall()
+        for r in rows:
+            out.setdefault(str(r[0]), {})[int(r[1])] = float(r[2])
         return out
 
     # ------------------------------------------------------------------
