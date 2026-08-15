@@ -1899,27 +1899,44 @@ def _rizhu_list_dates_cache_path() -> Path:
     return Path(__file__).resolve().parents[4] / "storage" / "astock" / "rizhu_list_dates.json"
 
 
-_LIST_DATES_CACHE: Dict[str, Any] = {}
+# 元数据缓存：code6 -> (上市日期, 名称)，股票与 ETF 分开。list_date 用于日柱推算，
+# name 用于补齐 Tushare-only 部署（缺 universe.json/TDX/forecast 快照）下全空的 name 列。
+_SYMBOL_META_CACHE: Dict[str, Any] = {}
 
 
-def _load_list_date_cache() -> Tuple[Dict[str, int], Dict[str, int]]:
-    """读 code6 -> list_date 的股票/ETF 缓存（rizhu_list_dates.json）。"""
-    cached = _LIST_DATES_CACHE.get("data")
+def _empty_meta() -> Tuple[Dict[str, int], Dict[str, int], Dict[str, str], Dict[str, str]]:
+    return {}, {}, {}, {}
+
+
+def _load_symbol_meta_cache() -> Tuple[Dict[str, int], Dict[str, int], Dict[str, str], Dict[str, str]]:
+    """读 code6 -> (list_date | name) 的股票/ETF 缓存（rizhu_list_dates.json）。
+
+    兼容旧版 schema：旧文件只存 stocks/etfs 的 list_date，无 stock_names/etf_names，
+    缺失时按空 dict 处理。
+    """
+    cached = _SYMBOL_META_CACHE.get("data")
     if cached is not None:
-        return cached[0], cached[1]
+        return cached
     import json as _json
 
     try:
         j = _json.loads(_rizhu_list_dates_cache_path().read_text(encoding="utf-8"))
         stocks = {str(k): int(v) for k, v in j.get("stocks", {}).items()}
         etfs = {str(k): int(v) for k, v in j.get("etfs", {}).items()}
-        _LIST_DATES_CACHE["data"] = (stocks, etfs)
-        return stocks, etfs
+        stock_names = {str(k): str(v) for k, v in j.get("stock_names", {}).items()}
+        etf_names = {str(k): str(v) for k, v in j.get("etf_names", {}).items()}
+        _SYMBOL_META_CACHE["data"] = (stocks, etfs, stock_names, etf_names)
+        return stocks, etfs, stock_names, etf_names
     except Exception:
-        return {}, {}
+        return _empty_meta()
 
 
-def _save_list_date_cache(stocks: Dict[str, int], etfs: Dict[str, int]) -> None:
+def _save_symbol_meta_cache(
+    stocks: Dict[str, int],
+    etfs: Dict[str, int],
+    stock_names: Dict[str, str],
+    etf_names: Dict[str, str],
+) -> None:
     import json as _json
 
     try:
@@ -1928,16 +1945,18 @@ def _save_list_date_cache(stocks: Dict[str, int], etfs: Dict[str, int]) -> None:
         p.write_text(
             _json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "fetched_at": _bq_time.strftime("%Y-%m-%d"),
                     "stocks": stocks,
                     "etfs": etfs,
+                    "stock_names": stock_names,
+                    "etf_names": etf_names,
                 },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
-        _LIST_DATES_CACHE["data"] = (stocks, etfs)
+        _SYMBOL_META_CACHE["data"] = (stocks, etfs, stock_names, etf_names)
     except Exception:
         pass
 
@@ -1958,13 +1977,14 @@ def _code6_from_entry(entry: Any, kind: Optional[str] = None) -> Optional[str]:
     return code if code.isdigit() and len(code) == 6 else None
 
 
-def _fetch_list_dates_from_tushare(
+def _fetch_symbol_meta_from_tushare(
     cfg: AStockConfig,
-) -> Tuple[Dict[str, int], Dict[str, int]]:
-    """全量拉取 A 股与 ETF 的上市日期（stock_basic / fund_basic）。
+) -> Tuple[Dict[str, int], Dict[str, int], Dict[str, str], Dict[str, str]]:
+    """全量拉取 A 股与 ETF 的上市日期 + 名称（stock_basic / fund_basic）。
 
     复用 TushareProvider 的限流/重试/类型化异常；token 取环境变量，
     未配置时由 provider 回退 ts.get_token()。指数被 _code6_from_entry 过滤。
+    返回 (stocks, etfs, stock_names, etf_names)。
     """
     import os as _os
 
@@ -1976,17 +1996,61 @@ def _fetch_list_dates_from_tushare(
         provider = TushareProvider(token=token)
         stocks: Dict[str, int] = {}
         etfs: Dict[str, int] = {}
+        stock_names: Dict[str, str] = {}
+        etf_names: Dict[str, str] = {}
         for e in provider.fetch_universe():
             c6 = _code6_from_entry(e, "STK")
-            if c6 and getattr(e, "list_date", None):
+            if not c6:
+                continue
+            if getattr(e, "list_date", None):
                 stocks[c6] = int(e.list_date)
+            nm = str(getattr(e, "name", "") or "").strip()
+            if nm:
+                stock_names[c6] = nm
         for e in provider.fetch_index_etf_universe():
             c6 = _code6_from_entry(e, "ETF")
-            if c6 and getattr(e, "list_date", None):
+            if not c6:
+                continue
+            if getattr(e, "list_date", None):
                 etfs[c6] = int(e.list_date)
-        return stocks, etfs
+            nm = str(getattr(e, "name", "") or "").strip()
+            if nm:
+                etf_names[c6] = nm
+        return stocks, etfs, stock_names, etf_names
     except Exception as exc:
-        raise ProviderUnavailable(f"tushare list-date fetch failed: {exc}") from exc
+        raise ProviderUnavailable(f"tushare symbol-meta fetch failed: {exc}") from exc
+
+
+def _ensure_symbol_meta(
+    cfg: AStockConfig,
+    needed: set,
+    *,
+    kind: str,
+) -> Tuple[Dict[str, int], Dict[str, int], Dict[str, str], Dict[str, str]]:
+    """返回股票/ETF 元数据，确保 needed 中代码的指定维度已覆盖（必要时拉 Tushare 并落盘）。
+
+    kind="dates" 时按上市日期覆盖判定，kind="names" 时按名称覆盖判定——两者分开，
+    避免旧 schema v1 缓存（只有 list_date、无 name）时 name 补齐不触发拉取。
+    list_date 与 name 同源（同一次 stock_basic/fund_basic），拉取一次两者都缓存，
+    日柱补齐与 name 补齐不会重复触网。Tushare 不可用时返回已有缓存，静默降级。
+    """
+    stocks, etfs, stock_names, etf_names = _load_symbol_meta_cache()
+    known = (set(stocks) | set(etfs)) if kind == "dates" else (
+        set(stock_names) | set(etf_names)
+    )
+    missing = needed - known
+    if not missing:
+        return stocks, etfs, stock_names, etf_names
+    try:
+        f_stocks, f_etfs, f_snames, f_enames = _fetch_symbol_meta_from_tushare(cfg)
+    except Exception:
+        return stocks, etfs, stock_names, etf_names
+    merged_stocks = {**stocks, **f_stocks}
+    merged_etfs = {**etfs, **f_etfs}
+    merged_snames = {**stock_names, **f_snames}
+    merged_enames = {**etf_names, **f_enames}
+    _save_symbol_meta_cache(merged_stocks, merged_etfs, merged_snames, merged_enames)
+    return merged_stocks, merged_etfs, merged_snames, merged_enames
 
 
 def ensure_rizhu_coverage(
@@ -2002,40 +2066,40 @@ def ensure_rizhu_coverage(
     不因网络问题中断导出。
     """
     base = existing or {}
-    missing: set = set()
-    for c in needed_codes:
-        c6 = _code6_from_any(c)
-        if c6 and c6 not in base:
-            missing.add(c6)
+    missing = {_code6_from_any(c) for c in needed_codes}
+    missing = {c6 for c6 in missing if c6 and c6 not in base}
     if not missing:
         return {}
-
-    cached_stocks, cached_etfs = _load_list_date_cache()
-    known = dict(cached_stocks)
-    known.update(cached_etfs)
-
+    stocks, etfs, _sn, _en = _ensure_symbol_meta(cfg, missing, kind="dates")
     out: Dict[str, str] = {}
-    still_missing: set = set()
     for c6 in sorted(missing):
-        ld = known.get(c6)
+        ld = stocks.get(c6) or etfs.get(c6)
         if ld:
             out[c6] = _rizhu_from_list_date(ld)
-        else:
-            still_missing.add(c6)
-    if not still_missing:
-        return out
+    return out
 
-    try:
-        stocks, etfs = _fetch_list_dates_from_tushare(cfg)
-    except Exception:
-        return out
-    merged_stocks = {**cached_stocks, **stocks}
-    merged_etfs = {**cached_etfs, **etfs}
-    _save_list_date_cache(merged_stocks, merged_etfs)
-    for c6 in still_missing:
-        ld = merged_stocks.get(c6) or merged_etfs.get(c6)
-        if ld:
-            out[c6] = _rizhu_from_list_date(ld)
+
+def ensure_name_coverage(
+    cfg: AStockConfig,
+    needed_codes: Sequence[str],
+    existing: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+    """补齐 code6 -> 名称（Tushare-only 部署缺 universe.json/TDX/forecast 快照时 name 全空）。
+
+    与 ensure_rizhu_coverage 共用同一份元数据缓存；只处理 needed_codes 中
+    尚未有名称的代码，Tushare 不可用时静默降级返回 {}。
+    """
+    base = existing or {}
+    missing = {_code6_from_any(c) for c in needed_codes}
+    missing = {c6 for c6 in missing if c6 and c6 not in base}
+    if not missing:
+        return {}
+    _s, _e, stock_names, etf_names = _ensure_symbol_meta(cfg, missing, kind="names")
+    out: Dict[str, str] = {}
+    for c6 in sorted(missing):
+        nm = stock_names.get(c6) or etf_names.get(c6)
+        if nm:
+            out[c6] = nm
     return out
 
 
@@ -2211,13 +2275,16 @@ def _export_sheet_rows(
     total: int,
     totals: Dict[str, int],
     resolve_names: bool = False,
+    name_map: Optional[Dict[str, str]] = None,
 ) -> Tuple[List[List[Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """Query bagua for one code pool and build weekly-style sheet rows.
 
     Returns (rows, first_week_row, first_month_row). ``base_idx`` offsets this
     pool inside the combined progress bar and ``total`` is the combined pool
     size. ``resolve_names`` fills empty name cells via ``resolve_stock_name``
-    (used for ETF rows, where display names are sparse).
+    (used for ETF rows, where display names are sparse). ``name_map`` is a
+    code6 -> 中文名 fallback (Tushare stock_basic/fund_basic)，用于 Tushare-only
+    部署下 name 列全空时的兜底补齐（股票与 ETF 均适用）。
     """
     sheet_rows: List[List[Any]] = []
     first_week_row: Optional[Dict[str, Any]] = None
@@ -2265,6 +2332,8 @@ def _export_sheet_rows(
                 row[1] = resolve_stock_name(cfg, c6) or ""
             except Exception:
                 pass
+        if name_map and c6 and not row[1]:
+            row[1] = name_map.get(c6) or ""
         sheet_rows.append(row)
         if on_progress is not None and (idx == total or idx % 25 == 0 or idx == 1):
             try:
@@ -2410,6 +2479,9 @@ def export_bagua_multi_period_xlsx(
         **ensure_rizhu_coverage(cfg, [*stock_pool, *etf_pool], rizhu_map),
         **rizhu_map,
     }
+    # Tushare-only 部署下缺 universe.json/TDX/forecast 快照，resolve_stock_name 全空；
+    # 用同一份 Tushare 元数据补齐 name 列（list_date 与 name 同源，不额外触网）。
+    name_map = ensure_name_coverage(cfg, [*stock_pool, *etf_pool])
 
     export_root = Path(cfg.storage_root) / "bagua_exports"
     export_root.mkdir(parents=True, exist_ok=True)
@@ -2455,6 +2527,7 @@ def export_bagua_multi_period_xlsx(
             total=total,
             totals=totals,
             resolve_names=resolve_names,
+            name_map=name_map,
         )
         base_idx += len(pool)
         sheet_rows_by_name[sheet_name] = rows
@@ -2522,6 +2595,7 @@ def export_bagua_multi_period_xlsx(
         ("rizhu_hit", totals["rizhu_hit"]),
         ("rizhu_source", rizhu_src),
         ("rizhu_note", "Excel 日柱表优先；次新股/ETF 按上市日期推算 60 甲子补齐"),
+        ("name_note", "name 列优先本地 universe/TDX/forecast，缺失时按 Tushare stock_basic/fund_basic 补齐"),
         ("exported_at", stamp),
     ]:
         meta.append([k, v])

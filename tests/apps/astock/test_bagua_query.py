@@ -24,6 +24,22 @@ JSON_PATH = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_tushare_network(monkeypatch):
+    """禁止导出测试触网：Tushare 元数据拉取一律降级，不写真实缓存。
+
+    需要验证网络行为的测试会在测试体内显式重新 mock 该函数覆盖此默认值。
+    同时清空模块级元数据缓存，避免测试间泄漏导致断言不确定。
+    """
+
+    def _fail(*_a, **_k):
+        raise RuntimeError("Tushare network disabled in tests")
+
+    monkeypatch.setattr(bq, "_fetch_symbol_meta_from_tushare", _fail)
+    monkeypatch.setattr(bq, "_SYMBOL_META_CACHE", {})
+    yield
+
+
 def test_normalize_period_and_code():
     assert bq.normalize_period("日") == "DAY"
     assert bq.normalize_period("按月") == "MONTH"
@@ -1335,12 +1351,12 @@ def test_rizhu_from_list_date_known_values():
 
 def test_ensure_rizhu_coverage_cache_hit_no_fetch(monkeypatch, tmp_path):
     """缓存命中时不再调 Tushare，直接推算补齐缺失代码。"""
-    monkeypatch.setattr(bq, "_LIST_DATES_CACHE", {})
+    monkeypatch.setattr(bq, "_SYMBOL_META_CACHE", {})
     monkeypatch.setattr(bq, "_rizhu_list_dates_cache_path", lambda: tmp_path / "c.json")
     monkeypatch.setattr(
         bq,
-        "_load_list_date_cache",
-        lambda: ({"600930": 20250620}, {"510300": 20120528}),
+        "_load_symbol_meta_cache",
+        lambda: ({"600930": 20250620}, {"510300": 20120528}, {}, {}),
     )
     called = {"n": 0}
 
@@ -1348,7 +1364,7 @@ def test_ensure_rizhu_coverage_cache_hit_no_fetch(monkeypatch, tmp_path):
         called["n"] += 1
         raise AssertionError("不应调用 Tushare")
 
-    monkeypatch.setattr(bq, "_fetch_list_dates_from_tushare", boom)
+    monkeypatch.setattr(bq, "_fetch_symbol_meta_from_tushare", boom)
     got = bq.ensure_rizhu_coverage(
         SimpleNamespace(), ["600930", "510300", "600000"], {"600000": "甲子"}
     )
@@ -1358,19 +1374,19 @@ def test_ensure_rizhu_coverage_cache_hit_no_fetch(monkeypatch, tmp_path):
 
 def test_ensure_rizhu_coverage_fetch_and_persist(monkeypatch, tmp_path):
     """缓存缺失时拉 Tushare 并落盘，之后走缓存。"""
-    monkeypatch.setattr(bq, "_LIST_DATES_CACHE", {})
+    monkeypatch.setattr(bq, "_SYMBOL_META_CACHE", {})
     cache_file = tmp_path / "c.json"
     monkeypatch.setattr(bq, "_rizhu_list_dates_cache_path", lambda: cache_file)
     monkeypatch.setattr(
         bq,
-        "_fetch_list_dates_from_tushare",
-        lambda _cfg: ({"600930": 20250620}, {"510300": 20120528}),
+        "_fetch_symbol_meta_from_tushare",
+        lambda _cfg: ({"600930": 20250620}, {"510300": 20120528}, {}, {}),
     )
     got = bq.ensure_rizhu_coverage(SimpleNamespace(), ["600930", "510300"], {})
     assert got == {"600930": "庚申", "510300": "己丑"}
     # 已持久化，二次调用不再触发网络
     monkeypatch.setattr(
-        bq, "_fetch_list_dates_from_tushare",
+        bq, "_fetch_symbol_meta_from_tushare",
         lambda _cfg: (_ for _ in ()).throw(AssertionError("不应二次拉取")),
     )
     got2 = bq.ensure_rizhu_coverage(SimpleNamespace(), ["600930", "510300"], {})
@@ -1379,15 +1395,15 @@ def test_ensure_rizhu_coverage_fetch_and_persist(monkeypatch, tmp_path):
 
 def test_ensure_rizhu_coverage_tushare_failure_degrades(monkeypatch, tmp_path):
     """Tushare 不可用时静默降级：已缓存的部分返回，其余放弃，不抛异常。"""
-    monkeypatch.setattr(bq, "_LIST_DATES_CACHE", {})
+    monkeypatch.setattr(bq, "_SYMBOL_META_CACHE", {})
     monkeypatch.setattr(bq, "_rizhu_list_dates_cache_path", lambda: tmp_path / "c.json")
     monkeypatch.setattr(
         bq,
-        "_load_list_date_cache",
-        lambda: ({"600930": 20250620}, {}),
+        "_load_symbol_meta_cache",
+        lambda: ({"600930": 20250620}, {}, {}, {}),
     )
     monkeypatch.setattr(
-        bq, "_fetch_list_dates_from_tushare",
+        bq, "_fetch_symbol_meta_from_tushare",
         lambda _cfg: (_ for _ in ()).throw(RuntimeError("network down")),
     )
     got = bq.ensure_rizhu_coverage(
@@ -1422,12 +1438,17 @@ def test_export_fills_rizhu_for_new_stock_and_etf(monkeypatch, tmp_path):
         lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("no md")),
     )
     monkeypatch.setattr(bq, "load_rizhu_map", lambda _p=None: {"000001": "癸卯"})
-    monkeypatch.setattr(bq, "_LIST_DATES_CACHE", {})
+    monkeypatch.setattr(bq, "_SYMBOL_META_CACHE", {})
     monkeypatch.setattr(bq, "_rizhu_list_dates_cache_path", lambda: tmp_path / "c.json")
     monkeypatch.setattr(
         bq,
-        "_fetch_list_dates_from_tushare",
-        lambda _cfg: ({"600930": 20250620}, {"510300": 20120528}),
+        "_fetch_symbol_meta_from_tushare",
+        lambda _cfg: (
+            {"600930": 20250620},
+            {"510300": 20120528},
+            {"600930": "华电新能"},
+            {"510300": "沪深300ETF"},
+        ),
     )
     cfg = SimpleNamespace(
         bagua_json=JSON_PATH,
@@ -1452,10 +1473,56 @@ def test_export_fills_rizhu_for_new_stock_and_etf(monkeypatch, tmp_path):
 
     wb = openpyxl.load_workbook(path)
     rizhu_by_code = {}
+    name_by_code = {}
     for sn in ("stock-all", "etf-all"):
         for row in wb[sn].iter_rows(min_row=2, values_only=True):
             rizhu_by_code[row[0]] = row[7]  # 日柱列
+            name_by_code[row[0]] = row[1]  # name 列
     assert rizhu_by_code.get("600930") == "庚申", rizhu_by_code
     assert rizhu_by_code.get("510300") == "己丑", rizhu_by_code
+    # name 列也被同一份 Tushare 元数据补齐
+    assert name_by_code.get("600930") == "华电新能", name_by_code
+    assert name_by_code.get("510300") == "沪深300ETF", name_by_code
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert meta.get("rizhu_note", "").startswith("Excel 日柱表优先"), meta
+    assert meta.get("name_note", "").startswith("name 列优先本地"), meta
+
+
+def test_ensure_name_coverage_fetches_and_skips_existing(monkeypatch, tmp_path):
+    """name 补齐：已有名字的代码跳过，缺的按 Tushare 元数据补齐。"""
+    monkeypatch.setattr(bq, "_SYMBOL_META_CACHE", {})
+    monkeypatch.setattr(bq, "_rizhu_list_dates_cache_path", lambda: tmp_path / "c.json")
+    monkeypatch.setattr(
+        bq,
+        "_fetch_symbol_meta_from_tushare",
+        lambda _cfg: (
+            {"600930": 20250620},
+            {"510300": 20120528},
+            {"600930": "华电新能"},
+            {"510300": "沪深300ETF"},
+        ),
+    )
+    got = bq.ensure_name_coverage(
+        SimpleNamespace(), ["600930", "510300", "600000"], {"600000": "浦发银行"}
+    )
+    assert got == {"600930": "华电新能", "510300": "沪深300ETF"}
+    assert "600000" not in got  # 已有名字，跳过
+
+
+def test_load_symbol_meta_cache_v1_schema_compat(monkeypatch, tmp_path):
+    """旧 schema v1 缓存（只有 list_date 无 name）仍可加载，name 缺省为空。"""
+    import json
+
+    monkeypatch.setattr(bq, "_SYMBOL_META_CACHE", {})
+    cache_file = tmp_path / "c.json"
+    cache_file.write_text(
+        json.dumps(
+            {"schema_version": 1, "stocks": {"600000": 19991110}, "etfs": {}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bq, "_rizhu_list_dates_cache_path", lambda: cache_file)
+    stocks, etfs, snames, enames = bq._load_symbol_meta_cache()
+    assert stocks == {"600000": 19991110}
+    assert snames == {}
+    assert enames == {}
