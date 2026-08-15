@@ -385,6 +385,14 @@ class TushareProvider:
             if request.end_date and trade_date > request.end_date:
                 continue
             close = _num(row.get("close"))
+            # Unit normalization (share/CNY standard, UNIT_STANDARD=share_yuan):
+            # Tushare daily `vol` is in 手 (lots of 100 shares) and `amount`
+            # in 千元 (1000 CNY) — convert to 股/元 so the blob matches the
+            # delisted pool, local_vendor and minute_vendor surfaces, which
+            # all store 股/元 (x100 / x1000). Without this, a hybrid dataset
+            # mixing local_vendor history with tushare increments breaks at
+            # the seam (100x volume / 1000x amount), and the formal L2
+            # (tushare/none + delisted complement) is unit-mixed.
             bars.append(
                 MarketBar(
                     symbol=symbol,
@@ -394,8 +402,8 @@ class TushareProvider:
                     high=_num(row.get("high"), close),
                     low=_num(row.get("low"), close),
                     close=close,
-                    volume=_num(row.get("vol", row.get("volume"))),
-                    amount=_num(row.get("amount")),
+                    volume=_num(row.get("vol", row.get("volume"))) * 100.0,
+                    amount=_num(row.get("amount")) * 1000.0,
                     source=DataSource.TUSHARE.value,
                     adjustment=adjustment.value,
                     anchor_date=request.anchor_date,
