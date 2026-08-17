@@ -40,9 +40,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from wtpy.apps.astock.data.dataset_store import DatasetManifest, DatasetStore
 from wtpy.apps.astock.data.delta_store import (
     DeltaStore,
+    KIND_BARS,
+    KIND_FACTOR,
     OverlayState,
     load_overlay_state,
     save_overlay_state,
+)
+from wtpy.apps.astock.data.generation_catalog import (
+    reconcile_generation_catalog,
 )
 from wtpy.apps.astock.data.tushare_product import (
     select_delisted_pool,
@@ -135,7 +140,7 @@ def build_overlay_state(store: DatasetStore, plan: Dict) -> OverlayState:
             plan["supplement_factor_base_manifest_sha256"]
         ),
         delta_watermark=plan["base_cutoff"],
-        factor_watermark=max(plan["base_cutoff"], plan["factor_base_cutoff"]),
+        factor_watermark=plan["factor_base_cutoff"],
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
     )
     return st
@@ -184,6 +189,7 @@ def cmd_apply(store: DatasetStore, *, force: bool = False) -> int:
     delta = DeltaStore(store.root)
     delta.init_schema()
     save_overlay_state(store.root, st)
+    reconcile_generation_catalog(store.root, st)
     print(json.dumps({"applied": True, "overlay_state": st.to_dict()},
                      ensure_ascii=False, indent=2))
     return 0
@@ -191,8 +197,19 @@ def cmd_apply(store: DatasetStore, *, force: bool = False) -> int:
 
 def cmd_status(store: DatasetStore) -> int:
     st = load_overlay_state(store.root)
-    delta = DeltaStore(store.root)
-    health = delta.health_check(st.delta_watermark) if st.enabled else None
+    delta = DeltaStore(store.root, st.delta_store_id if st.enabled else "main")
+    health = None
+    if st.enabled:
+        bars_committed = delta.current_watermark(KIND_BARS)
+        factors_committed = delta.current_watermark(KIND_FACTOR)
+        health = delta.health_check(
+            st.delta_watermark if bars_committed else 0,
+            factor_watermark=(st.factor_watermark if factors_committed else None),
+            commit_seq=st.delta_commit_seq or None,
+            factor_commit_seq=st.factor_commit_seq or None,
+        )
+        health["view_delta_watermark"] = st.delta_watermark
+        health["view_factor_watermark"] = st.factor_watermark
     print(json.dumps({"overlay": st.to_dict(), "delta_health": health},
                      ensure_ascii=False, indent=2))
     return 0

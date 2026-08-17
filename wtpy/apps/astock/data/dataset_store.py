@@ -41,6 +41,43 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def manifest_content_sha256(manifest: "DatasetManifest") -> str:
+    """Canonical manifest hash, excluding the hash field itself."""
+    payload = manifest.to_dict()
+    payload["manifest_sha256"] = ""
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return sha256_text(canonical)
+
+
+def validate_manifest_sha256(manifest: "DatasetManifest") -> bool:
+    """Validate an in-memory manifest produced by the current schema.
+
+    Persisted manifests should be checked with :func:`validate_manifest_path`.
+    Re-serializing an older manifest through a newer dataclass adds defaulted
+    fields and changes its canonical hash even when the file is intact.
+    """
+    expected = str(getattr(manifest, "manifest_sha256", "") or "")
+    return bool(expected) and expected == manifest_content_sha256(manifest)
+
+
+def validate_manifest_path(
+    path: Path | str, *, expected_sha256: str = ""
+) -> bool:
+    """Validate a persisted manifest without schema-dependent reserialization."""
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    claimed = str(payload.get("manifest_sha256") or "")
+    if not claimed or (expected_sha256 and claimed != expected_sha256):
+        return False
+    payload["manifest_sha256"] = ""
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return claimed == sha256_text(canonical)
+
+
 def make_sync_run_id(source: str) -> str:
     ts = time.strftime("%Y%m%dT%H%M%S")
     uid = uuid.uuid4().hex[:8]
@@ -147,6 +184,10 @@ class DatasetManifest:
     # newest committed batch watermark this view may read (inclusive, YYYYMMDD)
     delta_watermark: Optional[int] = None
     factor_watermark: Optional[int] = None
+    # Inclusive commit-sequence ceilings make same-watermark revisions
+    # replayable. Zero means no delta rows; None is a legacy unbounded view.
+    delta_commit_seq: Optional[int] = None
+    factor_commit_seq: Optional[int] = None
     # view_type: "l2_virtual_composite" | "l1_virtual_qfq" | "raw_virtual"
     #            | "" (legacy materialized snapshot)
     view_type: str = ""
@@ -161,6 +202,43 @@ class DatasetManifest:
     def from_dict(cls, d: dict) -> "DatasetManifest":
         symbols = [SymbolRecord(**s) for s in d.pop("symbols", [])]
         return cls(symbols=symbols, **d)
+
+
+def manifest_runtime_dependencies(manifest: DatasetManifest) -> Set[str]:
+    """Return manifests required to read or reproduce this dataset surface.
+
+    ``parent_dataset_id`` and ``provenance.parent_dataset_id`` are build
+    lineage only. A materialized snapshot is self-contained, so retaining
+    those parents would keep every historical rewrite forever.
+    """
+    dependencies = {
+        str(value)
+        for value in (
+            getattr(manifest, "raw_dataset_id", ""),
+            getattr(manifest, "factor_dataset_id", ""),
+            getattr(manifest, "base_dataset_id", ""),
+            getattr(manifest, "supplement_dataset_id", ""),
+            getattr(manifest, "universe_dataset_id", ""),
+        )
+        if value
+    }
+    provenance = dict(getattr(manifest, "provenance", None) or {})
+    for key in (
+        "delisted_base_dataset_id",
+        "factor_base_dataset_id",
+        "supplement_factor_base_dataset_id",
+        "supplement_factor_dataset_id",
+        "raw_virtual_dataset_id",
+        "universe_dataset_id",
+    ):
+        value = provenance.get(key)
+        if value:
+            dependencies.add(str(value))
+    for collection_key in ("parents", "parent_datasets"):
+        for parent in provenance.get(collection_key, []) or []:
+            if isinstance(parent, dict) and parent.get("dataset_id"):
+                dependencies.add(str(parent["dataset_id"]))
+    return dependencies
 
 
 def evaluate_strict_publish(
@@ -379,6 +457,7 @@ class DatasetStore:
     def save_manifest(self, manifest: DatasetManifest) -> Path:
         """Atomically write manifest JSON. Returns the manifest path."""
         payload = manifest.to_dict()
+        payload["manifest_sha256"] = ""
         canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         manifest.manifest_sha256 = sha256_text(canonical)
         payload["manifest_sha256"] = manifest.manifest_sha256

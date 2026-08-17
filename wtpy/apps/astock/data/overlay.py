@@ -37,6 +37,7 @@ from .dataset_store import (
     DatasetManifest,
     DatasetStore,
     SymbolRecord,
+    validate_manifest_path,
 )
 from .delta_store import (
     DeltaStore,
@@ -49,16 +50,19 @@ from .delta_store import (
 #: view_type values written on virtual manifests
 VIEW_L2_COMPOSITE = "l2_virtual_composite"
 VIEW_L1_QFQ = "l1_virtual_qfq"
+VIEW_FACTOR = "factor_virtual"
 VIEW_RAW = "raw_virtual"
 
 #: virtual dataset id prefixes (stable across watermarks — watermark lives in
 #: the manifest provenance so re-resolution returns the current surface)
 VIRTUAL_L2_PREFIX = "overlay_v1_l2_composite"
 VIRTUAL_L1_PREFIX = "overlay_v1_l1_qfq"
+VIRTUAL_FACTOR_PREFIX = "overlay_v1_factor"
 VIRTUAL_RAW_PREFIX = "overlay_v1_raw"
 
 #: rounding policy identical to the legacy QFQ derivation
 QFQ_ROUND_DECIMALS = 4
+VIRTUAL_SCHEMA_REVISION = "r3"
 
 
 class OverlayNotReadyError(RuntimeError):
@@ -77,40 +81,64 @@ class OverlayView:
 
     store: DatasetStore
     delta: Optional[DeltaStore] = None
-    #: merged factor series cache keyed by (symbol, watermark)
+    _state_override: Optional[OverlayState] = None
+    #: merged factor series cache keyed by (symbol, watermark, commit_seq)
     _factor_series_cache: Dict[tuple, Optional[Tuple[np.ndarray, np.ndarray]]] = field(default_factory=dict)
     #: decompressed factor-blob arrays keyed by blob sha256
     _factor_blob_cache: Dict[str, Dict[str, np.ndarray]] = field(default_factory=dict)
-    #: full visible delta bars/factors keyed by watermark (one query each)
-    _delta_bars_cache: Dict[int, Dict] = field(default_factory=dict)
-    _delta_factors_cache: Dict[int, Dict] = field(default_factory=dict)
+    #: full visible delta bars/factors keyed by (watermark, commit_seq)
+    _delta_bars_cache: Dict[tuple, Dict] = field(default_factory=dict)
+    _delta_factors_cache: Dict[tuple, Dict] = field(default_factory=dict)
     #: pool record list keyed by (base_dataset_id, delisted_base_dataset_id)
     _pool_records_cache: Dict[tuple, List[SymbolRecord]] = field(default_factory=dict)
 
+    def _ensure_delta_store(self) -> None:
+        if self._state_override is not None:
+            return
+        store_id = self.overlay.delta_store_id
+        if self.delta is None or self.delta.store_id != store_id:
+            self.delta = DeltaStore(self.store.root, store_id)
+            self._delta_bars_cache.clear()
+            self._delta_factors_cache.clear()
+            self._factor_series_cache.clear()
+
     def _delta_bars(self, watermark: int) -> Dict:
-        cached = self._delta_bars_cache.get(watermark)
+        self._ensure_delta_store()
+        commit_seq = self.delta_commit_seq
+        key = (int(watermark), commit_seq)
+        cached = self._delta_bars_cache.get(key)
         if cached is None:
-            cached = self.delta.load_all_visible_bars(watermark)
+            cached = self.delta.load_all_visible_bars(
+                watermark, commit_seq=(None if commit_seq < 0 else commit_seq)
+            )
             if len(self._delta_bars_cache) >= 8:
                 self._delta_bars_cache.clear()
-            self._delta_bars_cache[watermark] = cached
+            self._delta_bars_cache[key] = cached
         return cached
 
     def _delta_factors(self, watermark: int) -> Dict:
-        cached = self._delta_factors_cache.get(watermark)
+        self._ensure_delta_store()
+        commit_seq = self.factor_commit_seq
+        key = (int(watermark), commit_seq)
+        cached = self._delta_factors_cache.get(key)
         if cached is None:
-            cached = self.delta.load_all_visible_factors(watermark)
+            cached = self.delta.load_all_visible_factors(
+                watermark, commit_seq=(None if commit_seq < 0 else commit_seq)
+            )
             if len(self._delta_factors_cache) >= 8:
                 self._delta_factors_cache.clear()
-            self._delta_factors_cache[watermark] = cached
+            self._delta_factors_cache[key] = cached
         return cached
 
     def __post_init__(self) -> None:
         if self.delta is None:
-            self.delta = DeltaStore(self.store.root)
+            state = self.overlay
+            self.delta = DeltaStore(self.store.root, state.delta_store_id)
 
     @property
     def overlay(self) -> OverlayState:
+        if self._state_override is not None:
+            return self._state_override
         return load_overlay_state(self.store.root)
 
     # ------------------------------------------------------------------
@@ -133,8 +161,86 @@ class OverlayView:
                 )
             return None
         view = cls(store=store)
-        view.delta = DeltaStore(store.root)
+        view.delta = DeltaStore(store.root, overlay.delta_store_id)
         return view
+
+    @classmethod
+    def for_manifest(
+        cls, store: DatasetStore, manifest: DatasetManifest
+    ) -> "OverlayView":
+        """Build a view pinned to a virtual manifest's base and generation."""
+        current = load_overlay_state(store.root)
+        prov = dict(getattr(manifest, "provenance", None) or {})
+        factor_base_id = str(prov.get("factor_base_dataset_id") or "")
+        factor_base_sha = str(prov.get("factor_base_manifest_sha256") or "")
+        supplement_id = str(
+            prov.get("supplement_factor_base_dataset_id") or ""
+        )
+        supplement_sha = str(
+            prov.get("supplement_factor_base_manifest_sha256") or ""
+        )
+        delisted_id = str(prov.get("delisted_base_dataset_id") or "")
+        delisted_sha = str(
+            prov.get("delisted_base_manifest_sha256") or ""
+        )
+        if manifest.view_type == VIEW_L1_QFQ and not delisted_id:
+            raw_view_id = str(
+                manifest.raw_dataset_id
+                or prov.get("raw_virtual_dataset_id")
+                or ""
+            )
+            raw_view = (
+                store.load_manifest(raw_view_id, deep_copy=False)
+                if raw_view_id
+                else None
+            )
+            raw_prov = dict(getattr(raw_view, "provenance", None) or {})
+            delisted_id = str(
+                raw_prov.get("delisted_base_dataset_id") or ""
+            )
+            delisted_sha = str(
+                raw_prov.get("delisted_base_manifest_sha256") or ""
+            )
+        if manifest.view_type == VIEW_FACTOR:
+            factor_base_id = manifest.base_dataset_id
+            factor_base_sha = manifest.base_manifest_sha256
+        state = OverlayState(
+            enabled=True,
+            delta_store_id=manifest.delta_store_id or current.delta_store_id,
+            base_dataset_id=manifest.base_dataset_id or current.base_dataset_id,
+            base_manifest_sha256=(
+                manifest.base_manifest_sha256 or current.base_manifest_sha256
+            ),
+            delisted_base_dataset_id=delisted_id,
+            delisted_base_manifest_sha256=delisted_sha,
+            factor_base_dataset_id=factor_base_id or current.factor_base_dataset_id,
+            factor_base_manifest_sha256=(
+                factor_base_sha or current.factor_base_manifest_sha256
+            ),
+            supplement_factor_base_dataset_id=(
+                supplement_id or current.supplement_factor_base_dataset_id
+            ),
+            supplement_factor_base_manifest_sha256=(
+                supplement_sha or current.supplement_factor_base_manifest_sha256
+            ),
+            delta_watermark=int(manifest.delta_watermark or 0),
+            factor_watermark=int(manifest.factor_watermark or 0),
+            delta_commit_seq=(
+                int(manifest.delta_commit_seq)
+                if manifest.delta_commit_seq is not None
+                else -1
+            ),
+            factor_commit_seq=(
+                int(manifest.factor_commit_seq)
+                if manifest.factor_commit_seq is not None
+                else -1
+            ),
+        )
+        return cls(
+            store=store,
+            delta=DeltaStore(store.root, state.delta_store_id),
+            _state_override=state,
+        )
 
     @property
     def delta_watermark(self) -> int:
@@ -144,47 +250,84 @@ class OverlayView:
     def factor_watermark(self) -> int:
         return int(self.overlay.factor_watermark or 0)
 
+    @property
+    def delta_commit_seq(self) -> int:
+        return int(self.overlay.delta_commit_seq or 0)
+
+    @property
+    def factor_commit_seq(self) -> int:
+        return int(self.overlay.factor_commit_seq or 0)
+
     # ------------------------------------------------------------------
     # base resolution
     # ------------------------------------------------------------------
-    def _base_manifest(self, dataset_id: str) -> DatasetManifest:
+    def _base_manifest(
+        self, dataset_id: str, expected_sha256: str = ""
+    ) -> DatasetManifest:
         if not dataset_id:
             raise OverlayNotReadyError("overlay base_dataset_id is empty")
-        m = self.store.load_manifest(dataset_id, deep_copy=False)
-        if m is None:
+        manifest = self.store.load_manifest(dataset_id, deep_copy=False)
+        if manifest is None:
             raise OverlayNotReadyError(
                 f"overlay base dataset missing: {dataset_id}"
             )
-        return m
+        if expected_sha256:
+            if manifest.manifest_sha256 != expected_sha256:
+                raise OverlayNotReadyError(
+                    f"overlay manifest sha field mismatch: {dataset_id}"
+                )
+            manifest_path = self.store.manifests_dir / f"{dataset_id}.json"
+            if not validate_manifest_path(
+                manifest_path, expected_sha256=expected_sha256
+            ):
+                raise OverlayNotReadyError(
+                    f"overlay manifest content hash invalid: {dataset_id}"
+                )
+        return manifest
 
     def active_base(self) -> DatasetManifest:
-        return self._base_manifest(self.overlay.base_dataset_id)
+        return self._base_manifest(
+            self.overlay.base_dataset_id, self.overlay.base_manifest_sha256
+        )
 
     def delisted_base(self) -> Optional[DatasetManifest]:
         if not self.overlay.delisted_base_dataset_id:
             return None
-        return self._base_manifest(self.overlay.delisted_base_dataset_id)
+        return self._base_manifest(
+            self.overlay.delisted_base_dataset_id,
+            self.overlay.delisted_base_manifest_sha256,
+        )
 
     def factor_base(self) -> DatasetManifest:
-        return self._base_manifest(self.overlay.factor_base_dataset_id)
+        return self._base_manifest(
+            self.overlay.factor_base_dataset_id,
+            self.overlay.factor_base_manifest_sha256,
+        )
 
     def supplement_factor_base(self) -> Optional[DatasetManifest]:
         if not self.overlay.supplement_factor_base_dataset_id:
             return None
-        return self._base_manifest(self.overlay.supplement_factor_base_dataset_id)
+        return self._base_manifest(
+            self.overlay.supplement_factor_base_dataset_id,
+            self.overlay.supplement_factor_base_manifest_sha256,
+        )
 
     # ------------------------------------------------------------------
     # stock pool (active base + delisted base, disjoint by construction —
     # the migration registers a delisted base that is missing from active)
     # ------------------------------------------------------------------
     def pool_symbols(self) -> List[str]:
-        base = self.active_base()
-        syms = {r.symbol for r in base.symbols if r.blob_sha256}
-        delisted = self.delisted_base()
-        if delisted is not None:
-            for r in delisted.symbols:
-                if r.blob_sha256:
-                    syms.add(r.symbol)
+        self._ensure_delta_store()
+        syms = {r.symbol for r in self._pool_records()}
+        syms.update(
+            self.delta.distinct_symbols(
+                self.delta_watermark,
+                KIND_BARS,
+                commit_seq=(
+                    None if self.delta_commit_seq < 0 else self.delta_commit_seq
+                ),
+            )
+        )
         return sorted(syms)
 
     def _pool_records(self) -> List[SymbolRecord]:
@@ -225,10 +368,12 @@ class OverlayView:
         records: Dict[str, SymbolRecord] = {
             r.symbol: r for r in self._pool_records()
         }
-        try:
-            delta_only = self.delta.distinct_symbols(self.delta_watermark)
-        except Exception:
-            delta_only = set()
+        delta_only = self.delta.distinct_symbols(
+            self.delta_watermark,
+            commit_seq=(
+                None if self.delta_commit_seq < 0 else self.delta_commit_seq
+            ),
+        )
         for sym in sorted(delta_only):
             if sym not in records:
                 records[sym] = SymbolRecord(
@@ -236,6 +381,82 @@ class OverlayView:
                     window_status="delta_only",
                 )
         return [records[s] for s in sorted(records)]
+
+    @staticmethod
+    def _record_with_delta_stats(
+        record: SymbolRecord, delta_dates: Sequence[int]
+    ) -> SymbolRecord:
+        """Return a copied record whose coverage includes visible delta dates."""
+        out = SymbolRecord(**record.to_dict())
+        dates = sorted({int(d) for d in delta_dates})
+        if not dates:
+            return out
+        first = int(out.first_date or 0)
+        last = int(out.last_date or 0)
+        if not first or not last or int(out.row_count or 0) <= 0:
+            out.first_date = dates[0]
+            out.last_date = dates[-1]
+            out.row_count = len(dates)
+            out.window_status = out.window_status or "delta_only"
+            return out
+        additions = sum(1 for d in dates if d < first or d > last)
+        out.first_date = min(first, dates[0])
+        out.last_date = max(last, dates[-1])
+        out.row_count = int(out.row_count or 0) + additions
+        return out
+
+    def _raw_records_with_stats(self) -> List[SymbolRecord]:
+        delta_map = self._delta_bars(self.delta_watermark)
+        return [
+            self._record_with_delta_stats(r, delta_map.get(r.symbol, {}))
+            for r in self._pool_records_with_delta()
+        ]
+
+    def _active_records_with_stats(self) -> List[SymbolRecord]:
+        """Active Tushare base records plus delta-only IPO symbols."""
+        records: Dict[str, SymbolRecord] = {
+            record.symbol: record
+            for record in self.active_base().symbols
+            if record.blob_sha256
+        }
+        delta_map = self._delta_bars(self.delta_watermark)
+        for symbol in delta_map:
+            if symbol not in records:
+                records[symbol] = SymbolRecord(
+                    symbol=symbol,
+                    blob_sha256="",
+                    quality="ok",
+                    window_status="delta_only",
+                )
+        return [
+            self._record_with_delta_stats(records[s], delta_map.get(s, {}))
+            for s in sorted(records)
+        ]
+
+    def _factor_records_with_stats(self) -> List[SymbolRecord]:
+        records: Dict[str, SymbolRecord] = {}
+        main = self.factor_base()
+        for record in main.symbols:
+            if record.blob_sha256:
+                records[record.symbol] = record
+        supplement = self.supplement_factor_base()
+        if supplement is not None:
+            for record in supplement.symbols:
+                if record.blob_sha256 and record.symbol not in records:
+                    records[record.symbol] = record
+        delta_map = self._delta_factors(self.factor_watermark)
+        for symbol in delta_map:
+            if symbol not in records:
+                records[symbol] = SymbolRecord(
+                    symbol=symbol,
+                    blob_sha256="",
+                    quality="ok",
+                    window_status="delta_only",
+                )
+        return [
+            self._record_with_delta_stats(records[s], delta_map.get(s, {}))
+            for s in sorted(records)
+        ]
 
     # ------------------------------------------------------------------
     # virtual manifests
@@ -249,13 +470,17 @@ class OverlayView:
         """
         base = self.active_base()
         dataset_id = (
-            f"{VIRTUAL_L2_PREFIX}_{base.dataset_id}_wm{self.delta_watermark:08d}"
+            f"{VIRTUAL_L2_PREFIX}_{VIRTUAL_SCHEMA_REVISION}_"
+            f"{base.dataset_id}_wm{self.delta_watermark:08d}_"
+            f"seq{self.delta_commit_seq:08d}"
         )
         existing = self.store.load_manifest(dataset_id)
         if existing is not None:
             return existing
-        records = self._pool_records_with_delta()
-        cutoff = int(base.data_cutoff_date or 0)
+        records = self._raw_records_with_stats()
+        cutoff = max(
+            int(base.data_cutoff_date or 0), self.delta_watermark
+        )
         manifest = DatasetManifest(
             dataset_id=dataset_id,
             source="internal",
@@ -263,10 +488,7 @@ class OverlayView:
             period="1d",
             dataset_type="bars",
             snapshot_date=int(time.strftime("%Y%m%d")),
-            data_cutoff_date=max(
-                cutoff,
-                max((int(r.last_date or 0) for r in records), default=0),
-            ),
+            data_cutoff_date=cutoff,
             provider_version="overlay_v1",
             sync_run_id=f"overlay_l2_{time.strftime('%Y%m%dT%H%M%S')}",
             status="ready",
@@ -277,6 +499,8 @@ class OverlayView:
             delta_store_id=self.overlay.delta_store_id,
             delta_watermark=self.delta_watermark,
             factor_watermark=self.factor_watermark,
+            delta_commit_seq=self.delta_commit_seq,
+            factor_commit_seq=self.factor_commit_seq,
             view_type=VIEW_L2_COMPOSITE,
             universe_type=base.universe_type or "overlay_composite",
             survivorship_bias=False,
@@ -292,11 +516,149 @@ class OverlayView:
             ],
             provenance={
                 "storage_mode": "overlay_v1",
+                "data_policy": "tushare_only_v1",
                 "view_type": VIEW_L2_COMPOSITE,
                 "delta_store_id": self.overlay.delta_store_id,
                 "delta_watermark": self.delta_watermark,
+                "delta_commit_seq": self.delta_commit_seq,
+                "factor_commit_seq": self.factor_commit_seq,
                 "base_dataset_id": base.dataset_id,
                 "delisted_base_dataset_id": self.overlay.delisted_base_dataset_id,
+                "delisted_base_manifest_sha256": (
+                    self.overlay.delisted_base_manifest_sha256
+                ),
+            },
+        )
+        manifest.symbols = records
+        manifest.symbol_count = len(records)
+        manifest.row_count = sum(int(r.row_count or 0) for r in records)
+        manifest.expected_symbol_count = len(records)
+        manifest.imported_symbol_count = len(records)
+        manifest.coverage_ratio = 1.0
+        self.store.save_manifest(manifest)
+        return manifest
+
+    def raw_virtual_manifest(self) -> DatasetManifest:
+        """Current Tushare raw view over the frozen base plus bar delta."""
+        base = self.active_base()
+        dataset_id = (
+            f"{VIRTUAL_RAW_PREFIX}_{VIRTUAL_SCHEMA_REVISION}_"
+            f"{base.dataset_id}_wm{self.delta_watermark:08d}_"
+            f"seq{self.delta_commit_seq:08d}"
+        )
+        existing = self.store.load_manifest(dataset_id)
+        if existing is not None:
+            return existing
+        records = self._active_records_with_stats()
+        manifest = DatasetManifest(
+            dataset_id=dataset_id,
+            source="tushare",
+            adjustment="none",
+            period="1d",
+            dataset_type="bars",
+            snapshot_date=int(time.strftime("%Y%m%d")),
+            data_cutoff_date=max(
+                int(base.data_cutoff_date or 0), self.delta_watermark
+            ),
+            provider_version="overlay_v1",
+            sync_run_id=f"overlay_raw_{time.strftime('%Y%m%dT%H%M%S')}",
+            status="ready",
+            created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+            storage_mode="overlay_v1",
+            base_dataset_id=base.dataset_id,
+            base_manifest_sha256=base.manifest_sha256,
+            delta_store_id=self.overlay.delta_store_id,
+            delta_watermark=self.delta_watermark,
+            factor_watermark=self.factor_watermark,
+            delta_commit_seq=self.delta_commit_seq,
+            factor_commit_seq=self.factor_commit_seq,
+            view_type=VIEW_RAW,
+            universe_type=base.universe_type or "tushare_active_overlay",
+            survivorship_bias=True,
+            historical_universe_complete=False,
+            delisted_coverage_complete=False,
+            warning_text=(
+                "Virtual Tushare raw (overlay_v1): active base blobs + "
+                "DuckDB delta. Use formal L2 for survivorship-safe execution."
+            ),
+            recommended_use=["explicit Tushare raw inspection and replay"],
+            prohibited_or_discouraged_use=[
+                "survivorship-safe formal execution",
+            ],
+            provenance={
+                "storage_mode": "overlay_v1",
+                "data_policy": "tushare_only_v1",
+                "view_type": VIEW_RAW,
+                "delta_store_id": self.overlay.delta_store_id,
+                "delta_watermark": self.delta_watermark,
+                "delta_commit_seq": self.delta_commit_seq,
+                "base_dataset_id": base.dataset_id,
+                "base_manifest_sha256": base.manifest_sha256,
+            },
+        )
+        manifest.symbols = records
+        manifest.symbol_count = len(records)
+        manifest.row_count = sum(int(r.row_count or 0) for r in records)
+        manifest.expected_symbol_count = len(records)
+        manifest.imported_symbol_count = len(records)
+        manifest.coverage_ratio = 1.0
+        self.store.save_manifest(manifest)
+        return manifest
+
+    def factor_virtual_manifest(self) -> DatasetManifest:
+        """Version-locked adj_factor view over factor base + factor delta."""
+        base = self.factor_base()
+        dataset_id = (
+            f"{VIRTUAL_FACTOR_PREFIX}_{VIRTUAL_SCHEMA_REVISION}_"
+            f"{base.dataset_id}_wm{self.factor_watermark:08d}_"
+            f"seq{self.factor_commit_seq:08d}"
+        )
+        existing = self.store.load_manifest(dataset_id)
+        if existing is not None:
+            return existing
+        records = self._factor_records_with_stats()
+        manifest = DatasetManifest(
+            dataset_id=dataset_id,
+            source="tushare",
+            adjustment="adj_factor",
+            period="1d",
+            dataset_type="factor",
+            snapshot_date=int(time.strftime("%Y%m%d")),
+            data_cutoff_date=max(
+                int(base.data_cutoff_date or 0), self.factor_watermark
+            ),
+            provider_version="overlay_v1",
+            sync_run_id=f"overlay_factor_{time.strftime('%Y%m%dT%H%M%S')}",
+            status="ready",
+            created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+            storage_mode="overlay_v1",
+            base_dataset_id=base.dataset_id,
+            base_manifest_sha256=base.manifest_sha256,
+            delta_store_id=self.overlay.delta_store_id,
+            delta_watermark=self.delta_watermark,
+            factor_watermark=self.factor_watermark,
+            delta_commit_seq=self.delta_commit_seq,
+            factor_commit_seq=self.factor_commit_seq,
+            view_type=VIEW_FACTOR,
+            warning_text=(
+                "Virtual adj_factor (overlay_v1): factor base blobs + "
+                "versioned DuckDB factor delta."
+            ),
+            provenance={
+                "storage_mode": "overlay_v1",
+                "data_policy": "tushare_only_v1",
+                "view_type": VIEW_FACTOR,
+                "factor_base_dataset_id": base.dataset_id,
+                "factor_base_manifest_sha256": base.manifest_sha256,
+                "supplement_factor_base_dataset_id": (
+                    self.overlay.supplement_factor_base_dataset_id
+                ),
+                "supplement_factor_base_manifest_sha256": (
+                    self.overlay.supplement_factor_base_manifest_sha256
+                ),
+                "factor_watermark": self.factor_watermark,
+                "delta_commit_seq": self.delta_commit_seq,
+                "factor_commit_seq": self.factor_commit_seq,
             },
         )
         manifest.symbols = records
@@ -317,18 +679,19 @@ class OverlayView:
         """
         raw = self.l2_virtual_manifest()
         fac = self.factor_base()
+        factor_view = self.factor_virtual_manifest()
         dataset_id = (
-            f"{VIRTUAL_L1_PREFIX}_{raw.dataset_id}_wm{self.factor_watermark:08d}"
+            f"{VIRTUAL_L1_PREFIX}_{VIRTUAL_SCHEMA_REVISION}_"
+            f"{raw.dataset_id}_wm{self.factor_watermark:08d}_"
+            f"seq{self.factor_commit_seq:08d}"
         )
         existing = self.store.load_manifest(dataset_id)
         if existing is not None:
             return existing
         cutoff = max(
-            int(raw.data_cutoff_date or 0),
-            max((int(r.last_date or 0) for r in fac.symbols if r.last_date),
-                default=0),
+            int(raw.data_cutoff_date or 0), self.factor_watermark
         )
-        records = self._pool_records_with_delta()
+        records = [SymbolRecord(**r.to_dict()) for r in raw.symbols]
         manifest = DatasetManifest(
             dataset_id=dataset_id,
             source="internal",
@@ -340,7 +703,8 @@ class OverlayView:
             provider_version="overlay_v1_runtime_qfq",
             sync_run_id=f"overlay_l1_{time.strftime('%Y%m%dT%H%M%S')}",
             raw_dataset_id=raw.dataset_id,
-            factor_dataset_id=fac.dataset_id,
+            factor_dataset_id=factor_view.dataset_id,
+            factor_dataset_sha256=factor_view.manifest_sha256,
             status="ready",
             created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
             storage_mode="overlay_v1",
@@ -349,6 +713,8 @@ class OverlayView:
             delta_store_id=self.overlay.delta_store_id,
             delta_watermark=self.delta_watermark,
             factor_watermark=self.factor_watermark,
+            delta_commit_seq=self.delta_commit_seq,
+            factor_commit_seq=self.factor_commit_seq,
             view_type=VIEW_L1_QFQ,
             anchor_policy="last_factor_on_or_before_cutoff",
             formula_version="overlay_runtime_qfq_v1",
@@ -370,14 +736,27 @@ class OverlayView:
             ],
             provenance={
                 "storage_mode": "overlay_v1",
+                "data_policy": "tushare_only_v1",
                 "view_type": VIEW_L1_QFQ,
                 "delta_store_id": self.overlay.delta_store_id,
                 "delta_watermark": self.delta_watermark,
                 "factor_watermark": self.factor_watermark,
+                "delta_commit_seq": self.delta_commit_seq,
+                "factor_commit_seq": self.factor_commit_seq,
                 "raw_virtual_dataset_id": raw.dataset_id,
+                "delisted_base_dataset_id": (
+                    self.overlay.delisted_base_dataset_id or ""
+                ),
+                "delisted_base_manifest_sha256": (
+                    self.overlay.delisted_base_manifest_sha256 or ""
+                ),
                 "factor_base_dataset_id": fac.dataset_id,
+                "factor_base_manifest_sha256": fac.manifest_sha256,
                 "supplement_factor_base_dataset_id": (
                     self.overlay.supplement_factor_base_dataset_id or ""
+                ),
+                "supplement_factor_base_manifest_sha256": (
+                    self.overlay.supplement_factor_base_manifest_sha256 or ""
                 ),
             },
         )
@@ -467,10 +846,10 @@ class OverlayView:
 
         Resolution mirrors the legacy rule: main factor base > supplement
         factor base > BSE alias of main factor base. Series are cached
-        per (symbol, watermark) so whole-market loops do not re-merge.
+        per (symbol, watermark, commit_seq) for immutable replay.
         """
         wm = int(watermark if watermark is not None else self.factor_watermark)
-        key = (symbol, wm)
+        key = (symbol, wm, self.factor_commit_seq)
         cached = self._factor_series_cache.get(key)
         if cached is not None:
             return cached
@@ -538,7 +917,7 @@ class OverlayView:
         delta_map = self._delta_factors(wm)
         out: Dict[str, Optional[Tuple[np.ndarray, np.ndarray]]] = {}
         for sym in symbols:
-            key = (sym, wm)
+            key = (sym, wm, self.factor_commit_seq)
             cached = self._factor_series_cache.get(key)
             if cached is not None:
                 out[sym] = cached
@@ -583,6 +962,27 @@ class OverlayView:
             pass
         return ""
 
+    def factor_arrays(
+        self, symbol: str, *, watermark: Optional[int] = None
+    ) -> Optional[Dict[str, np.ndarray]]:
+        series = self._factor_series(symbol, watermark=watermark)
+        if series is None:
+            return None
+        dates, values = series
+        return {"trade_date": dates, "adj_factor": values}
+
+    def factor_arrays_batch(
+        self, symbols: Sequence[str], *, watermark: Optional[int] = None
+    ) -> Dict[str, Optional[Dict[str, np.ndarray]]]:
+        series_map = self._factor_series_batch(symbols, watermark=watermark)
+        return {
+            symbol: (
+                {"trade_date": series[0], "adj_factor": series[1]}
+                if series is not None else None
+            )
+            for symbol, series in series_map.items()
+        }
+
     # ------------------------------------------------------------------
     # runtime QFQ derivation (identical math to legacy derive)
     # ------------------------------------------------------------------
@@ -610,32 +1010,13 @@ class OverlayView:
         if raw is None or len(raw["trade_date"]) == 0:
             return None
         series = self._factor_series(symbol, watermark=factor_watermark)
-        if series is None:
+        derived = _derive_qfq_arrays(raw, series)
+        if derived is None:
             return None
-        fd, fv = series
-        if len(fd) == 0:
-            return None
-        rd = raw["trade_date"]
-        cutoff = int(rd[-1])
-        aidx = int(np.searchsorted(fd, cutoff, side="right")) - 1
-        if aidx < 0:
-            return None  # no anchor factor on or before the raw cutoff
-        anchor = float(fv[aidx])
-        pos = np.searchsorted(fd, rd, side="right") - 1
-        valid = pos >= 0
-        if not np.any(valid):
-            return None
-        rdv = rd[valid]
-        ratio = fv[pos[valid]] / anchor
-        return {
-            "trade_date": rdv,
-            "open": np.round(raw["open"][valid] * ratio, QFQ_ROUND_DECIMALS),
-            "high": np.round(raw["high"][valid] * ratio, QFQ_ROUND_DECIMALS),
-            "low": np.round(raw["low"][valid] * ratio, QFQ_ROUND_DECIMALS),
-            "close": np.round(raw["close"][valid] * ratio, QFQ_ROUND_DECIMALS),
-            "volume": raw["volume"][valid],
-            "amount": raw["amount"][valid],
-        }
+        # The anchor belongs to the immutable full-watermark surface. Slice
+        # only after derivation, otherwise an earlier query end date silently
+        # changes every historical QFQ price.
+        return _slice_arrays(derived, start_date, end_date)
 
     def qfq_arrays_batch(
         self,
@@ -652,11 +1033,10 @@ class OverlayView:
         selects the factor surface. When either is None the current overlay
         watermark is used.
         """
+        # Always derive against the full immutable raw surface. Applying the
+        # requested range here would move the QFQ anchor to the query end date.
         raws = self.merged_raw_arrays_batch(
-            symbols,
-            start_date=start_date,
-            end_date=end_date,
-            watermark=raw_watermark,
+            symbols, watermark=raw_watermark
         )
         present = [sym for sym, raw in raws.items() if raw is not None]
         series_map = self._factor_series_batch(
@@ -667,40 +1047,12 @@ class OverlayView:
             if raw is None:
                 out[sym] = None
                 continue
-            series = series_map.get(sym)
-            if series is None:
-                out[sym] = None
-                continue
-            fd, fv = series
-            if len(fd) == 0:
-                out[sym] = None
-                continue
-            rd = raw["trade_date"]
-            if len(rd) == 0:
-                out[sym] = {k: v for k, v in raw.items()}
-                continue
-            cutoff = int(rd[-1])
-            aidx = int(np.searchsorted(fd, cutoff, side="right")) - 1
-            if aidx < 0:
-                out[sym] = None
-                continue
-            anchor = float(fv[aidx])
-            pos = np.searchsorted(fd, rd, side="right") - 1
-            valid = pos >= 0
-            if not np.any(valid):
-                out[sym] = None
-                continue
-            rdv = rd[valid]
-            ratio = fv[pos[valid]] / anchor
-            out[sym] = {
-                "trade_date": rdv,
-                "open": np.round(raw["open"][valid] * ratio, QFQ_ROUND_DECIMALS),
-                "high": np.round(raw["high"][valid] * ratio, QFQ_ROUND_DECIMALS),
-                "low": np.round(raw["low"][valid] * ratio, QFQ_ROUND_DECIMALS),
-                "close": np.round(raw["close"][valid] * ratio, QFQ_ROUND_DECIMALS),
-                "volume": raw["volume"][valid],
-                "amount": raw["amount"][valid],
-            }
+            derived = _derive_qfq_arrays(raw, series_map.get(sym))
+            out[sym] = (
+                _slice_arrays(derived, start_date, end_date)
+                if derived is not None
+                else None
+            )
         return out
 
     # ------------------------------------------------------------------
@@ -820,6 +1172,37 @@ def _merge_factor_base_and_delta(
     if not np.all(fv > 0):
         return None
     return fd, fv
+
+
+def _derive_qfq_arrays(
+    raw: Dict[str, np.ndarray],
+    series: Optional[Tuple[np.ndarray, np.ndarray]],
+) -> Optional[Dict[str, np.ndarray]]:
+    """Derive QFQ against the full raw cutoff; callers slice afterwards."""
+    if series is None or len(raw.get("trade_date", ())) == 0:
+        return None
+    fd, fv = series
+    if len(fd) == 0:
+        return None
+    rd = raw["trade_date"]
+    cutoff = int(rd[-1])
+    anchor_index = int(np.searchsorted(fd, cutoff, side="right")) - 1
+    if anchor_index < 0:
+        return None
+    positions = np.searchsorted(fd, rd, side="right") - 1
+    valid = positions >= 0
+    if not np.any(valid):
+        return None
+    ratio = fv[positions[valid]] / float(fv[anchor_index])
+    return {
+        "trade_date": rd[valid],
+        "open": np.round(raw["open"][valid] * ratio, QFQ_ROUND_DECIMALS),
+        "high": np.round(raw["high"][valid] * ratio, QFQ_ROUND_DECIMALS),
+        "low": np.round(raw["low"][valid] * ratio, QFQ_ROUND_DECIMALS),
+        "close": np.round(raw["close"][valid] * ratio, QFQ_ROUND_DECIMALS),
+        "volume": raw["volume"][valid],
+        "amount": raw["amount"][valid],
+    }
 
 
 def _slice_arrays(

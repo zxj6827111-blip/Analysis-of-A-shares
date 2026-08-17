@@ -435,7 +435,7 @@ def build_factor_series(
     """
     if store is not None:
         try:
-            from .repository import MarketDataRepository
+            from .repository import DatasetNotFoundError, MarketDataRepository
 
             _repo = MarketDataRepository(store)
             _fm = _repo.resolve_latest_ready(
@@ -447,8 +447,8 @@ def build_factor_series(
                 )
                 if series is not None and series.quality == "complete":
                     return series
-        except Exception:
-            pass  # fall back to the legacy path below
+        except DatasetNotFoundError:
+            pass  # no warehouse factor surface; use the legacy path below
 
     adj_root = Path(adj_root)
     adj_root.mkdir(parents=True, exist_ok=True)
@@ -788,21 +788,28 @@ def build_factor_series_from_dataset(
     dates_i = [int(d) for d in dates]
     _lookup = lookup_symbol or std_code
     rec = None
-    if symbol_index is not None:
-        for variant in MarketDataRepository._symbol_variants(_lookup):
-            rec = symbol_index.get(variant)
-            if rec is not None:
-                break
-    else:
-        for variant in MarketDataRepository._symbol_variants(_lookup):
-            for s in factor_manifest.symbols:
-                if s.symbol == variant:
-                    rec = s
+    is_overlay_factor = (
+        getattr(factor_manifest, "storage_mode", "") == "overlay_v1"
+        and getattr(factor_manifest, "view_type", "") == "factor_virtual"
+    )
+    if not is_overlay_factor:
+        if symbol_index is not None:
+            for variant in MarketDataRepository._symbol_variants(_lookup):
+                rec = symbol_index.get(variant)
+                if rec is not None:
                     break
-            if rec is not None:
-                break
+        else:
+            for variant in MarketDataRepository._symbol_variants(_lookup):
+                for symbol_record in factor_manifest.symbols:
+                    if symbol_record.symbol == variant:
+                        rec = symbol_record
+                        break
+                if rec is not None:
+                    break
     ds_id = getattr(factor_manifest, "dataset_id", "")
-    if rec is None or not getattr(rec, "blob_sha256", ""):
+    if not is_overlay_factor and (
+        rec is None or not getattr(rec, "blob_sha256", "")
+    ):
         return FactorSeries(
             std_code=std_code,
             dates=dates_i,
@@ -812,7 +819,22 @@ def build_factor_series_from_dataset(
             quality="incomplete",
             sha256="",
         )
-    arrays = store.load_bars(rec.blob_sha256)
+    if is_overlay_factor:
+        arrays = MarketDataRepository(store).load_factor_arrays(
+            dataset_id=ds_id, symbols=[_lookup]
+        ).get(_lookup)
+        if arrays is None:
+            return FactorSeries(
+                std_code=std_code,
+                dates=dates_i,
+                factors=identity_factors(len(dates_i)).tolist(),
+                source="dataset_missing",
+                source_detail=f"factor_dataset:{ds_id};symbol_not_covered",
+                quality="incomplete",
+                sha256="",
+            )
+    else:
+        arrays = store.load_bars(rec.blob_sha256)
     f_dates = [int(x) for x in arrays["trade_date"]]
     f_vals = [float(x) for x in arrays["adj_factor"]]
     # event points = snapped change days (event-anchored; phantom Tushare
@@ -860,12 +882,23 @@ def build_factor_series_from_dataset(
         quality="complete",
         sha256="",
     )
+    if is_overlay_factor:
+        source_hash = hashlib.sha256()
+        source_hash.update(
+            np.asarray(arrays["trade_date"], dtype="<i8").tobytes()
+        )
+        source_hash.update(
+            np.asarray(arrays["adj_factor"], dtype="<f8").tobytes()
+        )
+        source_sha256 = source_hash.hexdigest()
+    else:
+        source_sha256 = rec.blob_sha256
     series.sha256 = sha256_text(
         json.dumps(
             {
                 "std_code": std_code,
                 "factor_dataset": ds_id,
-                "blob": rec.blob_sha256,
+                "source_sha256": source_sha256,
                 "dates": dates_i[:1] + dates_i[-1:],
                 "n": len(dates_i),
             },

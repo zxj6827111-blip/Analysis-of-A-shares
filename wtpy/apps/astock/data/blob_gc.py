@@ -12,15 +12,15 @@ Safety model (all must hold before any blob is deleted):
   2. No LIVE sync task holds any SyncTaskLock — a running sync means new
      blobs may exist that are not yet manifest-referenced. Stale lock files
      (dead holder pid) do NOT block GC.
-  3. Retention = transitive closure of ALL manifests (every status: ready,
-     partial, superseded, failed — superseded/partial manifests can still be
-     referenced by lineage or act as incremental parents) plus any sha256
-     mentioned in checkpoint files under sync_logs (in-flight references).
+  3. Retention = blobs referenced by ALL manifests (every status: ready,
+     partial, superseded, failed) plus any sha256 mentioned in checkpoint
+     files under sync_logs (in-flight references).
   4. Freshness guard: blobs written within ``protection_hours`` are never
      deleted, covering the gap between blob-write and manifest-publish even
      when no sync lock is visible (e.g. crash between the two steps).
-  5. Post-delete verification: every retained manifest's referenced blobs
-     still exist; failure aborts the run before any deletion.
+  5. Pre-delete verification: every retained manifest's referenced blobs
+     already exist, and every planned candidate is still an orphan. The same
+     manifest check is repeated after deletion.
 
 CLI (see scripts/gc_market_data.py):
   --dry-run   (default) only report what would be deleted.
@@ -36,7 +36,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from .dataset_store import DatasetStore
+from .dataset_store import (
+    DatasetStore,
+    manifest_runtime_dependencies,
+    validate_manifest_path,
+)
 from .sync_lock import SyncTaskLock, _pid_alive
 
 #: Minimum age of a blob before GC may consider it (covers write→publish gap).
@@ -204,33 +208,27 @@ def _checkpoint_blob_shas(store: DatasetStore) -> Set[str]:
     return out
 
 
-def _overlay_referenced_manifest_ids(store: DatasetStore) -> Set[str]:
-    """Dataset ids the overlay registry depends on (base blobs must survive GC).
+def _overlay_referenced_manifests(store: DatasetStore) -> Dict[str, str]:
+    """Overlay base dataset ids mapped to their pinned manifest hashes.
 
-    The overlay state (delta/overlay_state.json) names the stable base /
-    delisted base / factor bases whose blobs the virtual L1/L2 views merge
-    with the DuckDB delta. These manifests may have no other manifest
-    reference (their virtual views are periodically expired), so GC must keep
-    their blobs or the whole overlay surface breaks.
+    An existing but corrupt overlay registry raises; callers must fail closed.
     """
-    ids: Set[str] = set()
+    from .delta_store import load_overlay_state
+
     state_path = store.root / "delta" / "overlay_state.json"
     if not state_path.exists():
-        return ids
-    try:
-        data = json.loads(state_path.read_text(encoding="utf-8"))
-    except Exception:
-        return ids
-    for key in (
-        "base_dataset_id",
-        "delisted_base_dataset_id",
-        "factor_base_dataset_id",
-        "supplement_factor_base_dataset_id",
-    ):
-        v = str(data.get(key) or "")
-        if v:
-            ids.add(v)
-    return ids
+        return {}
+    state = load_overlay_state(store.root)
+    pairs = (
+        (state.base_dataset_id, state.base_manifest_sha256),
+        (state.delisted_base_dataset_id, state.delisted_base_manifest_sha256),
+        (state.factor_base_dataset_id, state.factor_base_manifest_sha256),
+        (
+            state.supplement_factor_base_dataset_id,
+            state.supplement_factor_base_manifest_sha256,
+        ),
+    )
+    return {dataset_id: sha for dataset_id, sha in pairs if dataset_id}
 
 
 def build_gc_plan(
@@ -249,9 +247,9 @@ def build_gc_plan(
             plan.blocked_by_live_lock = holder
             return plan
 
-    # 1. All manifests (every status) → transitive closure of references.
-    #    Parent/product lineage is covered because lineage-pointed manifests
-    #    live in the same manifests dir and are loaded too.
+    # 1. All manifests (every status) retain their own blobs. Runtime
+    #    dependencies are checked separately; build-only parent lineage is
+    #    intentionally excluded so legacy snapshots can be retired.
     retained_manifest_blobs: Set[str] = set()
     manifest_ids = store.list_manifests()
     plan.retained_manifest_count = len(manifest_ids)
@@ -261,27 +259,23 @@ def build_gc_plan(
         if m is None:
             continue
         retained_manifest_blobs |= _extract_manifest_blob_shas(m.to_dict())
-        for k in ("parent_dataset_id", "raw_dataset_id", "factor_dataset_id"):
-            v = getattr(m, k, None)
-            if v:
-                lineage_ids.add(v)
+        lineage_ids.update(manifest_runtime_dependencies(m))
     plan.referenced_manifest_blobs = len(retained_manifest_blobs)
 
-    # Defensive: lineage ids that have no manifest on disk are anomalies.
-    missing_lineage = [lid for lid in lineage_ids if lid not in set(manifest_ids)]
-    if missing_lineage:
-        plan.warnings.append(
-            f"manifests reference missing lineage datasets: {missing_lineage[:5]}"
-        )
-
+    # Defensive: runtime dependency ids with no manifest on disk are anomalies.
     # Overlay base references: keep every blob of the overlay-registered base
     # datasets even when their virtual views have been expired. A MISSING base
     # is a hard block: GC must never run against a broken overlay baseline
     # (the missing manifest means we cannot enumerate its blobs, and
     # collecting them as orphans would corrupt the whole overlay surface) —
     # mirroring the live-lock guard, the plan is returned empty.
-    overlay_ids = _overlay_referenced_manifest_ids(store)
-    for oid in sorted(overlay_ids):
+    try:
+        overlay_refs = _overlay_referenced_manifests(store)
+    except Exception as exc:
+        plan.blocked_by_overlay_manifest_missing = f"invalid_overlay_state:{exc}"
+        plan.warnings.append(f"overlay state invalid; GC refused: {exc}")
+        return plan
+    for oid, expected_sha in sorted(overlay_refs.items()):
         om = store.load_manifest(oid, deep_copy=False)
         if om is None:
             plan.blocked_by_overlay_manifest_missing = oid
@@ -290,12 +284,34 @@ def build_gc_plan(
                 f"(GC refused)"
             )
             return plan
+        if (
+            expected_sha
+            and (
+                om.manifest_sha256 != expected_sha
+                or not validate_manifest_path(
+                    store.manifests_dir / f"{oid}.json",
+                    expected_sha256=expected_sha,
+                )
+            )
+        ):
+            plan.blocked_by_overlay_manifest_missing = f"sha_mismatch:{oid}"
+            plan.warnings.append(
+                f"overlay base manifest hash invalid: {oid} (GC refused)"
+            )
+            return plan
         retained_manifest_blobs |= _extract_manifest_blob_shas(om.to_dict())
         lineage_ids.add(oid)
-    missing_lineage = [lid for lid in lineage_ids if lid not in set(manifest_ids)]
+    known_dependency_ids = set(manifest_ids)
+    universe_dir = store.root / "universes"
+    if universe_dir.is_dir():
+        known_dependency_ids.update(
+            path.stem for path in universe_dir.glob("*.json")
+        )
+    missing_lineage = sorted(lineage_ids - known_dependency_ids)
     if missing_lineage:
         plan.warnings.append(
-            f"manifests reference missing lineage datasets: {missing_lineage[:5]}"
+            "manifests reference missing runtime dependencies: "
+            f"{missing_lineage[:5]}"
         )
 
     # 2. Checkpoint / in-flight references.
@@ -345,12 +361,39 @@ def verify_retained_manifests(store: DatasetStore) -> List[str]:
 
 
 def apply_gc_plan(store: DatasetStore, plan: GcPlan) -> Dict:
-    """Delete the planned blobs, then verify retained manifests intact.
+    """Verify the plan is still safe, delete, then verify manifests again.
 
-    Returns a summary dict. Raises RuntimeError if post-delete verification
-    finds missing blobs (should never happen — plan was computed from the
-    full retention closure).
+    Returns a summary dict. Raises RuntimeError before deletion when retained
+    data is already incomplete or a candidate became referenced after planning.
     """
+    if plan.blocked:
+        raise RuntimeError(f"GC plan is blocked: {plan.summarize()}")
+    missing_before = verify_retained_manifests(store)
+    if missing_before:
+        raise RuntimeError(
+            f"PRE-DELETE VERIFICATION FAILED: {len(missing_before)} manifest "
+            f"blobs already missing: {missing_before[:10]}"
+        )
+    fresh_plan = build_gc_plan(
+        store,
+        protection_hours=0,
+        respect_live_locks=False,
+    )
+    if fresh_plan.blocked:
+        raise RuntimeError(
+            f"GC safety recheck is blocked: {fresh_plan.summarize()}"
+        )
+    current_orphans = {candidate.sha256 for candidate in fresh_plan.candidates}
+    stale_candidates = sorted(
+        candidate.sha256
+        for candidate in plan.candidates
+        if candidate.path.exists() and candidate.sha256 not in current_orphans
+    )
+    if stale_candidates:
+        raise RuntimeError(
+            "GC PLAN STALE: planned candidates are now retained or protected: "
+            f"{stale_candidates[:10]}"
+        )
     deleted = 0
     deleted_bytes = 0
     for c in plan.candidates:

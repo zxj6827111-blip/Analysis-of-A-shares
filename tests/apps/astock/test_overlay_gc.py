@@ -19,8 +19,12 @@ import time
 import numpy as np
 import pytest
 
-from wtpy.apps.astock.data.blob_gc import build_gc_plan
-from wtpy.apps.astock.data.dataset_store import DatasetStore
+from wtpy.apps.astock.data.blob_gc import apply_gc_plan, build_gc_plan
+from wtpy.apps.astock.data.dataset_store import (
+    DatasetManifest,
+    DatasetStore,
+    SymbolRecord,
+)
 from wtpy.apps.astock.data.delta_store import OverlayState, save_overlay_state
 
 from .conftest import build_overlay_warehouse
@@ -102,3 +106,151 @@ class TestOverlayGcRetention:
         _age_blobs(store)
         plan = build_gc_plan(store, respect_live_locks=False)
         assert not any(c.sha256 == base_blob for c in plan.candidates)
+
+    def test_gc_fails_closed_on_corrupt_overlay_state(self, tmp_path):
+        store = build_overlay_warehouse(tmp_path)
+        (tmp_path / "delta" / "overlay_state.json").write_text(
+            "{broken", encoding="utf-8"
+        )
+        plan = build_gc_plan(store, respect_live_locks=False)
+        assert plan.blocked
+        assert (
+            "invalid_overlay_state"
+            in plan.blocked_by_overlay_manifest_missing
+        )
+        assert plan.candidates == []
+
+    def test_gc_fails_closed_on_overlay_manifest_sha_mismatch(self, tmp_path):
+        import json
+
+        store = build_overlay_warehouse(tmp_path)
+        overlay = __import__(
+            "wtpy.apps.astock.data.delta_store",
+            fromlist=["load_overlay_state"],
+        ).load_overlay_state(tmp_path)
+        path = store.manifests_dir / f"{overlay.base_dataset_id}.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["provider_version"] = "tampered"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        plan = build_gc_plan(store, respect_live_locks=False)
+        assert plan.blocked
+        assert plan.blocked_by_overlay_manifest_missing == (
+            f"sha_mismatch:{overlay.base_dataset_id}"
+        )
+        assert plan.candidates == []
+
+    def test_missing_build_parent_does_not_emit_lineage_warning(self, tmp_path):
+        store = DatasetStore(tmp_path)
+        store.publish(
+            DatasetManifest(
+                dataset_id="materialized_snapshot",
+                source="tushare",
+                adjustment="none",
+                period="1d",
+                parent_dataset_id="retired_build_parent",
+            )
+        )
+
+        plan = build_gc_plan(store, respect_live_locks=False)
+
+        assert "retired_build_parent" not in "\n".join(plan.warnings)
+
+    @pytest.mark.parametrize("field", ["raw_dataset_id", "factor_dataset_id"])
+    def test_missing_runtime_parent_still_emits_lineage_warning(
+        self,
+        tmp_path,
+        field,
+    ):
+        store = DatasetStore(tmp_path)
+        missing_id = f"missing_{field}"
+        manifest = DatasetManifest(
+            dataset_id=f"dependent_{field}",
+            source="internal",
+            adjustment="qfq",
+            period="1d",
+        )
+        setattr(manifest, field, missing_id)
+        store.publish(manifest)
+
+        plan = build_gc_plan(store, respect_live_locks=False)
+
+        matching_warnings = [
+            warning for warning in plan.warnings if missing_id in warning
+        ]
+        assert len(matching_warnings) == 1
+
+
+    def test_existing_universe_file_satisfies_runtime_dependency(self, tmp_path):
+        store = DatasetStore(tmp_path)
+        universe_id = "pit_universe_1d_test"
+        universe_dir = store.root / "universes"
+        universe_dir.mkdir(parents=True, exist_ok=True)
+        (universe_dir / f"{universe_id}.json").write_text(
+            "{}", encoding="utf-8"
+        )
+        store.publish(
+            DatasetManifest(
+                dataset_id="universe_consumer",
+                source="internal",
+                adjustment="qfq",
+                period="1d",
+                provenance={"universe_dataset_id": universe_id},
+            )
+        )
+
+        plan = build_gc_plan(store, respect_live_locks=False)
+
+        assert universe_id not in "\n".join(plan.warnings)
+
+    def test_apply_fails_before_delete_when_retained_blob_is_missing(
+        self, tmp_path
+    ):
+        store = build_overlay_warehouse(tmp_path)
+        orphan = _make_orphan(store)
+        _age_blobs(store)
+        plan = build_gc_plan(
+            store, protection_hours=0, respect_live_locks=False
+        )
+        overlay = __import__(
+            "wtpy.apps.astock.data.delta_store",
+            fromlist=["load_overlay_state"],
+        ).load_overlay_state(tmp_path)
+        retained = store.load_manifest(overlay.base_dataset_id)
+        retained_path = (
+            store.blobs_dir / f"{retained.symbols[0].blob_sha256}.npz"
+        )
+        retained_path.unlink()
+
+        with pytest.raises(RuntimeError, match="PRE-DELETE"):
+            apply_gc_plan(store, plan)
+
+        assert (store.blobs_dir / f"{orphan}.npz").exists()
+
+    def test_apply_rejects_candidate_referenced_after_plan(self, tmp_path):
+        store = DatasetStore(tmp_path)
+        orphan = _make_orphan(store)
+        _age_blobs(store)
+        plan = build_gc_plan(
+            store, protection_hours=0, respect_live_locks=False
+        )
+        store.publish(
+            DatasetManifest(
+                dataset_id="late_manifest",
+                source="test",
+                adjustment="none",
+                period="1d",
+                status="ready",
+                symbols=[
+                    SymbolRecord(
+                        symbol="SSE.STK.600000",
+                        blob_sha256=orphan,
+                        row_count=1,
+                    )
+                ],
+            )
+        )
+
+        with pytest.raises(RuntimeError, match="GC PLAN STALE"):
+            apply_gc_plan(store, plan)
+
+        assert (store.blobs_dir / f"{orphan}.npz").exists()

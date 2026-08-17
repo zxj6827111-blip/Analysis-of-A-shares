@@ -64,6 +64,7 @@ def eod_sync_decide(
     lag: Optional[int],
     now,
     sync_time: str = "18:30",
+    sync_weekday: int = 4,
     min_lag: int = 1,
     last_trigger_day=None,
 ) -> tuple:
@@ -76,8 +77,8 @@ def eod_sync_decide(
     """
     import datetime as _dt
 
-    if now.weekday() >= 5:
-        return False, "周末，不触发", None
+    if now.weekday() != sync_weekday:
+        return False, f"非计划更新日（weekday={sync_weekday}）", None
     if now.strftime("%H:%M") < sync_time:
         return False, f"未到自动同步时间（{sync_time}）", None
     today = now.date()
@@ -122,13 +123,14 @@ def _effective_data_lag(health: dict) -> Optional[int]:
 def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
     """Startup + scheduled EOD auto-sync of Tushare market data.
 
-    Scheduling: on weekdays it sleeps straight to ``ASTOCK_EOD_SYNC_TIME``
-    (no idle polling before it); at/after the time it checks freshness and
+    Scheduling: it sleeps to the configured weekday
+    (``ASTOCK_EOD_SYNC_WEEKDAY``, Friday by default) and
+    ``ASTOCK_EOD_SYNC_TIME``; at/after the time it checks freshness and
     spawns the same incremental sync the UI button uses
     (``--source tushare --mode incremental``) plus ``--fresh``. If the data
     is not yet lagged (Tushare publishes late) it retries every
     ``ASTOCK_EOD_SYNC_POLL_SECONDS`` (default 30 min); once fired, the day is
-    done and it sleeps to the next day's sync time. Weekends sleep to Monday.
+    done and it sleeps to the next configured weekly sync time.
 
     The trigger record is persisted to ``storage/astock/eod_sync_state.json``
     so the UI can show "上次自动同步时间".
@@ -139,6 +141,7 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                                          指数/ETF 增量同步)
       ASTOCK_EOD_SYNC_STARTUP=0|1        (default 1, run once on startup)
       ASTOCK_EOD_SYNC_TIME=HH:MM         (default 18:30)
+      ASTOCK_EOD_SYNC_WEEKDAY=0..6       (default 4: Friday)
       ASTOCK_EOD_SYNC_MIN_LAG_DAYS=N     (default 1)
       ASTOCK_EOD_SYNC_POLL_SECONDS=N     (default 1800, min 60)
       ASTOCK_EOD_SYNC_MAX_RETRIES=N      (default 2, same-day retries after
@@ -166,6 +169,12 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             return
 
     sync_time = _os.environ.get("ASTOCK_EOD_SYNC_TIME", "18:30")
+    try:
+        sync_weekday = min(
+            6, max(0, int(_os.environ.get("ASTOCK_EOD_SYNC_WEEKDAY", "4")))
+        )
+    except ValueError:
+        sync_weekday = 4
     try:
         min_lag = max(0, int(_os.environ.get("ASTOCK_EOD_SYNC_MIN_LAG_DAYS", "1")))
     except ValueError:
@@ -211,6 +220,8 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                 st.update({
                     "enabled": True,
                     "sync_time": sync_time,
+                    "sync_weekday": sync_weekday,
+                    "schedule_mode": "weekly",
                     "min_lag_days": min_lag,
                     "poll_seconds": poll_sec,
                     "updated_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -278,8 +289,11 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         if _st0.get("retry_count") or _st0.get("pending_retry_at"):
             _save_state({"retry_count": 0, "pending_retry_at": None})
 
-    def _trigger(reason: str) -> None:
+    def _trigger(reason: str, *, retry_count: Optional[int] = None) -> None:
         nonlocal last_trigger_day
+        # retry_count is the numbered retry currently being launched. None
+        # means the initial scheduled run and resets the counter to zero.
+        attempt_retry_count = int(retry_count or 0)
         script = str(Path(__file__).resolve().parents[3] / "scripts" / "sync_market_data.py")
         today = int(_dt.date.today().strftime("%Y%m%d"))
         # overlay_v1 仓库:例行 EOD 走 delta 链(raw+factor 增量写 DuckDB,
@@ -289,10 +303,9 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             (_os.environ.get("ASTOCK_MARKET_STORAGE_MODE", "").strip().lower())
             == "overlay_v1"
         )
-        sync_mode = "delta" if overlay_mode else "incremental"
         cmd = [
             sys.executable, "-u", script,
-            "--source", "tushare", "--mode", sync_mode,
+            "--source", "tushare", "--mode", "incremental",
             "--end-date", str(today), "--fresh",
             "--storage-root", str(cfg.market_data_root),
         ]
@@ -305,7 +318,7 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         # 并发争抢 Tushare 频率限制。指数/ETF 无复权,与股票链互不影响。
         # overlay_v1 下指数/ETF 仍走旧 blob 增量路径(体积远小于股票全历史)。
         cmd_ie = None
-        if _env_flag("ASTOCK_EOD_SYNC_INDEX_ETF", "1"):
+        if _env_flag("ASTOCK_EOD_SYNC_INDEX_ETF", "0"):
             cmd_ie = [
                 sys.executable, "-u", script,
                 "--source", "tushare", "--asset-class", "all",
@@ -369,6 +382,57 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                     rc = rc2
                 else:
                     print("[EOD_SYNC] 指数/ETF 同步完成")
+            governance_rc = None
+            if (
+                rc == 0
+                and overlay_mode
+                and _env_flag("ASTOCK_MARKET_GOVERNANCE_ENABLED", "1")
+            ):
+                govern_script = str(
+                    Path(__file__).resolve().parents[3]
+                    / "scripts"
+                    / "govern_market_data.py"
+                )
+                govern_cmd = [
+                    sys.executable,
+                    "-u",
+                    govern_script,
+                    "--storage-root",
+                    str(cfg.market_data_root),
+                    "--maintain",
+                    "--apply",
+                ]
+                govern_log = None
+                try:
+                    govern_log = open(log_path, "a", encoding="utf-8")
+                except Exception:
+                    govern_log = None
+                try:
+                    governance_proc = subprocess.Popen(
+                        govern_cmd,
+                        stdout=govern_log or subprocess.DEVNULL,
+                        stderr=(
+                            subprocess.STDOUT
+                            if govern_log
+                            else subprocess.DEVNULL
+                        ),
+                        env=env,
+                    )
+                    governance_rc = governance_proc.wait()
+                except Exception as exc:
+                    governance_rc = -1
+                    print(f"[EOD_SYNC] 数据治理启动失败: {exc}")
+                finally:
+                    if govern_log:
+                        govern_log.close()
+                if governance_rc == 0:
+                    print("[EOD_SYNC] consolidation/retention/GC 治理完成")
+                else:
+                    print(
+                        f"[EOD_SYNC] 数据同步成功，但治理失败"
+                        f"（exit={governance_rc}）"
+                    )
+
             st = _load_state()
             prev_retry = int(st.get("retry_count") or 0)
             finished = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -376,6 +440,10 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                 "last_sync_exit_code": rc,
                 "last_sync_finished_at": finished,
                 "sync_pid": int(proc.pid or 0),
+                "last_governance_exit_code": governance_rc,
+                "last_governance_finished_at": (
+                    finished if governance_rc is not None else None
+                ),
             }
             if rc == 0:
                 extra["retry_count"] = 0
@@ -385,8 +453,12 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                 retry = prev_retry + 1
                 extra["retry_count"] = retry
                 extra["pending_retry_at"] = (
-                    _dt.datetime.now() + _dt.timedelta(seconds=poll_sec)
-                ).strftime("%Y-%m-%d %H:%M:%S")
+                    (_dt.datetime.now() + _dt.timedelta(seconds=poll_sec)).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                    if retry <= max_retries
+                    else None
+                )
                 if retry <= max_retries:
                     print(
                         f"[EOD_SYNC] 同步失败（exit={rc}），"
@@ -417,10 +489,14 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                 "last_reason": f"{reason}（启动失败）",
                 "last_sync_exit_code": -1,
                 "last_sync_finished_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "retry_count": int(_load_state().get("retry_count") or 0) + 1,
+                "retry_count": attempt_retry_count + 1,
                 "pending_retry_at": (
-                    _dt.datetime.now() + _dt.timedelta(seconds=poll_sec)
-                ).strftime("%Y-%m-%d %H:%M:%S"),
+                    (_dt.datetime.now() + _dt.timedelta(seconds=poll_sec)).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                    if attempt_retry_count + 1 <= max_retries
+                    else None
+                ),
             })
             wake_event.set()
             return
@@ -434,7 +510,7 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             "last_sync_started_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "last_reason": reason,
             "sync_pid": int(proc.pid or 0),
-            "retry_count": 0,
+            "retry_count": attempt_retry_count,
             "pending_retry_at": None,
         })
         _thr.Thread(
@@ -464,22 +540,25 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         effective_last = last_trigger_day
         st = _load_state()
         last_rc = st.get("last_sync_exit_code")
+        retry_number: Optional[int] = None
         if (
             effective_last is not None
             and effective_last == now.date()
             and (last_rc or 0) != 0
-            and int(st.get("retry_count") or 0) < max_retries
+            and 0 < int(st.get("retry_count") or 0) <= max_retries
             and _retry_due(st, now)
         ):
             effective_last = None
+            retry_number = int(st.get("retry_count") or 0)
             print(
-                f"[EOD_SYNC] 上次自动同步失败（exit={last_rc}），"
-                f"重试第 {int(st.get('retry_count') or 0) + 1}/{max_retries} 次"
+                f"[EOD_SYNC] previous run failed (exit={last_rc}); "
+                f"retry {retry_number}/{max_retries}"
             )
         trigger, reason, today_key = eod_sync_decide(
             lag=_lag_days(),
             now=now,
             sync_time=sync_time,
+            sync_weekday=sync_weekday,
             min_lag=min_lag,
             last_trigger_day=effective_last,
         )
@@ -487,7 +566,9 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             if _sync_in_progress():
                 print(f"[EOD_SYNC] {label}：{reason}，但已有手动同步在运行，稍后重试")
                 return False
-            _trigger(f"{label}：{reason}")
+            _trigger(
+                f"{label}: {reason}", retry_count=retry_number
+            )
             return True
         print(f"[EOD_SYNC] {label}：{reason}")
         return False
@@ -506,17 +587,18 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         _time.sleep(max(1.0, (target - now).total_seconds()))
 
     def _next_sync_target(now) -> _dt.datetime:
-        """Tomorrow's sync_time (when 'today' is done: success, retries used
-        up, or the scheduler simply loops into the next day)."""
+        """Next configured weekly sync time, strictly after ``now``."""
         try:
-            return (now + _dt.timedelta(days=1)).replace(
-                hour=int(sync_time[:2]), minute=int(sync_time[3:5]),
-                second=0, microsecond=0,
-            )
+            hour, minute = int(sync_time[:2]), int(sync_time[3:5])
         except (ValueError, IndexError):
-            return (now + _dt.timedelta(days=1)).replace(
-                hour=18, minute=30, second=0, microsecond=0
-            )
+            hour, minute = 18, 30
+        days = (sync_weekday - now.weekday()) % 7
+        target = (now + _dt.timedelta(days=days)).replace(
+            hour=hour, minute=minute, second=0, microsecond=0
+        )
+        if target <= now:
+            target += _dt.timedelta(days=7)
+        return target
 
     def _today_trigger_record() -> dict:
         st = _load_state()
@@ -535,13 +617,11 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
     while True:
         try:
             now = _dt.datetime.now()
-            if now.weekday() >= 5:
-                # weekend: sleep to Monday 00:05
-                days_until_mon = (7 - now.weekday()) % 7
-                target = (now + _dt.timedelta(days=days_until_mon)).replace(
-                    hour=0, minute=5, second=0, microsecond=0
+            if now.weekday() != sync_weekday:
+                target = _next_sync_target(now)
+                wake_event.wait(
+                    timeout=max(1.0, (target - now).total_seconds())
                 )
-                _time.sleep(max(1.0, (target - now).total_seconds()))
                 continue
             if now.strftime("%H:%M") < sync_time:
                 _sleep_until(sync_time)
@@ -559,12 +639,18 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                     wake_event.wait(timeout=poll_sec)
                 continue
             if int(st.get("last_sync_exit_code") or 0) == 0:
-                # today's run already succeeded: day done, sleep to tomorrow
-                _sleep_until(sync_time)
+                # This week's run succeeded; wait until next Friday.
+                target = _next_sync_target(now)
+                wake_event.wait(
+                    timeout=max(1.0, (target - now).total_seconds())
+                )
                 continue
-            if int(st.get("retry_count") or 0) >= max_retries:
-                # retry budget used up (or retries disabled): day done
-                _sleep_until(sync_time)
+            if int(st.get("retry_count") or 0) > max_retries:
+                # Retry budget used up; wait until next scheduled Friday.
+                target = _next_sync_target(now)
+                wake_event.wait(
+                    timeout=max(1.0, (target - now).total_seconds())
+                )
                 continue
             # a run failed and a retry is pending: wait until its due time
             pending = st.get("pending_retry_at")
@@ -683,15 +769,15 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
 
     app = create_app(cfg)
 
-    # Auto-check CA data freshness on startup; trigger incremental sync if stale (>30 days).
+    # Check CA freshness on startup, but only write in the weekly Friday window.
     def _auto_ca_check():
-        """CA 事件自动同步：启动检查（>30 天）+ 每个交易日定时增量同步。
+        """CA 事件自动同步：启动检查（>30 天）+ 每周五定时增量同步。
 
-        Originally a one-shot startup check; now also syncs on a daily timer
-        (default 18:35, after the market-data chain) so CA events stay as
-        fresh as the bars. Child output goes to sync_logs/ca_sync_<date>.log
-        and the exit code is persisted to eod_sync_state.json so a failure is
-        visible and simply re-runs next trading day.
+        Startup only reports staleness outside the weekly window. The
+        actual sync runs on Friday at ``ASTOCK_CA_SYNC_TIME`` (23:00 by
+        default), after the market-data chain. Child output goes to
+        sync_logs/ca_sync_<date>.log and the exit code is persisted to
+        eod_sync_state.json.
         """
         import datetime as _dt
         import os as _os
@@ -702,6 +788,13 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
         state_path = Path(state_path_env) if state_path_env else (
             Path(__file__).resolve().parents[3] / "storage" / "astock" / "eod_sync_state.json"
         )
+        ca_time = _os.environ.get("ASTOCK_CA_SYNC_TIME", "23:00")
+        try:
+            ca_weekday = min(
+                6, max(0, int(_os.environ.get("ASTOCK_CA_SYNC_WEEKDAY", "4")))
+            )
+        except (TypeError, ValueError):
+            ca_weekday = 4
 
         def _load_state():
             try:
@@ -752,7 +845,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
                     "ca_sync_pid": int(proc.pid or 0),
                 })
                 print(
-                    f"[CA_AUTO] CA 同步{'成功' if rc == 0 else f'失败（exit={rc}），次日自动重跑'}"
+                    f"[CA_AUTO] CA 同步{'成功' if rc == 0 else f'失败（exit={rc}），下周五自动重跑'}"
                 )
 
             print(f"[CA_AUTO] {reason}，自动启动 CA 增量同步… （日志: {log_path or 'DEVNULL'}）")
@@ -802,14 +895,19 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
             except Exception:
                 need_sync = True
                 reason = "CA元数据读取失败"
-        if need_sync:
+        now = _dt.datetime.now()
+        if (
+            need_sync
+            and now.weekday() == ca_weekday
+            and now.strftime("%H:%M") >= ca_time
+        ):
             _spawn_ca(reason)
+        elif need_sync:
+            print("[CA_AUTO] CA数据待更新，将在周五计划窗口执行")
         else:
             print("[CA_AUTO] CA数据在有效期内，跳过启动同步")
 
-        # ---- daily timer: every trading day at ASTOCK_CA_SYNC_TIME ----
-        ca_time = _os.environ.get("ASTOCK_CA_SYNC_TIME", "18:35")
-
+        # ---- weekly timer: Friday after the market-data chain ----
         def _sleep_until(hhmm):
             now = _dt.datetime.now()
             try:
@@ -825,12 +923,19 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
         while True:
             try:
                 now = _dt.datetime.now()
-                if now.weekday() >= 5:
-                    # weekend: sleep to Monday 00:05
-                    days_until_mon = (7 - now.weekday()) % 7
-                    target = (now + _dt.timedelta(days=days_until_mon)).replace(
-                        hour=0, minute=5, second=0, microsecond=0
-                    )
+                if now.weekday() != ca_weekday:
+                    days = (ca_weekday - now.weekday()) % 7
+                    try:
+                        target = (now + _dt.timedelta(days=days)).replace(
+                            hour=int(ca_time[:2]),
+                            minute=int(ca_time[3:5]),
+                            second=0,
+                            microsecond=0,
+                        )
+                    except (ValueError, IndexError):
+                        target = (now + _dt.timedelta(days=days)).replace(
+                            hour=23, minute=0, second=0, microsecond=0
+                        )
                     _time.sleep(max(1.0, (target - now).total_seconds()))
                     continue
                 if now.strftime("%H:%M") < ca_time:
@@ -840,7 +945,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
                 if _load_state().get("ca_sync_started_at", "")[:10] == now.strftime("%Y-%m-%d"):
                     _sleep_until(ca_time)
                     continue
-                _spawn_ca(f"每日定时（{ca_time}）")
+                _spawn_ca(f"每周五定时（{ca_time}）")
                 _sleep_until(ca_time)
             except Exception as e:
                 print(f"[CA_AUTO] 定时检查异常: {type(e).__name__}: {e}")
@@ -860,7 +965,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
                 return
             if cfg.market_storage_overlay_enabled:
                 # overlay_v1: 正式 L1/L2 是运行时虚拟视图(基准 blob + DuckDB
-                # 增量),不再物化快照;跳过产品派生,避免每日重建完整行情 NPZ。
+                # 增量),不再物化快照;跳过产品派生,避免例行更新重建完整行情 NPZ。
                 print(
                     "[TUSHARE_PRODUCT] overlay_v1 active: virtual L1/L2 views "
                     "reflect the delta automatically; skipping materialized "

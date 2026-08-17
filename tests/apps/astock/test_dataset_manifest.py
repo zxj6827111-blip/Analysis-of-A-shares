@@ -9,6 +9,7 @@ from wtpy.apps.astock.data.dataset_store import (
     SymbolRecord,
     make_dataset_id,
     make_sync_run_id,
+    validate_manifest_path,
 )
 
 
@@ -67,6 +68,35 @@ class TestDatasetManifest:
         assert loaded is not None
         assert loaded.dataset_id == "test_save_load"
         assert loaded.manifest_sha256 != ""
+
+    def test_legacy_manifest_hash_validates_from_persisted_payload(
+        self, store
+    ):
+        m = DatasetManifest(
+            dataset_id="legacy_hash",
+            source="tushare",
+            adjustment="none",
+            period="1d",
+            status="ready",
+        )
+        path = store.save_manifest(m)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload.pop("delta_commit_seq", None)
+        payload.pop("factor_commit_seq", None)
+        payload["manifest_sha256"] = ""
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        import hashlib
+
+        payload["manifest_sha256"] = hashlib.sha256(
+            canonical.encode("utf-8")
+        ).hexdigest()
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        assert validate_manifest_path(
+            path, expected_sha256=payload["manifest_sha256"]
+        )
 
     def test_load_nonexistent(self, store):
         assert store.load_manifest("nonexistent") is None

@@ -27,10 +27,12 @@ from wtpy.apps.astock.data.delta_store import (
     load_overlay_state,
 )
 from wtpy.apps.astock.data.providers.base import (
+    DataNotDownloaded,
     DataSource,
     MarketBar,
     MarketDataRequest,
     ProviderCapabilities,
+    ProviderError,
 )
 from wtpy.apps.astock.data.repository import MarketDataRepository
 
@@ -218,6 +220,29 @@ class TestEodDeltaChain:
         blobs_after = len(list(store.blobs_dir.glob("*.npz")))
         assert blobs_after == blobs_before
 
+    def test_requested_holiday_publishes_observed_trading_day(
+        self, tmp_path
+    ):
+        build_overlay_warehouse(tmp_path)
+        data = {
+            20240110: {
+                "SSE.STK.600000": (
+                    10.9, 11.2, 10.8, 11.1, 1700.0, 180000.0
+                )
+            }
+        }
+        factors = {20240110: {"SSE.STK.600000": 1.5}}
+        result, _ = _run_chain(
+            tmp_path, FakeProvider(data, factors), 20240113
+        )
+        assert result["status"] == "success", result
+        assert result["raw"]["requested_cutoff"] == 20240113
+        assert result["raw"]["cutoff"] == 20240110
+        assert result["factor"]["cutoff"] == 20240110
+        state = load_overlay_state(tmp_path)
+        assert state.delta_watermark == 20240110
+        assert state.factor_watermark == 20240110
+
     def test_publish_requires_healthy_delta(self, tmp_path):
         store = build_overlay_warehouse(tmp_path)
         ds = DeltaStore(tmp_path)
@@ -227,6 +252,14 @@ class TestEodDeltaChain:
         # health check against a watermark with no committed batch fails
         with pytest.raises(DeltaWriteError):
             writer.publish(delta_watermark=20250101, require_health=True)
+
+    def test_publish_rejects_watermark_regression(self, tmp_path):
+        store = build_overlay_warehouse(tmp_path)
+        from wtpy.apps.astock.data.delta_writer import DeltaEodWriter
+
+        writer = DeltaEodWriter(store)
+        with pytest.raises(DeltaWriteError, match="watermark regression"):
+            writer.publish(delta_watermark=20240107, require_health=False)
 
     def test_health_gate_blocks_publish_keeps_batch_invisible(self, tmp_path):
         store = build_overlay_warehouse(tmp_path)
@@ -248,3 +281,123 @@ class TestEodDeltaChain:
             writer.publish(delta_watermark=20240110, require_health=True)
         st = load_overlay_state(tmp_path)
         assert st.delta_watermark == 20240108  # unchanged -> batch invisible
+
+
+class TestEodDeltaEdgeCases:
+    def test_complete_chain_lock_rejects_concurrent_run(self, tmp_path):
+        build_overlay_warehouse(tmp_path)
+        from wtpy.apps.astock.data.sync_lock import SyncTaskLock
+
+        lock = SyncTaskLock(
+            tmp_path,
+            source="tushare",
+            adjustment="overlay_chain",
+            period="1d",
+            sync_run_id="held",
+        )
+        lock.acquire()
+        try:
+            result, _ = _run_chain(
+                tmp_path, FakeProvider({}, {}), 20240109
+            )
+        finally:
+            lock.release()
+        assert result["status"] == "failed"
+        assert result["error"] == "concurrent_overlay_chain"
+
+    def test_non_batch_provider_treats_suspended_symbol_as_empty(self):
+        smd = _sync_module()
+
+        class NonBatchProvider:
+            def __init__(self):
+                self.calls = []
+
+            def capabilities(self):
+                return ProviderCapabilities(
+                    source=DataSource.TUSHARE,
+                    supports_batch=False,
+                    max_batch_size=1,
+                )
+
+            def fetch_bars(self, request):
+                assert len(request.symbols) == 1
+                symbol = request.symbols[0]
+                self.calls.append(symbol)
+                if symbol == "SZSE.STK.000001":
+                    raise DataNotDownloaded("suspended")
+                return [MarketBar(
+                    symbol=symbol,
+                    trade_date=20240109,
+                    period="1d",
+                    open=10.0,
+                    high=11.0,
+                    low=9.0,
+                    close=10.5,
+                    volume=1000.0,
+                    amount=100000.0,
+                    source="tushare",
+                    adjustment="none",
+                )]
+
+        provider = NonBatchProvider()
+        rows, failed = smd._fetch_raw_window_rows(
+            provider,
+            ["SSE.STK.600000", "SZSE.STK.000001"],
+            start_date=20240101,
+            end_date=20240109,
+            batch_size=10,
+        )
+        assert provider.calls == ["SSE.STK.600000", "SZSE.STK.000001"]
+        assert list(rows) == ["SSE.STK.600000"]
+        assert failed == {}
+
+    def test_provider_error_blocks_raw_commit_and_watermark(self, tmp_path):
+        build_overlay_warehouse(tmp_path)
+
+        class PartialFailureProvider(FakeProvider):
+            def fetch_bars(self, request):
+                if len(request.symbols) > 1:
+                    raise ProviderError("batch request failed")
+                if request.symbols[0] == "SZSE.STK.000001":
+                    raise ProviderError("symbol request failed")
+                return super().fetch_bars(request)
+
+        data = {
+            20240109: {
+                "SSE.STK.600000": (
+                    10.7, 10.9, 10.6, 10.8, 1500.0, 160000.0
+                )
+            }
+        }
+        provider = PartialFailureProvider(
+            data,
+            {20240109: {"SSE.STK.600000": 1.5}},
+        )
+        result, _ = _run_chain(tmp_path, provider, 20240109)
+
+        assert result["status"] == "failed"
+        assert result["error"] == "raw_provider_failed"
+        assert result["failed_symbol_count"] == 1
+        assert "SZSE.STK.000001" in result["failed_symbols"]
+        assert DeltaStore(tmp_path).delta_row_count(KIND_BARS) == 0
+        state = load_overlay_state(tmp_path)
+        assert state.delta_watermark == 20240108
+        assert state.factor_watermark == 20240108
+
+    def test_empty_factor_window_does_not_advance_watermarks(self, tmp_path):
+        build_overlay_warehouse(tmp_path)
+        day_data = {
+            20240109: {
+                "SSE.STK.600000": (
+                    10.7, 10.9, 10.6, 10.8, 1500.0, 160000.0
+                )
+            }
+        }
+        result, _ = _run_chain(
+            tmp_path, FakeProvider(day_data, {}), 20240109
+        )
+        assert result["status"] == "failed"
+        assert result["error"] == "factor_window_empty"
+        state = load_overlay_state(tmp_path)
+        assert state.delta_watermark == 20240108
+        assert state.factor_watermark == 20240108

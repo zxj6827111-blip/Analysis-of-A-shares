@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""EOD delta write coordination — atomic commit + watermark publish.
+"""EOD delta write coordination - atomic commit + watermark publish.
 
 The EOD delta pipeline replaces the legacy "rewrite full history NPZ blobs
 every day" behavior:
@@ -41,7 +41,10 @@ class DeltaEodWriter:
 
     def __init__(self, store: DatasetStore, delta: Optional[DeltaStore] = None):
         self.store = store
-        self.delta = delta or DeltaStore(store.root)
+        if delta is None:
+            overlay = load_overlay_state(store.root)
+            delta = DeltaStore(store.root, overlay.delta_store_id)
+        self.delta = delta
 
     # ------------------------------------------------------------------
     def commit_bars(
@@ -131,8 +134,26 @@ class DeltaEodWriter:
             int(factor_watermark) if factor_watermark is not None
             else overlay.factor_watermark
         )
+        if new_delta < int(overlay.delta_watermark or 0):
+            raise DeltaWriteError(
+                f"delta watermark regression: {new_delta} < "
+                f"{overlay.delta_watermark}"
+            )
+        if new_factor < int(overlay.factor_watermark or 0):
+            raise DeltaWriteError(
+                f"factor watermark regression: {new_factor} < "
+                f"{overlay.factor_watermark}"
+            )
         if require_health and new_delta:
-            health = self.delta.health_check(new_delta)
+            expected_factor = (
+                new_factor
+                if factor_watermark is not None
+                and new_factor > int(overlay.factor_watermark or 0)
+                else None
+            )
+            health = self.delta.health_check(
+                new_delta, factor_watermark=expected_factor
+            )
             if not health["ok"]:
                 raise DeltaWriteError(
                     f"delta health check failed at watermark {new_delta}: "
@@ -140,6 +161,14 @@ class DeltaEodWriter:
                 )
         overlay.delta_watermark = new_delta
         overlay.factor_watermark = new_factor
+        if delta_watermark is not None:
+            overlay.delta_commit_seq = self.delta.current_commit_seq(
+                KIND_BARS, watermark=new_delta
+            )
+        if factor_watermark is not None:
+            overlay.factor_commit_seq = self.delta.current_commit_seq(
+                KIND_FACTOR, watermark=new_factor
+            )
         if base_dataset_id:
             overlay.base_dataset_id = base_dataset_id
         save_overlay_state(self.store.root, overlay)
@@ -147,6 +176,8 @@ class DeltaEodWriter:
             "published": True,
             "delta_watermark": new_delta,
             "factor_watermark": new_factor,
+            "delta_commit_seq": overlay.delta_commit_seq,
+            "factor_commit_seq": overlay.factor_commit_seq,
         }
 
     # ------------------------------------------------------------------

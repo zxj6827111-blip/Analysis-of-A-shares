@@ -4157,18 +4157,23 @@ def _fetch_raw_window_rows(
     start_date: int,
     end_date: int,
     batch_size: int = 10,
-) -> Dict[str, List[Tuple]]:
-    """Fetch the correction window for many symbols.
+) -> Tuple[Dict[str, List[Tuple]], Dict[str, str]]:
+    """Fetch a correction window and report hard provider failures.
 
-    Returns {normalized_symbol: [(trade_date, o, h, l, c, v, a), ...]} with
-    rows sorted ascending. Batch path with per-symbol fallback on provider
-    errors (mirrors ``_sync_dataset``); symbols with no data are absent.
+    ``DataNotDownloaded`` remains a normal suspended/no-data outcome. Any
+    other ``ProviderError`` is returned per symbol so callers can fail closed
+    instead of publishing a whole-market watermark over partial data.
     """
     rows: Dict[str, List[Tuple]] = {}
+    failed_symbols: Dict[str, str] = {}
     caps = provider.capabilities()
-    use_batch = bool(caps.supports_batch and batch_size > 1)
-    for i in range(0, len(symbols), batch_size):
-        batch = symbols[i : i + batch_size]
+    max_batch = max(1, int(getattr(caps, "max_batch_size", 1) or 1))
+    effective_batch = min(max(1, int(batch_size or 1)), max_batch)
+    if not caps.supports_batch:
+        effective_batch = 1
+
+    for i in range(0, len(symbols), effective_batch):
+        batch = symbols[i : i + effective_batch]
         try:
             req = MarketDataRequest(
                 symbols=batch,
@@ -4178,38 +4183,43 @@ def _fetch_raw_window_rows(
                 end_date=end_date,
             )
             bars = provider.fetch_bars(req)
-            for b in bars:
-                sym = _normalize_symbol(b.symbol)
-                rows.setdefault(sym, []).append(
-                    (int(b.trade_date), float(b.open), float(b.high),
-                     float(b.low), float(b.close), float(b.volume),
-                     float(b.amount))
+        except DataNotDownloaded:
+            continue
+        except ProviderError as batch_error:
+            if len(batch) == 1:
+                failed_symbols[batch[0]] = (
+                    f"{type(batch_error).__name__}: {batch_error}"
                 )
-        except ProviderError:
-            if not use_batch:
-                raise
-            for sym in batch:
+                continue
+            bars = []
+            for symbol in batch:
                 try:
                     req = MarketDataRequest(
-                        symbols=[sym],
+                        symbols=[symbol],
                         period=BarPeriod.DAY,
                         adjustment=AdjustmentMode.NONE,
                         start_date=start_date,
                         end_date=end_date,
                     )
-                    bars = provider.fetch_bars(req)
-                    for b in bars:
-                        s2 = _normalize_symbol(b.symbol)
-                        rows.setdefault(s2, []).append(
-                            (int(b.trade_date), float(b.open), float(b.high),
-                             float(b.low), float(b.close), float(b.volume),
-                             float(b.amount))
-                        )
-                except ProviderError:
+                    bars.extend(provider.fetch_bars(req))
+                except DataNotDownloaded:
                     continue
-    for sym in rows:
-        rows[sym].sort(key=lambda r: r[0])
-    return rows
+                except ProviderError as symbol_error:
+                    failed_symbols[symbol] = (
+                        f"{type(symbol_error).__name__}: {symbol_error}"
+                    )
+        for bar in bars:
+            symbol = _normalize_symbol(bar.symbol)
+            rows.setdefault(symbol, []).append(
+                (
+                    int(bar.trade_date), float(bar.open), float(bar.high),
+                    float(bar.low), float(bar.close), float(bar.volume),
+                    float(bar.amount),
+                )
+            )
+    for symbol in rows:
+        rows[symbol].sort(key=lambda row: row[0])
+    return rows, failed_symbols
 
 
 def sync_tushare_incremental_delta(args, store: DatasetStore) -> dict:
@@ -4239,8 +4249,9 @@ def sync_tushare_incremental_delta(args, store: DatasetStore) -> dict:
 
     base = view.active_base()
     base_cutoff = int(base.data_cutoff_date or 0)
-    window_start = int(args.start_date or _window_start_from_cutoff(base_cutoff))
-    cutoff = int(args.end_date or time.strftime("%Y%m%d"))
+    resume_cutoff = max(base_cutoff, int(view.delta_watermark or 0))
+    window_start = int(args.start_date or _window_start_from_cutoff(resume_cutoff))
+    requested_cutoff = int(args.end_date or time.strftime("%Y%m%d"))
 
     sync_run_id = make_sync_run_id("tushare_delta")
     lock = SyncTaskLock(store.root, source="tushare", adjustment="none",
@@ -4252,18 +4263,37 @@ def sync_tushare_incremental_delta(args, store: DatasetStore) -> dict:
 
     try:
         print(f"  [delta] fetching {len(symbols)} symbols window "
-              f"{window_start}..{cutoff} ...", flush=True)
+              f"{window_start}..{requested_cutoff} ...", flush=True)
         t0 = time.time()
-        window_rows = _fetch_raw_window_rows(
+        window_rows, failed_symbols = _fetch_raw_window_rows(
             provider, symbols,
-            start_date=window_start, end_date=cutoff,
+            start_date=window_start, end_date=requested_cutoff,
             batch_size=int(getattr(args, "batch_size", None) or 10),
         )
+        if failed_symbols:
+            return {
+                "status": "failed",
+                "error": "raw_provider_failed",
+                "window_start": window_start,
+                "requested_cutoff": requested_cutoff,
+                "failed_symbol_count": len(failed_symbols),
+                "failed_symbols": dict(list(sorted(failed_symbols.items()))[:50]),
+            }
         # only symbols that actually changed/new in the window become rows;
         # symbols absent from the window (suspended) contribute nothing
         rows: Dict[str, List[Tuple]] = {
             sym: rws for sym, rws in window_rows.items() if rws
         }
+        if not rows:
+            return {
+                "status": "failed",
+                "error": "raw_window_empty",
+                "window_start": window_start,
+                "requested_cutoff": requested_cutoff,
+            }
+        observed_cutoff = max(
+            int(row[0]) for symbol_rows in rows.values() for row in symbol_rows
+        )
         writer = DeltaEodWriter(store)
 
         def _commit() -> dict:
@@ -4271,7 +4301,7 @@ def sync_tushare_incremental_delta(args, store: DatasetStore) -> dict:
                 sync_run_id=sync_run_id,
                 source=DataSource.TUSHARE.value,
                 base_dataset_id=base.dataset_id,
-                cutoff=cutoff,
+                cutoff=observed_cutoff,
                 rows=rows,
             )
             return batch
@@ -4288,7 +4318,8 @@ def sync_tushare_incremental_delta(args, store: DatasetStore) -> dict:
             "sync_run_id": sync_run_id,
             "write_mode": "delta",
             "window_start": window_start,
-            "cutoff": cutoff,
+            "requested_cutoff": requested_cutoff,
+            "cutoff": observed_cutoff,
             "symbols_fetched": len(symbols),
             "symbols_with_rows": len(rows),
             "new_rows": batch["new_rows"],
@@ -4308,11 +4339,32 @@ def sync_tushare_incremental_delta(args, store: DatasetStore) -> dict:
 
 
 def sync_tushare_chain_delta(args, store: DatasetStore) -> dict:
-    """overlay_v1 EOD chain: raw delta + factor delta + atomic publish.
+    """Serialize the complete raw + factor overlay publication chain."""
+    from wtpy.apps.astock.data.sync_lock import SyncTaskLock, SyncLockHeldError
 
-    No product derivation, no full-history blob rewrites. The formal L1/L2
-    virtual views read the merged base+delta surface directly.
-    """
+    chain_lock = SyncTaskLock(
+        store.root,
+        source="tushare",
+        adjustment="overlay_chain",
+        period="1d",
+        sync_run_id=make_sync_run_id("tushare_overlay_chain"),
+    )
+    try:
+        chain_lock.acquire()
+    except SyncLockHeldError as exc:
+        return {
+            "status": "failed",
+            "error": "concurrent_overlay_chain",
+            "holder": exc.holder,
+        }
+    try:
+        return _sync_tushare_chain_delta_locked(args, store)
+    finally:
+        chain_lock.release()
+
+
+def _sync_tushare_chain_delta_locked(args, store: DatasetStore) -> dict:
+    """Run raw + factor commits and publish one coherent overlay version."""
     from wtpy.apps.astock.data.delta_writer import DeltaEodWriter
     from wtpy.apps.astock.data.providers.tushare import TushareProvider
     from wtpy.apps.astock.data.sync_lock import SyncTaskLock, SyncLockHeldError
@@ -4333,15 +4385,20 @@ def sync_tushare_chain_delta(args, store: DatasetStore) -> dict:
             "raw": raw_step,
         }
     fac_base = view.factor_base()
-    fac_cutoff = int(args.end_date or time.strftime("%Y%m%d"))
+    requested_factor_cutoff = int(
+        args.end_date or time.strftime("%Y%m%d")
+    )
     fac_start = int(
         args.start_date or _window_start_from_cutoff(
-            int(fac_base.data_cutoff_date or 0)
+            max(
+                int(fac_base.data_cutoff_date or 0),
+                int(view.factor_watermark or 0),
+            )
         )
     )
     symbols = _resolve_symbols(args, provider)
     if not symbols:
-        symbols = [r.symbol for r in fac_base.symbols if r.blob_sha256]
+        symbols = view.pool_symbols()
 
     sync_run_id = make_sync_run_id("tsfactor_delta")
     lock = SyncTaskLock(store.root, source="tushare", adjustment="adj_factor",
@@ -4356,7 +4413,7 @@ def sync_tushare_chain_delta(args, store: DatasetStore) -> dict:
         stats = {"api_calls": 0, "rate_limited": 0, "provider_failed": 0}
         rate_per_min = max(1, int(getattr(args, "rate_per_min", None) or 400))
         window_map = _fetch_factor_window_by_trade_date(
-            provider, fac_start, fac_cutoff, stats, len(symbols), rate_per_min
+            provider, fac_start, requested_factor_cutoff, stats, len(symbols), rate_per_min
         )
         factor_rows: Dict[str, List[Tuple]] = {}
         done_count = 0
@@ -4368,7 +4425,7 @@ def sync_tushare_chain_delta(args, store: DatasetStore) -> dict:
                 continue
             df = df[["trade_date", "adj_factor"]].dropna()
             df["trade_date"] = df["trade_date"].astype(str).astype(int)
-            df = df[df["trade_date"] <= fac_cutoff]
+            df = df[df["trade_date"] <= requested_factor_cutoff]
             df = df.sort_values("trade_date")
             df = df.drop_duplicates(subset="trade_date", keep="last")
             bad = df[df["adj_factor"] <= 0]
@@ -4380,6 +4437,22 @@ def sync_tushare_chain_delta(args, store: DatasetStore) -> dict:
             ]
             done_count += 1
 
+        if not factor_rows:
+            return {
+                "status": "failed",
+                "error": "factor_window_empty",
+                "raw": raw_step,
+                "factor_window": {
+                    "start": fac_start,
+                    "end": requested_factor_cutoff,
+                },
+            }
+        observed_factor_cutoff = max(
+            int(row[0])
+            for symbol_rows in factor_rows.values()
+            for row in symbol_rows
+        )
+
         writer = DeltaEodWriter(store)
 
         def _commit_and_publish() -> dict:
@@ -4387,12 +4460,12 @@ def sync_tushare_chain_delta(args, store: DatasetStore) -> dict:
                 sync_run_id=sync_run_id,
                 source=DataSource.TUSHARE.value,
                 factor_base_dataset_id=fac_base.dataset_id,
-                cutoff=fac_cutoff,
+                cutoff=observed_factor_cutoff,
                 rows=factor_rows,
             )
             published = writer.publish(
-                delta_watermark=int(args.end_date or time.strftime("%Y%m%d")),
-                factor_watermark=fac_cutoff,
+                delta_watermark=int(raw_step["cutoff"]),
+                factor_watermark=observed_factor_cutoff,
             )
             return {"factor_batch": fac_batch, "publish": published}
 
@@ -4419,6 +4492,8 @@ def sync_tushare_chain_delta(args, store: DatasetStore) -> dict:
                 "new_rows": out["factor_batch"]["new_rows"],
                 "skipped_rows": out["factor_batch"]["skipped_rows"],
                 "symbols_with_rows": len(factor_rows),
+                "requested_cutoff": requested_factor_cutoff,
+                "cutoff": observed_factor_cutoff,
             },
             "publish": out["publish"],
             "reconcile": {

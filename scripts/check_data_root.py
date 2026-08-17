@@ -9,7 +9,7 @@
   python scripts/check_data_root.py --storage-root D:\\AStockData\\datasets\\market_data
 
 退出码:
-  0 = 数据根可正常使用（系统先读这些数据，滞后时 18:30 自动更新补齐）
+  0 = 数据根可正常使用（系统先读这些数据，每周五 18:30 自动更新补齐）
   1 = 数据根不可用（目录不存在 / 空根 / 缺少 manifests 无法识别，需先初始化）
   2 = 数据可用但不完整（缺正式产品面 / 数据滞后等，自动同步链会补齐）
 """
@@ -101,7 +101,7 @@ def main() -> int:
     if not manifest_files:
         if blob_count == 0:
             print("❌ 数据根为空（无 manifests 清单、无 blobs 数据）")
-            print("   系统无法判断数据新鲜度，18:30 自动更新会跳过（无法计算滞后）")
+            print("   系统无法判断数据新鲜度，周五 18:30 自动更新会跳过（无法计算滞后）")
         else:
             print("❌ 数据根有文件但缺少 manifests/ 清单 → 系统无法识别")
             print("   （这不是系统生成的数据格式：可能只是裸 CSV/其他软件导出的数据）")
@@ -155,7 +155,7 @@ def main() -> int:
             ca_last = "—"
         print(f"  {'CA公司行为':<14} 上次同步={ca_last}")
     else:
-        print(f"  {'CA公司行为':<14} 未同步（每日定时会自动拉取）")
+        print(f"  {'CA公司行为':<14} 未同步（周五定时会自动拉取）")
 
     lag = health.get("trading_day_lag") or {}
     print()
@@ -168,7 +168,7 @@ def main() -> int:
     problems = []
     lag_raw = lag.get("raw")
     if lag_raw is None or (isinstance(lag_raw, int) and lag_raw > 5):
-        problems.append("日线数据滞后过多或无法判断（18:30 自动更新会自动补齐）")
+        problems.append("日线数据滞后过多或无法判断（周五 18:30 自动更新会自动补齐）")
     if not health.get("formal_l2"):
         problems.append("正式L2(未复权)未生成（自动链 reconcile 步骤会补齐）")
     if not health.get("formal_l1"):
@@ -176,12 +176,12 @@ def main() -> int:
 
     print()
     if not problems:
-        print("✅ 数据根可正常使用：系统启动即读取这些数据，滞后时 18:30 自动更新补齐")
+        print("✅ 数据根可正常使用：系统启动即读取这些数据，滞后时周五 18:30 自动更新补齐")
         return 0
     print("⚠️  数据可用，但存在以下问题（均可由自动同步链补齐）：")
     for p in problems:
         print("   - " + p)
-    print("   提示：无需手动初始化；等 18:30 自动链即可，或手动点一次更新加速")
+    print("   提示：无需手动初始化；等周五 18:30 自动链即可，或手动点一次更新加速")
     return 2
 
 

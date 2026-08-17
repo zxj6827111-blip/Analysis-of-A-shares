@@ -1391,6 +1391,17 @@ def resolve_active_tushare_product_pair(
     ``copy=False`` skips manifest deepcopy for read-only callers (large
     warehouses: each manifest deepcopy walks ~100k symbol records).
     """
+    from .delta_store import load_overlay_state
+
+    overlay = load_overlay_state(store.root)
+    if overlay.enabled:
+        from .overlay import OverlayView
+
+        view = OverlayView.from_root(store.root, required=True)
+        l2 = view.l2_virtual_manifest()
+        l1 = view.l1_virtual_manifest()
+        return _product_pair_from_manifests(l1, l2)
+
     l1_candidates: List[DatasetManifest] = []
     for mid in store.list_manifests():
         m = store.load_manifest(mid, deep_copy=deep_copy)
@@ -1984,7 +1995,7 @@ def _overlay_data_health(
             "storage_mode": "overlay_v1",
         }
 
-    delta = view.delta or DeltaStore(store.root)
+    delta = view.delta or DeltaStore(store.root, overlay.delta_store_id)
     raw_max = int(overlay.delta_watermark or 0) or None
     factor_max = int(overlay.factor_watermark or 0) or None
     try:
@@ -2025,6 +2036,7 @@ def _overlay_data_health(
         "storage_mode": "overlay_v1",
         "view_type": "l2_virtual_composite",
         "delta_watermark": overlay.delta_watermark,
+        "delta_commit_seq": overlay.delta_commit_seq,
     }
     l1_info = {
         "status": "ready" if l1 else "missing",
@@ -2035,6 +2047,7 @@ def _overlay_data_health(
         "storage_mode": "overlay_v1",
         "view_type": "l1_virtual_qfq",
         "factor_watermark": overlay.factor_watermark,
+        "factor_commit_seq": overlay.factor_commit_seq,
     }
 
     expected = int(
@@ -2086,8 +2099,31 @@ def _overlay_data_health(
     else:
         status = "stale"
 
-    health = delta.health_check(overlay.delta_watermark)
     base = view.active_base()
+    factor_base = view.factor_base()
+    expected_delta_wm = (
+        overlay.delta_watermark
+        if int(overlay.delta_commit_seq or 0) > 0
+        or int(overlay.delta_watermark or 0) > int(base.data_cutoff_date or 0)
+        else 0
+    )
+    expected_factor_wm = (
+        overlay.factor_watermark
+        if int(overlay.factor_commit_seq or 0) > 0
+        or int(overlay.factor_watermark or 0)
+        > int(factor_base.data_cutoff_date or 0)
+        else None
+    )
+    health = delta.health_check(
+        expected_delta_wm,
+        factor_watermark=expected_factor_wm,
+        commit_seq=(overlay.delta_commit_seq if expected_delta_wm else None),
+        factor_commit_seq=(
+            overlay.factor_commit_seq if expected_factor_wm else None
+        ),
+    )
+    if not health.get("ok"):
+        issues.extend(f"delta_health:{p}" for p in health.get("problems", []))
     sig = manifest_history_signals(base)
     p10 = sig.p10_first_date or 0
     hist_complete = p10 <= 20000101

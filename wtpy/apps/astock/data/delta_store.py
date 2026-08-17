@@ -57,7 +57,7 @@ OVERLAY_STATE_NAME = "overlay_state.json"
 #: pin registry file name under delta dir
 PINS_FILE_NAME = "pins.json"
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 #: bars batch kind
 KIND_BARS = "bars"
@@ -71,20 +71,15 @@ BATCH_COMMITTED = "committed"
 BATCH_ORPHANED = "orphaned"
 
 _BAR_COLS = ("open", "high", "low", "close", "volume", "amount")
+_INSERT_CHUNK_ROWS = 500
 
 
 class DeltaWriteError(RuntimeError):
     """A delta batch failed to commit; nothing was written."""
 
 
-#: module-level read-only connection pool keyed by (thread_id, db_path).
-#: DuckDB forbids mixing read-only and read-write connections to the same
-#: file within one process, and opening a connection costs ~20ms — so readers
-#: reuse ONE read-only connection per (thread, file), and any read-write
-#: ``connect()`` releases it first (consolidate / tests mix both in one
-#: thread).
-_READ_CONN_POOL: Dict[tuple, tuple] = {}
-_READ_CONN_LOCK = threading.Lock()
+class OverlayStateError(RuntimeError):
+    """The overlay registry exists but is unreadable or inconsistent."""
 
 
 class DeltaStore:
@@ -92,9 +87,17 @@ class DeltaStore:
 
     def __init__(self, root: Path | str, store_id: str = "main"):
         self.root = Path(root)
-        self.store_id = store_id
+        self.store_id = str(store_id or "main")
         self.delta_dir = self.root / DELTA_DIR_NAME
-        self.db_path = self.delta_dir / DELTA_DB_NAME
+        if self.store_id == "main":
+            db_name = DELTA_DB_NAME
+        else:
+            safe_id = "".join(
+                c if c.isalnum() or c in ("-", "_") else "_"
+                for c in self.store_id
+            )
+            db_name = f"market_delta_{safe_id}.duckdb"
+        self.db_path = self.delta_dir / db_name
         self.overlay_path = self.delta_dir / OVERLAY_STATE_NAME
 
     # ------------------------------------------------------------------
@@ -103,73 +106,23 @@ class DeltaStore:
     def connect(self, *, read_only: bool = False):
         """Open a short DuckDB connection.
 
-        Readers pass read_only=True so a long-lived server process can share
-        the file with the single-writer EOD child without lock contention
-        (DuckDB allows one read-write writer + any number of read-only
-        readers on the same file). A read-write open first releases any
-        pooled read-only connection for this file in the current thread
-        (DuckDB forbids mixing the two configurations).
+        Connections are deliberately never pooled. On Windows, a read-only
+        DuckDB connection in the long-running API process can prevent the EOD
+        child from opening the same file read-write. Keeping each read scoped
+        to one query removes that persistent cross-process lock. Writers retry
+        briefly so an in-flight read query can finish.
         """
         import duckdb
 
         self.delta_dir.mkdir(parents=True, exist_ok=True)
-        if not read_only:
-            self._release_read_conn()
-        return duckdb.connect(str(self.db_path), read_only=read_only)
-
-    def _db_sig(self):
-        """Stat signature of the DB file (None when it does not exist yet)."""
-        try:
-            st = self.db_path.stat()
-            return (st.st_mtime_ns, st.st_size)
-        except OSError:
-            return None
-
-    def _read_conn_key(self):
-        return (threading.get_ident(), str(self.db_path))
-
-    def _get_read_conn(self):
-        """Pooled read-only connection, invalidated on file change.
-
-        A DuckDB read-only connection pins the database state it opened; the
-        EOD writer (a separate process) changes the file mtime on commit, so
-        the signature is re-checked on every access and the connection is
-        reopened when the file moved. The pool is per (thread, file) so
-        threads never share a DuckDB connection (which is not thread-safe),
-        while different DeltaStore instances on the same file in one thread
-        still share one connection.
-        """
-        key = self._read_conn_key()
-        sig = self._db_sig()
-        with _READ_CONN_LOCK:
-            entry = _READ_CONN_POOL.get(key)
-            if entry is not None and entry[0] == sig:
-                return entry[1]
-            if entry is not None:
-                old = entry[1]
-                _READ_CONN_POOL.pop(key, None)
-            else:
-                old = None
-        if old is not None:
+        deadline = time.monotonic() + (30.0 if not read_only else 0.0)
+        while True:
             try:
-                old.close()
+                return duckdb.connect(str(self.db_path), read_only=read_only)
             except Exception:
-                pass
-        conn = self.connect(read_only=True)
-        with _READ_CONN_LOCK:
-            _READ_CONN_POOL[key] = (sig, conn)
-        return conn
-
-    def _release_read_conn(self):
-        """Close any pooled read-only connection for this file in this thread."""
-        key = self._read_conn_key()
-        with _READ_CONN_LOCK:
-            entry = _READ_CONN_POOL.pop(key, None)
-        if entry is not None:
-            try:
-                entry[1].close()
-            except Exception:
-                pass
+                if read_only or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.1)
 
     def init_schema(self) -> None:
         with self.connect() as conn:
@@ -178,6 +131,7 @@ class DeltaStore:
                 CREATE TABLE IF NOT EXISTS sync_batches (
                     batch_id        TEXT PRIMARY KEY,
                     store_id        TEXT NOT NULL,
+                    commit_seq      BIGINT,
                     kind            TEXT NOT NULL,
                     source          TEXT NOT NULL,
                     adjustment      TEXT NOT NULL,
@@ -188,6 +142,33 @@ class DeltaStore:
                     created_at      TEXT NOT NULL,
                     status          TEXT NOT NULL
                 )
+                """
+            )
+            columns = {
+                str(row[1])
+                for row in conn.execute(
+                    "PRAGMA table_info('sync_batches')"
+                ).fetchall()
+            }
+            if "commit_seq" not in columns:
+                conn.execute(
+                    "ALTER TABLE sync_batches ADD COLUMN commit_seq BIGINT"
+                )
+            conn.execute(
+                """
+                UPDATE sync_batches AS target
+                SET commit_seq = ranked.commit_seq
+                FROM (
+                    SELECT
+                        batch_id,
+                        row_number() OVER (
+                            PARTITION BY store_id
+                            ORDER BY created_at, batch_id
+                        ) AS commit_seq
+                    FROM sync_batches
+                ) AS ranked
+                WHERE target.batch_id = ranked.batch_id
+                  AND target.commit_seq IS NULL
                 """
             )
             conn.execute(
@@ -230,6 +211,10 @@ class DeltaStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_factors_lookup ON adj_factors "
                 "(store_id, symbol, trade_date)"
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_batches_commit_seq "
+                "ON sync_batches (store_id, commit_seq)"
             )
 
     # ------------------------------------------------------------------
@@ -284,7 +269,7 @@ class DeltaStore:
             ).fetchone()
             if exists:
                 row = conn.execute(
-                    "SELECT row_count, watermark FROM sync_batches "
+                    "SELECT row_count, watermark, commit_seq FROM sync_batches "
                     "WHERE batch_id = ?",
                     [batch_id],
                 ).fetchone()
@@ -294,15 +279,26 @@ class DeltaStore:
                     "new_rows": 0,
                     "skipped_rows": int(row[0] or 0),
                     "watermark": int(row[1] or watermark),
+                    "commit_seq": int(row[2] or 0),
                     "idempotent": True,
                 }
+            next_commit_seq = int(
+                conn.execute(
+                    "SELECT COALESCE(MAX(commit_seq), 0) + 1 "
+                    "FROM sync_batches WHERE store_id = ?",
+                    [self.store_id],
+                ).fetchone()[0]
+            )
+            rows = {symbol: values for symbol, values in rows.items() if values}
             if not rows:
                 conn.execute(
-                    "INSERT INTO sync_batches (batch_id, store_id, kind, source, "
-                    "adjustment, period, base_dataset_id, watermark, row_count, "
-                    "created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
-                    [batch_id, self.store_id, kind, source, adjustment, period,
-                     base_dataset_id, int(watermark), created_at, BATCH_COMMITTED],
+                    "INSERT INTO sync_batches (batch_id, store_id, commit_seq, "
+                    "kind, source, adjustment, period, base_dataset_id, watermark, "
+                    "row_count, created_at, status) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+                    [batch_id, self.store_id, next_commit_seq, kind, source,
+                     adjustment, period, base_dataset_id, int(watermark),
+                     created_at, BATCH_COMMITTED],
                 )
                 return {
                     "batch_id": batch_id,
@@ -310,6 +306,7 @@ class DeltaStore:
                     "new_rows": 0,
                     "skipped_rows": 0,
                     "watermark": int(watermark),
+                    "commit_seq": next_commit_seq,
                 }
 
             # Load the current visible versions for the touched (symbol, date)
@@ -377,29 +374,51 @@ class DeltaStore:
                     current[key] = (new_seq, vals)
                     new_rows += 1
 
-            if inserts:
-                n_cols = 6 + len(value_cols)
-                ph = ",".join("?" * n_cols)
-                conn.executemany(
-                    f"INSERT INTO {table} (store_id, symbol, trade_date, "
-                    f"batch_seq, batch_id, watermark, {', '.join(value_cols)}) "
-                    f"VALUES ({ph})",
-                    inserts,
+            try:
+                conn.execute("BEGIN TRANSACTION")
+                if inserts:
+                    n_cols = 6 + len(value_cols)
+                    row_placeholders = "(" + ",".join("?" * n_cols) + ")"
+                    insert_prefix = (
+                        f"INSERT INTO {table} (store_id, symbol, trade_date, "
+                        f"batch_seq, batch_id, watermark, {', '.join(value_cols)}) "
+                        "VALUES "
+                    )
+                    # DuckDB executemany executes row by row and is prohibitively
+                    # slow for a whole-market EOD batch. Send bounded multi-row
+                    # statements inside one explicit transaction.
+                    for offset in range(0, len(inserts), _INSERT_CHUNK_ROWS):
+                        chunk = inserts[offset : offset + _INSERT_CHUNK_ROWS]
+                        values_sql = ",".join([row_placeholders] * len(chunk))
+                        params = [value for row in chunk for value in row]
+                        conn.execute(insert_prefix + values_sql, params)
+                conn.execute(
+                    "INSERT INTO sync_batches (batch_id, store_id, commit_seq, kind, "
+                    "source, adjustment, period, base_dataset_id, watermark, row_count, "
+                    "created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [batch_id, self.store_id, next_commit_seq, kind, source,
+                     adjustment, period, base_dataset_id, int(watermark), new_rows,
+                     created_at, BATCH_COMMITTED],
                 )
-            conn.execute(
-                "INSERT INTO sync_batches (batch_id, store_id, kind, source, "
-                "adjustment, period, base_dataset_id, watermark, row_count, "
-                "created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [batch_id, self.store_id, kind, source, adjustment, period,
-                 base_dataset_id, int(watermark), new_rows, created_at,
-                 BATCH_COMMITTED],
-            )
+                conn.execute("COMMIT")
+            except Exception as exc:
+                try:
+                    conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                if isinstance(exc, DeltaWriteError):
+                    raise
+                raise DeltaWriteError(
+                    f"batch {batch_id} transaction failed: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
         return {
             "batch_id": batch_id,
             "status": BATCH_COMMITTED,
             "new_rows": new_rows,
             "skipped_rows": skipped_rows,
             "watermark": int(watermark),
+            "commit_seq": next_commit_seq,
         }
 
     # ------------------------------------------------------------------
@@ -417,6 +436,25 @@ class DeltaStore:
             ).fetchone()
         return int(row[0] or 0) if row else 0
 
+    def current_commit_seq(
+        self, kind: str, *, watermark: Optional[int] = None
+    ) -> int:
+        """Highest committed sequence for one kind, optionally by watermark."""
+        if not self.db_path.exists():
+            return 0
+        clauses = ["store_id = ?", "kind = ?", "status = ?"]
+        params: List = [self.store_id, kind, BATCH_COMMITTED]
+        if watermark is not None:
+            clauses.append("watermark <= ?")
+            params.append(int(watermark))
+        with self.connect(read_only=True) as conn:
+            row = conn.execute(
+                "SELECT MAX(commit_seq) FROM sync_batches WHERE "
+                + " AND ".join(clauses),
+                params,
+            ).fetchone()
+        return int(row[0] or 0) if row else 0
+
     def load_visible_bars(
         self,
         symbols: Sequence[str],
@@ -424,133 +462,178 @@ class DeltaStore:
         *,
         min_date: Optional[int] = None,
         max_date: Optional[int] = None,
+        commit_seq: Optional[int] = None,
     ) -> Dict[str, Dict[int, Tuple[float, float, float, float, float, float]]]:
-        """Versioned read: newest batch_seq with batch watermark <= watermark.
-
-        Returns {symbol: {trade_date: (open, high, low, close, volume, amount)}}.
-        Only rows within [min_date, max_date] (when given) are returned.
-        """
+        """Versioned read locked by watermark and optional commit sequence."""
         if not self.db_path.exists() or not symbols:
             return {}
         out: Dict[str, Dict[int, Tuple]] = {}
-        conn = self._get_read_conn()
-        clauses = ["store_id = ?", "watermark <= ?"]
-        params: List = [self.store_id, int(watermark)]
+        clauses = [
+            "d.store_id = ?",
+            "d.watermark <= ?",
+            "b.status = ?",
+        ]
+        params: List = [self.store_id, int(watermark), BATCH_COMMITTED]
+        if commit_seq is not None:
+            clauses.append("b.commit_seq <= ?")
+            params.append(int(commit_seq))
         if min_date is not None:
-            clauses.append("trade_date >= ?")
+            clauses.append("d.trade_date >= ?")
             params.append(int(min_date))
         if max_date is not None:
-            clauses.append("trade_date <= ?")
+            clauses.append("d.trade_date <= ?")
             params.append(int(max_date))
-        for i in range(0, len(symbols), 900):
-            chunk = list(symbols[i : i + 900])
-            ph = ",".join("?" * len(chunk))
-            rows = conn.execute(
-                f"SELECT symbol, trade_date, open, high, low, close, "
-                f"volume, amount FROM daily_bars "
-                f"WHERE {(' AND ').join(clauses)} AND symbol IN ({ph}) "
-                f"QUALIFY row_number() OVER "
-                f"(PARTITION BY symbol, trade_date ORDER BY batch_seq DESC) = 1",
-                [*params, *chunk],
-            ).fetchall()
-            for r in rows:
-                sym = str(r[0])
-                out.setdefault(sym, {})[int(r[1])] = (
-                    float(r[2]), float(r[3]), float(r[4]),
-                    float(r[5]), float(r[6]), float(r[7]),
-                )
+        with self.connect(read_only=True) as conn:
+            for i in range(0, len(symbols), 900):
+                chunk = list(symbols[i : i + 900])
+                ph = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"SELECT d.symbol, d.trade_date, d.open, d.high, d.low, "
+                    f"d.close, d.volume, d.amount FROM daily_bars AS d "
+                    f"JOIN sync_batches AS b ON b.batch_id = d.batch_id "
+                    f"AND b.store_id = d.store_id "
+                    f"WHERE {(' AND ').join(clauses)} "
+                    f"AND d.symbol IN ({ph}) "
+                    f"QUALIFY row_number() OVER "
+                    f"(PARTITION BY d.symbol, d.trade_date "
+                    f"ORDER BY d.batch_seq DESC) = 1",
+                    [*params, *chunk],
+                ).fetchall()
+                for row in rows:
+                    sym = str(row[0])
+                    out.setdefault(sym, {})[int(row[1])] = (
+                        float(row[2]), float(row[3]), float(row[4]),
+                        float(row[5]), float(row[6]), float(row[7]),
+                    )
         return out
 
     def load_visible_factors(
         self,
         symbols: Sequence[str],
         watermark: int,
+        *,
+        commit_seq: Optional[int] = None,
     ) -> Dict[str, Dict[int, float]]:
-        """Versioned factor read: newest adj_factor per date with watermark <=."""
+        """Versioned factor read locked by watermark and commit sequence."""
         if not self.db_path.exists() or not symbols:
             return {}
         out: Dict[str, Dict[int, float]] = {}
-        conn = self._get_read_conn()
-        for i in range(0, len(symbols), 900):
-            chunk = list(symbols[i : i + 900])
-            ph = ",".join("?" * len(chunk))
-            rows = conn.execute(
-                f"SELECT symbol, trade_date, adj_factor FROM adj_factors "
-                f"WHERE store_id = ? AND watermark <= ? AND symbol IN ({ph}) "
-                f"QUALIFY row_number() OVER "
-                f"(PARTITION BY symbol, trade_date ORDER BY batch_seq DESC) = 1",
-                [self.store_id, int(watermark), *chunk],
-            ).fetchall()
-            for r in rows:
-                out.setdefault(str(r[0]), {})[int(r[1])] = float(r[2])
+        seq_clause = " AND b.commit_seq <= ?" if commit_seq is not None else ""
+        with self.connect(read_only=True) as conn:
+            for i in range(0, len(symbols), 900):
+                chunk = list(symbols[i : i + 900])
+                ph = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"SELECT d.symbol, d.trade_date, d.adj_factor "
+                    f"FROM adj_factors AS d "
+                    f"JOIN sync_batches AS b ON b.batch_id = d.batch_id "
+                    f"AND b.store_id = d.store_id "
+                    f"WHERE d.store_id = ? AND d.watermark <= ? "
+                    f"AND b.status = ?{seq_clause} "
+                    f"AND d.symbol IN ({ph}) "
+                    f"QUALIFY row_number() OVER "
+                    f"(PARTITION BY d.symbol, d.trade_date "
+                    f"ORDER BY d.batch_seq DESC) = 1",
+                    [
+                        self.store_id,
+                        int(watermark),
+                        BATCH_COMMITTED,
+                        *([int(commit_seq)] if commit_seq is not None else []),
+                        *chunk,
+                    ],
+                ).fetchall()
+                for row in rows:
+                    out.setdefault(str(row[0]), {})[int(row[1])] = float(row[2])
         return out
 
-    def distinct_symbols(self, watermark: int, kind: str = KIND_BARS) -> Set[str]:
-        """All symbols that have at least one delta row up to ``watermark``.
-
-        Used to surface symbols that exist ONLY in the delta (e.g. IPOs whose
-        base snapshot predates their listing) so the virtual pool does not
-        silently drop them.
-        """
+    def distinct_symbols(
+        self,
+        watermark: int,
+        kind: str = KIND_BARS,
+        *,
+        commit_seq: Optional[int] = None,
+    ) -> Set[str]:
+        """All symbols with a visible delta row at the requested version."""
         if not self.db_path.exists():
             return set()
         table = "adj_factors" if kind == KIND_FACTOR else "daily_bars"
-        conn = self._get_read_conn()
-        rows = conn.execute(
-            f"SELECT DISTINCT symbol FROM {table} "
-            f"WHERE store_id = ? AND watermark <= ?",
-            [self.store_id, int(watermark)],
-        ).fetchall()
-        return {str(r[0]) for r in rows}
+        seq_clause = " AND b.commit_seq <= ?" if commit_seq is not None else ""
+        with self.connect(read_only=True) as conn:
+            rows = conn.execute(
+                f"SELECT DISTINCT d.symbol FROM {table} AS d "
+                f"JOIN sync_batches AS b ON b.batch_id = d.batch_id "
+                f"AND b.store_id = d.store_id "
+                f"WHERE d.store_id = ? AND d.watermark <= ? "
+                f"AND b.status = ?{seq_clause}",
+                [
+                    self.store_id,
+                    int(watermark),
+                    BATCH_COMMITTED,
+                    *([int(commit_seq)] if commit_seq is not None else []),
+                ],
+            ).fetchall()
+        return {str(row[0]) for row in rows}
 
     def load_all_visible_bars(
-        self, watermark: int
+        self, watermark: int, *, commit_seq: Optional[int] = None
     ) -> Dict[str, Dict[int, Tuple[float, float, float, float, float, float]]]:
-        """All visible bar rows up to ``watermark`` in one query.
-
-        The delta surface is small by design (target < 10MB/day), so a
-        whole-market backtest can afford to pull every visible delta row into
-        memory ONCE and then serve per-symbol merges from that dict — this is
-        what keeps per-symbol ``load_bars`` from opening a connection or
-        running SQL per symbol.
-        """
+        """All visible bar rows at the requested immutable version."""
         if not self.db_path.exists():
             return {}
         out: Dict[str, Dict[int, Tuple]] = {}
-        conn = self._get_read_conn()
-        rows = conn.execute(
-            "SELECT symbol, trade_date, open, high, low, close, volume, "
-            "amount FROM daily_bars WHERE store_id = ? AND watermark <= ? "
-            "QUALIFY row_number() OVER (PARTITION BY symbol, trade_date "
-            "ORDER BY batch_seq DESC) = 1",
-            [self.store_id, int(watermark)],
-        ).fetchall()
-        for r in rows:
-            out.setdefault(str(r[0]), {})[int(r[1])] = (
-                float(r[2]), float(r[3]), float(r[4]),
-                float(r[5]), float(r[6]), float(r[7]),
+        seq_clause = " AND b.commit_seq <= ?" if commit_seq is not None else ""
+        with self.connect(read_only=True) as conn:
+            rows = conn.execute(
+                "SELECT d.symbol, d.trade_date, d.open, d.high, d.low, d.close, "
+                "d.volume, d.amount FROM daily_bars AS d "
+                "JOIN sync_batches AS b ON b.batch_id = d.batch_id "
+                "AND b.store_id = d.store_id "
+                "WHERE d.store_id = ? AND d.watermark <= ? AND b.status = ?"
+                f"{seq_clause} QUALIFY row_number() OVER "
+                "(PARTITION BY d.symbol, d.trade_date "
+                "ORDER BY d.batch_seq DESC) = 1",
+                [
+                    self.store_id,
+                    int(watermark),
+                    BATCH_COMMITTED,
+                    *([int(commit_seq)] if commit_seq is not None else []),
+                ],
+            ).fetchall()
+        for row in rows:
+            out.setdefault(str(row[0]), {})[int(row[1])] = (
+                float(row[2]), float(row[3]), float(row[4]),
+                float(row[5]), float(row[6]), float(row[7]),
             )
         return out
 
     def load_all_visible_factors(
-        self, watermark: int
+        self, watermark: int, *, commit_seq: Optional[int] = None
     ) -> Dict[str, Dict[int, float]]:
-        """All visible factor rows up to ``watermark`` in one query."""
+        """All visible factor rows at the requested immutable version."""
         if not self.db_path.exists():
             return {}
         out: Dict[str, Dict[int, float]] = {}
-        conn = self._get_read_conn()
-        rows = conn.execute(
-            "SELECT symbol, trade_date, adj_factor FROM adj_factors "
-            "WHERE store_id = ? AND watermark <= ? "
-            "QUALIFY row_number() OVER (PARTITION BY symbol, trade_date "
-            "ORDER BY batch_seq DESC) = 1",
-            [self.store_id, int(watermark)],
-        ).fetchall()
-        for r in rows:
-            out.setdefault(str(r[0]), {})[int(r[1])] = float(r[2])
+        seq_clause = " AND b.commit_seq <= ?" if commit_seq is not None else ""
+        with self.connect(read_only=True) as conn:
+            rows = conn.execute(
+                "SELECT d.symbol, d.trade_date, d.adj_factor "
+                "FROM adj_factors AS d "
+                "JOIN sync_batches AS b ON b.batch_id = d.batch_id "
+                "AND b.store_id = d.store_id "
+                "WHERE d.store_id = ? AND d.watermark <= ? AND b.status = ?"
+                f"{seq_clause} QUALIFY row_number() OVER "
+                "(PARTITION BY d.symbol, d.trade_date "
+                "ORDER BY d.batch_seq DESC) = 1",
+                [
+                    self.store_id,
+                    int(watermark),
+                    BATCH_COMMITTED,
+                    *([int(commit_seq)] if commit_seq is not None else []),
+                ],
+            ).fetchall()
+        for row in rows:
+            out.setdefault(str(row[0]), {})[int(row[1])] = float(row[2])
         return out
-
     # ------------------------------------------------------------------
     # governance / stats
     # ------------------------------------------------------------------
@@ -558,9 +641,17 @@ class DeltaStore:
         if not self.db_path.exists():
             return []
         with self.connect(read_only=True) as conn:
-            q = "SELECT batch_id, store_id, kind, source, adjustment, period, " \
-                "base_dataset_id, watermark, row_count, created_at, status " \
-                "FROM sync_batches"
+            columns = {
+                str(row[1])
+                for row in conn.execute(
+                    "PRAGMA table_info('sync_batches')"
+                ).fetchall()
+            }
+            has_commit_seq = "commit_seq" in columns
+            commit_expr = "commit_seq" if has_commit_seq else "0 AS commit_seq"
+            q = f"SELECT batch_id, store_id, {commit_expr}, kind, source, " \
+                "adjustment, period, base_dataset_id, watermark, row_count, " \
+                "created_at, status FROM sync_batches"
             params: List = []
             if kind:
                 q += " WHERE kind = ?"
@@ -568,10 +659,11 @@ class DeltaStore:
             rows = conn.execute(q + " ORDER BY watermark", params).fetchall()
         return [
             {
-                "batch_id": r[0], "store_id": r[1], "kind": r[2],
-                "source": r[3], "adjustment": r[4], "period": r[5],
-                "base_dataset_id": r[6], "watermark": int(r[7]),
-                "row_count": int(r[8]), "created_at": r[9], "status": r[10],
+                "batch_id": r[0], "store_id": r[1],
+                "commit_seq": int(r[2] or 0), "kind": r[3],
+                "source": r[4], "adjustment": r[5], "period": r[6],
+                "base_dataset_id": r[7], "watermark": int(r[8]),
+                "row_count": int(r[9]), "created_at": r[10], "status": r[11],
             }
             for r in rows
         ]
@@ -588,13 +680,54 @@ class DeltaStore:
         return int(row[0] or 0) if row else 0
 
     def db_file_size(self) -> int:
-        try:
-            return self.db_path.stat().st_size if self.db_path.exists() else 0
-        except OSError:
-            return 0
+        total = 0
+        for path in (
+            self.db_path,
+            self.db_path.with_suffix(self.db_path.suffix + ".wal"),
+        ):
+            try:
+                total += path.stat().st_size
+            except OSError:
+                pass
+        return total
 
-    def health_check(self, watermark: int) -> Dict:
-        """Validate the committed store up to ``watermark`` is readable."""
+    def visible_trade_dates(
+        self,
+        kind: str = KIND_BARS,
+        *,
+        watermark: Optional[int] = None,
+        commit_seq: Optional[int] = None,
+    ) -> List[int]:
+        """Return distinct committed trade dates visible to this generation."""
+        if not self.db_path.exists():
+            return []
+        table = "adj_factors" if kind == KIND_FACTOR else "daily_bars"
+        clauses = ["d.store_id = ?", "b.status = ?"]
+        params: List[object] = [self.store_id, BATCH_COMMITTED]
+        if watermark is not None:
+            clauses.append("d.watermark <= ?")
+            params.append(int(watermark))
+        if commit_seq is not None:
+            clauses.append("b.commit_seq <= ?")
+            params.append(int(commit_seq))
+        sql = (
+            f"SELECT DISTINCT d.trade_date FROM {table} AS d "
+            "JOIN sync_batches AS b ON b.batch_id = d.batch_id "
+            f"WHERE {' AND '.join(clauses)} ORDER BY d.trade_date"
+        )
+        with self.connect(read_only=True) as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [int(row[0]) for row in rows]
+
+    def health_check(
+        self,
+        watermark: int,
+        *,
+        factor_watermark: Optional[int] = None,
+        commit_seq: Optional[int] = None,
+        factor_commit_seq: Optional[int] = None,
+    ) -> Dict:
+        """Validate the committed bar and optional factor surfaces."""
         problems: List[str] = []
         try:
             if not self.db_path.exists():
@@ -607,19 +740,53 @@ class DeltaStore:
                     ).fetchone()[0]
                     if n is None:
                         problems.append("sync_batches unreadable")
-                    w = conn.execute(
+                    bars_wm = conn.execute(
                         "SELECT MAX(watermark) FROM sync_batches "
                         "WHERE store_id = ? AND kind = ? AND status = ?",
                         [self.store_id, KIND_BARS, BATCH_COMMITTED],
                     ).fetchone()[0]
-                    if watermark and (w or 0) < watermark:
+                    if watermark and (bars_wm or 0) < int(watermark):
                         problems.append(
-                            f"committed watermark {w} < expected {watermark}"
+                            f"committed watermark {bars_wm} < expected {watermark}"
                         )
-        except Exception as e:  # noqa: BLE001
-            problems.append(f"read failed: {type(e).__name__}: {e}")
+                    if commit_seq:
+                        bars_seq = conn.execute(
+                            "SELECT MAX(commit_seq) FROM sync_batches "
+                            "WHERE store_id = ? AND kind = ? AND status = ?",
+                            [self.store_id, KIND_BARS, BATCH_COMMITTED],
+                        ).fetchone()[0]
+                        if (bars_seq or 0) < int(commit_seq):
+                            problems.append(
+                                f"committed bars sequence {bars_seq} < expected "
+                                f"{commit_seq}"
+                            )
+                    if factor_watermark:
+                        factor_wm = conn.execute(
+                            "SELECT MAX(watermark) FROM sync_batches "
+                            "WHERE store_id = ? AND kind = ? AND status = ?",
+                            [self.store_id, KIND_FACTOR, BATCH_COMMITTED],
+                        ).fetchone()[0]
+                        if (factor_wm or 0) < int(factor_watermark):
+                            problems.append(
+                                f"committed factor watermark {factor_wm} < expected "
+                                f"{factor_watermark}"
+                            )
+                    if factor_commit_seq:
+                        factor_seq = conn.execute(
+                            "SELECT MAX(commit_seq) FROM sync_batches "
+                            "WHERE store_id = ? AND kind = ? AND status = ?",
+                            [self.store_id, KIND_FACTOR, BATCH_COMMITTED],
+                        ).fetchone()[0]
+                        if (factor_seq or 0) < int(factor_commit_seq):
+                            problems.append(
+                                f"committed factor sequence {factor_seq} < expected "
+                                f"{factor_commit_seq}"
+                            )
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"read failed: {type(exc).__name__}: {exc}")
         return {
             "db_path": str(self.db_path),
+            "store_id": self.store_id,
             "exists": self.db_path.exists(),
             "ok": not problems,
             "problems": problems,
@@ -683,6 +850,8 @@ class OverlayState:
     supplement_factor_base_manifest_sha256: str = ""
     delta_watermark: int = 0
     factor_watermark: int = 0
+    delta_commit_seq: int = 0
+    factor_commit_seq: int = 0
     created_at: str = ""
     updated_at: str = ""
 
@@ -703,15 +872,19 @@ class OverlayState:
             ),
             "delta_watermark": self.delta_watermark,
             "factor_watermark": self.factor_watermark,
+            "delta_commit_seq": self.delta_commit_seq,
+            "factor_commit_seq": self.factor_commit_seq,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "OverlayState":
+        schema_version = int(d.get("schema_version") or 1)
+        legacy_sequence = -1 if schema_version < 2 else 0
         return cls(
             enabled=bool(d.get("enabled", False)),
-            schema_version=int(d.get("schema_version") or SCHEMA_VERSION),
+            schema_version=schema_version,
             delta_store_id=str(d.get("delta_store_id") or "main"),
             base_dataset_id=str(d.get("base_dataset_id") or ""),
             base_manifest_sha256=str(d.get("base_manifest_sha256") or ""),
@@ -731,6 +904,16 @@ class OverlayState:
             ),
             delta_watermark=int(d.get("delta_watermark") or 0),
             factor_watermark=int(d.get("factor_watermark") or 0),
+            delta_commit_seq=int(
+                d.get("delta_commit_seq")
+                if d.get("delta_commit_seq") is not None
+                else legacy_sequence
+            ),
+            factor_commit_seq=int(
+                d.get("factor_commit_seq")
+                if d.get("factor_commit_seq") is not None
+                else legacy_sequence
+            ),
             created_at=str(d.get("created_at") or ""),
             updated_at=str(d.get("updated_at") or ""),
         )
@@ -760,22 +943,27 @@ def load_overlay_state(root: Path | str) -> OverlayState:
     with _OVERLAY_CACHE_LOCK:
         hit = _OVERLAY_CACHE.get(key)
         if hit is not None and hit[0] == sig:
-            return hit[1]
+            return OverlayState.from_dict(hit[1].to_dict())
     try:
-        state = OverlayState.from_dict(
-            json.loads(path.read_text(encoding="utf-8"))
-        )
-    except Exception:
-        state = OverlayState()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("overlay state root must be a JSON object")
+        state = OverlayState.from_dict(payload)
+    except Exception as exc:
+        raise OverlayStateError(
+            f"overlay state exists but is unreadable: {path}: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
     if sig is not None:
         with _OVERLAY_CACHE_LOCK:
             _OVERLAY_CACHE[key] = (sig, state)
-    return state
+    return OverlayState.from_dict(state.to_dict())
 
 
 def save_overlay_state(root: Path | str, state: OverlayState) -> Path:
     path = Path(root) / DELTA_DIR_NAME / OVERLAY_STATE_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
+    state.schema_version = SCHEMA_VERSION
     state.updated_at = time.strftime("%Y-%m-%dT%H:%M:%S")
     atomic_write_json(path, state.to_dict())
     return path

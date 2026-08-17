@@ -283,11 +283,11 @@ def main() -> int:
         source="internal", adjustment="composite_tushare_factor_qfq",
         period="1d",
     )
-    ds = DeltaStore(root)
     st = __import__(
         "wtpy.apps.astock.data.delta_store",
         fromlist=["load_overlay_state"],
     ).load_overlay_state(root)
+    ds = DeltaStore(root, st.delta_store_id)
 
     # snapshot: merge base arrays + truth (same "newest-on-date" semantics)
     def snapshot_arrays(sym):
@@ -325,7 +325,11 @@ def main() -> int:
         from wtpy.apps.astock.data.overlay import _merge_factor_base_and_delta
 
         fac_arr = store.load_bars(fac_recs[sym].blob_sha256)
-        delta_map = ds.load_visible_factors([sym], int(st.delta_watermark))
+        delta_map = ds.load_visible_factors(
+            [sym],
+            int(st.factor_watermark),
+            commit_seq=st.factor_commit_seq,
+        )
         merged = _merge_factor_base_and_delta(fac_arr, delta_map.get(sym))
         fd, fv = merged
         cutoff = int(arr["trade_date"][-1])

@@ -16,7 +16,7 @@ Verifies:
 import sys
 from pathlib import Path
 
-sys.path.insert(0, r"E:\Software Development\wtpy-master")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import tempfile
 
@@ -225,7 +225,7 @@ from wtpy.apps.astock.data.repository import MarketDataRepository
 from wtpy.apps.astock.data.overlay import OverlayView
 
 import importlib.util
-_smd_path = Path(r"E:\Software Development\wtpy-master\scripts\sync_market_data.py")
+_smd_path = Path(__file__).resolve().parent / "sync_market_data.py"
 _spec = importlib.util.spec_from_file_location("smd_under_test", _smd_path)
 smd = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(smd)
@@ -302,8 +302,18 @@ assert blob_count_after == blob_count_before, (blob_count_before, blob_count_aft
 print("NPZ blob count before/after:", blob_count_before, blob_count_after, "(no new blobs)")
 
 # ---- delta row counts ----
-from wtpy.apps.astock.data.delta_store import DeltaStore, KIND_BARS, KIND_FACTOR
-ds = DeltaStore(root)
-print("delta bars rows:", ds.delta_row_count(KIND_BARS), "(expect 5: 0813 x2 + 0814 x2 + 0813 revision x1)")
-print("delta factor rows:", ds.delta_row_count(KIND_FACTOR), "(expect 3)")
+from wtpy.apps.astock.data.delta_store import (
+    DeltaStore,
+    KIND_BARS,
+    KIND_FACTOR,
+    load_overlay_state,
+)
+state = load_overlay_state(root)
+ds = DeltaStore(root, state.delta_store_id)
+bar_rows = ds.delta_row_count(KIND_BARS)
+factor_rows = ds.delta_row_count(KIND_FACTOR)
+assert bar_rows == 5, bar_rows
+assert factor_rows == 4, factor_rows
+print("delta bars rows:", bar_rows, "(expect 5: 0813 x2 + 0814 x2 + 0813 revision x1)")
+print("delta factor rows:", factor_rows, "(expect 4: 0813 x2 + 0814 x2)")
 print("ALL EOD DELTA SIMULATION ASSERTIONS PASSED")

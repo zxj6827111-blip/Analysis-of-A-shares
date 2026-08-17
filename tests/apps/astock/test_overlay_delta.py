@@ -17,6 +17,10 @@ Covers the plan's storage + read-layer acceptance:
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -28,6 +32,7 @@ from wtpy.apps.astock.data.delta_store import (
     KIND_FACTOR,
     load_overlay_state,
 )
+from wtpy.apps.astock.data.overlay import OverlayView
 from wtpy.apps.astock.data.repository import MarketDataRepository
 
 from .conftest import (
@@ -113,6 +118,63 @@ class TestDeltaStoreBasics:
         assert delta.delta_row_count(KIND_BARS) == 0
         assert delta.batch_exists("bad") is False
 
+    def test_database_failure_after_first_chunk_rolls_back(
+        self, delta, monkeypatch
+    ):
+        import wtpy.apps.astock.data.delta_store as delta_store_mod
+
+        delta.init_schema()
+        real_connect = delta.connect
+
+        class FailingConnection:
+            def __init__(self, conn):
+                self._conn = conn
+                self._bar_inserts = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                self._conn.close()
+                return False
+
+            def execute(self, sql, params=None):
+                normalized = " ".join(str(sql).split())
+                if normalized.startswith("INSERT INTO daily_bars"):
+                    self._bar_inserts += 1
+                    if self._bar_inserts == 2:
+                        raise RuntimeError("injected second chunk failure")
+                if params is None:
+                    return self._conn.execute(sql)
+                return self._conn.execute(sql, params)
+
+        def failing_connect(*, read_only=False):
+            if read_only:
+                return real_connect(read_only=True)
+            return FailingConnection(real_connect())
+
+        rows = _rows({
+            "SSE.STK.600000": [(20240109, 10.8)],
+            "SZSE.STK.000001": [(20240109, 5.4)],
+        })
+        with monkeypatch.context() as patch:
+            patch.setattr(delta_store_mod, "_INSERT_CHUNK_ROWS", 1)
+            patch.setattr(delta, "connect", failing_connect)
+            with pytest.raises(DeltaWriteError, match="transaction failed"):
+                delta.commit_batch(
+                    batch_id="mid-transaction-failure",
+                    kind=KIND_BARS,
+                    source="tushare",
+                    adjustment="none",
+                    period="1d",
+                    base_dataset_id="base",
+                    watermark=20240109,
+                    rows=rows,
+                )
+
+        assert delta.delta_row_count(KIND_BARS) == 0
+        assert delta.batch_exists("mid-transaction-failure") is False
+
     def test_empty_batch_commits_zero_rows(self, delta):
         r = delta.commit_batch(
             batch_id="empty", kind=KIND_BARS, source="tushare",
@@ -121,6 +183,99 @@ class TestDeltaStoreBasics:
         )
         assert r["new_rows"] == 0
         assert delta.batch_exists("empty")
+
+    def test_empty_symbol_lists_commit_zero_rows(self, delta):
+        r = delta.commit_batch(
+            batch_id="empty-lists", kind=KIND_BARS, source="tushare",
+            adjustment="none", period="1d", base_dataset_id="base",
+            watermark=20240109, rows={"SSE.STK.600000": []},
+        )
+        assert r["new_rows"] == 0
+        assert delta.batch_exists("empty-lists")
+
+    def test_large_batch_crosses_bulk_insert_chunks(self, delta):
+        rows = {
+            f"SSE.STK.{600000 + i:06d}": [
+                (20240109, 10.0, 10.2, 9.8, 10.1, 1000.0, 10100.0)
+            ]
+            for i in range(1001)
+        }
+        r = delta.commit_batch(
+            batch_id="bulk", kind=KIND_BARS, source="tushare",
+            adjustment="none", period="1d", base_dataset_id="base",
+            watermark=20240109, rows=rows,
+        )
+        assert r["new_rows"] == 1001
+        assert delta.delta_row_count(KIND_BARS) == 1001
+        visible = delta.load_visible_bars(
+            ["SSE.STK.600000", "SSE.STK.601000"], 20240109
+        )
+        assert visible["SSE.STK.600000"][20240109][3] == pytest.approx(10.1)
+        assert visible["SSE.STK.601000"][20240109][3] == pytest.approx(10.1)
+
+    def test_legacy_schema_is_readable_before_first_upgraded_write(self, tmp_path):
+        import duckdb
+
+        legacy = DeltaStore(tmp_path)
+        legacy.delta_dir.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(legacy.db_path)) as conn:
+            conn.execute(
+                """
+                CREATE TABLE sync_batches (
+                    batch_id TEXT PRIMARY KEY,
+                    store_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    adjustment TEXT NOT NULL,
+                    period TEXT NOT NULL,
+                    base_dataset_id TEXT NOT NULL,
+                    watermark INTEGER NOT NULL,
+                    row_count INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    status TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO sync_batches VALUES "
+                "('legacy', 'main', 'bars', 'tushare', 'none', '1d', "
+                "'base', 20240109, 0, '2024-01-09T18:30:00', 'committed')"
+            )
+
+        batches = legacy.list_batches()
+        assert batches[0]["commit_seq"] == 0
+        legacy.init_schema()
+        assert legacy.current_commit_seq(KIND_BARS) == 1
+        assert legacy.list_batches()[0]["commit_seq"] == 1
+    def test_read_query_does_not_leave_cross_process_writer_lock(
+        self, delta, tmp_path
+    ):
+        delta.commit_batch(
+            batch_id="seed",
+            kind=KIND_BARS,
+            source="tushare",
+            adjustment="none",
+            period="1d",
+            base_dataset_id="base",
+            watermark=20240109,
+            rows=_rows({"SSE.STK.600000": [(20240109, 10.8)]}),
+        )
+        assert delta.load_all_visible_bars(20240109)
+        code = (
+            "from wtpy.apps.astock.data.delta_store import DeltaStore;"
+            f"d=DeltaStore(r'{tmp_path}');"
+            "d.commit_batch(batch_id='child',kind='bars',source='tushare',"
+            "adjustment='none',period='1d',base_dataset_id='base',"
+            "watermark=20240110,rows={'SSE.STK.600000':"
+            "[(20240110,10,11,9,10.9,1000,100000)]})"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=str(Path(__file__).resolve().parents[3]),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
 
     def test_factor_anchor_change_visible_in_qfq(self, warehouse, delta, tmp_path):
         # day1: new bar at 20240109 with factor still 1.5
@@ -174,8 +329,74 @@ class TestOverlayRepository:
         )
         assert l2.storage_mode == "overlay_v1"
         assert l1.storage_mode == "overlay_v1"
+        raw = repo.resolve_latest_ready(
+            source="tushare", adjustment="none", period="1d"
+        )
         assert l2.view_type == "l2_virtual_composite"
         assert l1.view_type == "l1_virtual_qfq"
+        assert raw.view_type == "raw_virtual"
+
+    def test_raw_latest_uses_delta_but_explicit_base_stays_frozen(
+        self, warehouse
+    ):
+        repo = MarketDataRepository(warehouse)
+        raw_old = repo.resolve_latest_ready(
+            source="tushare", adjustment="none", period="1d"
+        )
+        state = load_overlay_state(warehouse.root)
+        base_id = state.base_dataset_id
+        commit_eod_delta(
+            warehouse,
+            cutoff=20240109,
+            rows=_rows({"SSE.STK.600000": [(20240109, 10.8)]}),
+            batch_suffix="raw_virtual",
+        )
+        raw_new = repo.resolve_latest_ready(
+            source="tushare", adjustment="none", period="1d"
+        )
+        assert raw_new.dataset_id != raw_old.dataset_id
+        assert repo.load_bars(
+            dataset_id=raw_new.dataset_id, symbol="SSE.STK.600000"
+        )[-1].trade_date == 20240109
+        assert repo.load_bars(
+            dataset_id=raw_old.dataset_id, symbol="SSE.STK.600000"
+        )[-1].trade_date == 20240108
+        assert repo.load_bars(
+            dataset_id=base_id, symbol="SSE.STK.600000"
+        )[-1].trade_date == 20240108
+
+    def test_unpublished_same_watermark_batch_is_invisible_at_sequence_zero(
+        self, warehouse
+    ):
+        from wtpy.apps.astock.data.delta_writer import DeltaEodWriter
+
+        repo = MarketDataRepository(warehouse)
+        before = repo.resolve_latest_ready(
+            source="internal", adjustment="composite_none", period="1d"
+        )
+        writer = DeltaEodWriter(warehouse)
+        state = load_overlay_state(warehouse.root)
+        writer.commit_bars(
+            sync_run_id="unpublished",
+            source="tushare",
+            base_dataset_id=state.base_dataset_id,
+            cutoff=20240108,
+            rows=_rows({"SSE.STK.600000": [(20240108, 10.9)]}),
+        )
+        hidden = repo.load_bars(
+            dataset_id=before.dataset_id, symbol="SSE.STK.600000"
+        )
+        assert hidden[-1].close == pytest.approx(10.2)
+
+        writer.publish(delta_watermark=20240108)
+        after = repo.resolve_latest_ready(
+            source="internal", adjustment="composite_none", period="1d"
+        )
+        visible = repo.load_bars(
+            dataset_id=after.dataset_id, symbol="SSE.STK.600000"
+        )
+        assert after.delta_commit_seq == 1
+        assert visible[-1].close == pytest.approx(10.9)
 
     def test_merged_delta_visible_and_old_watermark_replays(
         self, warehouse, tmp_path
@@ -208,6 +429,123 @@ class TestOverlayRepository:
         assert len(
             repo.load_bars(dataset_id=l2_old.dataset_id, symbol="SSE.STK.600000")
         ) == old_len
+
+    def test_same_watermark_revision_keeps_old_virtual_views(self, warehouse):
+        from wtpy.apps.astock.data.delta_writer import DeltaEodWriter
+
+        writer = DeltaEodWriter(warehouse)
+        state = load_overlay_state(warehouse.root)
+        writer.commit_bars(
+            sync_run_id="same_day_v1",
+            source="tushare",
+            base_dataset_id=state.base_dataset_id,
+            cutoff=20240109,
+            rows=_rows({"SSE.STK.600000": [(20240109, 10.8)]}),
+        )
+        writer.commit_factors(
+            sync_run_id="same_day_v1",
+            source="tushare",
+            factor_base_dataset_id=state.factor_base_dataset_id,
+            cutoff=20240109,
+            rows={"SSE.STK.600000": [(20240109, 3.0)]},
+        )
+        writer.publish(delta_watermark=20240109, factor_watermark=20240109)
+
+        repo = MarketDataRepository(warehouse)
+        old_l2 = repo.resolve_latest_ready(
+            source="internal", adjustment="composite_none", period="1d"
+        )
+        old_factor = repo.resolve_latest_ready(
+            source="tushare", adjustment="adj_factor", period="1d"
+        )
+
+        writer.commit_bars(
+            sync_run_id="same_day_v2",
+            source="tushare",
+            base_dataset_id=state.base_dataset_id,
+            cutoff=20240109,
+            rows=_rows({"SSE.STK.600000": [(20240109, 11.2)]}),
+        )
+        writer.commit_factors(
+            sync_run_id="same_day_v2",
+            source="tushare",
+            factor_base_dataset_id=state.factor_base_dataset_id,
+            cutoff=20240109,
+            rows={"SSE.STK.600000": [(20240109, 4.0)]},
+        )
+        writer.publish(delta_watermark=20240109, factor_watermark=20240109)
+
+        new_l2 = repo.resolve_latest_ready(
+            source="internal", adjustment="composite_none", period="1d"
+        )
+        new_factor = repo.resolve_latest_ready(
+            source="tushare", adjustment="adj_factor", period="1d"
+        )
+        assert new_l2.dataset_id != old_l2.dataset_id
+        assert new_factor.dataset_id != old_factor.dataset_id
+        assert new_l2.delta_commit_seq > old_l2.delta_commit_seq
+        assert new_factor.factor_commit_seq > old_factor.factor_commit_seq
+
+        old_bars = repo.load_bar_arrays(
+            dataset_id=old_l2.dataset_id, symbols=["SSE.STK.600000"]
+        )["SSE.STK.600000"]
+        new_bars = repo.load_bar_arrays(
+            dataset_id=new_l2.dataset_id, symbols=["SSE.STK.600000"]
+        )["SSE.STK.600000"]
+        assert old_bars["close"][-1] == pytest.approx(10.8)
+        assert new_bars["close"][-1] == pytest.approx(11.2)
+
+        old_factors = repo.load_factor_arrays(
+            dataset_id=old_factor.dataset_id, symbols=["SSE.STK.600000"]
+        )["SSE.STK.600000"]
+        new_factors = repo.load_factor_arrays(
+            dataset_id=new_factor.dataset_id, symbols=["SSE.STK.600000"]
+        )["SSE.STK.600000"]
+        assert old_factors["adj_factor"][-1] == pytest.approx(3.0)
+        assert new_factors["adj_factor"][-1] == pytest.approx(4.0)
+    def test_batch_factor_cache_tracks_same_watermark_commit_seq(
+        self, warehouse
+    ):
+        from wtpy.apps.astock.data.delta_store import save_overlay_state
+        from wtpy.apps.astock.data.overlay import OverlayView
+
+        symbol = "SSE.STK.600000"
+        view = OverlayView.from_root(warehouse.root)
+        delta = DeltaStore(warehouse.root)
+        state = load_overlay_state(warehouse.root)
+        delta.commit_batch(
+            batch_id="factor_cache_v1",
+            kind=KIND_FACTOR,
+            source="tushare",
+            adjustment="adj_factor",
+            period="1d",
+            base_dataset_id=state.factor_base_dataset_id,
+            watermark=state.factor_watermark,
+            rows={symbol: [(state.factor_watermark, 2.0)]},
+        )
+        state.factor_commit_seq = delta.current_commit_seq(KIND_FACTOR)
+        save_overlay_state(warehouse.root, state)
+        first = view.factor_arrays_batch(
+            [symbol], watermark=state.factor_watermark
+        )[symbol]
+        assert first["adj_factor"][-1] == pytest.approx(2.0)
+
+        delta.commit_batch(
+            batch_id="factor_cache_v2",
+            kind=KIND_FACTOR,
+            source="tushare",
+            adjustment="adj_factor",
+            period="1d",
+            base_dataset_id=state.factor_base_dataset_id,
+            watermark=state.factor_watermark,
+            rows={symbol: [(state.factor_watermark, 4.0)]},
+        )
+        state.factor_commit_seq = delta.current_commit_seq(KIND_FACTOR)
+        save_overlay_state(warehouse.root, state)
+        revised = view.factor_arrays_batch(
+            [symbol], watermark=state.factor_watermark
+        )[symbol]
+        assert revised["adj_factor"][-1] == pytest.approx(4.0)
 
     def test_suspended_symbol_empty_window_no_growth(self, warehouse, tmp_path):
         repo = MarketDataRepository(warehouse)
@@ -319,6 +657,47 @@ class TestOverlayRepository:
         )["SSE.STK.600000"]
         assert arr["close"][0] > 0
 
+    def test_qfq_range_uses_snapshot_anchor_before_slicing(self, warehouse):
+        from wtpy.apps.astock.data.delta_store import save_overlay_state
+        from wtpy.apps.astock.data.overlay import OverlayView
+
+        symbol = "SSE.STK.600000"
+        state = load_overlay_state(warehouse.root)
+        delta = DeltaStore(warehouse.root, state.delta_store_id)
+        delta.commit_batch(
+            batch_id="factor-anchor",
+            kind=KIND_FACTOR,
+            source="tushare",
+            adjustment="adj_factor",
+            period="1d",
+            base_dataset_id=state.factor_base_dataset_id,
+            watermark=20240108,
+            rows={symbol: [(20240108, 3.0)]},
+        )
+        state.factor_commit_seq = delta.current_commit_seq(KIND_FACTOR)
+        save_overlay_state(warehouse.root, state)
+
+        view = OverlayView.from_root(warehouse.root, required=True)
+        full = view.qfq_arrays(symbol)
+        ranged = view.qfq_arrays(
+            symbol, start_date=20240103, end_date=20240104
+        )
+        assert ranged["trade_date"].tolist() == [20240103, 20240104]
+        mask = (full["trade_date"] >= 20240103) & (
+            full["trade_date"] <= 20240104
+        )
+        np.testing.assert_allclose(ranged["close"], full["close"][mask])
+
+        batch_full = view.qfq_arrays_batch([symbol])[symbol]
+        batch_ranged = view.qfq_arrays_batch(
+            [symbol], start_date=20240103, end_date=20240104
+        )[symbol]
+        assert batch_ranged["trade_date"].tolist() == [20240103, 20240104]
+        np.testing.assert_allclose(
+            batch_ranged["close"], batch_full["close"][mask]
+        )
+        np.testing.assert_allclose(batch_ranged["close"], ranged["close"])
+
     def test_delta_only_symbol_is_served(self, tmp_path):
         """A symbol present ONLY in the delta (IPO listed after the base
         snapshot) must be readable — never silently dropped."""
@@ -342,13 +721,18 @@ class TestOverlayRepository:
         )
         st = load_overlay_state(tmp_path)
         st.delta_watermark = 20240109
+        st.delta_commit_seq = ds.current_commit_seq(KIND_BARS)
         save_overlay_state(tmp_path, st)
 
         l2 = repo.resolve_latest_ready(
             source="internal", adjustment="composite_none", period="1d"
         )
-        # the virtual pool lists the new symbol
-        assert "SSE.STK.600999" in [r.symbol for r in l2.symbols]
+        # the virtual pool and metadata include the new symbol accurately
+        records = {record.symbol: record for record in l2.symbols}
+        assert "SSE.STK.600999" in records
+        assert records["SSE.STK.600999"].row_count == 1
+        assert records["SSE.STK.600999"].last_date == 20240109
+        assert l2.data_cutoff_date == 20240109
         # per-symbol read serves it from the delta
         bars = repo.load_bars(dataset_id=l2.dataset_id, symbol="SSE.STK.600999")
         assert len(bars) == 1
@@ -358,3 +742,85 @@ class TestOverlayRepository:
         all_bars = repo.load_bars(dataset_id=l2.dataset_id)
         assert "SSE.STK.600999" in {b.symbol for b in all_bars}
 
+    @pytest.mark.parametrize("alias", ["600000.SH", "sh600000"])
+    def test_overlay_repository_preserves_legacy_symbol_aliases(
+        self, warehouse, alias
+    ):
+        repo = MarketDataRepository(warehouse)
+        l2 = repo.resolve_latest_ready(
+            source="internal", adjustment="composite_none", period="1d"
+        )
+        l1 = repo.resolve_latest_ready(
+            source="internal",
+            adjustment="composite_tushare_factor_qfq",
+            period="1d",
+        )
+        factor = repo.resolve_latest_ready(
+            source="tushare", adjustment="adj_factor", period="1d"
+        )
+
+        l2_bars = repo.load_bars(dataset_id=l2.dataset_id, symbol=alias)
+        l1_bars = repo.load_bars(dataset_id=l1.dataset_id, symbol=alias)
+        l2_arrays = repo.load_bar_arrays(
+            dataset_id=l2.dataset_id, symbols=[alias]
+        )
+        factor_arrays = repo.load_factor_arrays(
+            dataset_id=factor.dataset_id, symbols=[alias]
+        )
+
+        assert l2_bars
+        assert l1_bars
+        assert {bar.symbol for bar in l2_bars + l1_bars} == {
+            "SSE.STK.600000"
+        }
+        assert list(l2_arrays) == ["SSE.STK.600000"]
+        assert factor_arrays[alias] is not None
+
+    def test_delta_symbol_enumeration_failure_is_not_silenced(
+        self, warehouse, monkeypatch
+    ):
+        view = OverlayView.from_root(warehouse.root, required=True)
+
+        def _raise(*_args, **_kwargs):
+            raise RuntimeError("delta catalog corrupt")
+
+        monkeypatch.setattr(view.delta, "distinct_symbols", _raise)
+        with pytest.raises(RuntimeError, match="delta catalog corrupt"):
+            view._pool_records_with_delta()
+
+
+def test_factor_dataset_reads_base_plus_delta(warehouse):
+    from wtpy.apps.astock.data.adjustments import build_factor_series_from_dataset
+    from wtpy.apps.astock.data.delta_writer import DeltaEodWriter
+
+    writer = DeltaEodWriter(warehouse)
+    state = load_overlay_state(warehouse.root)
+    writer.commit_bars(
+        sync_run_id="factor_path",
+        source="tushare",
+        base_dataset_id=state.base_dataset_id,
+        cutoff=20240109,
+        rows=_rows({"SSE.STK.600000": [(20240109, 10.8)]}),
+    )
+    writer.commit_factors(
+        sync_run_id="factor_path",
+        source="tushare",
+        factor_base_dataset_id=state.factor_base_dataset_id,
+        cutoff=20240109,
+        rows={"SSE.STK.600000": [(20240109, 3.0)]},
+    )
+    writer.publish(delta_watermark=20240109, factor_watermark=20240109)
+
+    repo = MarketDataRepository(warehouse)
+    factor_manifest = repo.resolve_latest_ready(
+        source="tushare", adjustment="adj_factor", period="1d"
+    )
+    assert factor_manifest.view_type == "factor_virtual"
+    series = build_factor_series_from_dataset(
+        warehouse,
+        factor_manifest,
+        "SSE.STK.600000",
+        [20240108, 20240109],
+    )
+    assert series.quality == "complete"
+    assert series.factors == [1.5, 3.0]
