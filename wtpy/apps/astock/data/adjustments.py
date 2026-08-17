@@ -418,12 +418,38 @@ def build_factor_series(
     force_identity: bool = False,
     refresh: bool = False,
     history_start: str = BAOSTOCK_HISTORY_START,
+    store: Optional["DatasetStore"] = None,
 ) -> FactorSeries:
     """Load or fetch factors for dates; persist under adj_root.
 
     Always queries Baostock from history_start (not local first bar) so the
     last pre-history event can seed the first local segment.
+
+    ``store`` (repository mode): when given and a ready tushare/adj_factor
+    dataset exists, the factor series is built from the immutable warehouse
+    dataset first (offline, BSE included). Only when the warehouse has no
+    ready factor dataset, or the symbol is absent from it, does the legacy
+    Baostock / cache path run. Passing no ``store`` keeps the exact legacy
+    behaviour — explicit legacy callers (卦象 bagua plane, old CLI) are
+    unchanged.
     """
+    if store is not None:
+        try:
+            from .repository import DatasetNotFoundError, MarketDataRepository
+
+            _repo = MarketDataRepository(store)
+            _fm = _repo.resolve_latest_ready(
+                source="tushare", adjustment="adj_factor", period="1d"
+            )
+            if _fm is not None:
+                series = build_factor_series_from_dataset(
+                    store, _fm, std_code, dates
+                )
+                if series is not None and series.quality == "complete":
+                    return series
+        except DatasetNotFoundError:
+            pass  # no warehouse factor surface; use the legacy path below
+
     adj_root = Path(adj_root)
     adj_root.mkdir(parents=True, exist_ok=True)
     dates_i = [int(d) for d in dates]
@@ -762,21 +788,28 @@ def build_factor_series_from_dataset(
     dates_i = [int(d) for d in dates]
     _lookup = lookup_symbol or std_code
     rec = None
-    if symbol_index is not None:
-        for variant in MarketDataRepository._symbol_variants(_lookup):
-            rec = symbol_index.get(variant)
-            if rec is not None:
-                break
-    else:
-        for variant in MarketDataRepository._symbol_variants(_lookup):
-            for s in factor_manifest.symbols:
-                if s.symbol == variant:
-                    rec = s
+    is_overlay_factor = (
+        getattr(factor_manifest, "storage_mode", "") == "overlay_v1"
+        and getattr(factor_manifest, "view_type", "") == "factor_virtual"
+    )
+    if not is_overlay_factor:
+        if symbol_index is not None:
+            for variant in MarketDataRepository._symbol_variants(_lookup):
+                rec = symbol_index.get(variant)
+                if rec is not None:
                     break
-            if rec is not None:
-                break
+        else:
+            for variant in MarketDataRepository._symbol_variants(_lookup):
+                for symbol_record in factor_manifest.symbols:
+                    if symbol_record.symbol == variant:
+                        rec = symbol_record
+                        break
+                if rec is not None:
+                    break
     ds_id = getattr(factor_manifest, "dataset_id", "")
-    if rec is None or not getattr(rec, "blob_sha256", ""):
+    if not is_overlay_factor and (
+        rec is None or not getattr(rec, "blob_sha256", "")
+    ):
         return FactorSeries(
             std_code=std_code,
             dates=dates_i,
@@ -786,7 +819,22 @@ def build_factor_series_from_dataset(
             quality="incomplete",
             sha256="",
         )
-    arrays = store.load_bars(rec.blob_sha256)
+    if is_overlay_factor:
+        arrays = MarketDataRepository(store).load_factor_arrays(
+            dataset_id=ds_id, symbols=[_lookup]
+        ).get(_lookup)
+        if arrays is None:
+            return FactorSeries(
+                std_code=std_code,
+                dates=dates_i,
+                factors=identity_factors(len(dates_i)).tolist(),
+                source="dataset_missing",
+                source_detail=f"factor_dataset:{ds_id};symbol_not_covered",
+                quality="incomplete",
+                sha256="",
+            )
+    else:
+        arrays = store.load_bars(rec.blob_sha256)
     f_dates = [int(x) for x in arrays["trade_date"]]
     f_vals = [float(x) for x in arrays["adj_factor"]]
     # event points = snapped change days (event-anchored; phantom Tushare
@@ -834,12 +882,23 @@ def build_factor_series_from_dataset(
         quality="complete",
         sha256="",
     )
+    if is_overlay_factor:
+        source_hash = hashlib.sha256()
+        source_hash.update(
+            np.asarray(arrays["trade_date"], dtype="<i8").tobytes()
+        )
+        source_hash.update(
+            np.asarray(arrays["adj_factor"], dtype="<f8").tobytes()
+        )
+        source_sha256 = source_hash.hexdigest()
+    else:
+        source_sha256 = rec.blob_sha256
     series.sha256 = sha256_text(
         json.dumps(
             {
                 "std_code": std_code,
                 "factor_dataset": ds_id,
-                "blob": rec.blob_sha256,
+                "source_sha256": source_sha256,
                 "dates": dates_i[:1] + dates_i[-1:],
                 "n": len(dates_i),
             },

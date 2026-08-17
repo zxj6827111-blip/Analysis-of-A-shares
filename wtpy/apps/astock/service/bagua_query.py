@@ -319,6 +319,7 @@ class BaguaPlaneSession:
 
     def __init__(self, cfg: AStockConfig, source_key: str):
         from ..data.dataset_store import DatasetStore
+        from ..data.repository import MarketDataRepository
 
         self.source_key = normalize_adjust_mode(source_key)
         if self.source_key == "tdx_front":
@@ -332,6 +333,7 @@ class BaguaPlaneSession:
         if not md_root or not Path(md_root).exists():
             raise FileNotFoundError(f"market data root not found: {md_root}")
         self.store = DatasetStore(md_root)
+        self.repo = MarketDataRepository(self.store)
         self.match_pairs = _source_match_pairs(self.source_key)
         self.pair_rank = {pair: idx for idx, pair in enumerate(self.match_pairs)}
         self.status_rank = {"ready": 3, "partial": 2, "building": 1, "failed": 0}
@@ -437,7 +439,10 @@ class BaguaPlaneSession:
             self._saw_any_pair = True
             idx: Dict[str, Any] = {}
             for r in m.symbols:
-                if not getattr(r, "blob_sha256", None):
+                if (
+                    not getattr(r, "blob_sha256", None)
+                    and getattr(m, "storage_mode", "") != "overlay_v1"
+                ):
                     continue
                 # index all variants so lookup is O(1)
                 for v in _symbol_variants(r.symbol):
@@ -594,7 +599,24 @@ class BaguaPlaneSession:
 
         hits.sort(key=_score, reverse=True)
         manifest, rec, _, covers_asof, effective_first, effective_last = hits[0]
-        bars = _bars_from_blob(self.store, rec.blob_sha256)
+        if getattr(manifest, "storage_mode", "") == "overlay_v1":
+            market_bars = self.repo.load_bars(
+                dataset_id=manifest.dataset_id, symbol=rec.symbol
+            )
+            bars = [
+                DayBar(
+                    date=int(bar.trade_date),
+                    open=float(bar.open),
+                    high=float(bar.high),
+                    low=float(bar.low),
+                    close=float(bar.close),
+                    amount=float(bar.amount),
+                    volume=float(bar.volume),
+                )
+                for bar in market_bars
+            ]
+        else:
+            bars = _bars_from_blob(self.store, rec.blob_sha256)
         if not bars:
             raise FileNotFoundError(
                 f"{std_code} 数据集 {manifest.dataset_id} blob 为空"
@@ -639,7 +661,23 @@ _session_cache: Dict[Tuple[str, str], Tuple[float, "BaguaPlaneSession"]] = {}
 def _get_plane_session(cfg: AStockConfig, source_key: str) -> "BaguaPlaneSession":
     """Return a cached (TTL) BaguaPlaneSession for the given price plane."""
     md_root = getattr(cfg, "market_data_root", None)
-    key = (str(md_root), normalize_adjust_mode(source_key))
+    overlay_key = (0, 0, 0, 0, "")
+    if md_root is not None:
+        try:
+            from ..data.delta_store import load_overlay_state
+
+            state = load_overlay_state(md_root)
+            if state.enabled:
+                overlay_key = (
+                    int(state.delta_watermark or 0),
+                    int(state.factor_watermark or 0),
+                    int(state.delta_commit_seq or 0),
+                    int(state.factor_commit_seq or 0),
+                    state.delta_store_id,
+                )
+        except FileNotFoundError:
+            pass
+    key = (str(md_root), normalize_adjust_mode(source_key), *overlay_key)
     now = _bq_time.time()
     with _session_cache_lock:
         hit = _session_cache.get(key)
@@ -737,8 +775,10 @@ def _adjust_day_bars(
             meta["asof_date"] = asof
         return out, meta
 
+    from ..data.dataset_store import DatasetStore as _BqDS
     series = build_factor_series(
-        std_code, dates, adj_root=cfg.adj_root, prefer_baostock=True
+        std_code, dates, adj_root=cfg.adj_root, prefer_baostock=True,
+        store=_BqDS(cfg.market_data_root),
     )
     fac = np.array(series.factors, dtype=float)
     meta["factor_source"] = series.source

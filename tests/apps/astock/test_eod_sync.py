@@ -62,48 +62,61 @@ def test_effective_data_lag_none_when_empty():
     assert _effective_data_lag({}) is None
 
 
-def test_eod_sync_decide_triggers_on_weekday_after_time():
-    wed = _dt.datetime(2026, 8, 12, 18, 40)  # Wednesday
+def test_eod_sync_decide_triggers_on_friday_after_time():
+    friday = _dt.datetime(2026, 8, 14, 18, 40)
     trigger, reason, today = eod_sync_decide(
-        lag=2, now=wed, sync_time="18:30", min_lag=1
+        lag=2, now=friday, sync_time="18:30", sync_weekday=4, min_lag=1
     )
     assert trigger is True
-    assert today == _dt.date(2026, 8, 12)
+    assert today == _dt.date(2026, 8, 14)
     assert "滞后" in reason
 
 
-def test_eod_sync_decide_skips_weekend():
-    sat = _dt.datetime(2026, 8, 15, 18, 40)  # Saturday
-    trigger, reason, today = eod_sync_decide(lag=5, now=sat)
+def test_eod_sync_decide_skips_non_scheduled_day():
+    wed = _dt.datetime(2026, 8, 12, 18, 40)
+    trigger, reason, today = eod_sync_decide(
+        lag=5, now=wed, sync_weekday=4
+    )
     assert trigger is False
     assert today is None
 
 
 def test_eod_sync_decide_skips_before_time():
-    wed_before = _dt.datetime(2026, 8, 12, 18, 20)
-    trigger, reason, today = eod_sync_decide(lag=5, now=wed_before, sync_time="18:30")
+    friday_before = _dt.datetime(2026, 8, 14, 18, 20)
+    trigger, reason, today = eod_sync_decide(
+        lag=5, now=friday_before, sync_time="18:30", sync_weekday=4
+    )
     assert trigger is False
     assert today is None
 
 
 def test_eod_sync_decide_skips_when_fresh():
-    wed = _dt.datetime(2026, 8, 12, 18, 40)
-    trigger, reason, today = eod_sync_decide(lag=0, now=wed)
-    assert trigger is False
-    trigger, reason, today = eod_sync_decide(lag=None, now=wed)
-    assert trigger is False
-
-
-def test_eod_sync_decide_once_per_day():
-    wed = _dt.datetime(2026, 8, 12, 18, 40)
+    friday = _dt.datetime(2026, 8, 14, 18, 40)
     trigger, reason, today = eod_sync_decide(
-        lag=2, now=wed, last_trigger_day=_dt.date(2026, 8, 12)
+        lag=0, now=friday, sync_weekday=4
     )
     assert trigger is False
-    # next day triggers again
-    thu = _dt.datetime(2026, 8, 13, 18, 40)
     trigger, reason, today = eod_sync_decide(
-        lag=2, now=thu, last_trigger_day=_dt.date(2026, 8, 12)
+        lag=None, now=friday, sync_weekday=4
+    )
+    assert trigger is False
+
+
+def test_eod_sync_decide_once_per_weekly_run():
+    friday = _dt.datetime(2026, 8, 14, 18, 40)
+    trigger, reason, today = eod_sync_decide(
+        lag=2,
+        now=friday,
+        sync_weekday=4,
+        last_trigger_day=_dt.date(2026, 8, 14),
+    )
+    assert trigger is False
+    next_friday = _dt.datetime(2026, 8, 21, 18, 40)
+    trigger, reason, today = eod_sync_decide(
+        lag=2,
+        now=next_friday,
+        sync_weekday=4,
+        last_trigger_day=_dt.date(2026, 8, 14),
     )
     assert trigger is True
 
@@ -128,6 +141,8 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
 
     monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
     monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "00:00")
+    monkeypatch.setenv("ASTOCK_MARKET_STORAGE_MODE", "overlay_v1")
+    monkeypatch.setenv("ASTOCK_MARKET_GOVERNANCE_ENABLED", "0")
     monkeypatch.setenv("TUSHARE_TOKEN", "test_token_123")
     # state file lives under the test tree, never the real repo storage/
     state_path = tmp_path / "eod_sync_state.json"
@@ -135,8 +150,8 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
 
     cfg, ctx = _make_cfg_ctx(tmp_path)
 
-    # force the decision to "trigger" exactly once (startup check); the
-    # polling loop then sees the daily-once guard, like production
+    # Force the startup decision to trigger once; the polling loop then
+    # sees the once-per-scheduled-run guard, like production.
     decide_n = {"n": 0}
     def _fake_decide(**k):
         decide_n["n"] += 1
@@ -170,7 +185,10 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
     assert len(calls) == 1, "exactly one sync process should be spawned"
     cmd = calls[0][0]
     assert "--source" in cmd and "tushare" in cmd
-    assert "--mode" in cmd and "incremental" in cmd
+    mode_index = cmd.index("--mode")
+    assert cmd[mode_index + 1] == "incremental"
+    write_mode_index = cmd.index("--write-mode")
+    assert cmd[write_mode_index + 1] == "delta"
     assert "--fresh" in cmd
     assert "--token" in cmd and "test_token_123" in cmd
     assert "--storage-root" in cmd and str(tmp_path) in cmd
@@ -182,6 +200,85 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
     assert st.get("last_trigger_date")
     assert st.get("last_sync_started_at")
     assert st.get("enabled") is True
+
+
+def test_auto_eod_sync_success_runs_governance(monkeypatch, tmp_path):
+    import json as _json
+    import subprocess
+    import time as _time
+
+    import wtpy.apps.astock.api as api_mod
+    from wtpy.apps.astock.api import _auto_eod_sync
+
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "00:00")
+    monkeypatch.setenv("ASTOCK_MARKET_STORAGE_MODE", "overlay_v1")
+    monkeypatch.setenv("ASTOCK_MARKET_GOVERNANCE_ENABLED", "1")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_INDEX_ETF", "0")
+    state_path = tmp_path / "eod_sync_state.json"
+    monkeypatch.setenv("ASTOCK_EOD_STATE_PATH", str(state_path))
+
+    cfg, ctx = _make_cfg_ctx(tmp_path)
+    decisions = {"n": 0}
+
+    def _fake_decide(**_kwargs):
+        decisions["n"] += 1
+        if decisions["n"] == 1:
+            return True, "weekly lag", _dt.date.today()
+        return False, "already handled", None
+
+    monkeypatch.setattr(api_mod, "eod_sync_decide", _fake_decide)
+    calls = []
+
+    class FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def wait(self, timeout=None):
+            return 0
+
+    def _popen(cmd, **kwargs):
+        calls.append((list(cmd), kwargs))
+        return FakeProc(4300 + len(calls))
+
+    class ImmediateThread:
+        def __init__(self, target=None, args=(), kwargs=None, **_options):
+            self.target = target
+            self.args = args
+            self.kwargs = kwargs or {}
+
+        def start(self):
+            self.target(*self.args, **self.kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", _popen)
+    monkeypatch.setattr(threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(
+        threading.Event,
+        "wait",
+        lambda self, timeout=None: (_ for _ in ()).throw(SystemExit("stop-loop")),
+    )
+    monkeypatch.setattr(
+        _time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(SystemExit("stop-loop")),
+    )
+
+    with pytest.raises(SystemExit, match="stop-loop"):
+        _auto_eod_sync(cfg, ctx)
+
+    assert len(calls) == 2
+    sync_cmd = calls[0][0]
+    governance_cmd = calls[1][0]
+    assert "sync_market_data.py" in " ".join(sync_cmd)
+    assert "govern_market_data.py" in " ".join(governance_cmd)
+    assert governance_cmd[-2:] == ["--maintain", "--apply"]
+    assert "--storage-root" in governance_cmd
+    assert str(tmp_path) in governance_cmd
+
+    state = _json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["last_sync_exit_code"] == 0
+    assert state["last_governance_exit_code"] == 0
+    assert state["last_governance_finished_at"]
 
 
 def test_auto_eod_sync_skips_when_fresh(monkeypatch, tmp_path):
@@ -298,7 +395,7 @@ def test_auto_eod_sync_retry_respects_pending_interval(monkeypatch, tmp_path):
     }), encoding="utf-8")
 
     # state says "failed today, retry 1/2 pending in the future": the startup
-    # check must NOT clear the daily-once guard (would retry immediately,
+    # check must NOT clear the scheduled-run guard (would retry immediately,
     # bypassing the poll interval). Capture the last_trigger_day the decide
     # callback receives: with the fix it stays today; without it, the retry
     # branch would pass None and re-fire.
@@ -333,8 +430,86 @@ def test_auto_eod_sync_retry_respects_pending_interval(monkeypatch, tmp_path):
         _auto_eod_sync(cfg, ctx)
 
     assert captured.get("last_trigger_day") == _dt.date.today(), (
-        "retry must not fire before pending_retry_at (daily-once guard kept)"
+        "retry must not fire before pending_retry_at (scheduled-run guard kept)"
     )
+
+
+def test_auto_eod_sync_runs_second_retry_then_exhausts_budget(
+    monkeypatch, tmp_path
+):
+    import json as _json
+    import subprocess
+    import time as _time
+
+    import wtpy.apps.astock.api as api_mod
+    from wtpy.apps.astock.api import _auto_eod_sync
+
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "00:00")
+    monkeypatch.setenv(
+        "ASTOCK_EOD_SYNC_WEEKDAY", str(_dt.date.today().weekday())
+    )
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_POLL_SECONDS", "60")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_MAX_RETRIES", "2")
+    state_path = tmp_path / "eod_sync_state.json"
+    monkeypatch.setenv("ASTOCK_EOD_STATE_PATH", str(state_path))
+    state_path.write_text(_json.dumps({
+        "last_trigger_date": _dt.date.today().strftime("%Y-%m-%d"),
+        "last_sync_started_at": "2026-08-17 18:31:00",
+        "last_sync_exit_code": 1,
+        "retry_count": 2,
+        "pending_retry_at": "2000-01-01 00:00:00",
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(
+        api_mod,
+        "eod_sync_decide",
+        lambda **_kwargs: (True, "retry due", _dt.date.today()),
+    )
+    calls = []
+
+    class FailedProc:
+        pid = 4402
+
+        def wait(self, timeout=None):
+            return 1
+
+    class ImmediateThread:
+        def __init__(self, target=None, args=(), kwargs=None, **_options):
+            self.target = target
+            self.args = args
+            self.kwargs = kwargs or {}
+
+        def start(self):
+            self.target(*self.args, **self.kwargs)
+
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda cmd, **kwargs: calls.append((list(cmd), kwargs)) or FailedProc(),
+    )
+    monkeypatch.setattr(threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(
+        threading.Event,
+        "wait",
+        lambda self, timeout=None: (_ for _ in ()).throw(
+            SystemExit("stop-loop")
+        ),
+    )
+    monkeypatch.setattr(
+        _time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(SystemExit("stop-loop")),
+    )
+
+    cfg, ctx = _make_cfg_ctx(tmp_path)
+    with pytest.raises(SystemExit, match="stop-loop"):
+        _auto_eod_sync(cfg, ctx)
+
+    assert len(calls) == 1, "retry 2/2 must still be launched"
+    state = _json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["retry_count"] == 3
+    assert state["pending_retry_at"] is None
 
 
 def test_eod_sync_status_api(tmp_path, monkeypatch):
@@ -351,6 +526,9 @@ def test_eod_sync_status_api(tmp_path, monkeypatch):
 
     monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
     monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "18:30")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_WEEKDAY", "invalid")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_MIN_LAG_DAYS", "invalid")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_POLL_SECONDS", "1")
     # eod_sync/status resolves the state file via PROJECT_ROOT: pin it to the
     # test tree so the real repo storage/ is never read or written.
     monkeypatch.setattr(system_mod, "PROJECT_ROOT", tmp_path)
@@ -385,6 +563,10 @@ def test_eod_sync_status_api(tmp_path, monkeypatch):
     assert j.get("ok") is True
     assert j.get("enabled") is True
     assert j.get("sync_time") == "18:30"
+    assert j.get("sync_weekday") == 4
+    assert j.get("schedule_mode") == "weekly"
+    assert j.get("min_lag_days") == 1
+    assert j.get("poll_seconds") == 60
     assert j.get("last_sync_started_at") == past_at
     assert j.get("last_trigger_date") == past_day
     assert j.get("state_suspect") is False

@@ -975,6 +975,8 @@ def api_db_stats(ctx: ApiContext = Depends(get_ctx)) -> dict:
 
 @router.post("/api/v1/data-sync/start")
 def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) -> dict:
+    import os as _os
+
     cfg = ctx.cfg
     _sync_state = ctx.sync_state
     _sync_proc = ctx.sync_proc
@@ -1021,8 +1023,16 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
         # Zero-config default chain (handled inside the script for the same
         # CLI args cron jobs already use): raw incremental -> adj_factor
         # incremental -> product reconcile. Only the full formal L1/L2 chain
-        # reports success.
-        cmd = [sys.executable, "-u", SYNC_SCRIPT, "--source", "tushare", "--mode", "incremental", "--end-date", str(end_date)]
+        # reports success. overlay_v1 仓库:例行同步走 delta 链(增量写
+        # DuckDB + 原子发布 watermark),不再每日重写完整行情 NPZ。
+        overlay_mode = bool(
+            (_os.environ.get("ASTOCK_MARKET_STORAGE_MODE", "").strip().lower())
+            == "overlay_v1"
+        )
+        cmd = [sys.executable, "-u", SYNC_SCRIPT, "--source", "tushare",
+               "--mode", "incremental", "--end-date", str(end_date)]
+        if overlay_mode:
+            cmd += ["--write-mode", "delta"]
         if start_date:
             cmd += ["--start-date", str(start_date)]
     elif payload.task == "factor":
@@ -1127,7 +1137,7 @@ def eod_sync_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
     except Exception:
         state = {}
 
-    def _sane_state_value(v):
+    def _sane_state_value(v, *, date_only: bool = False):
         # Future-dated or unparseable records are dirty (a crash can persist
         # a timestamp for a sync that never ran) and are dropped from the
         # payload; the caller flags them via state_suspect.
@@ -1135,19 +1145,24 @@ def eod_sync_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
             return None
         s = str(v).strip()
         try:
-            if len(s) >= 8 and s[:8].isdigit():
-                d = _dt.datetime.strptime(s[:8], "%Y%m%d").date()
-                if d > _dt.date.today():
+            if date_only:
+                if len(s) == 8 and s.isdigit():
+                    value_date = _dt.datetime.strptime(s, "%Y%m%d").date()
+                else:
+                    value_date = _dt.date.fromisoformat(s)
+                if value_date > _dt.date.today():
                     return None
             else:
-                dt = _dt.datetime.fromisoformat(s)
-                if dt > _dt.datetime.now() + _dt.timedelta(minutes=10):
+                value_time = _dt.datetime.fromisoformat(s)
+                if value_time > _dt.datetime.now() + _dt.timedelta(minutes=10):
                     return None
         except ValueError:
             return None
         return v
 
-    last_trigger_date = _sane_state_value(state.get("last_trigger_date"))
+    last_trigger_date = _sane_state_value(
+        state.get("last_trigger_date"), date_only=True
+    )
     last_sync_started_at = _sane_state_value(state.get("last_sync_started_at"))
     state_suspect = bool(
         (state.get("last_trigger_date") and last_trigger_date is None)
@@ -1156,6 +1171,22 @@ def eod_sync_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
 
     def _flag(name: str, default: str = "1") -> bool:
         return _os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+    def _int_setting(
+        name: str,
+        default: int,
+        *,
+        minimum: int = 0,
+        maximum: Optional[int] = None,
+    ) -> int:
+        try:
+            value = int(_os.environ.get(name, str(default)) or default)
+        except (TypeError, ValueError):
+            value = default
+        value = max(minimum, value)
+        if maximum is not None:
+            value = min(maximum, value)
+        return value
 
     health: Dict[str, Any] = {}
     try:
@@ -1184,8 +1215,15 @@ def eod_sync_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         "ok": True,
         "enabled": _flag("ASTOCK_EOD_SYNC_ENABLED", "1"),
         "sync_time": _os.environ.get("ASTOCK_EOD_SYNC_TIME", "18:30"),
-        "min_lag_days": int(_os.environ.get("ASTOCK_EOD_SYNC_MIN_LAG_DAYS", "1") or 1),
-        "poll_seconds": int(_os.environ.get("ASTOCK_EOD_SYNC_POLL_SECONDS", "1800") or 1800),
+        "sync_weekday": _int_setting(
+            "ASTOCK_EOD_SYNC_WEEKDAY", 4, maximum=6
+        ),
+        "schedule_mode": "weekly",
+        "governance_enabled": _flag("ASTOCK_MARKET_GOVERNANCE_ENABLED", "1"),
+        "min_lag_days": _int_setting("ASTOCK_EOD_SYNC_MIN_LAG_DAYS", 1),
+        "poll_seconds": _int_setting(
+            "ASTOCK_EOD_SYNC_POLL_SECONDS", 1800, minimum=60
+        ),
         "startup_check": _flag("ASTOCK_EOD_SYNC_STARTUP", "1"),
         "last_trigger_date": last_trigger_date,
         "last_sync_started_at": last_sync_started_at,
@@ -1194,6 +1232,8 @@ def eod_sync_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         "last_sync_finished_at": state.get("last_sync_finished_at"),
         "retry_count": state.get("retry_count"),
         "pending_retry_at": state.get("pending_retry_at"),
+        "last_governance_exit_code": state.get("last_governance_exit_code"),
+        "last_governance_finished_at": state.get("last_governance_finished_at"),
         "sync_pid": pid,
         "state_suspect": state_suspect,
         "auto_running": auto_running,

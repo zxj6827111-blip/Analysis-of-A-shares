@@ -2,11 +2,21 @@
 
 Backtest tasks must ONLY use this repository. Providers are never called
 during a backtest run.
+
+Storage modes:
+  - blob_snapshot (legacy): each dataset is a manifest + full-history NPZ blob
+    per symbol; ``load_bars`` reads the blobs directly.
+  - overlay_v1: stable base blobs + DuckDB versioned delta. Formal L1/L2 are
+    VIRTUAL manifests (``storage_mode="overlay_v1"``) whose bars are merged
+    (base + delta) or runtime-derived (QFQ) by ``data/overlay.OverlayView``.
+    ``load_bar_arrays`` / ``load_bars_batch`` are the unified entry points;
+    ``load_bars`` stays as the compatible wrapper.
 """
 
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -34,12 +44,43 @@ class DatasetNotReadyError(Exception):
 class MarketDataRepository:
     """Reads bars exclusively from local immutable datasets."""
 
+    #: per-repository overlay view (lazy); virtual L1/L2 resolution.
+    #: Class-level default only — the first access assigns an instance attr.
+    _overlay = None
+    _overlay_lock = threading.Lock()
+
     def __init__(self, store: DatasetStore):
         self._store = store
 
     @classmethod
     def from_root(cls, root: Path | str) -> "MarketDataRepository":
         return cls(DatasetStore(root))
+
+    # ------------------------------------------------------------------
+    # overlay support
+    # ------------------------------------------------------------------
+    def _overlay_enabled(self) -> bool:
+        from .delta_store import load_overlay_state
+
+        return load_overlay_state(self._store.root).enabled
+
+    def _overlay_view(self):
+        if self._overlay is not None:
+            return self._overlay
+        with self._overlay_lock:
+            if self._overlay is not None:
+                return self._overlay
+            from .overlay import OverlayView
+
+            view = OverlayView.from_root(self._store.root, required=False)
+            if view is not None:
+                self._overlay = view
+            return view
+
+    def _overlay_view_for_manifest(self, manifest: DatasetManifest):
+        from .overlay import OverlayView
+
+        return OverlayView.for_manifest(self._store, manifest)
 
     @staticmethod
     def _symbol_kind_std(code: str, suffix: str) -> str:
@@ -190,8 +231,19 @@ class MarketDataRepository:
         Preference order (desc): cutoff → symbol_count → row_count → created_at.
         Partial / superseded / failed are never selected.
 
+        In overlay_v1 mode, the formal L1/L2 product roles resolve to their
+        current virtual manifests (stable base blobs + DuckDB delta) instead
+        of a materialized snapshot; explicit legacy dataset ids keep reading
+        their original blobs.
+
         Raises DatasetNotFoundError if none exists.
         """
+        if self._overlay_enabled():
+            view = self._overlay_view()
+            if view is not None:
+                vm = _virtual_manifest_for(view, source, adjustment, period)
+                if vm is not None:
+                    return vm
         candidates = self.list_datasets(
             source=source,
             adjustment=adjustment,
@@ -297,12 +349,23 @@ class MarketDataRepository:
         If symbol is None, loads all symbols in the dataset.
         By default only status=ready datasets can be loaded.
         Set allow_partial=True only for audit tooling, never for backtest.
+
+        Overlay-aware: a virtual manifest (storage_mode=overlay_v1) is served
+        from the merged base+delta surface (raw/composite views) or the
+        runtime-derived QFQ view instead of per-symbol blobs.
         """
-        manifest = self.get_dataset(dataset_id)
+        manifest = self.get_dataset(dataset_id, deep_copy=False)
         allowed = ("ready",) if not allow_partial else ("ready", "partial")
         if manifest.status not in allowed:
             raise DatasetNotReadyError(
                 f"Dataset {dataset_id} status={manifest.status}, cannot load"
+            )
+
+        # ---- overlay virtual view path ----
+        if getattr(manifest, "storage_mode", "") == "overlay_v1":
+            return self._load_virtual_bars(
+                manifest, symbol=symbol,
+                start_date=start_date, end_date=end_date,
             )
 
         bars: List[MarketBar] = []
@@ -347,6 +410,255 @@ class MarketDataRepository:
                 )
         return bars
 
+    # ------------------------------------------------------------------
+    # overlay / unified array reads
+    # ------------------------------------------------------------------
+    def _load_virtual_bars(
+        self,
+        manifest: DatasetManifest,
+        *,
+        symbol: Optional[str],
+        start_date: Optional[int],
+        end_date: Optional[int],
+    ) -> List[MarketBar]:
+        view = self._overlay_view_for_manifest(manifest)
+
+        # per-symbol fast path: skip the batch dict wrapper + a second
+        # manifest load (whole-market loops call this once per symbol).
+        if symbol is not None:
+            record = self._find_symbol_record(manifest, symbol)
+            if record is None:
+                raise DatasetNotFoundError(
+                    f"Symbol {symbol} not in dataset {manifest.dataset_id}"
+                )
+            resolved_symbol = record.symbol
+            if manifest.view_type == "l1_virtual_qfq":
+                arr = view.qfq_arrays(
+                    resolved_symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    raw_watermark=manifest.delta_watermark,
+                    factor_watermark=manifest.factor_watermark,
+                )
+            else:
+                arr = view.merged_raw_arrays(
+                    resolved_symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    watermark=manifest.delta_watermark,
+                )
+            return self._bars_from_arrays(manifest, resolved_symbol, arr)
+
+        symbols = [r.symbol for r in manifest.symbols]
+        arrays_map = self.load_bar_arrays(
+            dataset_id=manifest.dataset_id,
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        bars: List[MarketBar] = []
+        for sym in symbols:
+            bars.extend(self._bars_from_arrays(manifest, sym, arrays_map.get(sym)))
+        return bars
+
+    @staticmethod
+    def _bars_from_arrays(
+        manifest: DatasetManifest, sym: str, arr
+    ) -> List[MarketBar]:
+        if arr is None or len(arr["trade_date"]) == 0:
+            return []
+        n = len(arr["trade_date"])
+        return [
+            MarketBar(
+                symbol=sym,
+                trade_date=int(arr["trade_date"][i]),
+                period=manifest.period,
+                open=float(arr["open"][i]),
+                high=float(arr["high"][i]),
+                low=float(arr["low"][i]),
+                close=float(arr["close"][i]),
+                volume=float(arr["volume"][i]),
+                amount=float(arr["amount"][i]),
+                source=manifest.source,
+                adjustment=manifest.adjustment,
+                anchor_date=manifest.anchor_date,
+                snapshot_date=manifest.snapshot_date,
+                data_cutoff_date=manifest.data_cutoff_date,
+                provider_version=manifest.provider_version,
+            )
+            for i in range(n)
+        ]
+
+    def load_bar_arrays(
+        self,
+        *,
+        dataset_id: str,
+        symbols: Optional[Sequence[str]] = None,
+        start_date: Optional[int] = None,
+        end_date: Optional[int] = None,
+    ) -> Dict[str, Optional[Dict[str, np.ndarray]]]:
+        """Unified bar-array read (blob datasets AND overlay virtual views).
+
+        Returns {symbol: {trade_date/open/high/low/close/volume/amount arrays}}
+        with the symbol's exact manifest spelling as the key. ``symbols=None``
+        loads every symbol with a blob in the dataset.
+
+        Virtual manifest behavior:
+          - l2_virtual_composite / raw_virtual : base blob + DuckDB delta merge
+          - l1_virtual_qfq                    : runtime QFQ derivation
+        Blob manifests read their per-symbol blobs (no delta).
+        """
+        manifest = self.get_dataset(dataset_id, deep_copy=False)
+        allowed = ("ready",)
+        if manifest.status not in allowed:
+            raise DatasetNotReadyError(
+                f"Dataset {dataset_id} status={manifest.status}, cannot load"
+            )
+        view_type = getattr(manifest, "view_type", "")
+        storage_mode = getattr(manifest, "storage_mode", "blob_snapshot")
+
+        if storage_mode == "overlay_v1":
+            view = self._overlay_view_for_manifest(manifest)
+            if symbols is None:
+                targets = [r.symbol for r in manifest.symbols]
+            else:
+                targets = []
+                seen = set()
+                for requested_symbol in symbols:
+                    record = self._find_symbol_record(manifest, requested_symbol)
+                    if record is None or record.symbol in seen:
+                        continue
+                    seen.add(record.symbol)
+                    targets.append(record.symbol)
+            if not targets:
+                return {}
+            if view_type == "l1_virtual_qfq":
+                return view.qfq_arrays_batch(
+                    targets,
+                    start_date=start_date,
+                    end_date=end_date,
+                    raw_watermark=manifest.delta_watermark,
+                    factor_watermark=manifest.factor_watermark,
+                )
+            return view.merged_raw_arrays_batch(
+                targets,
+                start_date=start_date,
+                end_date=end_date,
+                watermark=manifest.delta_watermark,
+            )
+
+        # ---- legacy blob snapshot path ----
+        targets = (
+            [r.symbol for r in manifest.symbols if r.blob_sha256]
+            if symbols is None
+            else list(symbols)
+        )
+        out: Dict[str, Optional[Dict[str, np.ndarray]]] = {}
+        for sym in targets:
+            rec = self._find_symbol_record(manifest, sym)
+            if rec is None or not rec.blob_sha256:
+                continue
+            try:
+                arr = self._store.load_bars(rec.blob_sha256)
+            except FileNotFoundError:
+                continue
+            arr = _slice_arrays(arr, start_date, end_date)
+            out[rec.symbol] = arr
+        return out
+
+    def load_factor_arrays(
+        self,
+        *,
+        dataset_id: str,
+        symbols: Sequence[str],
+    ) -> Dict[str, Optional[Dict[str, np.ndarray]]]:
+        """Unified factor-array read for blob and overlay factor datasets."""
+        manifest = self.get_dataset(dataset_id, deep_copy=False)
+        if manifest.status != "ready" or manifest.dataset_type != "factor":
+            raise DatasetNotReadyError(
+                f"Factor dataset {dataset_id} is not a ready factor surface"
+            )
+        if (
+            getattr(manifest, "storage_mode", "") == "overlay_v1"
+            and getattr(manifest, "view_type", "") == "factor_virtual"
+        ):
+            view = self._overlay_view_for_manifest(manifest)
+            resolved = {}
+            canonical_symbols = []
+            seen = set()
+            for symbol in symbols:
+                record = self._find_symbol_record(manifest, symbol)
+                canonical = record.symbol if record is not None else None
+                resolved[symbol] = canonical
+                if canonical is not None and canonical not in seen:
+                    seen.add(canonical)
+                    canonical_symbols.append(canonical)
+            arrays = view.factor_arrays_batch(
+                canonical_symbols, watermark=manifest.factor_watermark
+            )
+            return {
+                symbol: arrays.get(canonical) if canonical is not None else None
+                for symbol, canonical in resolved.items()
+            }
+
+        out: Dict[str, Optional[Dict[str, np.ndarray]]] = {}
+        for symbol in symbols:
+            record = self._find_symbol_record(manifest, symbol)
+            if record is None or not record.blob_sha256:
+                out[symbol] = None
+                continue
+            out[symbol] = self._store.load_bars(record.blob_sha256)
+        return out
+
+    def load_bars_batch(
+        self,
+        *,
+        dataset_id: str,
+        symbols: Sequence[str],
+        start_date: Optional[int] = None,
+        end_date: Optional[int] = None,
+    ) -> Dict[str, Optional[List[MarketBar]]]:
+        """Batch MarketBar loader for whole-market loops.
+
+        One DuckDB query per overlay batch call; never creates a database
+        connection per symbol. Returns {symbol: bars or None}.
+        """
+        arrays_map = self.load_bar_arrays(
+            dataset_id=dataset_id,
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        manifest = self.get_dataset(dataset_id, deep_copy=False)
+        out: Dict[str, Optional[List[MarketBar]]] = {}
+        for sym, arr in arrays_map.items():
+            if arr is None or len(arr["trade_date"]) == 0:
+                out[sym] = None
+                continue
+            n = len(arr["trade_date"])
+            bars = [
+                MarketBar(
+                    symbol=sym,
+                    trade_date=int(arr["trade_date"][i]),
+                    period=manifest.period,
+                    open=float(arr["open"][i]),
+                    high=float(arr["high"][i]),
+                    low=float(arr["low"][i]),
+                    close=float(arr["close"][i]),
+                    volume=float(arr["volume"][i]),
+                    amount=float(arr["amount"][i]),
+                    source=manifest.source,
+                    adjustment=manifest.adjustment,
+                    anchor_date=manifest.anchor_date,
+                    snapshot_date=manifest.snapshot_date,
+                    data_cutoff_date=manifest.data_cutoff_date,
+                    provider_version=manifest.provider_version,
+                )
+                for i in range(n)
+            ]
+            out[sym] = bars
+        return out
+
     def load_day_bars(
         self,
         *,
@@ -379,9 +691,15 @@ class MarketDataRepository:
         return result
 
     def validate_dataset(self, dataset_id: str) -> Dict:
-        """Validate dataset integrity: all blobs present, row counts match."""
+        """Validate dataset integrity: all blobs present, row counts match.
+
+        Overlay virtual manifests validate their base lineage + delta health
+        instead of per-symbol blobs (they carry none).
+        """
         manifest = self.get_dataset(dataset_id)
         issues = []
+        if getattr(manifest, "storage_mode", "") == "overlay_v1":
+            return self._validate_virtual_dataset(manifest, issues)
         for sym in manifest.symbols:
             if not sym.blob_sha256:
                 if sym.error:
@@ -405,3 +723,157 @@ class MarketDataRepository:
             "issues": issues,
             "valid": len(issues) == 0,
         }
+
+    def _validate_virtual_dataset(
+        self, manifest: DatasetManifest, issues: List
+    ) -> Dict:
+        try:
+            view = self._overlay_view_for_manifest(manifest)
+        except Exception as exc:  # noqa: BLE001
+            issues.append(
+                f"overlay view unavailable: {type(exc).__name__}: {exc}"
+            )
+            view = None
+
+        base = None
+        if view is not None:
+            try:
+                base = view.active_base()
+                if base.status != "ready":
+                    issues.append(f"base dataset not ready: {base.dataset_id}")
+            except Exception as exc:  # noqa: BLE001
+                issues.append(
+                    "base dataset unavailable: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+        elif not manifest.base_dataset_id:
+            issues.append("base_dataset_id missing")
+
+        if view is not None:
+            delta = view.delta
+            if delta is None:
+                issues.append("delta store unavailable")
+            else:
+                view_type = str(getattr(manifest, "view_type", "") or "")
+                raw_types = {
+                    "raw_virtual",
+                    "l2_virtual_composite",
+                    "l1_virtual_qfq",
+                }
+                factor_types = {"factor_virtual", "l1_virtual_qfq"}
+                if view_type in {"l2_virtual_composite", "l1_virtual_qfq"}:
+                    try:
+                        delisted_base = view.delisted_base()
+                        if (
+                            delisted_base is not None
+                            and delisted_base.status != "ready"
+                        ):
+                            issues.append(
+                                "delisted base dataset not ready: "
+                                f"{delisted_base.dataset_id}"
+                            )
+                    except Exception as exc:  # noqa: BLE001
+                        issues.append(
+                            "delisted base unavailable: "
+                            f"{type(exc).__name__}: {exc}"
+                        )
+
+                raw_watermark = int(manifest.delta_watermark or 0)
+                raw_commit_seq = int(manifest.delta_commit_seq or 0)
+                base_cutoff = int(base.data_cutoff_date or 0) if base else 0
+                expected_raw = (
+                    raw_watermark
+                    if view_type in raw_types
+                    and (raw_commit_seq > 0 or raw_watermark > base_cutoff)
+                    else 0
+                )
+
+                expected_factor = None
+                factor_commit_seq = int(manifest.factor_commit_seq or 0)
+                if view_type in factor_types:
+                    try:
+                        factor_base = view.factor_base()
+                        if factor_base.status != "ready":
+                            issues.append(
+                                "factor base dataset not ready: "
+                                f"{factor_base.dataset_id}"
+                            )
+                        supplement = view.supplement_factor_base()
+                        if (
+                            supplement is not None
+                            and supplement.status != "ready"
+                        ):
+                            issues.append(
+                                "supplement factor base dataset not ready: "
+                                f"{supplement.dataset_id}"
+                            )
+                        factor_base_cutoff = int(
+                            factor_base.data_cutoff_date or 0
+                        )
+                        factor_watermark = int(manifest.factor_watermark or 0)
+                        if (
+                            factor_commit_seq > 0
+                            or factor_watermark > factor_base_cutoff
+                        ):
+                            expected_factor = factor_watermark
+                    except Exception as exc:  # noqa: BLE001
+                        issues.append(
+                            "factor base unavailable: "
+                            f"{type(exc).__name__}: {exc}"
+                        )
+
+                health = delta.health_check(
+                    expected_raw,
+                    factor_watermark=expected_factor,
+                    commit_seq=(raw_commit_seq if expected_raw else None),
+                    factor_commit_seq=(
+                        factor_commit_seq if expected_factor else None
+                    ),
+                )
+                if not health["ok"]:
+                    issues.extend(health["problems"])
+        return {
+            "dataset_id": manifest.dataset_id,
+            "status": manifest.status,
+            "symbol_count": manifest.symbol_count,
+            "issues": issues,
+            "valid": len(issues) == 0,
+        }
+
+
+def _virtual_manifest_for(view, source: str, adjustment: str, period: str):
+    """Map a formal product role to its current overlay virtual manifest.
+
+    overlay_v1 substitution applies ONLY to the formal product roles
+    (internal/composite_none -> L2, internal/composite_tushare_factor_qfq ->
+    L1). Anything else (legacy families, explicit tushare/none requests,
+    factor datasets) falls through to the normal manifest search so old
+    backtests keep their explicit dataset ids untouched.
+    """
+    if (period or "1d") != "1d":
+        return None
+    if source == "internal" and adjustment == "composite_none":
+        return view.l2_virtual_manifest()
+    if source == "tushare" and adjustment == "none":
+        return view.raw_virtual_manifest()
+    if source == "internal" and adjustment == "composite_tushare_factor_qfq":
+        return view.l1_virtual_manifest()
+    if source == "tushare" and adjustment == "adj_factor":
+        return view.factor_virtual_manifest()
+    return None
+
+
+def _slice_arrays(
+    arr: Dict[str, np.ndarray],
+    start_date: Optional[int],
+    end_date: Optional[int],
+) -> Dict[str, np.ndarray]:
+    if start_date is None and end_date is None:
+        return arr
+    d = arr["trade_date"]
+    mask = np.ones(len(d), dtype=bool)
+    if start_date is not None:
+        mask &= d >= int(start_date)
+    if end_date is not None:
+        mask &= d <= int(end_date)
+    return {k: v[mask] for k, v in arr.items()}

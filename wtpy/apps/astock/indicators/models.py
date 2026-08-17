@@ -76,5 +76,11 @@ class IndicatorSpec:
         if "MIN1" in deps:
             return False
         if "MIN60" in deps:
+            # Native path: true 60-minute bars are available (minute_vendor
+            # CSV imported into the warehouse) and #MIN60 refs resolve from
+            # the minute series themselves. Otherwise the formula is only
+            # backtestable via the day-line MACD research proxy.
+            if (self.parameters or {}).get("min60_native"):
+                return True
             return bool((self.parameters or {}).get("min60_day_proxy", False))
         return True

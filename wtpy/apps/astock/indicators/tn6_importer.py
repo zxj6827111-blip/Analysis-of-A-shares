@@ -207,6 +207,19 @@ def build_specs_from_indicator_dir(
                     else:
                         status = "invalid"
                         failure = cr.error or "compile failed"
+                elif "MIN60" in deps and min60_available:
+                    # True 60-minute data available (vendor CSV archives): the
+                    # formula compiles normally and #MIN60 refs are resolved
+                    # from the minute bars themselves at backtest time.
+                    from .compiler import compile_formula
+                    cr = compile_formula(formula, indicator_id=ind_id)
+                    if cr.ok:
+                        status = "ready"
+                        failure = None
+                        params = {"min60_native": True}
+                    else:
+                        status = "invalid"
+                        failure = cr.error or "compile failed"
                 else:
                     from .compiler import compile_formula
                     cr = compile_formula(formula, indicator_id=ind_id)
@@ -267,6 +280,16 @@ def build_specs_from_indicator_dir(
                         "MACD.DIF#MIN60 / MACD.DEA#MIN60 filled from daily DIF/DEA"
                     ),
                 }
+            else:
+                status = "invalid"
+                failure = cr.error or "compile failed"
+        elif "MIN60" in deps and min60_available:
+            from .compiler import compile_formula
+            cr = compile_formula(formula, indicator_id=ind_id)
+            if cr.ok:
+                status = "ready"
+                failure = None
+                params = {"min60_native": True}
             else:
                 status = "invalid"
                 failure = cr.error or "compile failed"

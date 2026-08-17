@@ -1391,6 +1391,17 @@ def resolve_active_tushare_product_pair(
     ``copy=False`` skips manifest deepcopy for read-only callers (large
     warehouses: each manifest deepcopy walks ~100k symbol records).
     """
+    from .delta_store import load_overlay_state
+
+    overlay = load_overlay_state(store.root)
+    if overlay.enabled:
+        from .overlay import OverlayView
+
+        view = OverlayView.from_root(store.root, required=True)
+        l2 = view.l2_virtual_manifest()
+        l1 = view.l1_virtual_manifest()
+        return _product_pair_from_manifests(l1, l2)
+
     l1_candidates: List[DatasetManifest] = []
     for mid in store.list_manifests():
         m = store.load_manifest(mid, deep_copy=deep_copy)
@@ -1948,6 +1959,234 @@ def _workday_span(start_ymd: int, end_ymd: int) -> int:
     return count
 
 
+def _overlay_data_health(
+    store: DatasetStore,
+    *,
+    overlay: "OverlayState",
+    expected_trading_day: Optional[int] = None,
+    calendar_dates: Optional[Sequence[int]] = None,
+    recent_sync_errors: Optional[List[dict]] = None,
+) -> Dict[str, Any]:
+    """Data-health snapshot over the overlay virtual product surfaces.
+
+    Freshness comes from the overlay watermarks (delta_watermark for raw/L2,
+    factor_watermark for factor/L1). The formal L1/L2 are the virtual
+    manifests (no materialized blobs). Storage-governance metrics required by
+    the plan (delta size, watermark, base id, storage mode) are included.
+    """
+    from .delta_store import DeltaStore
+    from .overlay import OverlayView
+
+    view = OverlayView.from_root(store.root, required=False)
+    if view is None:
+        return {
+            "status": "stale",
+            "expected_latest_trading_day": expected_trading_day
+            or _last_weekday_on_or_before(int(time.strftime("%Y%m%d"))),
+            "current_freshness": {},
+            "formal_l2": {"status": "missing"},
+            "formal_l1": {"status": "missing"},
+            "lineage": {"consistent": False, "issues": ["overlay not enabled"]},
+            "trading_day_lag": {"raw": None, "factor": None},
+            "historical_completeness": {"complete": False, "note": "overlay missing"},
+            "recent_sync_errors": recent_sync_errors or [],
+            "bootstrap_fallback_active": True,
+            "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "storage_mode": "overlay_v1",
+        }
+
+    delta = view.delta or DeltaStore(store.root, overlay.delta_store_id)
+    raw_max = int(overlay.delta_watermark or 0) or None
+    factor_max = int(overlay.factor_watermark or 0) or None
+    try:
+        l2 = view.l2_virtual_manifest()
+    except Exception:
+        l2 = None
+    try:
+        l1 = view.l1_virtual_manifest()
+    except Exception:
+        l1 = None
+
+    def _ds_info(key: str, label: str, dataset_id, max_date, cutoff) -> Dict:
+        return {
+            "key": key, "label": label,
+            "status": "ready" if dataset_id else "missing",
+            "dataset_id": dataset_id,
+            "data_cutoff_date": cutoff,
+            "max_date": max_date,
+            "fresh_symbol_ratio": None,
+            "stale_active_symbols": None,
+            "storage_mode": "overlay_v1",
+        }
+
+    raw_info = _ds_info(
+        "tushare_raw", "Tushare raw (overlay)", overlay.base_dataset_id,
+        raw_max, raw_max,
+    )
+    factor_info = _ds_info(
+        "tushare_factor", "Tushare adj_factor (overlay)",
+        overlay.factor_base_dataset_id, factor_max, factor_max,
+    )
+    l2_info = {
+        "status": "ready" if l2 else "missing",
+        "dataset_id": l2.dataset_id if l2 else None,
+        "data_cutoff_date": l2.data_cutoff_date if l2 else None,
+        "max_date": raw_max,
+        "data_policy": "tushare_only_v1",
+        "storage_mode": "overlay_v1",
+        "view_type": "l2_virtual_composite",
+        "delta_watermark": overlay.delta_watermark,
+        "delta_commit_seq": overlay.delta_commit_seq,
+    }
+    l1_info = {
+        "status": "ready" if l1 else "missing",
+        "dataset_id": l1.dataset_id if l1 else None,
+        "data_cutoff_date": l1.data_cutoff_date if l1 else None,
+        "max_date": factor_max,
+        "data_policy": "tushare_only_v1",
+        "storage_mode": "overlay_v1",
+        "view_type": "l1_virtual_qfq",
+        "factor_watermark": overlay.factor_watermark,
+        "factor_commit_seq": overlay.factor_commit_seq,
+    }
+
+    expected = int(
+        expected_trading_day
+        or _last_weekday_on_or_before(int(time.strftime("%Y%m%d")))
+    )
+
+    def _lag(actual: Optional[int]) -> Optional[int]:
+        if actual is None:
+            return None
+        if calendar_dates:
+            days = [d for d in calendar_dates if int(d) <= expected]
+            idx = days.index(actual) if actual in days else None
+            if idx is not None:
+                return max(0, len(days) - 1 - idx)
+            return None
+        return max(0, _workday_span(int(actual), expected))
+
+    lag_raw = _lag(raw_max)
+    lag_factor = _lag(factor_max)
+    issues: List[str] = []
+    if raw_max is None:
+        issues.append("tushare_raw_missing")
+    elif lag_raw is not None and lag_raw > 0:
+        issues.append(f"tushare_raw_lag={lag_raw}")
+    if factor_max is None:
+        issues.append("tushare_factor_missing")
+    elif lag_factor is not None and lag_factor > 0:
+        issues.append(f"tushare_factor_lag={lag_factor}")
+    if l1 is None or l2 is None:
+        issues.append("formal_product_pair_missing")
+    for err in recent_sync_errors or []:
+        issues.append(f"recent_sync_error: {err.get('error') or err.get('status')}")
+
+    lag_for_status = max(
+        (l for l in (lag_raw, lag_factor) if l is not None), default=0
+    )
+    if l1 is None or l2 is None or raw_max is None:
+        status = "stale"
+    elif lag_for_status <= 1 and not any(
+        i.startswith(("tushare_raw_missing", "tushare_factor_missing"))
+        or i.startswith("formal_product")
+        or i.startswith("recent_sync_error")
+        for i in issues
+    ):
+        status = "healthy"
+    elif lag_for_status <= 3:
+        status = "warning"
+    else:
+        status = "stale"
+
+    base = view.active_base()
+    factor_base = view.factor_base()
+    expected_delta_wm = (
+        overlay.delta_watermark
+        if int(overlay.delta_commit_seq or 0) > 0
+        or int(overlay.delta_watermark or 0) > int(base.data_cutoff_date or 0)
+        else 0
+    )
+    expected_factor_wm = (
+        overlay.factor_watermark
+        if int(overlay.factor_commit_seq or 0) > 0
+        or int(overlay.factor_watermark or 0)
+        > int(factor_base.data_cutoff_date or 0)
+        else None
+    )
+    health = delta.health_check(
+        expected_delta_wm,
+        factor_watermark=expected_factor_wm,
+        commit_seq=(overlay.delta_commit_seq if expected_delta_wm else None),
+        factor_commit_seq=(
+            overlay.factor_commit_seq if expected_factor_wm else None
+        ),
+    )
+    if not health.get("ok"):
+        issues.extend(f"delta_health:{p}" for p in health.get("problems", []))
+    sig = manifest_history_signals(base)
+    p10 = sig.p10_first_date or 0
+    hist_complete = p10 <= 20000101
+    hist_note = (
+        "complete (10th-percentile history start {p10})".format(p10=p10)
+        if hist_complete
+        else (
+            "pre-2001 history incomplete (10th-percentile start {p10}); "
+            "forward incremental backfill is a separate channel".format(p10=p10)
+        )
+    )
+
+    return {
+        "status": status,
+        "expected_latest_trading_day": expected,
+        "current_freshness": {
+            "tushare_raw": raw_info,
+            "tushare_factor": factor_info,
+            "delisted_supplement": {
+                "status": "ready" if overlay.delisted_base_dataset_id else "missing",
+                "dataset_ids": (
+                    [overlay.delisted_base_dataset_id]
+                    if overlay.delisted_base_dataset_id
+                    else []
+                ),
+            },
+        },
+        "formal_l2": l2_info,
+        "formal_l1": l1_info,
+        "lineage": {
+            "consistent": (l1 is not None and l2 is not None),
+            "l1_raw_parent": l1.raw_dataset_id if l1 else None,
+            "l2_dataset_id": l2.dataset_id if l2 else None,
+            "issues": issues,
+        },
+        "trading_day_lag": {"raw": lag_raw, "factor": lag_factor},
+        "historical_completeness": {
+            "complete": hist_complete,
+            "note": hist_note,
+            "current_freshness": raw_max,
+        },
+        "recent_sync_errors": recent_sync_errors or [],
+        "bootstrap_fallback_active": False,
+        "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        # ---- overlay governance metrics (plan requirements) ----
+        "storage_mode": "overlay_v1",
+        "base_dataset_id": overlay.base_dataset_id,
+        "base_manifest_sha256": overlay.base_manifest_sha256,
+        "delta_watermark": overlay.delta_watermark,
+        "factor_watermark": overlay.factor_watermark,
+        "delta_size_bytes": health.get("file_size_bytes", 0),
+        "delta_bars_rows": health.get("bars_rows", 0),
+        "delta_factor_rows": health.get("factor_rows", 0),
+        "delta_batches": health.get("batches", 0),
+        "delta_health": health.get("ok", False),
+        "gc_suggestion": (
+            "run govern_market_data.py --audit weekly"
+            if health.get("ok")
+            else f"delta unhealthy: {health.get('problems')}"
+        ),
+    }
+
+
 def tushare_product_data_health(
     store: DatasetStore,
     *,
@@ -1959,7 +2198,32 @@ def tushare_product_data_health(
 
     Never uses the universe file maximum date as the formal product date:
     raw / factor / L1 / L2 each report their own real dataset date.
+
+    In overlay_v1 mode the formal surfaces are virtual views over the stable
+    base blobs + DuckDB delta; freshness is reported from the overlay
+    watermarks (never the stale base cutoff) so the EOD scheduler and the UI
+    see the real data lag.
     """
+    from .delta_store import load_overlay_state
+
+    overlay = load_overlay_state(store.root)
+    if overlay.enabled:
+        try:
+            return _overlay_data_health(
+                store,
+                overlay=overlay,
+                expected_trading_day=expected_trading_day,
+                calendar_dates=calendar_dates,
+                recent_sync_errors=recent_sync_errors,
+            )
+        except Exception as e:  # noqa: BLE001
+            # Overlay health must never crash the health endpoint; fall back
+            # to the manifest-based snapshot below.
+            print(
+                f"  WARNING: overlay health failed ({type(e).__name__}: {e}); "
+                "falling back to manifest snapshot"
+            )
+
     base = select_tushare_base(store, deep_copy=False)
     factor = select_tushare_factor(store, deep_copy=False)
     delisted_pool = select_delisted_pool(store, deep_copy=False)
