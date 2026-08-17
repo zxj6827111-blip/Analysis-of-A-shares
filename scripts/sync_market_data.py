@@ -4420,7 +4420,12 @@ def _sync_tushare_chain_delta_locked(args, store: DatasetStore) -> dict:
         for sym in symbols:
             df = None
             if window_map is not None:
-                df = window_map.get(sym)
+                # --symbol 可能传 tushare 格式(600519.SH),而批量窗口的
+                # key 是内部格式(SSE.STK.600519):两种都尝试,避免手动
+                # 小范围同步时 factor 链误报 factor_window_empty。
+                df = window_map.get(sym) or window_map.get(
+                    provider._from_ts_code(sym)
+                )
             if df is None or df.empty:
                 continue
             df = df[["trade_date", "adj_factor"]].dropna()

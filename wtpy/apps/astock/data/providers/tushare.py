@@ -204,7 +204,11 @@ class TushareProvider:
             )
         try:
             ts.set_token(token)
-            self._pro = ts.pro_api()
+            # requests 的单个 timeout 只限制读取阶段,connect(SYN)阶段无限
+            # 等待:服务器到 tushare 间歇性丢包时,全量 delta EOD 会在建连
+            # 处永久挂死(2026-08-17 生产事故)。用元组限制 connect=8s +
+            # read=30s,超时抛异常交给 _call_with_retry 重试。
+            self._pro = ts.pro_api(timeout=(8, 30))
             self._initialized = True
         except Exception as e:
             raise AuthenticationError(f"Tushare API init failed: {e}")
