@@ -83,3 +83,7 @@ _render_history_fn.js
 .reasonix/
 reasonix.toml
 
+# ---- Local research / tool state (do not publish) ----
+.zcode/
+/index.html
+
