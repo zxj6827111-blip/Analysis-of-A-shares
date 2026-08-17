@@ -9,6 +9,7 @@
 #   --port 8765
 #   --host 127.0.0.1|0.0.0.0
 #   --storage PATH
+#   --market-data-root PATH
 #   --tdx-root PATH
 #   --skip-pip
 #   --dry-run
@@ -20,6 +21,7 @@ APP_ROOT=""
 PORT=8765
 HOST="127.0.0.1"
 STORAGE=""
+MARKET_DATA_ROOT_VAL=""
 TDX_ROOT=""
 SKIP_PIP=0
 DRY_RUN=0
@@ -31,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --port) PORT="${2:-8765}"; shift 2 ;;
     --host) HOST="${2:-127.0.0.1}"; shift 2 ;;
     --storage) STORAGE="${2:-}"; shift 2 ;;
+    --market-data-root) MARKET_DATA_ROOT_VAL="${2:-}"; shift 2 ;;
     --tdx-root) TDX_ROOT="${2:-}"; shift 2 ;;
     --skip-pip) SKIP_PIP=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
@@ -141,8 +144,54 @@ ASTOCK_STORAGE=$STORAGE
 ASTOCK_TDX_ROOT=${TDX_ROOT}
 PYTHONPATH=$APP_ROOT
 TZ=Asia/Shanghai
+
+# 正式行情数据根（serve() 与迁移脚本均读取；production 下缺失将拒绝启动）
+MARKET_DATA_ROOT=${MARKET_DATA_ROOT_VAL}
+
+# ---- overlay_v1 增量存储（推荐）----
+# 置为 overlay_v1 后每周五 EOD 走 delta 写入 + 虚拟 L1/L2，不再周期性重写完整行情。
+# 启用前必须先运行: python scripts/migrate_market_data_overlay.py --apply
+# ASTOCK_MARKET_STORAGE_MODE=overlay_v1
+
+# ---- 每周五 18:30 行情更新，成功后自动 consolidation/retention/Blob GC ----
+ASTOCK_EOD_SYNC_ENABLED=1
+ASTOCK_EOD_SYNC_STARTUP=1
+ASTOCK_EOD_SYNC_TIME=18:30
+ASTOCK_EOD_SYNC_WEEKDAY=4
+ASTOCK_EOD_SYNC_INDEX_ETF=0
+ASTOCK_EOD_SYNC_MIN_LAG_DAYS=1
+ASTOCK_EOD_SYNC_POLL_SECONDS=300
+ASTOCK_EOD_SYNC_MAX_RETRIES=2
+
+# ---- 本地磁盘长期治理（不依赖 NAS）----
+ASTOCK_MARKET_GOVERNANCE_ENABLED=1
+ASTOCK_RETENTION_GENERATIONS=2
+ASTOCK_RETENTION_GRACE_DAYS=7
+ASTOCK_LEGACY_RETENTION_ENABLED=1
+ASTOCK_LEGACY_KEEP_PER_FAMILY=1
+ASTOCK_LEGACY_MIGRATION_GRACE_DAYS=14
+ASTOCK_LEGACY_MANIFEST_MIN_AGE_DAYS=7
+ASTOCK_CONSOLIDATE_TRADING_DAYS=60
+ASTOCK_CONSOLIDATE_DELTA_BYTES=536870912
+ASTOCK_CONSOLIDATE_MIN_FREE_GB=5
+ASTOCK_CONSOLIDATE_MAX_DISK_USAGE_PCT=80
+
+# ---- CA 公司行为（安排在周五行情更新之后）----
+ASTOCK_CA_SYNC_WEEKDAY=4
+ASTOCK_CA_SYNC_TIME=23:00
 EOF
 echo "[OK] wrote $ENV_FILE"
+
+# serve() 启动时加载 <项目根>/.env（已有环境变量优先），PM2 模式靠它注入
+# overlay/调度/治理配置；与 deploy/astock.env 保持同一份内容。
+if [[ -f "$APP_ROOT/.env" ]]; then
+  echo "[WARN] $APP_ROOT/.env 已存在，未覆盖（请手工合并 overlay/调度/治理配置）"
+elif [[ -n "$MARKET_DATA_ROOT_VAL" ]]; then
+  cp "$ENV_FILE" "$APP_ROOT/.env"
+  echo "[OK] wrote $APP_ROOT/.env (serve() 加载源)"
+else
+  echo "[WARN] 未提供 --market-data-root，未生成 .env（production 下服务将拒绝启动，请先配置）"
+fi
 
 # ---- TUSHARE_TOKEN 检查（缺失仅警告，不阻断安装）----
 if [[ -z "${TUSHARE_TOKEN:-}" ]] && ! grep -q '^TUSHARE_TOKEN=' "$ENV_FILE" 2>/dev/null; then
@@ -169,7 +218,13 @@ fi
 
 START_CMD="$PY -m wtpy.apps.astock serve $EXTRA_ARGS"
 
-# 生成 PM2 ecosystem
+# 生成 PM2 ecosystem（env 从 $ENV_FILE 展开，保证 overlay/调度/治理变量对进程可见）
+ENV_BLOCK=""
+while IFS='=' read -r k v; do
+  case "$k" in ''|\#*) continue ;; esac
+  v="${v//\\/\\\\}"          # JSON 字符串转义反斜杠
+  ENV_BLOCK="$ENV_BLOCK"$'\n'"        ${k}: \"${v}\","
+done < "$ENV_FILE"
 cat >"$PM2_ECO" <<EOF
 /**
  * PM2 配置 — 不修改业务代码，直接拉起 uvicorn/FastAPI
@@ -190,7 +245,7 @@ module.exports = {
       max_restarts: 30,
       min_uptime: "5s",
       max_memory_restart: "3500M",
-      env: {
+      env: {$ENV_BLOCK
         PYTHONPATH: "$APP_ROOT",
         PYTHONUNBUFFERED: "1",
         TZ: "Asia/Shanghai",
