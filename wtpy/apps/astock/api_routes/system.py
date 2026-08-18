@@ -551,6 +551,22 @@ def market_data_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         l1_tile,
     ]
 
+    # overlay_v1 下 raw 日线数据在 DuckDB 增量库,磁盘 manifest 停留在基准
+    # 日期(list_datasets 只列 blob manifest,不含虚拟 L1/L2),前台 raw 卡
+    # 若不修正会永远显示基准 cutoff。正式 L1/L2 产品卡已由 pair 虚拟视图
+    # 给出 watermark,这里把 raw 卡统一对齐到 delta watermark。
+    if pair is not None and pair.l2_manifest is not None:
+        overlay_wm = getattr(pair.l2_manifest, "delta_watermark", None)
+        if overlay_wm:
+            overlay_wm = int(overlay_wm)
+            for _tile in source_freshness:
+                if _tile and _tile.get("key") == "tushare":
+                    _tile["updated_to"] = overlay_wm
+                    _tile["data_cutoff_date"] = overlay_wm
+                    _tile["latest_date"] = overlay_wm
+                    _tile["max_date"] = overlay_wm
+                    break
+
     result.update({
         "manifest_count": len(all_ds),
         "blob_count": blob_count,
