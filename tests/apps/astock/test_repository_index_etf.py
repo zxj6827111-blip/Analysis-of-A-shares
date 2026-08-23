@@ -40,7 +40,24 @@ def test_variants_etf():
     assert "SSE.ETF.588000" in V("sh588000")
     assert "SZSE.ETF.159915" in V("159915.SZ")
     assert "SZSE.ETF.159915" in V("sz159915")
-    assert "SZSE.ETF.161725" in V("161725.SZ")
+    # 新段：沪 52/530/551、深 158（服务器实测已有真实行情）
+    assert "SSE.ETF.520740" in V("520740.SH")
+    assert "SSE.ETF.520740" in V("520740")
+    assert "SSE.ETF.530060" in V("530060.SH")
+    assert "SSE.ETF.530060" in V("530060")
+    assert "SSE.ETF.551060" in V("551060.SH")
+    assert "SSE.ETF.551900" in V("551900.SH")
+    assert "SZSE.ETF.158012" in V("158012.SZ")
+    assert "SZSE.ETF.158012" in V("158012")
+    # 550xxx 保持非 ETF：不得因 551 新段被连带误收
+    assert "SSE.ETF.550001" not in V("550001.SH")
+    assert "SSE.ETF.550001" not in V("550001")
+    # 161725 是 LOF：点形式/裸代码不得再展开成 .ETF. 规范形态
+    # （旧规则把整个深市 15/16/18 段当 ETF，是 LOF 污染的源头之一；
+    #  已入库的旧污染记录仍可用规范形态 SZSE.ETF.161725 直接查询）
+    assert "SZSE.ETF.161725" not in V("161725.SZ")
+    assert "SZSE.ETF.161725" not in V("161725")
+    assert "SSE.ETF.501300" not in V("501300.SH")
     # ETFs never become stocks
     assert "SSE.STK.510300" not in V("510300.SH")
 

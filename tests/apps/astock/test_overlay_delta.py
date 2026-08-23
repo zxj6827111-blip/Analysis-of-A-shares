@@ -586,14 +586,17 @@ class TestOverlayRepository:
         l2 = repo.resolve_latest_ready(
             source="internal", adjustment="composite_none", period="1d"
         )
-        # count DB connections made while loading three symbols
-        from wtpy.apps.astock.data.overlay import OverlayView
+        # 真实计数：批量加载 N 个符号只允许一次 delta 全量查询
+        from wtpy.apps.astock.data.delta_store import DeltaStore
 
         calls = {"n": 0}
-        orig = OverlayView.from_root
+        orig = DeltaStore.load_all_visible_bars
 
-        def _counting_from_root(*a, **k):
-            return orig(*a, **k)
+        def _counting(self, watermark, **kw):
+            calls["n"] += 1
+            return orig(self, watermark, **kw)
+
+        monkeypatch.setattr(DeltaStore, "load_all_visible_bars", _counting)
 
         arrs = repo.load_bar_arrays(
             dataset_id=l2.dataset_id,
@@ -602,6 +605,9 @@ class TestOverlayRepository:
         assert len(arrs) == 3
         assert arrs["SSE.STK.600000"]["trade_date"][-1] == 20240109
         assert arrs["SSE.STK.601088"]["trade_date"][-1] == 20240109
+        assert calls["n"] == 1, (
+            f"批量加载 3 个符号执行了 {calls['n']} 次 delta 查询"
+        )
 
     def test_legacy_blob_manifest_still_reads_blobs(self, tmp_path):
         # a legacy (non-overlay) warehouse keeps working through the same repo

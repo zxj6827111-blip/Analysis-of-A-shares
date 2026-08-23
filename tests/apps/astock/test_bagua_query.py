@@ -990,13 +990,15 @@ def test_export_month_defaults_to_prev_month(monkeypatch, tmp_path):
     assert "stock-all" in wb.sheetnames
     ws = wb["stock-all"]
     headers = [c.value for c in ws[1]]
-    assert len(headers) == 12
+    assert len(headers) == 13
     assert headers[:8] == ["code", "name", "week_end", "open", "high", "low", "close", "日柱"]
     # 周卦列在前(9)、月卦列在后(11)，标签分别含查询周 ISO 周与上一月
     assert headers[8].startswith("周卦周线-组合(") and "2024-W02" in headers[8], headers[8]
     assert headers[9] == "爻辞解释"
     assert headers[10].startswith("月卦月线-组合(") and "2023-12" in headers[10], headers[10]
     assert headers[11] == "爻辞解释"
+    # 末列为数据状态（失败行写 data_status/error_reason，正常行为空）
+    assert headers[12] == "数据状态"
 
     # 月卦数据确实取 2023-12：组合与 2023-12-31 的 MONTH 查询完全一致，
     # 且与周卦列（2024-W02 的天水讼）不同
@@ -1098,7 +1100,7 @@ def test_export_all_stocks_two_sheets_and_no_gua_symbol(monkeypatch, tmp_path):
     ws_etf = wb["etf-all"]
     assert ws_stock.max_row >= 2
     assert ws_etf.max_row >= 2
-    assert len([c.value for c in ws_etf[1]]) == 12
+    assert len([c.value for c in ws_etf[1]]) == 13
     # 两个 sheet 的所有单元格均不含卦符（U+4DC0–U+4DFF）
     for ws in (ws_stock, ws_etf):
         for row in ws.iter_rows(values_only=True):
@@ -1526,3 +1528,323 @@ def test_load_symbol_meta_cache_v1_schema_compat(monkeypatch, tmp_path):
     assert stocks == {"600000": 19991110}
     assert snames == {}
     assert enames == {}
+
+
+def test_export_etf_pool_uses_newest_surface_only(tmp_path, monkeypatch):
+    """导出 ETF 池只取最新就绪面：旧快照里的 LOF 污染不得再进池。
+
+    旧实现是对全部 ready tushare/none manifest 求并集——上游 universe
+    修复后，历史快照残留的 LOF 污染（.ETF. 标签但实为 LOF）仍会永久
+    占据导出池。改为按 cutoff/created_at 取最新单面后，新干净 manifest
+    落地即自动清除污染。
+    """
+    from wtpy.apps.astock.config import get_default_config
+    from wtpy.apps.astock.data.dataset_store import (
+        DatasetManifest,
+        DatasetStore,
+        SymbolRecord,
+    )
+    from wtpy.apps.astock.data.providers.base import MarketBar
+
+    def _bars(sym, dates, base):
+        return [
+            MarketBar(symbol=sym, trade_date=d, period="1d", open=base,
+                      high=base + 0.1, low=base - 0.1, close=base + 0.05,
+                      volume=1000.0, amount=100000.0,
+                      source="tushare", adjustment="none")
+            for d in dates
+        ]
+
+    store = DatasetStore(tmp_path)
+
+    def _publish(ds_id, spec, cutoff, created_at):
+        recs = []
+        for sym, dates, base in spec:
+            sha = store.store_bars(sym, _bars(sym, dates, base))
+            recs.append(SymbolRecord(symbol=sym, blob_sha256=sha,
+                                     first_date=dates[0], last_date=dates[-1],
+                                     row_count=len(dates), quality="ok"))
+        m = DatasetManifest(dataset_id=ds_id, source="tushare",
+                            adjustment="none", period="1d",
+                            data_cutoff_date=cutoff, snapshot_date=cutoff,
+                            provider_version="test", status="ready",
+                            created_at=created_at)
+        m.symbols = recs
+        m.symbol_count = len(recs)
+        m.row_count = sum(r.row_count for r in recs)
+        m.expected_symbol_count = len(recs)
+        m.imported_symbol_count = len(recs)
+        m.coverage_ratio = 1.0
+        store.publish(m)
+
+    old_dates = [20240101 + i for i in range(10)]
+    new_dates = [20240101 + i for i in range(20)]
+    # 旧面：含 510300 与 LOF 污染 161725；新面：只有干净的 510300
+    _publish("tushare_none_1d_old_surface",
+             [("SSE.ETF.510300", old_dates, 4.0),
+              ("SZSE.ETF.161725", old_dates, 0.8)],
+             cutoff=old_dates[-1], created_at="2024-01-11T18:00:00")
+    _publish("tushare_none_1d_new_surface",
+             [("SSE.ETF.510300", new_dates, 4.0)],
+             cutoff=new_dates[-1], created_at="2024-01-21T18:00:00")
+
+    monkeypatch.setenv("MARKET_DATA_ROOT", str(tmp_path))
+    cfg = get_default_config()
+    pool = bq._enumerate_export_etf_pool(cfg)
+    assert pool == ["SSE.ETF.510300"]
+
+
+def test_export_etf_pool_rejects_pollution_and_partial_surfaces(
+    tmp_path, monkeypatch
+):
+    """历史伪 .ETF. 标签 + 同 cutoff 污染面 + 新 cutoff 单标的面 三重防线。
+
+    复刻服务器实测形态：
+      - 旧污染面：cutoff=20240120，含 510300 与伪标签 161725/150001（LOF）
+      - 新干净面：同 cutoff、创建更晚、只有真 ETF → 必须选新干净面
+        （created_at 排在数量之前，否则污染大面永远获胜）
+      - 局部残片：cutoff 更新但只有 1 只 → 完整度门槛排除
+    """
+    from wtpy.apps.astock.config import get_default_config
+    from wtpy.apps.astock.data.dataset_store import (
+        DatasetManifest,
+        DatasetStore,
+        SymbolRecord,
+    )
+    from wtpy.apps.astock.data.providers.base import MarketBar
+
+    def _bars(sym, dates, base):
+        return [
+            MarketBar(symbol=sym, trade_date=d, period="1d", open=base,
+                      high=base + 0.1, low=base - 0.1, close=base + 0.05,
+                      volume=1000.0, amount=100000.0,
+                      source="tushare", adjustment="none")
+            for d in dates
+        ]
+
+    store = DatasetStore(tmp_path)
+
+    def _publish(ds_id, spec, cutoff, created_at):
+        recs = []
+        for sym, dates, base in spec:
+            sha = store.store_bars(sym, _bars(sym, dates, base))
+            recs.append(SymbolRecord(symbol=sym, blob_sha256=sha,
+                                     first_date=dates[0], last_date=dates[-1],
+                                     row_count=len(dates), quality="ok"))
+        m = DatasetManifest(dataset_id=ds_id, source="tushare",
+                            adjustment="none", period="1d",
+                            data_cutoff_date=cutoff, snapshot_date=cutoff,
+                            provider_version="test", status="ready",
+                            created_at=created_at)
+        m.symbols = recs
+        m.symbol_count = len(recs)
+        m.row_count = sum(r.row_count for r in recs)
+        m.expected_symbol_count = len(recs)
+        m.imported_symbol_count = len(recs)
+        m.coverage_ratio = 1.0
+        store.publish(m)
+
+    old_dates = [20240101 + i for i in range(10)]
+    new_dates = [20240101 + i for i in range(20)]
+    cutoff = new_dates[-1]
+    # 污染面：品种复验后仍有 **4 个有效 ETF**（>干净面的 3 个）——只有让
+    # 两个面都通过完整度门槛，才能真正验证排序是 created_at 优先于数量。
+    # 若错误地改回 (cutoff, count, created_at)，本测试必然失败。
+    _publish("tushare_none_1d_polluted_surface",
+             [("SSE.ETF.510300", new_dates, 4.0),
+              ("SSE.ETF.510050", new_dates, 2.1),
+              ("SSE.ETF.561830", new_dates, 1.2),
+              ("SSE.ETF.511990", new_dates, 6.0),
+              ("SZSE.ETF.161725", old_dates, 0.8),   # LOF 伪标签
+              ("SZSE.ETF.150001", old_dates, 0.7)],  # LOF 伪标签
+             cutoff=cutoff, created_at="2024-01-21T18:00:00")
+    # 干净面：3 个真 ETF，创建更晚——必须凭 created_at 胜出
+    _publish("tushare_none_1d_clean_surface",
+             [("SSE.ETF.510300", new_dates, 4.0),
+              ("SZSE.ETF.159915", new_dates, 2.5),
+              ("SZSE.ETF.158012", new_dates, 1.3)],
+             cutoff=cutoff, created_at="2024-01-21T20:00:00")
+    # 局部残片：cutoff 更高但仅 1 只 → 完整度门槛排除
+    _publish("tushare_none_1d_partial_surface",
+             [("SSE.ETF.510300", new_dates + [20240121, 20240122], 4.0)],
+             cutoff=20240122, created_at="2024-01-23T18:00:00")
+
+    monkeypatch.setenv("MARKET_DATA_ROOT", str(tmp_path))
+    cfg = get_default_config()
+    pool = bq._enumerate_export_etf_pool(cfg)
+    # 选中同 cutoff 但创建更晚的干净面；伪标签不出现
+    assert pool == ["SSE.ETF.510300", "SZSE.ETF.158012", "SZSE.ETF.159915"]
+    assert "SZSE.ETF.161725" not in pool
+    assert "SZSE.ETF.150001" not in pool
+    assert "SSE.ETF.511990" not in pool  # 污染面整体落选，非逐只拼合
+
+
+def test_export_etf_pool_prefers_authoritative_pointer(tmp_path, monkeypatch):
+    """指针有效时直接采用权威面，即使启发式会选更新 cutoff 的其他面。"""
+    from wtpy.apps.astock.config import get_default_config
+    from wtpy.apps.astock.data.dataset_store import (
+        DatasetManifest,
+        DatasetStore,
+        SymbolRecord,
+    )
+    from wtpy.apps.astock.data.io_util import atomic_write_json
+    from wtpy.apps.astock.data.providers.base import MarketBar
+
+    old_dates = [20240101 + i for i in range(10)]
+    newer_dates = [20240105 + i for i in range(20)]
+
+    def _bars(sym, dates, base):
+        return [
+            MarketBar(symbol=sym, trade_date=d, period="1d", open=base,
+                      high=base + 0.1, low=base - 0.1, close=base + 0.05,
+                      volume=1000.0, amount=100000.0,
+                      source="tushare", adjustment="none")
+            for d in dates
+        ]
+
+    store = DatasetStore(tmp_path)
+
+    def _publish(ds_id, spec, cutoff, created_at):
+        recs = []
+        for sym, dates, base in spec:
+            sha = store.store_bars(sym, _bars(sym, dates, base))
+            recs.append(SymbolRecord(symbol=sym, blob_sha256=sha,
+                                     first_date=dates[0], last_date=dates[-1],
+                                     row_count=len(dates), quality="ok"))
+        m = DatasetManifest(dataset_id=ds_id, source="tushare",
+                            adjustment="none", period="1d",
+                            data_cutoff_date=cutoff, snapshot_date=cutoff,
+                            provider_version="test", status="ready",
+                            created_at=created_at)
+        m.symbols = recs
+        m.symbol_count = len(recs)
+        m.row_count = sum(r.row_count for r in recs)
+        m.expected_symbol_count = len(recs)
+        m.imported_symbol_count = len(recs)
+        m.coverage_ratio = 1.0
+        store.publish(m)
+        return m
+
+    # 权威面：cutoff 较旧但经完整 universe 同步验证（指针指向它）
+    target = _publish("tushare_none_1d_verified_full",
+                      [("SSE.ETF.510300", old_dates, 4.0),
+                       ("SZSE.ETF.158012", old_dates, 1.3)],
+                      cutoff=old_dates[-1],
+                      created_at="2024-01-11T18:00:00")
+    # 启发式会因更高 cutoff 选中的局部面（仅 1 只）
+    _publish("tushare_none_1d_partial_newer",
+             [("SSE.ETF.510300", newer_dates, 4.0)],
+             cutoff=newer_dates[-1], created_at="2024-01-26T18:00:00")
+
+    pointer = {
+        "dataset_id": target.dataset_id,
+        "manifest_sha256": target.manifest_sha256,
+        "data_cutoff_date": int(target.data_cutoff_date or 0),
+        "coverage": 0.95,
+    }
+    atomic_write_json(tmp_path / "etf_surface_pointer.json", pointer)
+
+    monkeypatch.setenv("MARKET_DATA_ROOT", str(tmp_path))
+    cfg = get_default_config()
+    assert bq._enumerate_export_etf_pool(cfg) == [
+        "SSE.ETF.510300", "SZSE.ETF.158012"
+    ]
+
+    # 指针 sha 失配（manifest 被替换）→ 回退启发式，不盲用失效指针
+    bad = dict(pointer, manifest_sha256="deadbeef")
+    atomic_write_json(tmp_path / "etf_surface_pointer.json", bad)
+    assert bq._enumerate_export_etf_pool(cfg) == ["SSE.ETF.510300"]
+
+    # fail-closed：缺失 manifest_sha256 的指针一律视为无效（权威面必须
+    # 可验证内容身份，不允许无 sha 的"口头权威"）
+    atomic_write_json(
+        tmp_path / "etf_surface_pointer.json",
+        {"dataset_id": target.dataset_id, "data_cutoff_date": 20240110},
+    )
+    assert bq._enumerate_export_etf_pool(cfg) == ["SSE.ETF.510300"]
+
+
+def test_export_etf_pool_rejects_tampered_manifest_content(tmp_path, monkeypatch):
+    """篡改 manifest 文件内容但保留声明 sha → 指针面必须被拒。
+
+    复核复现的攻击面：只比对 manifest 对象的 manifest_sha256 属性与
+    指针值，挡不住"改磁盘文件内容、不动声明字段"的篡改——声明 sha
+    与文件实算 canonical hash 不一致时，指针与启发式候选都必须
+    fail-closed。此处直接改写磁盘上的 symbols 列表注入一只不存在的
+    ETF，验证导出池不会带出它。
+    """
+    import json as _json
+
+    from wtpy.apps.astock.config import get_default_config
+    from wtpy.apps.astock.data.dataset_store import DatasetStore
+    from wtpy.apps.astock.data.io_util import atomic_write_json
+    from wtpy.apps.astock.data.providers.base import MarketBar
+
+    dates = [20240101 + i for i in range(10)]
+    store = DatasetStore(tmp_path)
+
+    def _publish(ds_id, symbols):
+        recs = []
+        for sym in symbols:
+            bars = [
+                MarketBar(symbol=sym, trade_date=d, period="1d", open=1.0,
+                          high=1.1, low=0.9, close=1.05, volume=1000.0,
+                          amount=100000.0, source="tushare",
+                          adjustment="none")
+                for d in dates
+            ]
+            from wtpy.apps.astock.data.dataset_store import SymbolRecord
+
+            sha = store.store_bars(sym, bars)
+            recs.append(SymbolRecord(symbol=sym, blob_sha256=sha,
+                                     first_date=dates[0],
+                                     last_date=dates[-1],
+                                     row_count=len(dates), quality="ok"))
+        from wtpy.apps.astock.data.dataset_store import DatasetManifest
+
+        m = DatasetManifest(dataset_id=ds_id, source="tushare",
+                            adjustment="none", period="1d",
+                            data_cutoff_date=dates[-1],
+                            snapshot_date=dates[-1], provider_version="test",
+                            status="ready", created_at="2024-01-11T18:00:00")
+        m.symbols = recs
+        m.symbol_count = len(recs)
+        m.row_count = sum(r.row_count for r in recs)
+        m.expected_symbol_count = len(recs)
+        m.imported_symbol_count = len(recs)
+        m.coverage_ratio = 1.0
+        store.publish(m)
+        return m
+
+    target = _publish("tushare_none_1d_pointer_target",
+                      ["SSE.ETF.510300", "SZSE.ETF.158012"])
+    _publish("tushare_none_1d_fallback",
+             ["SSE.ETF.510300", "SZSE.ETF.159915"])
+
+    pointer = {
+        "dataset_id": target.dataset_id,
+        "manifest_sha256": target.manifest_sha256,
+        "data_cutoff_date": int(target.data_cutoff_date or 0),
+        "coverage": 0.95,
+    }
+    atomic_write_json(tmp_path / "etf_surface_pointer.json", pointer)
+
+    # 篡改：把指针面磁盘 manifest 里的 158012 换成不存在的 199999，
+    # manifest_sha256 声明字段原样保留
+    mpath = tmp_path / "manifests" / f"{target.dataset_id}.json"
+    payload = _json.loads(mpath.read_text(encoding="utf-8"))
+    tampered_text = mpath.read_text(encoding="utf-8").replace(
+        "SZSE.ETF.158012", "SZSE.ETF.199999"
+    )
+    assert tampered_text != mpath.read_text(encoding="utf-8"), "篡改必须生效"
+    assert _json.loads(tampered_text)["manifest_sha256"] == \
+        payload["manifest_sha256"], "声明 sha 必须未变（攻击前提）"
+    mpath.write_text(tampered_text, encoding="utf-8")
+
+    monkeypatch.setenv("MARKET_DATA_ROOT", str(tmp_path))
+    cfg = get_default_config()
+    # 指针面被拒 -> 回退启发式选中未篡改的 fallback 面；
+    # 关键断言：篡改注入的 199999 绝不能进入导出池
+    assert bq._enumerate_export_etf_pool(cfg) == [
+        "SSE.ETF.510300", "SZSE.ETF.159915"
+    ]

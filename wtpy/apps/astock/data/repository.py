@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import json
 import threading
+from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .dataset_store import DatasetManifest, DatasetStore
+from .dataset_store import DatasetManifest, DatasetStore, SymbolRecord
 from .providers.base import (
     AdjustmentMode,
     BarPeriod,
@@ -41,6 +42,12 @@ class DatasetNotReadyError(Exception):
     pass
 
 
+#: 每个 repository 实例缓存的 manifest view 上限。全市场导出的逐股票循环
+#: 只涉及 2-3 个虚拟 manifest（L1/L2/raw），4 足够且能容纳 consolidation 前
+#: 后的新旧代次并存；不引入环境变量，保持部署面不变。
+_MANIFEST_VIEW_CACHE_MAX = 4
+
+
 class MarketDataRepository:
     """Reads bars exclusively from local immutable datasets."""
 
@@ -51,10 +58,24 @@ class MarketDataRepository:
 
     def __init__(self, store: DatasetStore):
         self._store = store
+        # ---- manifest view LRU（修复 0f009e9 引入的回归）----
+        # _load_virtual_bars 曾改为每次调用 OverlayView.for_manifest()，
+        # 而 OverlayView 的 delta/pool/factor 缓存都是实例字段——每次新建
+        # 实例等于缓存永不命中，全市场导出退化为每股一次 DuckDB 全量扫描。
+        # 这里按 (dataset_id, manifest_sha256) 复用视图；虚拟 manifest 把
+        # watermark/代次钉死在自身身份里（for_manifest 用 _state_override
+        # 回放），因此按 manifest 身份缓存不会串代次。
+        self._manifest_views: "OrderedDict[Tuple[str, str], Tuple[object, Dict[str, SymbolRecord]]]" = OrderedDict()
+        self._manifest_views_lock = threading.RLock()
 
     @classmethod
     def from_root(cls, root: Path | str) -> "MarketDataRepository":
         return cls(DatasetStore(root))
+
+    @property
+    def manifests_dir(self) -> Path:
+        """manifest 文件目录透传（供调用方做文件实算哈希校验）。"""
+        return self._store.manifests_dir
 
     # ------------------------------------------------------------------
     # overlay support
@@ -77,10 +98,117 @@ class MarketDataRepository:
                 self._overlay = view
             return view
 
-    def _overlay_view_for_manifest(self, manifest: DatasetManifest):
-        from .overlay import OverlayView
+    @staticmethod
+    def _manifest_view_key(manifest: DatasetManifest) -> Tuple[str, str]:
+        """LRU cache key: manifest identity (id + content hash).
 
-        return OverlayView.for_manifest(self._store, manifest)
+        虚拟 manifest 把 watermark/代次钉死在自身身份里，consolidation
+        换代产生新 id/sha，旧缓存条目自然失效、不会串代次。
+        """
+        return (manifest.dataset_id, getattr(manifest, "manifest_sha256", "") or "")
+
+    def _overlay_entry_for_manifest(
+        self, manifest: DatasetManifest
+    ) -> Tuple[object, Dict[str, SymbolRecord]]:
+        """Return (OverlayView, exact-symbol index) for a virtual manifest.
+
+        查询、创建、LRU 更新与淘汰都在同一把锁内完成：并发首次访问只会
+        创建一个实例（for_manifest 只做 manifest/registry 读取，不做 NPZ
+        解压，锁内创建的开销可控）。
+        """
+        key = self._manifest_view_key(manifest)
+        with self._manifest_views_lock:
+            entry = self._manifest_views.get(key)
+            if entry is not None:
+                self._manifest_views.move_to_end(key)
+                return entry
+            from .overlay import OverlayView
+
+            view = OverlayView.for_manifest(self._store, manifest)
+            sym_index: Dict[str, SymbolRecord] = {}
+            for r in manifest.symbols:
+                sym_index[r.symbol] = r
+            self._manifest_views[key] = (view, sym_index)
+            while len(self._manifest_views) > _MANIFEST_VIEW_CACHE_MAX:
+                self._manifest_views.popitem(last=False)
+            return self._manifest_views[key]
+
+    def _overlay_view_for_manifest(self, manifest: DatasetManifest):
+        return self._overlay_entry_for_manifest(manifest)[0]
+
+    def _virtual_symbol_record(
+        self, manifest: DatasetManifest, symbol: str
+    ) -> Optional[SymbolRecord]:
+        """Exact-spelling O(1) lookup against the cached manifest index.
+
+        未命中时回退到变体线性扫描，保持与 _find_symbol_record 相同的
+        外部行为（调用方可能传 600000.SH 等非规范拼法）。
+        """
+        key = self._manifest_view_key(manifest)
+        with self._manifest_views_lock:
+            entry = self._manifest_views.get(key)
+            idx = entry[1] if entry is not None else None
+        if idx is not None:
+            rec = idx.get(symbol)
+            if rec is not None:
+                return rec
+        return self._find_symbol_record(manifest, symbol)
+
+    def load_record_bars(
+        self,
+        *,
+        manifest: DatasetManifest,
+        record: SymbolRecord,
+        start_date: Optional[int] = None,
+        end_date: Optional[int] = None,
+    ) -> List[MarketBar]:
+        """Load bars for an already-resolved SymbolRecord.
+
+        全市场循环（BaguaPlaneSession）已持有 manifest/record，直接传入可
+        跳过 load_bars 内部重复的变体线性扫描；读取语义与
+        ``load_bars(dataset_id=..., symbol=record.symbol, ...)`` 完全一致。
+        """
+        allowed = ("ready",)
+        if manifest.status not in allowed:
+            raise DatasetNotReadyError(
+                f"Dataset {manifest.dataset_id} status={manifest.status}, cannot load"
+            )
+        if getattr(manifest, "storage_mode", "") == "overlay_v1":
+            return self._load_virtual_bars(
+                manifest, symbol=record.symbol,
+                start_date=start_date, end_date=end_date, record=record,
+            )
+        bars: List[MarketBar] = []
+        if not record.blob_sha256:
+            return bars
+        arrays = self._store.load_bars(record.blob_sha256)
+        n = len(arrays["trade_date"])
+        for i in range(n):
+            td = int(arrays["trade_date"][i])
+            if start_date is not None and td < start_date:
+                continue
+            if end_date is not None and td > end_date:
+                continue
+            bars.append(
+                MarketBar(
+                    symbol=record.symbol,
+                    trade_date=td,
+                    period=manifest.period,
+                    open=float(arrays["open"][i]),
+                    high=float(arrays["high"][i]),
+                    low=float(arrays["low"][i]),
+                    close=float(arrays["close"][i]),
+                    volume=float(arrays["volume"][i]),
+                    amount=float(arrays["amount"][i]),
+                    source=manifest.source,
+                    adjustment=manifest.adjustment,
+                    anchor_date=manifest.anchor_date,
+                    snapshot_date=manifest.snapshot_date,
+                    data_cutoff_date=manifest.data_cutoff_date,
+                    provider_version=manifest.provider_version,
+                )
+            )
+        return bars
 
     @staticmethod
     def _symbol_kind_std(code: str, suffix: str) -> str:
@@ -95,9 +223,9 @@ class MarketDataRepository:
             return "IDX"
         if suffix == "SZ" and code.startswith("399"):
             return "IDX"
-        if suffix == "SH" and code.startswith(("51", "56", "58")):
+        if suffix == "SH" and code.startswith(("51", "52", "530", "551", "56", "58")):
             return "ETF"
-        if suffix == "SZ" and code.startswith(("15", "16", "18")):
+        if suffix == "SZ" and code.startswith(("158", "159")):
             return "ETF"
         return "STK"
 
@@ -153,6 +281,19 @@ class MarketDataRepository:
                 variants.append(f"BSE.STK.{symbol}")
                 variants.append(f"{symbol}.BJ")
                 variants.append(f"bj{symbol}")
+            elif symbol.startswith(("51", "52", "530", "551", "56", "58")):
+                # 沪市 ETF 段（52/530/551 新段）：必须生成 .ETF. 形态，否则
+                # 正式面锁定会把裸代码查询当股票过滤（历史上 561830 因此
+                # 无法解析甚至串号到深市品种）。
+                variants.append(f"SSE.ETF.{symbol}")
+                variants.append(f"{symbol}.SH")
+                variants.append(f"sh{symbol}")
+            elif symbol.startswith(("158", "159")):
+                # 深市 ETF 段（159 传统段 + 158 新段；16xxxx 是 LOF、其余
+                # 15/18 是其他场内基金，不在此映射）
+                variants.append(f"SZSE.ETF.{symbol}")
+                variants.append(f"{symbol}.SZ")
+                variants.append(f"sz{symbol}")
             elif symbol.startswith(("5", "6", "9")):
                 variants.append(f"SSE.STK.{symbol}")
                 variants.append(f"{symbol}.SH")
@@ -363,9 +504,17 @@ class MarketDataRepository:
 
         # ---- overlay virtual view path ----
         if getattr(manifest, "storage_mode", "") == "overlay_v1":
+            record = None
+            if symbol is not None:
+                record = self._virtual_symbol_record(manifest, symbol)
+                if record is None:
+                    raise DatasetNotFoundError(
+                        f"Symbol {symbol} not in dataset {dataset_id}"
+                    )
             return self._load_virtual_bars(
                 manifest, symbol=symbol,
                 start_date=start_date, end_date=end_date,
+                record=record,
             )
 
         bars: List[MarketBar] = []
@@ -420,13 +569,15 @@ class MarketDataRepository:
         symbol: Optional[str],
         start_date: Optional[int],
         end_date: Optional[int],
+        record: Optional[SymbolRecord] = None,
     ) -> List[MarketBar]:
         view = self._overlay_view_for_manifest(manifest)
 
         # per-symbol fast path: skip the batch dict wrapper + a second
         # manifest load (whole-market loops call this once per symbol).
         if symbol is not None:
-            record = self._find_symbol_record(manifest, symbol)
+            if record is None:
+                record = self._virtual_symbol_record(manifest, symbol)
             if record is None:
                 raise DatasetNotFoundError(
                     f"Symbol {symbol} not in dataset {manifest.dataset_id}"
@@ -525,7 +676,7 @@ class MarketDataRepository:
                 targets = []
                 seen = set()
                 for requested_symbol in symbols:
-                    record = self._find_symbol_record(manifest, requested_symbol)
+                    record = self._virtual_symbol_record(manifest, requested_symbol)
                     if record is None or record.symbol in seen:
                         continue
                     seen.add(record.symbol)

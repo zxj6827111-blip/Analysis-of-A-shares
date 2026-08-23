@@ -92,12 +92,12 @@ def _symbol_kind(symbol: str) -> str:
         if pfx == "sh":
             if code.startswith("000"):
                 return "index"
-            if code.startswith(("51", "56", "58")):
+            if code.startswith(("51", "52", "530", "551", "56", "58")):
                 return "etf"
         else:
             if code.startswith("399"):
                 return "index"
-            if code.startswith(("15", "16", "18")):
+            if code.startswith(("158", "159")):
                 return "etf"
         return "stock"
     parts = lower.split(".")
@@ -110,12 +110,12 @@ def _symbol_kind(symbol: str) -> str:
         if parts[1] == "sh":
             if parts[0].startswith("000"):
                 return "index"
-            if parts[0].startswith(("51", "56", "58")):
+            if parts[0].startswith(("51", "52", "530", "551", "56", "58")):
                 return "etf"
         else:
             if parts[0].startswith("399"):
                 return "index"
-            if parts[0].startswith(("15", "16", "18")):
+            if parts[0].startswith(("158", "159")):
                 return "etf"
     return "stock"
 
@@ -491,13 +491,32 @@ class TushareProvider:
 
         return entries
 
-    def fetch_index_etf_universe(self) -> List[UniverseEntry]:
+    @staticmethod
+    def _coerce_sync_end(end_date) -> int:
+        """把同步截止日参数归一为 YYYYMMDD 整数，缺省取今天。"""
+        if end_date:
+            try:
+                return int(str(end_date))
+            except (TypeError, ValueError):
+                pass
+        return int(time.strftime("%Y%m%d"))
+
+    def fetch_index_etf_universe(
+        self, end_date: Optional[int] = None
+    ) -> List[UniverseEntry]:
         """Fetch exchange-listed indices (SSE/SZSE) and ETFs for the warehouse.
 
         Returns UniverseEntry symbols in SSE.IDX.* / SZSE.IDX.* /
         SSE.ETF.* / SZSE.ETF.* form so bars land in the same dataset family
         as stocks (raw/none only — indices/ETFs have no 复权).
+
+        ``end_date``：同步截止日（YYYYMMDD）。基金 list_date 晚于该日
+        （尚未上市）或 delist_date 不晚于该日（已退市）的一律排除——
+        Tushare fund_basic 的 status 参数曾被服务端忽略导致退市基金
+        混入（实测 2905 行中含 676 只 D），因此除正确传参外再按日期
+        二次校验。
         """
+        eff_end = self._coerce_sync_end(end_date)
         self._ensure_initialized()
         entries: List[UniverseEntry] = []
         seen: set = set()
@@ -524,15 +543,44 @@ class TushareProvider:
 
         # list_status=L alone truncates at 15000 rows (Tushare cap), which can
         # drop large ETFs; market='E' (exchange-traded funds) returns them all.
+        # 注意：fund_basic 的状态参数名是 status（不是 stock_basic 的
+        # list_status），且服务端曾实测忽略该参数返回 D 行——因此下面再按
+        # list_date/delist_date 对 eff_end 做二次校验。
         df_fund = self._call_with_retry(
-            self._pro.fund_basic, market="E", list_status="L"
+            self._pro.fund_basic, market="E", status="L"
         )
         if df_fund is not None and not df_fund.empty:
             df_fund = df_fund[df_fund.get("market", "") == "E"]
             if "fund_type" in df_fund.columns:
                 df_fund = df_fund[df_fund["fund_type"] != "REITs"]
+            # 复用 B1 参考宇宙的分类规则：只保留真 ETF。
+            # 深市 16xxxx 是 LOF、15 非 158/159 / 18xxxx 是其他场内基金，
+            # 沪市 501/502/506 是 LOF——历史上曾被误标成 .ETF. 入库。
+            from ..historical_universe import ETF as INSTRUMENT_ETF
+            from ..historical_universe import _TS_SUFFIX_TO_EXCH
+            from ..historical_universe import classify_instrument
+
             for _, row in df_fund.iterrows():
                 ts_code = str(row.get("ts_code", ""))
+                list_date = self._parse_date(row.get("list_date"))
+                if not list_date or list_date > eff_end:
+                    # 无上市日期或晚于同步截止日（未上市）不进 universe
+                    continue
+                delist_date = self._parse_date(row.get("delist_date"))
+                if delist_date and delist_date <= eff_end:
+                    # 已退市基金不进 universe
+                    continue
+                code6 = ts_code.split(".")[0] if "." in ts_code else ""
+                suffix = (
+                    ts_code.split(".")[1].upper() if "." in ts_code else ""
+                )
+                exch = _TS_SUFFIX_TO_EXCH.get(suffix, "")
+                if (
+                    not exch
+                    or not code6
+                    or classify_instrument(code6, exch) != INSTRUMENT_ETF
+                ):
+                    continue
                 symbol = self._index_etf_ts_code_to_symbol(ts_code, "ETF")
                 if not symbol or symbol in seen:
                     continue
@@ -542,7 +590,7 @@ class TushareProvider:
                         symbol=symbol,
                         name=str(row.get("name", "")),
                         exchange=symbol.split(".")[0],
-                        list_date=self._parse_date(row.get("list_date")),
+                        list_date=list_date,
                         status="listed",
                         source=DataSource.TUSHARE.value,
                     )
@@ -555,7 +603,10 @@ class TushareProvider:
         """000001.SH -> SSE.IDX.000001, 510300.SH -> SSE.ETF.510300.
 
         Only exchange-listed codes with the app's known segments are kept
-        (indices sh000xxx / sz399xxx; ETFs sh51/56/58xxxx / sz15/16/18xxxx).
+        (indices sh000xxx / sz399xxx; ETFs sh51/52/530/551/56/58xxxx / sz158/159xxx).
+        深市 16xxxx(LOF)、其余 15/18 与沪市 501/502/506 等其他基金段一律
+        拒绝——universe 层已用 classify_instrument 过滤，这里再做一道格式
+        防线，防止 .ETF. 标签污染。
         """
         parts = ts_code.split(".")
         if len(parts) != 2:
@@ -570,8 +621,8 @@ class TushareProvider:
                 exch == "SZSE" and code.startswith("399")
             )
         elif kind == "ETF":
-            ok = (exch == "SSE" and code.startswith(("51", "56", "58"))) or (
-                exch == "SZSE" and code.startswith(("15", "16", "18"))
+            ok = (exch == "SSE" and code.startswith(("51", "52", "530", "551", "56", "58"))) or (
+                exch == "SZSE" and code.startswith(("158", "159"))
             )
         else:
             ok = False

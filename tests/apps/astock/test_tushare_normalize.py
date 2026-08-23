@@ -82,6 +82,7 @@ class TestTushareNormalization:
         assert conv("000001.SH", "IDX") == "SSE.IDX.000001"
         assert conv("399006.SZ", "IDX") == "SZSE.IDX.399006"
         assert conv("510300.SH", "ETF") == "SSE.ETF.510300"
+        assert conv("561830.SH", "ETF") == "SSE.ETF.561830"
         assert conv("159915.SZ", "ETF") == "SZSE.ETF.159915"
         # wrong segments / kinds rejected
         assert conv("000300.SH", "ETF") == ""
@@ -91,6 +92,17 @@ class TestTushareNormalization:
         assert conv("junk", "IDX") == ""
         assert conv("000001.HK", "IDX") == ""
         assert conv("399006.SZ", "IDX") != ""
+        # LOF / 其他场内基金段不得被打上 .ETF. 标签（深市 16xxxx=LOF、
+        # 15 非 159 与 18xxxx=其他基金；沪市 501/502/506=LOF）
+        assert conv("161725.SZ", "ETF") == ""
+        assert conv("161730.SZ", "ETF") == ""
+        assert conv("164212.SZ", "ETF") == ""
+        assert conv("160646.SZ", "ETF") == ""
+        assert conv("169000.SZ", "ETF") == ""
+        assert conv("180801.SZ", "ETF") == ""
+        assert conv("501300.SH", "ETF") == ""
+        assert conv("502000.SH", "ETF") == ""
+        assert conv("159906.SZ", "ETF") != ""
 
     def test_fetch_bars_dispatch_index_etf(self, provider):
         import pandas as pd
@@ -169,14 +181,40 @@ class TestTushareNormalization:
             "market": ["SSE", "SZSE", "CSI", "SSE"],
         })
         provider._pro.fund_basic.return_value = pd.DataFrame({
-            "ts_code": ["510300.SH", "510050.SH", "159915.SZ", "161725.SZ",
-                        "180801.SH"],
-            "name": ["沪深300ETF", "上证50ETF", "创业板ETF", "招商中证白酒",
-                     "某REIT"],
-            "market": ["E", "E", "E", "E", "E"],
-            "fund_type": ["股票型", "股票型", "股票型", "混合型", "REITs"],
+            "ts_code": ["510300.SH", "510050.SH", "561830.SH", "520740.SH",
+                        "520750.SH", "526030.SH", "530060.SH", "530300.SH",
+                        "551060.SH", "551900.SH", "550001.SH", "159915.SZ",
+                        "159096.SZ",
+                        "158003.SZ", "158009.SZ", "158012.SZ",
+                        "161725.SZ", "161730.SZ", "164212.SZ",
+                        "160646.SZ", "180801.SZ", "501300.SH", "511990.SH",
+                        "519999.SH", "512100.SH", "159920.SZ"],
+            "name": ["沪深300ETF", "上证50ETF", "某沪ETF", "新段沪ETF-A",
+                     "新段沪ETF-B", "新段沪ETF-C", "新段沪530A", "新段沪530B",
+                     "新段沪551A", "新段沪551B", "550负例基金", "创业板ETF",
+                     "某深ETF", "新段深ETF-A", "新段深ETF-B", "新段深ETF-C",
+                     "招商中证白酒LOF", "LOF-A", "LOF-B",
+                     "LOF-C", "某场内基金", "某LOF", "华宝添益",
+                     "无上市日期基金", "已退市ETF", "未来上市基金"],
+            "market": ["E"] * 26,
+            "fund_type": ["股票型", "股票型", "股票型", "股票型", "股票型",
+                          "股票型", "股票型", "股票型", "股票型", "股票型",
+                          "股票型", "股票型", "股票型", "股票型", "股票型",
+                          "混合型", "混合型", "混合型", "混合型",
+                          "混合型", "其他类型", "混合型", "货币型",
+                          "股票型", "股票型", "股票型"],
+            "list_date": ["20120528", "20041230", "20210805", "20250808",
+                          "20250808", "20250901", "20250910", "20250915",
+                          "20251001", "20251008", "20240601", "20110610",
+                          "20210901", "20250612", "20250612", "20250701",
+                          "20150707", "20101118", "20160808",
+                          "20070315", "20220301", "20130626", "20150105",
+                          None, "20210601", "20991231"],
+            "delist_date": [None] * 24 + ["20260110", None],
         })
-        entries = provider.fetch_index_etf_universe()
+        # end_date=20260822：已退市(512100 delist 20260110)与未上市
+        # (159920 list 20991231) 都必须排除
+        entries = provider.fetch_index_etf_universe(end_date=20260822)
         syms = {e.symbol for e in entries}
         assert syms == {
             "SSE.IDX.000001",
@@ -184,21 +222,106 @@ class TestTushareNormalization:
             "SZSE.IDX.399001",
             "SSE.ETF.510300",
             "SSE.ETF.510050",
+            "SSE.ETF.561830",
+            # 新段：沪 52、深 158 均为真 ETF（服务器实测已有真实行情）
+            "SSE.ETF.520740",
+            "SSE.ETF.520750",
+            "SSE.ETF.526030",
+            "SSE.ETF.530060",
+            "SSE.ETF.530300",
+            "SSE.ETF.551060",
+            "SSE.ETF.551900",
+            # 511990 货币型也是真 ETF（51 段），保留
+            "SSE.ETF.511990",
             "SZSE.ETF.159915",
-            "SZSE.ETF.161725",
+            "SZSE.ETF.159096",
+            "SZSE.ETF.158003",
+            "SZSE.ETF.158009",
+            "SZSE.ETF.158012",
         }
+        # LOF / 其他场内基金 / 无上市日期 / 已退市 / 未来上市一律排除
+        for bad in ("SZSE.ETF.161725", "SZSE.ETF.161730", "SZSE.ETF.164212",
+                    "SZSE.ETF.160646", "SZSE.ETF.169000", "SZSE.ETF.180801",
+                    "SSE.ETF.501300", "SSE.ETF.512100", "SZSE.ETF.159920",
+                    "SSE.ETF.550001"):
+            assert bad not in syms, bad
+        # 无 list_date 的基金行被排除（指数 fixture 未提供 list_date，不在此列）
+        assert all(
+            e.list_date is not None for e in entries if ".ETF." in e.symbol
+        )
         by = {e.symbol: e for e in entries}
         assert by["SSE.IDX.000001"].name == "上证指数"
         assert by["SSE.IDX.000001"].exchange == "SSE"
         assert by["SSE.IDX.000001"].status == "listed"
         assert by["SSE.IDX.000001"].source == "tushare"
-        # market='E' must be passed so the 15000-row cap never drops big ETFs
+        assert by["SSE.ETF.561830"].list_date is not None
+        # fund_basic 的状态参数名是 status；market='E' 必须显式传递，
+        # 否则 15000 行截断会丢大 ETF
         provider._pro.fund_basic.assert_called_once_with(
-            market="E", list_status="L"
+            market="E", status="L"
         )
         # CSI index, REIT (SH 180801) excluded
         assert "930001.CSI" not in syms
-        assert "SSE.ETF.180801" not in syms
+
+    def test_etf_segment_rules_consistent_across_layers(self):
+        """四层段位规则必须一致：B1 分类器 / 查询服务 / ts_code 映射 / 裸变体。
+
+        历史上各层各自维护段位表，导致沪 52xxxx、深 158xxx 新段不被识别，
+        而 16xxxx LOF 反被当 ETF——用服务器实测有真实行情的样本钉死全层。
+        """
+        from wtpy.apps.astock.data.historical_universe import LOF
+        from wtpy.apps.astock.data.historical_universe import classify_instrument
+        from wtpy.apps.astock.data.repository import MarketDataRepository
+        from wtpy.apps.astock.service.index_etf import (
+            classify_symbol,
+            to_index_etf_std_code,
+        )
+
+        conv = TushareProvider._index_etf_ts_code_to_symbol
+        exch_of = {"SH": "SSE", "SZ": "SZSE"}
+        pfx_of = {"SH": "sh", "SZ": "sz"}
+        etf_true = [
+            ("510300", "SH", "SSE.ETF.510300"),
+            ("561830", "SH", "SSE.ETF.561830"),
+            ("520740", "SH", "SSE.ETF.520740"),  # 沪新段 52
+            ("520750", "SH", "SSE.ETF.520750"),
+            ("526030", "SH", "SSE.ETF.526030"),
+            ("530060", "SH", "SSE.ETF.530060"),  # 沪新段 530
+            ("530300", "SH", "SSE.ETF.530300"),
+            ("551060", "SH", "SSE.ETF.551060"),  # 沪新段 551
+            ("551900", "SH", "SSE.ETF.551900"),
+            ("159915", "SZ", "SZSE.ETF.159915"),
+            ("159096", "SZ", "SZSE.ETF.159096"),
+            ("158012", "SZ", "SZSE.ETF.158012"),  # 深新段 158
+            ("158003", "SZ", "SZSE.ETF.158003"),
+            ("158009", "SZ", "SZSE.ETF.158009"),
+        ]
+        for bare, suffix, canonical in etf_true:
+            assert classify_instrument(bare, exch_of[suffix]) == "etf", bare
+            assert classify_symbol(bare) == "etf", bare
+            assert classify_symbol(f"{bare}.{suffix.lower()}") == "etf", bare
+            assert to_index_etf_std_code(
+                f"{pfx_of[suffix]}{bare}"
+            ) == canonical, bare
+            assert to_index_etf_std_code(canonical) == canonical, bare
+            assert conv(f"{bare}.{suffix}", "ETF") == canonical, bare
+            variants = MarketDataRepository._symbol_variants(bare)
+            assert canonical in variants, (bare, variants)
+        # LOF 样本：分类器判为 LOF；其余层一律不得按 ETF 处理
+        for bare, suffix in (("161725", "SZ"), ("161730", "SZ"),
+                             ("164212", "SZ"), ("160646", "SZ"),
+                             ("501300", "SH")):
+            assert classify_instrument(bare, exch_of[suffix]) == LOF, bare
+            assert classify_symbol(bare) != "etf", bare
+            assert to_index_etf_std_code(bare) == "", bare
+            assert conv(f"{bare}.{suffix}", "ETF") == "", bare
+        # 550xxx 保持非 ETF 负例（FUND_OTHER），不得因 551 新段被误收
+        from wtpy.apps.astock.data.historical_universe import FUND_OTHER
+
+        assert classify_instrument("550001", "SSE") == FUND_OTHER
+        assert classify_symbol("550001") != "etf"
+        assert to_index_etf_std_code("550001") == ""
+        assert conv("550001.SH", "ETF") == ""
 
     def test_symbol_kind(self):
         assert _symbol_kind("SSE.STK.600000") == "stock"

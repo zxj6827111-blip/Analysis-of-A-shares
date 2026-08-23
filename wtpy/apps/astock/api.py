@@ -318,7 +318,9 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         # 并发争抢 Tushare 频率限制。指数/ETF 无复权,与股票链互不影响。
         # overlay_v1 下指数/ETF 仍走旧 blob 增量路径(体积远小于股票全历史)。
         cmd_ie = None
-        if _env_flag("ASTOCK_EOD_SYNC_INDEX_ETF", "0"):
+        # 默认启用（与模块头部 env 说明一致）：ETF 权威面指针依赖本增量链
+        # 刷新，关闭会导致新上市/退市 ETF 无法自动进出导出池
+        if _env_flag("ASTOCK_EOD_SYNC_INDEX_ETF", "1"):
             cmd_ie = [
                 sys.executable, "-u", script,
                 "--source", "tushare", "--asset-class", "all",
@@ -356,6 +358,12 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             scheduler thread is busy; wakes the scheduler via wake_event.
             """
             rc = proc.wait()
+            # 指数/ETF 链 warning 级失败（exit=2，如 ETF 面指针发布失败）
+            # 不阻塞治理链：治理（consolidation/retention/GC）只作用于股票
+            # overlay 层，与 IE 链数据无关。rc 保持非零以如实记录 partial
+            # （数据 lag 门控不含 IE 面，同晚重试通常被拦下，指针由下一
+            # 交易日的例行 IE 增量链幂等重写修复）。
+            ie_soft_fail = False
             if rc == 0 and cmd_ie:
                 print("[EOD_SYNC] 股票同步完成，启动指数/ETF 增量同步…")
                 log_fh2 = None
@@ -380,11 +388,17 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                 if rc2 != 0:
                     print(f"[EOD_SYNC] 指数/ETF 同步失败（exit={rc2}）")
                     rc = rc2
+                    if rc2 == 2:
+                        ie_soft_fail = True
+                        print(
+                            "[EOD_SYNC] 指数/ETF 链为 warning 级 partial，"
+                            "不阻塞治理链"
+                        )
                 else:
                     print("[EOD_SYNC] 指数/ETF 同步完成")
             governance_rc = None
             if (
-                rc == 0
+                (rc == 0 or ie_soft_fail)
                 and overlay_mode
                 and _env_flag("ASTOCK_MARKET_GOVERNANCE_ENABLED", "1")
             ):

@@ -966,7 +966,11 @@ def _resolve_index_etf_symbols(args, provider) -> List[str]:
     if args.symbol:
         return [s.strip() for s in args.symbol.split(",") if s.strip()]
     asset = (getattr(args, "asset_class", "index") or "index").lower()
-    universe = provider.fetch_index_etf_universe()
+    # 传入同步截止日：排除未上市（list_date > end）与已退市（delist_date
+    # <= end）的基金，避免 LOF/退市基金混入 ETF 同步池
+    universe = provider.fetch_index_etf_universe(
+        end_date=getattr(args, "end_date", None)
+    )
     if asset == "index":
         return [e.symbol for e in universe if ".IDX." in e.symbol]
     if asset == "etf":
@@ -1057,7 +1061,130 @@ def sync_tushare_index_etf_full(args, store: DatasetStore) -> dict:
         _result["error"] = _detail
     elif _status == "partial":
         _result["warning"] = f"datasets not all ready: {_detail}"
+    # 完整 universe 同步（full 模式）成功且 ETF 覆盖达标时发布权威面指针；
+    # 发布失败必须显式降级为 partial，不允许"同步成功但指针静默丢失"
+    try:
+        _publish_etf_surface_pointer_if_eligible(args, store, results)
+    except Exception as _pe:
+        _result["status"] = "partial"
+        _result["warning"] = f"etf_surface_pointer_failed: {_pe}"
     return _result
+
+
+#: 权威 ETF 面指针：ETF **独立**最低覆盖率（分母只数 .ETF. 记录）。
+#: 旧口径 success/total 混入指数（651 指数 + 1610 ETF）——指数全部成功时
+#: 最多可漏 452 只 ETF 仍达 80%，明显失真，故改为 ETF 单独统计。
+ETF_SURFACE_MIN_COVERAGE = 0.8
+ETF_SURFACE_POINTER_NAME = "etf_surface_pointer.json"
+#: ETF 允许缺失清单：数据根下的 json 数组（6 位代码或规范符号均可）。
+#: 未获数据的 ETF 必须全部在清单中显式放行，否则不发布权威面指针。
+ETF_NO_DATA_ALLOWLIST_NAME = "etf_no_data_allowlist.json"
+
+
+def _load_etf_no_data_allowlist(root) -> set:
+    """读取允许缺失的 ETF 清单，归一为 6 位代码集合；读取失败返回空集。"""
+    p = Path(root) / ETF_NO_DATA_ALLOWLIST_NAME
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    if not isinstance(data, list):
+        return set()
+    out = set()
+    for item in data:
+        s = str(item).strip()
+        if s:
+            out.add(s.split(".")[-1] if "." in s else s)
+    return out
+
+
+def _write_etf_surface_pointer(
+    store: DatasetStore, result: dict, *, full_universe: bool
+) -> Optional[Path]:
+    """发布当前权威 ETF 面（etf_surface_pointer.json），导出据此选面。
+
+    仅当满足全部条件才写指针（任一不满足保留旧指针）：
+      - 本次为完整 universe 同步（full 或 incremental 全量模式；
+        --symbol 局部同步不得更新）；
+      - 数据集 status=ready 且含 .ETF. 符号；
+      - ETF 独立覆盖率 blob_backed_etf/expected_etf >= 阈值；
+      - 未获数据的 ETF 全部在 etf_no_data_allowlist.json 显式放行
+        （防止静默丢新上市 ETF 后仍发布"权威"面）。
+    """
+    if not full_universe:
+        return None
+    if result.get("status") != "ready":
+        return None
+    ds_id = str(result.get("dataset_id") or "")
+    if not ds_id:
+        return None
+    manifest = store.load_manifest(ds_id, deep_copy=False)
+    if manifest is None:
+        return None
+    etf_recs = [r for r in manifest.symbols if ".ETF." in r.symbol]
+    if not etf_recs:
+        return None
+    backed = [r for r in etf_recs if r.blob_sha256]
+    no_data_codes = sorted(
+        r.symbol.split(".")[-1] for r in etf_recs if not r.blob_sha256
+    )
+    coverage = len(backed) / len(etf_recs)
+    allow = _load_etf_no_data_allowlist(store.root)
+    effective_missing = [c for c in no_data_codes if c not in allow]
+    if coverage < ETF_SURFACE_MIN_COVERAGE or effective_missing:
+        head = ",".join(effective_missing[:5])
+        more = "..." if len(effective_missing) > 5 else ""
+        print(
+            f"  NOTE: ETF surface pointer NOT updated "
+            f"(etf coverage {len(backed)}/{len(etf_recs)}, "
+            f"unallowed missing=[{head}{more}])"
+        )
+        return None
+    from wtpy.apps.astock.data.io_util import atomic_write_json
+
+    payload = {
+        "dataset_id": ds_id,
+        "manifest_sha256": manifest.manifest_sha256,
+        "data_cutoff_date": int(manifest.data_cutoff_date or 0),
+        "symbol_count": len(manifest.symbols),
+        "expected_etf": len(etf_recs),
+        "blob_backed_etf": len(backed),
+        "no_data_etf": no_data_codes,
+        "allowlisted_missing": [c for c in no_data_codes if c in allow],
+        "coverage": round(coverage, 4),
+        "synced_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    path = Path(store.root) / ETF_SURFACE_POINTER_NAME
+    atomic_write_json(path, payload)
+    print(
+        f"  ETF surface pointer -> {ds_id[:52]} "
+        f"(cutoff={payload['data_cutoff_date']}, "
+        f"etf={len(backed)}/{len(etf_recs)})"
+    )
+    return path
+
+
+def _publish_etf_surface_pointer_if_eligible(args, store, results) -> None:
+    """完整 universe 同步（full 或 incremental）后按门槛发布权威 ETF 面指针。
+
+    生产调度固定走 ``--mode incremental``（api.py EOD 链），因此增量全量
+    同步成功后同样必须刷新指针——否则新上市 ETF 永远进不了导出池、
+    退市 ETF 永远退不出去，直到有人手工跑一次 full。
+    ``--symbol`` 局部同步不更新指针（无 universe 完整性可言）。
+    """
+    if bool(getattr(args, "symbol", None)):
+        return
+    best = max(
+        (r for r in results.values() if r.get("dataset_id")),
+        key=lambda r: int(r.get("success") or 0),
+        default=None,
+    )
+    if best is None:
+        return
+    # 指针写入的意外异常向上抛出，由调用方标记 partial——权威面发布失败
+    # 不能静默吞掉，否则 EOD 显示成功而导出继续用旧面；门槛不满足（覆盖
+    # 率/allowlist）属于正常跳过，仅打 NOTE，不抛异常。
+    _write_etf_surface_pointer(store, best, full_universe=True)
 
 
 def sync_tushare_index_etf_incremental(args, store: DatasetStore) -> dict:
@@ -1091,71 +1218,82 @@ def sync_tushare_index_etf_incremental(args, store: DatasetStore) -> dict:
         print("Another index/ETF sync task on this data root is running. "
               "Concurrent tasks with the same scope are forbidden.")
         return {"status": "failed", "error": "concurrent_lock", "holder": e.holder}
+    try:
 
-    # 首次同步时仓库没有 tushare 指数/ETF 数据集:自动以 TDX 本地入库的
-    # tdxlocal/none/1d 数据作为父,增量只拉父截止之后的窗口并与全历史
-    # 合并(指数/ETF 无复权,TDX 原始价与 fund_daily/index_daily 口径
-    # 一致),避免对全历史做 Tushare 重下;之后同源 tushare 数据集优先。
-    parent_start, parent_id = _infer_index_etf_parent(store)
-    if parent_id:
-        src = "tdx_local" if parent_id.startswith("tdxlocal") else "tushare"
-        print(f"  [auto] parent dataset {parent_id} ({src}), "
-              f"window start={parent_start}")
-        if args.start_date is None:
-            args.start_date = parent_start
+        # 首次同步时仓库没有 tushare 指数/ETF 数据集:自动以 TDX 本地入库的
+        # tdxlocal/none/1d 数据作为父,增量只拉父截止之后的窗口并与全历史
+        # 合并(指数/ETF 无复权,TDX 原始价与 fund_daily/index_daily 口径
+        # 一致),避免对全历史做 Tushare 重下;之后同源 tushare 数据集优先。
+        parent_start, parent_id = _infer_index_etf_parent(store)
+        if parent_id:
+            src = "tdx_local" if parent_id.startswith("tdxlocal") else "tushare"
+            print(f"  [auto] parent dataset {parent_id} ({src}), "
+                  f"window start={parent_start}")
+            if args.start_date is None:
+                args.start_date = parent_start
 
-    asset = (getattr(args, "asset_class", "index") or "index").lower()
-    ck_path = store.sync_logs_dir / f"checkpoint_tushare_index_etf_{asset}_1d.json"
-    ck = None
-    if ck_path.exists():
-        try:
-            ck = json.loads(ck_path.read_text(encoding="utf-8"))
-        except Exception:
-            ck = None
-    if ck and not getattr(args, "resume", False) and not getattr(args, "fresh", False):
-        print(f"ERROR: tushare index/ETF ({asset}) incremental checkpoint exists: "
-              f"{ck_path.name}. Use --resume or --fresh.")
-        return {"status": "failed", "error": "checkpoint_exists_use_resume_or_fresh"}
-    if getattr(args, "fresh", False) and ck_path.exists():
-        ck_path.unlink()
+        asset = (getattr(args, "asset_class", "index") or "index").lower()
+        ck_path = store.sync_logs_dir / f"checkpoint_tushare_index_etf_{asset}_1d.json"
         ck = None
-    if getattr(args, "resume", False) and ck:
-        sync_run_id = ck.get("sync_run_id", sync_run_id)
-        print(f"  Resuming tushare index/ETF incremental sync_run_id={sync_run_id}")
+        if ck_path.exists():
+            try:
+                ck = json.loads(ck_path.read_text(encoding="utf-8"))
+            except Exception:
+                ck = None
+        if ck and not getattr(args, "resume", False) and not getattr(args, "fresh", False):
+            print(f"ERROR: tushare index/ETF ({asset}) incremental checkpoint exists: "
+                  f"{ck_path.name}. Use --resume or --fresh.")
+            return {"status": "failed", "error": "checkpoint_exists_use_resume_or_fresh"}
+        if getattr(args, "fresh", False) and ck_path.exists():
+            ck_path.unlink()
+            ck = None
+        if getattr(args, "resume", False) and ck:
+            sync_run_id = ck.get("sync_run_id", sync_run_id)
+            print(f"  Resuming tushare index/ETF incremental sync_run_id={sync_run_id}")
 
-    results = {}
-    for adj, period in _index_etf_configs():
-        phase_key = f"{adj.value}/{period.value}"
-        resume_records = None
-        if ck and getattr(args, "resume", False):
-            phase = ck.get("phases", {}).get(phase_key)
-            if phase:
-                resume_records = phase.get("done", {})
-        ds_result = _sync_dataset(
-            provider=provider,
-            store=store,
-            symbols=symbols,
-            source=DataSource.TUSHARE.value,
-            adjustment=adj,
-            period=period,
-            sync_run_id=sync_run_id,
-            start_date=args.start_date,
-            end_date=args.end_date,
-            anchor_date=args.anchor_date,
-            parent_dataset_id=parent_id,
-            checkpoint_path=ck_path,
-            resume_records=resume_records,
-            universe_type="index_etf",
-        )
-        results[f"{adj.value}_{period.value}"] = ds_result
+        results = {}
+        for adj, period in _index_etf_configs():
+            phase_key = f"{adj.value}/{period.value}"
+            resume_records = None
+            if ck and getattr(args, "resume", False):
+                phase = ck.get("phases", {}).get(phase_key)
+                if phase:
+                    resume_records = phase.get("done", {})
+            ds_result = _sync_dataset(
+                provider=provider,
+                store=store,
+                symbols=symbols,
+                source=DataSource.TUSHARE.value,
+                adjustment=adj,
+                period=period,
+                sync_run_id=sync_run_id,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                anchor_date=args.anchor_date,
+                parent_dataset_id=parent_id,
+                checkpoint_path=ck_path,
+                resume_records=resume_records,
+                universe_type="index_etf",
+            )
+            results[f"{adj.value}_{period.value}"] = ds_result
 
-    _status, _detail = _aggregate_dataset_status(results)
-    _result = {"status": _status, "sync_run_id": sync_run_id, "datasets": results}
-    if _status == "failed":
-        _result["error"] = _detail
-    elif _status == "partial":
-        _result["warning"] = f"datasets not all ready: {_detail}"
-    return _result
+        _status, _detail = _aggregate_dataset_status(results)
+        _result = {"status": _status, "sync_run_id": sync_run_id, "datasets": results}
+        if _status == "failed":
+            _result["error"] = _detail
+        elif _status == "partial":
+            _result["warning"] = f"datasets not all ready: {_detail}"
+        # 增量全量同步（生产 EOD 调度的固定模式）成功后同样刷新权威 ETF 面指针，
+        # 否则新上市/退市 ETF 的导出成员变更要等到手工 full 才生效；
+        # 发布失败必须显式降级为 partial，不允许"同步成功但指针静默丢失"
+        try:
+            _publish_etf_surface_pointer_if_eligible(args, store, results)
+        except Exception as _pe:
+            _result["status"] = "partial"
+            _result["warning"] = f"etf_surface_pointer_failed: {_pe}"
+        return _result
+    finally:
+        lock.release()
 
 
 KNOWN_MISSING_DELISTED_EVIDENCE = [

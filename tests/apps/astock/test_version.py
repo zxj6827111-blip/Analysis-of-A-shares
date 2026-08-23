@@ -14,7 +14,8 @@ from wtpy.apps.astock.version import (
 
 class TestVersionModule:
     def test_version_semver(self):
-        assert re.fullmatch(r"\d+\.\d+", APP_VERSION)
+        # 两段(2.9)或三段(2.9.1) semver 均合法；v2.9.1 起版本号为三段
+        assert re.fullmatch(r"\d+\.\d+(\.\d+)?", APP_VERSION)
 
     def test_build_info_keys(self):
         info = get_build_info()

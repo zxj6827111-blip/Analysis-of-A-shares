@@ -27,6 +27,7 @@ Design notes:
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -89,10 +90,25 @@ class OverlayView:
     #: full visible delta bars/factors keyed by (watermark, commit_seq)
     _delta_bars_cache: Dict[tuple, Dict] = field(default_factory=dict)
     _delta_factors_cache: Dict[tuple, Dict] = field(default_factory=dict)
-    #: pool record list keyed by (base_dataset_id, delisted_base_dataset_id)
+    #: pool record list keyed by (base id, base sha, delisted id, delisted sha)
     _pool_records_cache: Dict[tuple, List[SymbolRecord]] = field(default_factory=dict)
+    #: pool exact-spelling symbol index, keyed identically to _pool_records_cache
+    _pool_index_cache: Dict[tuple, Dict[str, SymbolRecord]] = field(default_factory=dict)
+    #: factor base / supplement manifest exact-spelling symbol indexes,
+    #: keyed by (dataset_id, manifest_sha256)
+    _factor_base_index_cache: Dict[tuple, Dict[str, SymbolRecord]] = field(default_factory=dict)
+    #: guards every shared cache dict above; NPZ decompression and other
+    #: slow I/O stay OUTSIDE the lock so whole-market loops are not serialized
+    _cache_lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
 
     def _ensure_delta_store(self) -> None:
+        with self._cache_lock:
+            self._ensure_delta_store_locked()
+
+    def _ensure_delta_store_locked(self) -> None:
+        """Caller must hold _cache_lock."""
         if self._state_override is not None:
             return
         store_id = self.overlay.delta_store_id
@@ -103,32 +119,42 @@ class OverlayView:
             self._factor_series_cache.clear()
 
     def _delta_bars(self, watermark: int) -> Dict:
-        self._ensure_delta_store()
-        commit_seq = self.delta_commit_seq
-        key = (int(watermark), commit_seq)
-        cached = self._delta_bars_cache.get(key)
-        if cached is None:
+        """All visible delta bars at `watermark`, cached per (wm, commit_seq).
+
+        首次查询在锁内完成（single-flight）：同一 watermark/commit_seq 的并发
+        请求只执行一次 SQL；查询异常直接抛出、不写入缓存。这是全市场导出
+        曾经每股重复执行的全量扫描，缓存命中后整个市场只查一次。
+        """
+        with self._cache_lock:
+            self._ensure_delta_store_locked()
+            commit_seq = self.delta_commit_seq
+            key = (int(watermark), commit_seq)
+            cached = self._delta_bars_cache.get(key)
+            if cached is not None:
+                return cached
             cached = self.delta.load_all_visible_bars(
                 watermark, commit_seq=(None if commit_seq < 0 else commit_seq)
             )
             if len(self._delta_bars_cache) >= 8:
                 self._delta_bars_cache.clear()
             self._delta_bars_cache[key] = cached
-        return cached
+            return cached
 
     def _delta_factors(self, watermark: int) -> Dict:
-        self._ensure_delta_store()
-        commit_seq = self.factor_commit_seq
-        key = (int(watermark), commit_seq)
-        cached = self._delta_factors_cache.get(key)
-        if cached is None:
+        with self._cache_lock:
+            self._ensure_delta_store_locked()
+            commit_seq = self.factor_commit_seq
+            key = (int(watermark), commit_seq)
+            cached = self._delta_factors_cache.get(key)
+            if cached is not None:
+                return cached
             cached = self.delta.load_all_visible_factors(
                 watermark, commit_seq=(None if commit_seq < 0 else commit_seq)
             )
             if len(self._delta_factors_cache) >= 8:
                 self._delta_factors_cache.clear()
             self._delta_factors_cache[key] = cached
-        return cached
+            return cached
 
     def __post_init__(self) -> None:
         if self.delta is None:
@@ -330,18 +356,35 @@ class OverlayView:
         )
         return sorted(syms)
 
+    def _pool_state_key(self) -> tuple:
+        """Pool cache key from the pinned overlay state fields directly.
+
+        命中路径不得调用 active_base()（那会加载/校验整个 base manifest）；
+        键包含 id+sha，consolidation 换代后旧条目自然失效。
+        """
+        st = self.overlay
+        return (
+            st.base_dataset_id,
+            st.base_manifest_sha256,
+            st.delisted_base_dataset_id,
+            st.delisted_base_manifest_sha256,
+        )
+
     def _pool_records(self) -> List[SymbolRecord]:
         """Merge base + delisted symbol records (base wins on collision).
 
-        Cached by (base, delisted) id: whole-market per-symbol loads call this
-        once per symbol, and rebuilding a 5000-symbol dict per symbol is a
-        needless O(n²) cost.
+        Cached by pinned (base, delisted) id+sha: whole-market per-symbol
+        loads call this once per symbol, and rebuilding a 5000-symbol dict
+        per symbol is a needless O(n²) cost. 并发下 double-check：命中返回
+        共享列表（调用方只读），未命中的构建放在锁外，写回前再查一次。
         """
-        base = self.active_base()
-        key = (base.dataset_id, self.overlay.delisted_base_dataset_id)
-        cached = self._pool_records_cache.get(key)
-        if cached is not None:
-            return cached
+        key = self._pool_state_key()
+        with self._cache_lock:
+            cached = self._pool_records_cache.get(key)
+            if cached is not None:
+                return cached
+        st = self.overlay
+        base = self._base_manifest(st.base_dataset_id, st.base_manifest_sha256)
         records: Dict[str, SymbolRecord] = {}
         for r in base.symbols:
             if r.blob_sha256:
@@ -352,10 +395,44 @@ class OverlayView:
                 if r.blob_sha256 and r.symbol not in records:
                     records[r.symbol] = r
         out = [records[s] for s in sorted(records)]
-        if len(self._pool_records_cache) >= 4:
-            self._pool_records_cache.clear()
-        self._pool_records_cache[key] = out
+        index = {r.symbol: r for r in out}
+        with self._cache_lock:
+            existing = self._pool_records_cache.get(key)
+            if existing is not None:
+                return existing
+            if len(self._pool_records_cache) >= 4:
+                self._pool_records_cache.clear()
+                self._pool_index_cache.clear()
+            self._pool_records_cache[key] = out
+            self._pool_index_cache[key] = index
         return out
+
+    def _pool_record(self, symbol: str):
+        """O(1) exact-spelling pool lookup (was a linear scan per call).
+
+        只查当前 pinned 池：找不到返回 None（与旧线性扫描一致，
+        delta-only 的 IPO 符号由调用方按无 base 处理）。
+
+        注意：本类中只允许存在这一个 _pool_record 定义——历史上
+        helpers 区残留过同名线性扫描版本，Python 后定义覆盖前定义，
+        使本 O(1) 实现静默失效（全市场导出每符号仍线性遍历）。
+        tests/apps/astock/test_overlay_view_cache.py 有 AST 钉子防回归。
+        """
+        key = self._pool_state_key()
+        with self._cache_lock:
+            idx = self._pool_index_cache.get(key)
+        if idx is None:
+            self._pool_records()
+            with self._cache_lock:
+                idx = self._pool_index_cache.get(key)
+        if not idx:
+            # 空池，或填充间隙被并发淘汰（缓存>=4 触发 clear）：
+            # 退化为一次线性扫描，保持与旧实现完全一致的语义
+            for rec in self._pool_records():
+                if rec.symbol == symbol:
+                    return rec
+            return None
+        return idx.get(symbol)
 
     def _pool_records_with_delta(self) -> List[SymbolRecord]:
         """Pool records plus symbols that exist ONLY in the delta (IPOs).
@@ -850,14 +927,19 @@ class OverlayView:
         """
         wm = int(watermark if watermark is not None else self.factor_watermark)
         key = (symbol, wm, self.factor_commit_seq)
-        cached = self._factor_series_cache.get(key)
-        if cached is not None:
-            return cached
+        with self._cache_lock:
+            cached = self._factor_series_cache.get(key)
+            if cached is not None:
+                return cached
+        # 计算（含 _delta_factors 的 SQL 与因子 blob 解压）在锁外执行；
+        # _delta_factors/_factor_base_arrays 内部各自短暂持锁，无嵌套持锁
         series = self._factor_series_uncached(symbol, watermark=wm)
-        if len(self._factor_series_cache) >= 4096:
-            self._factor_series_cache.clear()
-        if series is not None:
-            self._factor_series_cache[key] = series
+        with self._cache_lock:
+            if len(self._factor_series_cache) >= 4096:
+                self._factor_series_cache.clear()
+            if series is not None:
+                existing = self._factor_series_cache.setdefault(key, series)
+                return existing
         return series
 
     def _factor_series_uncached(
@@ -883,22 +965,44 @@ class OverlayView:
                 return merged
         return None
 
+    def _factor_base_record(
+        self, fac_manifest: DatasetManifest, symbol: str
+    ) -> Optional[SymbolRecord]:
+        """O(1) exact-spelling lookup in a factor base/supplement manifest.
+
+        替换 _find_record 的逐条线性扫描；索引按 (dataset_id, manifest_sha256)
+        有界缓存（主因子面 + 补充面轮转，8 个上限足够）。
+        """
+        key = (fac_manifest.dataset_id, getattr(fac_manifest, "manifest_sha256", "") or "")
+        with self._cache_lock:
+            idx = self._factor_base_index_cache.get(key)
+            if idx is None:
+                idx = {r.symbol: r for r in fac_manifest.symbols}
+                if len(self._factor_base_index_cache) >= 8:
+                    self._factor_base_index_cache.clear()
+                self._factor_base_index_cache[key] = idx
+        return idx.get(symbol)
+
     def _factor_base_arrays(
         self, fac_manifest: DatasetManifest, symbol: str
     ) -> Optional[Dict[str, np.ndarray]]:
-        rec = self._find_record(fac_manifest, symbol)
+        rec = self._factor_base_record(fac_manifest, symbol)
         if rec is None or not rec.blob_sha256:
             return None
         if not self.store.blob_exists(rec.blob_sha256):
             return None
-        cached = self._factor_blob_cache.get(rec.blob_sha256)
+        sha = rec.blob_sha256
+        # 缓存检查/写入加锁，NPZ 解压放在锁外，避免串行化所有股票 I/O
+        with self._cache_lock:
+            cached = self._factor_blob_cache.get(sha)
         if cached is not None:
             return cached
-        arr = self.store.load_bars(rec.blob_sha256)
-        if len(self._factor_blob_cache) >= 8192:
-            self._factor_blob_cache.clear()
-        self._factor_blob_cache[rec.blob_sha256] = arr
-        return arr
+        arr = self.store.load_bars(sha)
+        with self._cache_lock:
+            if len(self._factor_blob_cache) >= 8192:
+                self._factor_blob_cache.clear()
+            existing = self._factor_blob_cache.setdefault(sha, arr)
+        return existing
 
     def _factor_series_batch(
         self,
@@ -918,7 +1022,8 @@ class OverlayView:
         out: Dict[str, Optional[Tuple[np.ndarray, np.ndarray]]] = {}
         for sym in symbols:
             key = (sym, wm, self.factor_commit_seq)
-            cached = self._factor_series_cache.get(key)
+            with self._cache_lock:
+                cached = self._factor_series_cache.get(key)
             if cached is not None:
                 out[sym] = cached
                 continue
@@ -938,9 +1043,10 @@ class OverlayView:
                         merged = _merge_factor_base_and_delta(
                             arr, delta_map.get(alias)
                         )
-            if len(self._factor_series_cache) >= 8192:
-                self._factor_series_cache.clear()
-            self._factor_series_cache[key] = merged
+            with self._cache_lock:
+                if len(self._factor_series_cache) >= 8192:
+                    self._factor_series_cache.clear()
+                self._factor_series_cache[key] = merged
             out[sym] = merged
         return out
 
@@ -1058,12 +1164,6 @@ class OverlayView:
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
-    def _pool_record(self, symbol: str):
-        for rec in self._pool_records():
-            if rec.symbol == symbol:
-                return rec
-        return None
-
     @staticmethod
     def _find_record(manifest: DatasetManifest, symbol: str):
         for rec in manifest.symbols:
