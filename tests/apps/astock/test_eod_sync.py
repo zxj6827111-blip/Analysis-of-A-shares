@@ -798,3 +798,190 @@ def test_data_sync_start_auto_resumes_leftover_checkpoint(tmp_path, monkeypatch)
     assert r.status_code == 200
     assert "--resume" not in calls[0]
     assert "--fresh" not in calls[0]
+
+
+def test_auto_eod_sync_index_etf_chain_default_on(monkeypatch, tmp_path):
+    """默认部署必须启用指数/ETF 增量链（ETF 权威面指针依赖它刷新）。
+
+    环境未显式设置 ASTOCK_EOD_SYNC_INDEX_ETF 时，同步顺序应为：
+    股票链 -> 指数/ETF 增量链 -> 治理链。
+    """
+    import subprocess
+    import threading
+    import time as _time
+
+    from wtpy.apps.astock.api import _auto_eod_sync
+    import wtpy.apps.astock.api as api_mod
+
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "00:00")
+    monkeypatch.setenv("ASTOCK_MARKET_STORAGE_MODE", "overlay_v1")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_INDEX_ETF", "1")
+    monkeypatch.setenv("ASTOCK_EOD_STATE_PATH", str(tmp_path / "state.json"))
+    # 显式移除可能泄漏的外部环境设置，验证代码内默认值
+    monkeypatch.delenv("ASTOCK_EOD_SYNC_INDEX_ETF", raising=False)
+
+    cfg, ctx = _make_cfg_ctx(tmp_path)
+    monkeypatch.setattr(
+        api_mod,
+        "eod_sync_decide",
+        lambda **k: (True, "weekly lag", _dt.date.today()),
+    )
+    calls = []
+
+    class FakeProc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda cmd, **kw: (calls.append(list(cmd)), FakeProc(1))[1]
+    )
+
+    class ImmediateThread:
+        def __init__(self, target=None, args=(), kwargs=None, **_o):
+            self.target, self.args, self.kwargs = target, args, kwargs or {}
+
+        def start(self):
+            self.target(*self.args, **self.kwargs)
+
+    monkeypatch.setattr(threading, "Thread", ImmediateThread)
+    _stop = SystemExit("stop-loop")
+    monkeypatch.setattr(
+        threading.Event, "wait",
+        lambda self, timeout=None: (_ for _ in ()).throw(_stop),
+    )
+    monkeypatch.setattr(
+        _time, "sleep", lambda _s: (_ for _ in ()).throw(_stop),
+    )
+
+    with pytest.raises(SystemExit, match="stop-loop"):
+        _auto_eod_sync(cfg, ctx)
+
+    # 股票链 + 指数/ETF 链 + 治理链
+    assert len(calls) == 3, calls
+    ie_cmd = calls[1]
+    ie_txt = " ".join(ie_cmd)
+    assert "sync_market_data.py" in ie_txt
+    assert "--asset-class" in ie_cmd and "all" in ie_cmd
+    assert "--mode" in ie_cmd and "incremental" in ie_cmd
+
+
+def _drive_eod_chain(monkeypatch, tmp_path, exit_codes):
+    """按序模拟子进程退出码，跑完一次 EOD 自动同步。
+
+    返回 (Popen 调用列表, 终态 state dict)。前置环境与
+    test_auto_eod_sync_index_etf_chain_default_on 一致：overlay_v1 +
+    治理启用 + IE 链默认开启。
+    """
+    import json as _json
+    import subprocess
+    import threading
+    import time as _time
+
+    import wtpy.apps.astock.api as api_mod
+    from wtpy.apps.astock.api import _auto_eod_sync
+
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_ENABLED", "1")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_TIME", "00:00")
+    monkeypatch.setenv("ASTOCK_MARKET_STORAGE_MODE", "overlay_v1")
+    monkeypatch.setenv("ASTOCK_MARKET_GOVERNANCE_ENABLED", "1")
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_MAX_RETRIES", "2")
+    # 显式固定 IE 链开关：三个用例的 Popen 调用序依赖它，外部环境
+    # 泄漏 ASTOCK_EOD_SYNC_INDEX_ETF=0 会导致退出码注入错位
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_INDEX_ETF", "1")
+    state_path = tmp_path / "state.json"
+    monkeypatch.setenv("ASTOCK_EOD_STATE_PATH", str(state_path))
+
+    cfg, ctx = _make_cfg_ctx(tmp_path)
+    monkeypatch.setattr(
+        api_mod,
+        "eod_sync_decide",
+        lambda **k: (True, "weekly lag", _dt.date.today()),
+    )
+
+    calls = []
+
+    class FakeProc:
+        def __init__(self, pid, code):
+            self.pid = pid
+            self.code = code
+
+        def wait(self, timeout=None):
+            return self.code
+
+    def _popen(cmd, **kw):
+        idx = len(calls)
+        calls.append(list(cmd))
+        return FakeProc(4300 + idx, exit_codes[idx])
+
+    monkeypatch.setattr(subprocess, "Popen", _popen)
+
+    class ImmediateThread:
+        def __init__(self, target=None, args=(), kwargs=None, **_o):
+            self.target, self.args, self.kwargs = target, args, kwargs or {}
+
+        def start(self):
+            self.target(*self.args, **self.kwargs)
+
+    monkeypatch.setattr(threading, "Thread", ImmediateThread)
+    _stop = SystemExit("stop-loop")
+    monkeypatch.setattr(
+        threading.Event, "wait",
+        lambda self, timeout=None: (_ for _ in ()).throw(_stop),
+    )
+    monkeypatch.setattr(
+        _time, "sleep", lambda _s: (_ for _ in ()).throw(_stop),
+    )
+
+    with pytest.raises(SystemExit, match="stop-loop"):
+        _auto_eod_sync(cfg, ctx)
+
+    state = (
+        _json.loads(state_path.read_text(encoding="utf-8"))
+        if state_path.exists()
+        else {}
+    )
+    return calls, state
+
+
+def test_auto_eod_sync_ie_warning_partial_still_runs_governance(monkeypatch, tmp_path):
+    """IE 链 exit=2（warning 级 partial，如 ETF 面指针发布失败）不阻塞治理链。
+
+    治理只作用于股票 overlay 层；同时总退出码保持 2，同晚重试与状态
+    可观测性不受影响。
+    """
+    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 2, 0])
+
+    # 股票链 -> IE 链 -> 治理链，三段都执行
+    assert len(calls) == 3, calls
+    assert "govern_market_data.py" in " ".join(calls[2])
+    assert calls[2][-2:] == ["--maintain", "--apply"]
+
+    assert state["last_sync_exit_code"] == 2
+    assert state["last_governance_exit_code"] == 0
+    assert state["last_governance_finished_at"]
+    # 治理放行不等于同步成功：非零退出码必须仍触发同晚重试
+    assert state["retry_count"] == 1
+    assert state["pending_retry_at"]
+
+
+def test_auto_eod_sync_ie_hard_fail_blocks_governance(monkeypatch, tmp_path):
+    """IE 链 exit=1（硬失败）维持"同步不干净就不治理"的既有语义。"""
+    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 1])
+
+    assert len(calls) == 2, calls
+    assert "govern_market_data.py" not in " ".join(map(" ".join, calls))
+    assert state["last_sync_exit_code"] == 1
+    assert state["last_governance_exit_code"] is None
+
+
+def test_auto_eod_sync_stocks_partial_blocks_governance(monkeypatch, tmp_path):
+    """股票链自身 exit=2 仍跳过 IE 链与治理（既有语义回归保护）。"""
+    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [2])
+
+    assert len(calls) == 1, calls
+    assert state["last_sync_exit_code"] == 2
+    assert state["last_governance_exit_code"] is None

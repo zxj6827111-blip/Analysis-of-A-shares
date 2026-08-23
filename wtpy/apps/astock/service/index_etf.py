@@ -79,29 +79,29 @@ _EXTRA_NAMES: Dict[str, str] = {
 
 _SSE_INDEX_RE = re.compile(r"^(?:sh|SSE\.IDX\.)000\d{3}$")
 _SZSE_INDEX_RE = re.compile(r"^(?:sz|SZSE\.IDX\.)399\d{3}$")
-_SH_ETF_RE = re.compile(r"^(?:sh|SSE\.ETF\.)(?:51|56|58)\d{4}$")
-_SZ_ETF_RE = re.compile(r"^(?:sz|SZSE\.ETF\.)(?:15|16|18)\d{4}$")
+_SH_ETF_RE = re.compile(r"^(?:sh|SSE\.ETF\.)(?:(?:51|52|56|58)\d{4}|(?:530|551)\d{3})$")
+_SZ_ETF_RE = re.compile(r"^(?:sz|SZSE\.ETF\.)(?:158|159)\d{3}$")
 
 # Dotted ts_code-style forms: 000001.SH (上证指数), 399001.SZ, 510300.SH, 159915.SZ.
 # Unlike bare 000xxx (which stays a stock — SZSE 000001 平安银行), the dotted
 # form is unambiguous because the exchange suffix is explicit.
 _SSE_INDEX_DOTTED_RE = re.compile(r"^000\d{3}\.sh$")
 _SZSE_INDEX_DOTTED_RE = re.compile(r"^399\d{3}\.sz$")
-_SH_ETF_DOTTED_RE = re.compile(r"^(?:51|56|58)\d{4}\.sh$")
-_SZ_ETF_DOTTED_RE = re.compile(r"^(?:15|16|18)\d{4}\.sz$")
+_SH_ETF_DOTTED_RE = re.compile(r"^(?:(?:51|52|56|58)\d{4}|(?:530|551)\d{3})\.sh$")
+_SZ_ETF_DOTTED_RE = re.compile(r"^(?:158|159)\d{3}\.sz$")
 
 # Bare 6-digit codes that cannot be A-share stocks (unambiguous segments):
-# 399xxx = SZSE index, 51/56/58xxxx = SH ETF, 15/16/18xxxx = SZ ETF/LOF.
+# 399xxx = SZSE index, 51/52/530/551/56/58xxxx = SH ETF, 158/159xxx = SZ ETF.
 _BARE_INDEX_RE = re.compile(r"^399\d{3}$")
-_BARE_SH_ETF_RE = re.compile(r"^(?:51|56|58)\d{4}$")
-_BARE_SZ_ETF_RE = re.compile(r"^(?:15|16|18)\d{4}$")
+_BARE_SH_ETF_RE = re.compile(r"^(?:(?:51|52|56|58)\d{4}|(?:530|551)\d{3})$")
+_BARE_SZ_ETF_RE = re.compile(r"^(?:158|159)\d{3}$")
 
 
 def classify_symbol(raw: str) -> str:
     """Return 'index' | 'etf' | 'stock' | '' for a raw query code.
 
     Bare 6-digit codes only become index/ETF when unambiguous
-    (399xxx / 51/56/58xxxx / 15/16/18xxxx). Bare 000xxx stays a stock
+    (399xxx / 51/52/56/58xxxx / 158/159xxx). Bare 000xxx stays a stock
     (SZSE 000001 平安银行), so SSE indices must carry the sh prefix.
     """
     t = str(raw or "").strip().lower()
@@ -220,8 +220,9 @@ def load_index_etf_day_bars(
 def list_etf_std_codes(cfg: AStockConfig) -> List[str]:
     """枚举通达信本地 day 目录中的全部 ETF 标准代码（SSE.ETF.* / SZSE.ETF.*）。
 
-    经 to_index_etf_std_code 识别后仅保留 .ETF. 段（沪 51/56/58、深 15/16/18），
-    排除指数（SSE.IDX.* / SZSE.IDX.*）与股票；目录缺失或为空时返回空列表。
+    经 to_index_etf_std_code 识别后仅保留 .ETF. 段（沪 51/52/56/58、
+    深 158/159），排除指数（SSE.IDX.* / SZSE.IDX.*）与股票；
+    目录缺失或为空时返回空列表。
     """
     root = Path(cfg.tdx_root)
     out: List[str] = []

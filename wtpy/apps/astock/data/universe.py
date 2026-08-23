@@ -53,7 +53,7 @@ def is_ashare_code(raw: str) -> bool:
         )
     ):
         # careful: sz1xxxxx may be funds; sz000 is main board
-        if num.startswith(("15", "16", "18", "50", "51", "52", "56", "58")):
+        if num.startswith(("15", "16", "18", "50", "51", "52", "53", "55", "56", "58")):
             return False
         if prefix == "sh" and num.startswith("5"):
             return False

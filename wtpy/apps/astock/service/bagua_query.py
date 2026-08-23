@@ -14,9 +14,11 @@ Price plane selectable:
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time as _bq_time
+from dataclasses import dataclass
 from datetime import date as _ymd_date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -45,6 +47,8 @@ from .index_etf import (
     to_index_etf_std_code,
 )
 from .stock_names import display_code_with_name, resolve_stock_name
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_ymd(value: Union[str, int, None]) -> int:
@@ -303,6 +307,36 @@ def load_day_bars_for_plane(
     return bars, meta
 
 
+@dataclass
+class BaguaSymbolResolution:
+    """单次符号解析的产物（load_symbol 的 resolve 阶段结果）。
+
+    保存选中的 manifest/record 与 asof 相关的覆盖信息。materialize_key
+    相同的两个解析（例如同一次导出里 WEEK 与 MONTH 命中同一数据集代次、
+    同一符号、同一 blob）可以共享同一份完整 DayBar 物化——多周期导出
+    借此把每股 2 次仓库加载降为 1 次；键含 manifest_sha256，consolidation
+    换代后新旧代次不会互相串数据（point-in-time 语义保持）。
+    """
+
+    manifest: Any
+    record: Any
+    covers_asof: bool
+    effective_first: int
+    effective_last: int
+    candidate_count: int
+    std_code: str = ""
+
+    @property
+    def materialize_key(self) -> tuple:
+        m = self.manifest
+        return (
+            m.dataset_id,
+            getattr(m, "manifest_sha256", "") or "",
+            self.record.symbol,
+            getattr(self.record, "blob_sha256", "") or "",
+        )
+
+
 class BaguaPlaneSession:
     """One-shot warehouse index for multi-symbol bagua plane loads.
 
@@ -471,6 +505,22 @@ class BaguaPlaneSession:
         *,
         asof: Optional[int] = None,
     ) -> Tuple[List[DayBar], Dict[str, Any]]:
+        """兼容入口：resolve → materialize → build_meta 三步串联。"""
+        res = self.resolve_symbol(std_code, asof=asof)
+        bars = self.materialize_symbol(res)
+        return bars, self.build_meta(res)
+
+    def resolve_symbol(
+        self,
+        std_code: str,
+        *,
+        asof: Optional[int] = None,
+    ) -> "BaguaSymbolResolution":
+        """解析符号到具体 manifest/record（纯选择，不做任何仓库 I/O 物化）。
+
+        选择语义与拆分前的 load_symbol 完全一致：qualified 变体优先、
+        正式产品面锁定、freshness/history 评分、asof 覆盖过滤。
+        """
         hits: List[Tuple[Any, Any, int, bool, int, int]] = []
         variants = _symbol_variants(std_code)
         # Variant priority matters: a bare 6-digit code collides across kinds
@@ -599,9 +649,27 @@ class BaguaPlaneSession:
 
         hits.sort(key=_score, reverse=True)
         manifest, rec, _, covers_asof, effective_first, effective_last = hits[0]
+        return BaguaSymbolResolution(
+            manifest=manifest,
+            record=rec,
+            covers_asof=bool(covers_asof),
+            effective_first=int(effective_first or 0),
+            effective_last=int(effective_last or 0),
+            candidate_count=len(hits),
+            std_code=str(std_code),
+        )
+
+    def materialize_symbol(
+        self, resolution: "BaguaSymbolResolution"
+    ) -> List[DayBar]:
+        """把解析结果物化为完整日线序列（overlay 合并或 blob 直读）。"""
+        manifest = resolution.manifest
+        rec = resolution.record
         if getattr(manifest, "storage_mode", "") == "overlay_v1":
-            market_bars = self.repo.load_bars(
-                dataset_id=manifest.dataset_id, symbol=rec.symbol
+            # 已持有 manifest/record：走 repo 的 record 直读入口，
+            # 跳过 load_bars 内部重复的变体线性扫描
+            market_bars = self.repo.load_record_bars(
+                manifest=manifest, record=rec
             )
             bars = [
                 DayBar(
@@ -619,13 +687,21 @@ class BaguaPlaneSession:
             bars = _bars_from_blob(self.store, rec.blob_sha256)
         if not bars:
             raise FileNotFoundError(
-                f"{std_code} 数据集 {manifest.dataset_id} blob 为空"
+                f"{resolution.std_code} 数据集 {manifest.dataset_id} blob 为空"
             )
+        return bars
+
+    def build_meta(
+        self, resolution: "BaguaSymbolResolution"
+    ) -> Dict[str, Any]:
+        """构建数据源元信息（字段与拆分前的 load_symbol 完全一致）。"""
+        manifest = resolution.manifest
+        rec = resolution.record
         formal_id = (
             self.formal_l2_id if self.source_key == "raw" else self.formal_l1_id
         )
         prov = getattr(manifest, "provenance", None) or {}
-        meta: Dict[str, Any] = {
+        return {
             "dataset_id": manifest.dataset_id,
             "dataset_source": manifest.source,
             "dataset_adjustment": manifest.adjustment,
@@ -634,10 +710,10 @@ class BaguaPlaneSession:
             "symbol_first_date": rec.first_date,
             "symbol_last_date": rec.last_date,
             "symbol_row_count": rec.row_count,
-            "covers_asof": bool(covers_asof),
-            "symbol_effective_first_date": effective_first,
-            "symbol_effective_last_date": effective_last,
-            "candidate_datasets": len(hits),
+            "covers_asof": bool(resolution.covers_asof),
+            "symbol_effective_first_date": resolution.effective_first,
+            "symbol_effective_last_date": resolution.effective_last,
+            "candidate_datasets": resolution.candidate_count,
             "session_indexed": True,
             "data_policy": prov.get("data_policy"),
             "expected_formal_l1_id": self.formal_l1_id,
@@ -646,7 +722,6 @@ class BaguaPlaneSession:
                 formal_id is None or manifest.dataset_id != formal_id
             ),
         }
-        return bars, meta
 
 
 # Process-wide plane-session reuse. Building the warehouse index is the
@@ -807,6 +882,122 @@ def _adjust_day_bars(
     return out, meta
 
 
+def _assemble_index_etf_bagua_result(
+    cfg: AStockConfig,
+    *,
+    std: str,
+    symbol_type: str,
+    asof: int,
+    per: str,
+    requested_adjust: str,
+    calc: BaguaCalculator,
+    day_bars: List[DayBar],
+    adj_meta: Dict[str, Any],
+) -> Dict[str, Any]:
+    """指数/ETF 卦象纯组装：输入已加载日线与 adj_meta，输出与
+    _query_bagua_index_etf 完全一致的结果字典（多周期单次物化共用）。"""
+    if per == "DAY":
+        bar, exact = _find_day_bar(day_bars, asof)
+        bar_meta = {
+            "date": int(bar.date),
+            "start_date": int(bar.date),
+            "end_date": int(bar.date),
+            "n_days": 1,
+            "closed": True,
+            "open": float(bar.open),
+            "high": float(bar.high),
+            "low": float(bar.low),
+            "close": float(bar.close),
+        }
+        o, h, l, c = bar.open, bar.high, bar.low, bar.close
+    else:
+        pb, exact = _find_period_bar(day_bars, per, asof)
+        bar_meta = {
+            "date": int(pb.date),
+            "start_date": int(getattr(pb, "start_date", pb.date)),
+            "end_date": int(getattr(pb, "end_date", pb.date)),
+            "n_days": int(getattr(pb, "n_days", 1)),
+            "closed": bool(getattr(pb, "closed", True)),
+            "open": float(pb.open),
+            "high": float(pb.high),
+            "low": float(pb.low),
+            "close": float(pb.close),
+        }
+        o, h, l, c = pb.open, pb.high, pb.low, pb.close
+
+    result = calc.calculate(open_price=o, high_price=h, low_price=l, close_price=c)
+    bagua = result.to_dict()
+
+    src_desc = (
+        "Tushare 数据仓库"
+        if adj_meta.get("dataset_source") == "tushare"
+        else f"数据仓库({adj_meta.get('dataset_source')}/{adj_meta.get('dataset_adjustment')})"
+    )
+    if not adj_meta.get("legacy_fallback"):
+        notes_head = (
+            "算法：开盘定上卦(mod8)、收盘定下卦(mod8)、最高+最低定动爻(mod6)；"
+            f"指数/ETF 无复权概念，价格直接读取{src_desc}（未复权、两位小数）。"
+        )
+    else:
+        notes_head = (
+            "算法：开盘定上卦(mod8)、收盘定下卦(mod8)、最高+最低定动爻(mod6)；"
+            "指数/ETF 无复权概念，价格直接读取通达信本地 day 文件（未复权、两位小数）。"
+        )
+    notes: List[str] = [notes_head]
+    if requested_adjust != "raw":
+        notes.append(
+            f"请求的复权口径 {requested_adjust} 对指数/ETF 不适用，已按未复权(raw)计算。"
+        )
+    if not exact and per == "DAY":
+        notes.append(f"请求日期 {asof} 非交易日或无日线，已使用最近交易日 {bar_meta['date']}。")
+    if per != "DAY" and not bar_meta.get("closed", True):
+        notes.append(f"该{('周' if per == 'WEEK' else '月')}K 尚未收官，卦象可能随后续交易日变化。")
+    if per == "DAY" and int(bar_meta["date"]) != asof:
+        notes.append(f"实际使用日线日期：{bar_meta['date']}。")
+
+    name = resolve_index_etf_name(std)
+    disp = display_code(std)
+
+    return {
+        "ok": True,
+        "code": disp,
+        "name": name,
+        "display": display_code_with_name(disp, name),
+        "std_code": std,
+        "symbol_type": symbol_type,
+        "query_date": asof,
+        "period": per,
+        "adjust": "raw",
+        "price_plane": adj_meta.get("price_plane"),
+        "bar_date_exact": exact if per == "DAY" else (int(bar_meta["end_date"]) == asof),
+        "bar": bar_meta,
+        "bagua": bagua,
+        "algorithm": {
+            "open_to_upper": "digit_sum(open) mod 8 (0→8)",
+            "close_to_lower": "digit_sum(close) mod 8 (0→8)",
+            "hl_to_yao": "digit_sum(high)+digit_sum(low) mod 6 (0→6)",
+            "price_format": adj_meta.get("price_format"),
+            "adjust": "raw",
+        },
+        "adjust_meta": adj_meta,
+        "notes": notes,
+        "summary": {
+            "full_name": bagua.get("full_name") or bagua.get("gua_name") or "",
+            "yao_name": bagua.get("yao_name") or bagua.get("line_name") or "",
+            "state_id": bagua.get("state_id") or "",
+            "action_signal": bagua.get("action_signal") or "",
+            "market_judgement": bagua.get("market_judgement")
+            or bagua.get("market_summary")
+            or "",
+            "upper": f"{bagua.get('upper_alias') or bagua.get('upper_name') or ''}"
+            f"({bagua.get('upper_id')})",
+            "lower": f"{bagua.get('lower_alias') or bagua.get('lower_name') or ''}"
+            f"({bagua.get('lower_id')})",
+            "yao_order": bagua.get("yao_order"),
+        },
+    }
+
+
 def _query_bagua_index_etf(
     cfg: AStockConfig,
     *,
@@ -859,203 +1050,72 @@ def _query_bagua_index_etf(
         "requested_adjust": requested_adjust,
     }
 
-    if per == "DAY":
-        bar, exact = _find_day_bar(day_bars, asof)
-        bar_meta = {
-            "date": int(bar.date),
-            "start_date": int(bar.date),
-            "end_date": int(bar.date),
-            "n_days": 1,
-            "closed": True,
-            "open": float(bar.open),
-            "high": float(bar.high),
-            "low": float(bar.low),
-            "close": float(bar.close),
-        }
-        o, h, l, c = bar.open, bar.high, bar.low, bar.close
-    else:
-        pb, exact = _find_period_bar(day_bars, per, asof)
-        bar_meta = {
-            "date": int(pb.date),
-            "start_date": int(getattr(pb, "start_date", pb.date)),
-            "end_date": int(getattr(pb, "end_date", pb.date)),
-            "n_days": int(getattr(pb, "n_days", 1)),
-            "closed": bool(getattr(pb, "closed", True)),
-            "open": float(pb.open),
-            "high": float(pb.high),
-            "low": float(pb.low),
-            "close": float(pb.close),
-        }
-        o, h, l, c = pb.open, pb.high, pb.low, pb.close
-
-    result = calc.calculate(open_price=o, high_price=h, low_price=l, close_price=c)
-    bagua = result.to_dict()
-
-    notes: List[str] = []
-    notes.append(
-        "算法：开盘定上卦(mod8)、收盘定下卦(mod8)、最高+最低定动爻(mod6)；"
-        f"指数/ETF 无复权概念，价格直接读取{src_desc}（未复权、两位小数）。"
+    return _assemble_index_etf_bagua_result(
+        cfg,
+        std=std,
+        symbol_type=symbol_type,
+        asof=asof,
+        per=per,
+        requested_adjust=requested_adjust,
+        calc=calc,
+        day_bars=day_bars,
+        adj_meta=adj_meta,
     )
-    if requested_adjust != "raw":
-        notes.append(
-            f"请求的复权口径 {requested_adjust} 对指数/ETF 不适用，已按未复权(raw)计算。"
-        )
-    if not exact and per == "DAY":
-        notes.append(f"请求日期 {asof} 非交易日或无日线，已使用最近交易日 {bar_meta['date']}。")
-    if per != "DAY" and not bar_meta.get("closed", True):
-        notes.append(f"该{('周' if per == 'WEEK' else '月')}K 尚未收官，卦象可能随后续交易日变化。")
-    if per == "DAY" and int(bar_meta["date"]) != asof:
-        notes.append(f"实际使用日线日期：{bar_meta['date']}。")
 
-    name = resolve_index_etf_name(std)
-    disp = display_code(std)
 
+def _warehouse_adj_meta(adj: str, ds_meta: Dict[str, Any]) -> Dict[str, Any]:
+    """从仓库数据源元信息构建 adjust_meta（字段与原内联逻辑完全一致）。"""
+    if adj == "tdx_front":
+        src_label = "通达信前复权数据集"
+        price_plane = "L1_signal_price"
+    elif adj == "tushare_qfq":
+        ds_src = ds_meta.get("dataset_source")
+        ds_adj = ds_meta.get("dataset_adjustment")
+        if ds_src == "tushare" and ds_adj == "qfq":
+            src_label = "Tushare官方前复权数据集"
+        elif ds_adj in ("tushare_factor_qfq", "composite_tushare_factor_qfq"):
+            src_label = "派生Tushare因子前复权数据集"
+        else:
+            src_label = "Tushare前复权数据集"
+        price_plane = "L1_signal_price"
+    else:
+        ds_src = ds_meta.get("dataset_source")
+        if ds_src == "internal":
+            src_label = "正式L2复合数据集" if ds_meta.get("dataset_adjustment") == "composite_none" else "内部未复权数据集"
+        elif ds_src == "tushare":
+            src_label = "Tushare未复权日线"
+        elif ds_src == "legacy_tdx_day":
+            src_label = "本地通达信day文件(未复权后备)"
+        else:
+            src_label = "未复权数据集"
+        price_plane = "L2_trade_price"
     return {
-        "ok": True,
-        "code": disp,
-        "name": name,
-        "display": display_code_with_name(disp, name),
-        "std_code": std,
-        "symbol_type": symbol_type,
-        "query_date": asof,
-        "period": per,
         "adjust": adj,
-        "price_plane": adj_meta.get("price_plane"),
-        "bar_date_exact": exact if per == "DAY" else (int(bar_meta["end_date"]) == asof),
-        "bar": bar_meta,
-        "bagua": bagua,
-        "algorithm": {
-            "open_to_upper": "digit_sum(open) mod 8 (0→8)",
-            "close_to_lower": "digit_sum(close) mod 8 (0→8)",
-            "hl_to_yao": "digit_sum(high)+digit_sum(low) mod 6 (0→6)",
-            "price_format": adj_meta.get("price_format"),
-            "adjust": adj,
-        },
-        "adjust_meta": adj_meta,
-        "notes": notes,
-        "summary": {
-            "full_name": bagua.get("full_name") or bagua.get("gua_name") or "",
-            "yao_name": bagua.get("yao_name") or bagua.get("line_name") or "",
-            "state_id": bagua.get("state_id") or "",
-            "action_signal": bagua.get("action_signal") or "",
-            "market_judgement": bagua.get("market_judgement")
-            or bagua.get("market_summary")
-            or "",
-            "upper": f"{bagua.get('upper_alias') or bagua.get('upper_name') or ''}"
-            f"({bagua.get('upper_id')})",
-            "lower": f"{bagua.get('lower_alias') or bagua.get('lower_name') or ''}"
-            f"({bagua.get('lower_id')})",
-            "yao_order": bagua.get("yao_order"),
-        },
+        "price_plane": price_plane,
+        "price_format": f"{src_label}（仓库直接读取，两位小数）"
+        if not ds_meta.get("legacy_fallback")
+        else f"{src_label}（两位小数）",
+        "signal_adjust": adj,
+        "model": "dataset_precomputed" if not ds_meta.get("legacy_fallback") else "legacy_day_file",
+        **ds_meta,
     }
 
 
-def query_bagua(
+def _assemble_stock_bagua_result(
     cfg: AStockConfig,
     *,
-    code: str,
-    date: Union[str, int],
-    period: str = "DAY",
-    adjust: str = "raw",
-    session: Optional["BaguaPlaneSession"] = None,
-    calc: Optional[BaguaCalculator] = None,
+    std: str,
+    asof: int,
+    per: str,
+    adj: str,
+    calc: BaguaCalculator,
+    day_bars: List[DayBar],
+    adj_meta: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Query hexagram for one stock at a given date and period.
-
-    adjust: raw | tdx_front | tushare_qfq | standard_qfq | asof_forward_qfq
-
-    Optional ``session`` / ``calc`` reuse the warehouse index and knowledge
-    base across multi-stock batch / export (avoids per-symbol full scans).
-    """
-    std = normalize_query_code(code)
-    asof = _parse_ymd(date)
-    per = normalize_period(period)
-    adj = normalize_adjust_mode(adjust)
-
-    if adj == "tdx_front":
-        raise SourceDisabledError(
-            "tdx_front 已停用：系统已切换为 Tushare-only 数据策略，不再提供"
-            "通达信前复权数据面。请使用 tushare_qfq（正式 L1）或 raw（正式 L2）。"
-        )
-
-    if calc is None:
-        if not cfg.bagua_json:
-            raise FileNotFoundError("bagua knowledge json not configured")
-        calc = BaguaCalculator.from_json(cfg.bagua_json)
-
-    symbol_type = classify_symbol(code)
-    if symbol_type in ("index", "etf"):
-        return _query_bagua_index_etf(
-            cfg,
-            std=std,
-            symbol_type=symbol_type,
-            asof=asof,
-            per=per,
-            requested_adjust=adj,
-            calc=calc,
-        )
-
-    if adj in ("tdx_front", "tushare_qfq", "raw"):
-        try:
-            if session is not None:
-                day_bars, ds_meta = session.load_symbol(std, asof=asof)
-            else:
-                day_bars, ds_meta = _load_dataset_bars(cfg, std, adj, asof=asof)
-        except FileNotFoundError:
-            if adj != "raw":
-                raise
-            # 仓库无未复权集时回退旧 DataStore / 通达信 day 文件
-            day_bars = load_day_bars(cfg, std)
-            ds_meta = {
-                "dataset_id": None,
-                "dataset_source": "legacy_tdx_day",
-                "dataset_adjustment": "none",
-                "dataset_status": "legacy",
-                "covers_asof": None,
-                "candidate_datasets": 0,
-                "legacy_fallback": True,
-            }
-        if not day_bars:
-            raise FileNotFoundError(f"no market data for {display_code(std)}")
-        if adj == "tdx_front":
-            src_label = "通达信前复权数据集"
-            price_plane = "L1_signal_price"
-        elif adj == "tushare_qfq":
-            ds_src = ds_meta.get("dataset_source")
-            ds_adj = ds_meta.get("dataset_adjustment")
-            if ds_src == "tushare" and ds_adj == "qfq":
-                src_label = "Tushare官方前复权数据集"
-            elif ds_adj in ("tushare_factor_qfq", "composite_tushare_factor_qfq"):
-                src_label = "派生Tushare因子前复权数据集"
-            else:
-                src_label = "Tushare前复权数据集"
-            price_plane = "L1_signal_price"
-        else:
-            ds_src = ds_meta.get("dataset_source")
-            if ds_src == "internal":
-                src_label = "正式L2复合数据集" if ds_meta.get("dataset_adjustment") == "composite_none" else "内部未复权数据集"
-            elif ds_src == "tushare":
-                src_label = "Tushare未复权日线"
-            elif ds_src == "legacy_tdx_day":
-                src_label = "本地通达信day文件(未复权后备)"
-            else:
-                src_label = "未复权数据集"
-            price_plane = "L2_trade_price"
-        adj_meta: Dict[str, Any] = {
-            "adjust": adj,
-            "price_plane": price_plane,
-            "price_format": f"{src_label}（仓库直接读取，两位小数）"
-            if not ds_meta.get("legacy_fallback")
-            else f"{src_label}（两位小数）",
-            "signal_adjust": adj,
-            "model": "dataset_precomputed" if not ds_meta.get("legacy_fallback") else "legacy_day_file",
-            **ds_meta,
-        }
-    else:
-        day_raw = load_day_bars(cfg, std)
-        if not day_raw:
-            raise FileNotFoundError(f"no market data for {display_code(std)}")
-        day_bars, adj_meta = _adjust_day_bars(cfg, std, day_raw, adj, asof)
+    """股票卦象纯组装：输入已加载的日线与 adjust_meta，输出与
+    query_bagua 完全一致的结果字典（多周期单次物化共用此入口）。"""
+    if not day_bars:
+        raise FileNotFoundError(f"no market data for {display_code(std)}")
 
     if per == "DAY":
         bar, exact = _find_day_bar(day_bars, asof)
@@ -1174,6 +1234,90 @@ def query_bagua(
     }
 
 
+def query_bagua(
+    cfg: AStockConfig,
+    *,
+    code: str,
+    date: Union[str, int],
+    period: str = "DAY",
+    adjust: str = "raw",
+    session: Optional["BaguaPlaneSession"] = None,
+    calc: Optional[BaguaCalculator] = None,
+) -> Dict[str, Any]:
+    """Query hexagram for one stock at a given date and period.
+
+    adjust: raw | tdx_front | tushare_qfq | standard_qfq | asof_forward_qfq
+
+    Optional ``session`` / ``calc`` reuse the warehouse index and knowledge
+    base across multi-stock batch / export (avoids per-symbol full scans).
+    """
+    std = normalize_query_code(code)
+    asof = _parse_ymd(date)
+    per = normalize_period(period)
+    adj = normalize_adjust_mode(adjust)
+
+    if adj == "tdx_front":
+        raise SourceDisabledError(
+            "tdx_front 已停用：系统已切换为 Tushare-only 数据策略，不再提供"
+            "通达信前复权数据面。请使用 tushare_qfq（正式 L1）或 raw（正式 L2）。"
+        )
+
+    if calc is None:
+        if not cfg.bagua_json:
+            raise FileNotFoundError("bagua knowledge json not configured")
+        calc = BaguaCalculator.from_json(cfg.bagua_json)
+
+    symbol_type = classify_symbol(code)
+    if symbol_type in ("index", "etf"):
+        return _query_bagua_index_etf(
+            cfg,
+            std=std,
+            symbol_type=symbol_type,
+            asof=asof,
+            per=per,
+            requested_adjust=adj,
+            calc=calc,
+        )
+
+    if adj in ("tdx_front", "tushare_qfq", "raw"):
+        try:
+            if session is not None:
+                day_bars, ds_meta = session.load_symbol(std, asof=asof)
+            else:
+                day_bars, ds_meta = _load_dataset_bars(cfg, std, adj, asof=asof)
+        except FileNotFoundError:
+            if adj != "raw":
+                raise
+            # 仓库无未复权集时回退旧 DataStore / 通达信 day 文件
+            day_bars = load_day_bars(cfg, std)
+            ds_meta = {
+                "dataset_id": None,
+                "dataset_source": "legacy_tdx_day",
+                "dataset_adjustment": "none",
+                "dataset_status": "legacy",
+                "covers_asof": None,
+                "candidate_datasets": 0,
+                "legacy_fallback": True,
+            }
+        adj_meta = _warehouse_adj_meta(adj, ds_meta)
+    else:
+        day_raw = load_day_bars(cfg, std)
+        if not day_raw:
+            raise FileNotFoundError(f"no market data for {display_code(std)}")
+        day_bars, adj_meta = _adjust_day_bars(cfg, std, day_raw, adj, asof)
+
+    return _assemble_stock_bagua_result(
+        cfg,
+        std=std,
+        asof=asof,
+        per=per,
+        adj=adj,
+        calc=calc,
+        day_bars=day_bars,
+        adj_meta=adj_meta,
+    )
+
+
 def _resolve_batch_codes(
     cfg: AStockConfig,
     codes: Optional[Sequence[str]] = None,
@@ -1205,33 +1349,138 @@ def _resolve_batch_codes(
     return out
 
 
+def _clean_etf_symbols(manifest) -> List[str]:
+    """对 manifest 内带 blob 的 .ETF. 标签记录做品种复验，只留真 ETF。"""
+    from ..data.historical_universe import ETF as INSTRUMENT_ETF
+    from ..data.historical_universe import classify_instrument
+
+    out: List[str] = []
+    for r in manifest.symbols:
+        if not r.blob_sha256 or ".ETF." not in r.symbol:
+            continue
+        parts = r.symbol.split(".")
+        if len(parts) != 3:
+            continue
+        # 品种复验：历史伪 .ETF. 标签（LOF/其他基金，如 SZSE.ETF.150001）
+        if classify_instrument(parts[2], parts[0]) != INSTRUMENT_ETF:
+            continue
+        out.append(r.symbol)
+    return sorted(out)
+
+
+def _load_etf_surface_pointer(md_root) -> dict:
+    """读取权威 ETF 面指针（etf_surface_pointer.json），缺失/损坏返回 {}。"""
+    import json as _json
+
+    p = Path(md_root) / "etf_surface_pointer.json"
+    try:
+        data = _json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def _enumerate_export_etf_pool(cfg: AStockConfig) -> List[str]:
-    """ETF pool for full-market exports: warehouse first, TDX fallback.
+    """ETF pool for full-market exports: current warehouse surface, TDX fallback.
 
     The Tushare-only deployment has NO local TDX day files, so enumerating
     ``vipdoc/.../lday`` (list_etf_std_codes) yields an empty (or near-empty)
-    ``etf-all`` export sheet. Prefer the ETF symbols present in the ready
-    tushare/none warehouse datasets (blob-backed), falling back to TDX day
+    ``etf-all`` export sheet. Prefer the ETF symbols present in the CURRENT
+    ready tushare/none ETF surface (blob-backed), falling back to TDX day
     files only when the warehouse has none.
+
+    选面优先级：
+      1. **权威面指针** `etf_surface_pointer.json`（成功且覆盖达标的完整
+         universe 同步由 sync 侧显式发布——full 与生产 EOD 的增量链均会
+         发布；仅 --symbol 局部同步不更新）。指针有效时直接采用其面
+         ——导出不再自行猜测 manifest。有效性 = sha 必填 + 匹配 manifest
+         声明字段 + **匹配磁盘文件实算哈希**（防止"改内容不改声明 sha"
+         的篡改/损坏面混入导出）。
+      2. 无指针时的启发式（历史闭环三道防线，上游 universe 修复只保证
+         **新**同步干净，旧 manifest 里已标成 .ETF. 的 LOF/退市污染必须
+         在这里兜住）：
+           a. 品种复验：classify_instrument 重新判定，伪标签剔除；
+           b. 完整度门槛：干净符号数不足最大面一半的候选视为局部重同步
+              残片，不参与选面；
+           c. 排序 ``(cutoff, created_at, clean_count)``——数量排在
+              created_at 之后：同 cutoff 下"新创建的干净小面"必须胜过
+              "更早创建的污染大面"。
+         候选 manifest 同样做文件实算哈希自洽校验（声明 sha 与内容
+         不一致即被篡改/损坏，不参与选面）。
+      所有路径返回前都经过品种复验，退市 ETF 的最终清除依赖重新生成
+      干净 manifest 并发布指针（部署后执行一次完整 ETF 同步）。
     """
     try:
+        from ..data.dataset_store import validate_manifest_path
         from ..data.repository import MarketDataRepository
 
         md_root = getattr(cfg, "market_data_root", None)
         if md_root and Path(md_root).exists():
             repo = MarketDataRepository.from_root(md_root)
-            etfs: set = set()
+
+            def _clean(manifest) -> List[str]:
+                return _clean_etf_symbols(manifest)
+
+            def _file_intact(dataset_id: str, expected_sha: str) -> bool:
+                """manifest 磁盘文件实算哈希与声明 sha 一致（防篡改/损坏）。"""
+                return validate_manifest_path(
+                    repo.manifests_dir / f"{dataset_id}.json",
+                    expected_sha256=expected_sha,
+                )
+
+            # ---- 1) 权威面指针优先（fail-closed：sha 必填且必须匹配）----
+            pointer = _load_etf_surface_pointer(md_root)
+            pid = str(pointer.get("dataset_id") or "")
+            psha = str(pointer.get("manifest_sha256") or "")
+            if pid:
+                try:
+                    pm = repo.get_dataset(pid, deep_copy=False)
+                except Exception:
+                    pm = None
+                if (
+                    pm is not None
+                    and pm.status == "ready"
+                    and psha
+                    and getattr(pm, "manifest_sha256", "") == psha
+                    and _file_intact(pid, psha)
+                ):
+                    syms = _clean(pm)
+                    if syms:
+                        return syms
+                print(
+                    "  NOTE: ETF surface pointer invalid "
+                    f"({pid[:48]}); falling back to surface heuristic"
+                )
+
+            # ---- 2) 启发式选面（无指针 / 指针失效）----
+            candidates: List[Tuple[Any, List[str]]] = []
             for m in repo.list_datasets(
                 source="tushare", adjustment="none", period="1d",
                 deep_copy=False,
             ):
                 if m.status != "ready":
                     continue
-                for r in m.symbols:
-                    if r.blob_sha256 and ".ETF." in r.symbol:
-                        etfs.add(r.symbol)
-            if etfs:
-                return sorted(etfs)
+                msha = str(getattr(m, "manifest_sha256", "") or "")
+                if not _file_intact(str(m.dataset_id), msha):
+                    continue
+                clean_syms = _clean(m)
+                if clean_syms:
+                    candidates.append((m, clean_syms))
+            if candidates:
+                max_clean = max(len(c[1]) for c in candidates)
+                candidates = [
+                    c for c in candidates
+                    if len(c[1]) * 2 >= max_clean
+                ]
+                candidates.sort(
+                    key=lambda t: (
+                        int(t[0].data_cutoff_date or 0),
+                        t[0].created_at or "",
+                        len(t[1]),
+                    ),
+                    reverse=True,
+                )
+                return list(candidates[0][1])
     except Exception:
         pass
     # TDX 兜底(本地有通达信盘后数据时)
@@ -2149,8 +2398,13 @@ def _weekly_style_row(
     month_row: Optional[Dict[str, Any]],
     rizhu: str = "",
     fallback_code: str = "",
+    note: str = "",
 ) -> List[Any]:
-    """One stock row in weekly_analysis stock-all layout (周卦列在前、月卦列在后)."""
+    """One stock row in weekly_analysis stock-all layout (周卦列在前、月卦列在后).
+
+    ``note``：失败行的结构化原因（data_status/error_reason），写入末尾
+    "数据状态" 列；正常行保持空串，避免无行情时留下难以解释的空白。
+    """
     base = week_row if (week_row and not week_row.get("error")) else month_row
     bar = (week_row or {}).get("bar") or (base or {}).get("bar") or {}
     code = (
@@ -2180,6 +2434,7 @@ def _weekly_style_row(
         _bagua_yao_explain(week_row),
         _bagua_combo(month_row),
         _bagua_yao_explain(month_row),
+        note,
     ]
 
 
@@ -2210,6 +2465,237 @@ def export_bagua_xlsx(
     )
 
 
+def _try_multiperiod_shared_materialize(
+    cfg: AStockConfig,
+    *,
+    code: str,
+    asof: int,
+    periods: Sequence[str],
+    adjust: str,
+    session: Optional["BaguaPlaneSession"],
+    calc: Optional[BaguaCalculator],
+    asof_map: Optional[Dict[str, int]],
+) -> Optional[Dict[str, Dict[str, Any]]]:
+    """多周期快路径：物化键相同的周期只做一次仓库加载。
+
+    返回 None 表示不适用或中途失败，调用方应回退到逐周期 query_bagua
+    原路径（legacy TDX 后备、standard_qfq、错误行语义都在那条路上）。
+    """
+    if session is None or calc is None:
+        return None
+    try:
+        adj = normalize_adjust_mode(adjust)
+    except ValueError:
+        return None
+    if adj not in ("raw", "tushare_qfq"):
+        return None  # standard_qfq / asof_forward_qfq 保持逐周期路径
+    try:
+        std = normalize_query_code(code)
+    except ValueError:
+        return None
+    try:
+        symbol_type = classify_symbol(code)
+        if symbol_type in ("index", "etf"):
+            # 指数/ETF 固定走 raw 面（与单周期入口一致）
+            return _multiperiod_index_etf_shared(
+                cfg,
+                std=std,
+                symbol_type=symbol_type,
+                asof=asof,
+                periods=periods,
+                requested_adjust=adj,
+                calc=calc,
+                asof_map=asof_map,
+            )
+
+        resolutions: Dict[str, Tuple[int, "BaguaSymbolResolution"]] = {}
+        for per in periods:
+            per_asof = asof_map.get(per, asof) if asof_map else asof
+            resolutions[per] = (
+                per_asof,
+                session.resolve_symbol(std, asof=per_asof),
+            )
+        bars_by_key: Dict[tuple, List[DayBar]] = {}
+        out: Dict[str, Dict[str, Any]] = {}
+        for per in periods:
+            per_asof, res = resolutions[per]
+            key = res.materialize_key
+            if key not in bars_by_key:
+                bars_by_key[key] = session.materialize_symbol(res)
+            adj_meta = _warehouse_adj_meta(adj, session.build_meta(res))
+            out[per] = _assemble_stock_bagua_result(
+                cfg,
+                std=std,
+                asof=per_asof,
+                per=per,
+                adj=adj,
+                calc=calc,
+                day_bars=bars_by_key[key],
+                adj_meta=adj_meta,
+            )
+        return out
+    except Exception as e:
+        # 回退到逐周期路径是正确行为（那条路是唯一权威实现），但快路径
+        # 自身若出 bug 不应无声无息——debug 级别留痕，不干扰正常回退。
+        logger.debug(
+            "multiperiod fast path fallback for %s: %s: %s",
+            code, type(e).__name__, e,
+        )
+        return None
+
+
+def _etf_warehouse_adj_meta(
+    wmeta: Dict[str, Any], requested_adjust: str
+) -> Dict[str, Any]:
+    """指数/ETF 仓库数据面的 adj_meta（字段与单周期入口完全一致）。"""
+    ds_source = wmeta.get("dataset_source")
+    ds_adjust = wmeta.get("dataset_adjustment")
+    src_desc = (
+        "Tushare 数据仓库"
+        if ds_source == "tushare"
+        else f"数据仓库({ds_source}/{ds_adjust})"
+    )
+    return {
+        "adjust": "raw",
+        "price_plane": "L2_trade_price",
+        "price_format": f"未复权（指数/ETF 无复权口径，{src_desc}，两位小数）",
+        "signal_adjust": "raw",
+        "model": "warehouse",
+        "dataset_id": wmeta.get("dataset_id"),
+        "dataset_source": ds_source,
+        "dataset_adjustment": ds_adjust,
+        "dataset_status": wmeta.get("dataset_status"),
+        "legacy_fallback": False,
+        "requested_adjust": requested_adjust,
+    }
+
+
+def _etf_legacy_adj_meta(requested_adjust: str) -> Dict[str, Any]:
+    """指数/ETF 通达信 day 文件后备面的 adj_meta（镜像单周期入口 legacy 分支）。"""
+    return {
+        "adjust": "raw",
+        "price_plane": "L2_trade_price",
+        "price_format": "未复权（指数/ETF 无复权口径，通达信本地 day 文件，两位小数）",
+        "signal_adjust": "raw",
+        "model": "legacy_day_file",
+        "dataset_id": None,
+        "dataset_source": "legacy_tdx_day",
+        "dataset_adjustment": "none",
+        "dataset_status": "legacy",
+        "legacy_fallback": True,
+        "requested_adjust": requested_adjust,
+    }
+
+
+def _multiperiod_index_etf_shared(
+    cfg: AStockConfig,
+    *,
+    std: str,
+    symbol_type: str,
+    asof: int,
+    periods: Sequence[str],
+    requested_adjust: str,
+    calc: BaguaCalculator,
+    asof_map: Optional[Dict[str, int]],
+) -> Dict[str, Dict[str, Any]]:
+    """指数/ETF 多周期共享物化。
+
+    与股票路径被正式产品面锁定不同，指数/ETF 在仓库中可能存在多个快照
+    代次；逐周期独立解析会按"最近 cutoff"点时语义选中不同代次（如 WEEK
+    落在新快照、MONTH 因锚点更近落在旧快照），导致同一 ETF 物化两次。
+    因此这里先做**锚点面钉定**：以最晚查询日解析一次，若该面覆盖全部
+    周期查询日（first <= min(asofs)），则全部周期共享同一份物化——与
+    股票路径的"同一 manifest 单次物化"对齐。代价是非锚点周期的数据集
+    溯源字段（adjust_meta.dataset_id 等）可能与旧逐周期导出不同（价格与
+    卦象完全一致：快照为追加式，历史行内容相同）。
+
+    锚点面不覆盖更早周期时（如新上市 ETF 晚于上月末），退回逐周期独立
+    解析；无法解析的周期共享**一次**通达信 day 文件（legacy）加载组装，
+    避免逐周期各加载一次。legacy 也失败时抛 FileNotFoundError，由上层
+    回退到单周期入口的错误行语义（与旧行为一致）。
+    """
+    std_id = to_index_etf_std_code(std) or std
+    raw_session = _get_plane_session(cfg, "raw")
+    per_asofs: Dict[str, int] = {
+        per: (asof_map.get(per, asof) if asof_map else asof)
+        for per in periods
+    }
+
+    # ---- 锚点面钉定：一次解析 + 覆盖校验 + 全周期共享 ----
+    anchor_asof = max(per_asofs.values())
+    try:
+        anchor = raw_session.resolve_symbol(std_id, asof=anchor_asof)
+    except FileNotFoundError:
+        anchor = None
+    if anchor is not None:
+        rec_first = int(anchor.record.first_date or 0)
+        if rec_first <= min(per_asofs.values()):
+            bars = raw_session.materialize_symbol(anchor)
+            adj_meta = _etf_warehouse_adj_meta(
+                raw_session.build_meta(anchor), requested_adjust
+            )
+            return {
+                per: _assemble_index_etf_bagua_result(
+                    cfg,
+                    std=std,
+                    symbol_type=symbol_type,
+                    asof=per_asofs[per],
+                    per=per,
+                    requested_adjust=requested_adjust,
+                    calc=calc,
+                    day_bars=bars,
+                    adj_meta=adj_meta,
+                )
+                for per in periods
+            }
+
+    # ---- 混合路径：仓库面逐周期独立解析 + 未覆盖周期共享一次 legacy 加载 ----
+    resolved: Dict[str, Tuple[int, "BaguaSymbolResolution"]] = {}
+    unresolved_asofs: List[int] = []
+    for per in periods:
+        per_asof = per_asofs[per]
+        try:
+            resolved[per] = (
+                per_asof,
+                raw_session.resolve_symbol(std_id, asof=per_asof),
+            )
+        except FileNotFoundError:
+            if per_asof not in unresolved_asofs:
+                unresolved_asofs.append(per_asof)
+    legacy_bars: Optional[List[DayBar]] = None
+    if unresolved_asofs:
+        legacy_bars = load_index_etf_day_bars(cfg, std)
+
+    bars_by_key: Dict[tuple, List[DayBar]] = {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for per in periods:
+        per_asof = per_asofs[per]
+        if per in resolved:
+            _, res = resolved[per]
+            key = res.materialize_key
+            if key not in bars_by_key:
+                bars_by_key[key] = raw_session.materialize_symbol(res)
+            adj_meta = _etf_warehouse_adj_meta(
+                raw_session.build_meta(res), requested_adjust
+            )
+            bars = bars_by_key[key]
+        else:
+            adj_meta = _etf_legacy_adj_meta(requested_adjust)
+            bars = legacy_bars
+        out[per] = _assemble_index_etf_bagua_result(
+            cfg,
+            std=std,
+            symbol_type=symbol_type,
+            asof=per_asof,
+            per=per,
+            requested_adjust=requested_adjust,
+            calc=calc,
+            day_bars=bars,
+            adj_meta=adj_meta,
+        )
+    return out
+
+
 def _query_bagua_periods_for_code(
     cfg: AStockConfig,
     *,
@@ -2221,11 +2707,25 @@ def _query_bagua_periods_for_code(
     calc: Optional[BaguaCalculator] = None,
     asof_map: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """Compute bagua for one stock across multiple periods (one bar load)."""
+    """Compute bagua for one code across multiple periods.
+
+    默认尝试快路径（WEEK/MONTH 共享一次物化）；不适用的口径或快路径
+    失败时回退到逐周期 query_bagua——该循环同时是 legacy/标准前复权/
+    错误行的唯一权威实现。
+    """
+    fast = _try_multiperiod_shared_materialize(
+        cfg,
+        code=code,
+        asof=asof,
+        periods=periods,
+        adjust=adjust,
+        session=session,
+        calc=calc,
+        asof_map=asof_map,
+    )
+    if fast is not None:
+        return fast
     out: Dict[str, Dict[str, Any]] = {}
-    # First period loads bars via query_bagua; subsequent reuse same session/calc.
-    # Still one warehouse load per period internally — but shared session avoids
-    # re-indexing. For true single-load, call query once per period with session.
     for per in periods:
         per_asof = asof_map.get(per, asof) if asof_map else asof
         try:
@@ -2250,6 +2750,13 @@ def _query_bagua_periods_for_code(
                 name = resolve_stock_name(cfg, disp, std_code=std or None) or ""
             except Exception:
                 pass
+            # 结构化失败原因：导出行据此展示，避免无行情时只留空白
+            if isinstance(e, FileNotFoundError):
+                data_status = "no_data"
+            elif isinstance(e, SourceDisabledError):
+                data_status = "source_disabled"
+            else:
+                data_status = "error"
             out[per] = {
                 "ok": False,
                 "code": disp,
@@ -2260,6 +2767,8 @@ def _query_bagua_periods_for_code(
                 "query_date": per_asof,
                 "period": per,
                 "adjust": adjust,
+                "data_status": data_status,
+                "error_reason": str(e),
                 "error": str(e),
             }
     return out
@@ -2361,11 +2870,23 @@ def _export_sheet_rows(
             totals["ok"] += 1
         else:
             totals["error"] += 1
+        # 失败行的结构化原因（data_status/error_reason），写入"数据状态"列
+        note_parts: List[str] = []
+        for failed in (week_row, month_row):
+            if failed and failed.get("error"):
+                note_parts.append(
+                    "{}[{}]: {}".format(
+                        failed.get("period") or "?",
+                        failed.get("data_status") or "error",
+                        (failed.get("error_reason") or failed.get("error") or "")[:80],
+                    )
+                )
         row = _weekly_style_row(
             week_row=week_row,
             month_row=month_row,
             rizhu=rizhu,
             fallback_code=raw_code,
+            note="；".join(note_parts),
         )
         if resolve_names and c6 and not row[1] and ".ETF." in str(raw_code):
             try:
@@ -2600,6 +3121,7 @@ def export_bagua_multi_period_xlsx(
             "爻辞解释",
             f"月卦月线-组合({month_label})",
             "爻辞解释",
+            "数据状态",
         ]
         ws.append(headers)
         for cell in ws[1]:

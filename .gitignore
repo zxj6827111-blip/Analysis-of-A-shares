@@ -34,6 +34,8 @@ ParserCTPFlow
 /outputs_astock/
 *.log
 .pytest_cache/
+# 本地批量跑测产生的临时目录（如 .pytest-full-ready/），一律不入库
+.pytest-*/
 .codegraph/
 .codex/
 .agents/

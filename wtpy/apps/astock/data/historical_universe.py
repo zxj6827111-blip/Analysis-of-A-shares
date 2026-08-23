@@ -66,7 +66,9 @@ def classify_instrument(code: str, exchange: str) -> str:
             return A_SHARE
         if code.startswith("900"):
             return B_SHARE
-        if code.startswith(("51", "52", "56", "58")):
+        # 沪市 ETF：51/52/56/58 传统段 + 530/551 新段（服务器实测已有
+        # 真实行情，如 530060/530300/551060/551900）；550 保持非 ETF。
+        if code.startswith(("51", "52", "530", "551", "56", "58")):
             return ETF
         if code.startswith(("501", "502", "506")):
             return LOF
@@ -84,7 +86,9 @@ def classify_instrument(code: str, exchange: str) -> str:
             return A_SHARE
         if code.startswith("200"):
             return B_SHARE
-        if code.startswith("159"):
+        # 深市 ETF：159（传统段）+ 158（新段）。16xxxx=LOF、其余 15/18=
+        # 其他场内基金，不得标为 ETF。
+        if code.startswith(("158", "159")):
             return ETF
         if code.startswith(("16", "15")):
             return LOF if code.startswith("16") else FUND_OTHER
