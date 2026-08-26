@@ -1671,7 +1671,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
           <button type="button" class="btn btn-export-secondary" id="bqExportBtn" title="导出全市场日/周/月线卦象 Excel">⇩ 导出全市场（后台）</button>
           <span class="bq-export-note">「导出输入的股票」快速导出输入框代码；「导出全市场」为后台任务，耗时较长</span>
         </div>
-        <div class="muted" style="font-size:11px;margin-top:8px" id="bqHint">指数/ETF 无复权口径，卦象按未复权(raw)计算；下拉预设可快速填入（也可手动输入 sh000001、sh510300、sz159915 等）。导出为周报格式：code/name/week_end/OHLC/日柱/周卦组合(标注周)/爻辞/月卦组合(标注月)/爻辞；月卦默认取查询月份的上一个月（如8月查询导出7月月卦），周卦取查询周；导出全市场=同一 Excel 内 A股(stock-all)与全量ETF(etf-all) 两个 sheet，手动代码含 ETF 时也按类型分 sheet；导出卦象不含卦符。日柱自动读桌面「股票+卦象/日柱(1).xlsx」。Ctrl+F5 强刷后生效。</div>
+        <div class="muted" style="font-size:11px;margin-top:8px" id="bqHint">指数/ETF 无复权口径，卦象按未复权(raw)计算；下拉预设可快速填入（也可手动输入 sh000001、sh510300、sz159915 等）。导出为周报格式：code/name/week_end/OHLC/日柱/周卦组合(标注周)/爻辞/周·高岛易断/月卦组合(标注月)/爻辞/月·高岛易断/数据状态；高岛易断列为《高岛易断》问营商断语（覆盖 379/384 爻，仅供解读、不参与选股，个别爻原书无断语时留空）；月卦默认取查询月份的上一个月（如8月查询导出7月月卦），周卦取查询周；导出全市场=同一 Excel 内 A股(stock-all)与全量ETF(etf-all) 两个 sheet，手动代码含 ETF 时也按类型分 sheet；导出卦象不含卦符。日柱自动读桌面「股票+卦象/日柱(1).xlsx」。Ctrl+F5 强刷后生效。</div>
         <div id="bqGuidePanel" style="display:none;border:1px solid var(--line,#2a3a55);border-radius:8px;padding:12px 14px;margin-top:10px;font-size:12px;line-height:1.9;color:#c3d0e0;background:rgba(24,38,60,.35)">
           <div style="font-weight:600;color:#9fc7ff;margin-bottom:6px">四步使用指南</div>
           <ol style="margin:0;padding-left:20px">
