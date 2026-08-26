@@ -345,6 +345,11 @@
     .forecast-panel p{margin:4px 0;font-size:12px}
     .forecast-panel .judgement{font-size:13px;font-weight:650;margin-top:8px}
     .forecast-panel .note{font-size:10px;color:#7f91a8;margin-top:4px}
+    /* 折叠面板标题：说明类内容（起卦算法、数据集出处）默认收起，需要审计时展开 */
+    .panel-fold{cursor:pointer;font-size:12px;color:#b6c5d7;list-style:none;user-select:none}
+    .panel-fold::-webkit-details-marker{display:none}
+    .panel-fold::before{content:"▸ ";color:#7f91a8}
+    details[open]>.panel-fold::before{content:"▾ "}
     .task-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:12px 0}
     .task-layout{display:block;width:100%}
 
@@ -6395,9 +6400,9 @@ async function expCreateAndStart() {
           "</div>"
         : "") +
       (notes
-        ? '<div class="forecast-panel"><h4>说明</h4><ul style="margin:0;padding-left:18px;font-size:12px;color:#9aafc4">' +
+        ? '<details class="forecast-panel"><summary class="panel-fold">说明（起卦算法与数据来源）</summary><ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:#9aafc4">' +
           notes +
-          "</ul></div>"
+          "</ul></details>"
         : "");
     if (card) card.style.display = "";
     if (opts.allowConstituents && (data.symbol_type === "index" || data.symbol_type === "etf") && data.code) {
