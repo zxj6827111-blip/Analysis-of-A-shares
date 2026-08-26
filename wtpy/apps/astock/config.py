@@ -101,6 +101,8 @@ class AStockConfig:
     mapping_path: Optional[Path] = None
     manifest_path: Optional[Path] = None
     bagua_json: Optional[Path] = None
+    # 《高岛易断》营商断语 sidecar（旁挂于 bagua_384.json，仅用于解读展示）
+    bagua_gaodao_json: Optional[Path] = None
     # Forecast module (isolated from backtest outputs)
     forecast_root: Optional[Path] = None
     forecast_kb_path: Optional[Path] = None
@@ -151,6 +153,12 @@ class AStockConfig:
             )
         else:
             self.bagua_json = Path(self.bagua_json)
+        if self.bagua_gaodao_json is None:
+            self.bagua_gaodao_json = (
+                Path(__file__).resolve().parent / "bagua" / "bagua_gaodao.json"
+            )
+        else:
+            self.bagua_gaodao_json = Path(self.bagua_gaodao_json)
         if self.forecast_root is None:
             self.forecast_root = self.storage_root / "forecast"
         else:
