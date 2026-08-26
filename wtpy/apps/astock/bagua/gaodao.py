@@ -67,6 +67,66 @@ def invalidate_gaodao_cache() -> None:
     _load_raw.cache_clear()
 
 
+class GaodaoIndex:
+    """一次加载、多次查询的轻量索引。
+
+    列表类接口（384 爻目录、卦象目录）需要逐爻查断语，
+    若每爻都走 load_gaodao 会重复 stat 文件；用索引对象只加载一次。
+    sidecar 不可用时索引为空，所有查询返回空值（fail-open）。
+    """
+
+    __slots__ = ("_by_state_id", "_primary")
+
+    def __init__(self, data: Optional[dict]) -> None:
+        if isinstance(data, dict):
+            self._by_state_id = data.get("by_state_id") or {}
+            pol = data.get("policy") or {}
+            prim = pol.get("primary")
+            self._primary = frozenset(str(x) for x in prim) if isinstance(prim, list) else frozenset()
+        else:
+            self._by_state_id = {}
+            self._primary = frozenset()
+
+    def __bool__(self) -> bool:
+        return bool(self._by_state_id)
+
+    def get(self, state_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not state_id:
+            return None
+        item = self._by_state_id.get(str(state_id))
+        if not isinstance(item, dict) or not item.get("text"):
+            return None
+        return item
+
+    def is_primary(self, category: Optional[str]) -> bool:
+        """类别是否属营商类；sidecar 无 policy 时保守视为营商（不加后缀）。"""
+        if not category or not self._primary:
+            return True
+        return str(category) in self._primary
+
+    def category(self, state_id: Optional[str]) -> str:
+        item = self.get(state_id)
+        return str((item or {}).get("category") or "")
+
+    def display(self, state_id: Optional[str]) -> str:
+        """展示串：非营商类别（时运/功名兜底）追加类别后缀，避免口径误读。"""
+        item = self.get(state_id)
+        if not item:
+            return ""
+        text = str(item.get("text") or "").strip()
+        if not text:
+            return ""
+        cat = str(item.get("category") or "").strip()
+        if not cat or self.is_primary(cat):
+            return text
+        return f"{text}{_FALLBACK_SUFFIX_FMT.format(category=cat)}"
+
+
+def gaodao_index(cfg: Optional[AStockConfig] = None) -> GaodaoIndex:
+    """构造一次性索引对象（列表类接口用）。"""
+    return GaodaoIndex(load_gaodao(cfg))
+
+
 def gaodao_for_state(
     state_id: Optional[str], cfg: Optional[AStockConfig] = None
 ) -> Optional[Dict[str, Any]]:
@@ -74,31 +134,14 @@ def gaodao_for_state(
 
     未命中（含 5 个原书无占断的爻）或 sidecar 不可用时返回 None。
     """
-    if not state_id:
-        return None
-    data = load_gaodao(cfg)
-    if not data:
-        return None
-    item = data["by_state_id"].get(str(state_id))
-    if not isinstance(item, dict) or not item.get("text"):
-        return None
-    return item
+    return gaodao_index(cfg).get(state_id)
 
 
 def gaodao_display(
     state_id: Optional[str], cfg: Optional[AStockConfig] = None
 ) -> str:
     """取用于展示的断语串：非营商类别（时运/功名兜底）追加类别后缀。"""
-    item = gaodao_for_state(state_id, cfg)
-    if not item:
-        return ""
-    text = str(item.get("text") or "").strip()
-    if not text:
-        return ""
-    if is_primary_category(item.get("category"), cfg):
-        return text
-    cat = str(item.get("category") or "").strip()
-    return f"{text}{_FALLBACK_SUFFIX_FMT.format(category=cat)}" if cat else text
+    return gaodao_index(cfg).display(state_id)
 
 
 def primary_categories(cfg: Optional[AStockConfig] = None) -> List[str]:
@@ -115,12 +158,7 @@ def is_primary_category(
     category: Optional[str], cfg: Optional[AStockConfig] = None
 ) -> bool:
     """判断类别是否属于营商类。sidecar 不可用时保守视为营商（不加后缀）。"""
-    if not category:
-        return True
-    prim = primary_categories(cfg)
-    if not prim:
-        return True
-    return str(category) in prim
+    return gaodao_index(cfg).is_primary(category)
 
 
 def gaodao_coverage(cfg: Optional[AStockConfig] = None) -> Optional[Dict[str, Any]]:

@@ -10381,6 +10381,10 @@ function renderBtRuleList() {
         html += "<div class='gua-line'>";
         html += "<label class='chk'><input type='checkbox' data-sid='"+ln.state_id+"' data-gid='"+h.main_hexagram_id+"' "+(checked?"checked":"")+" /><span><b>"+(ln.line_name||"")+"</b> "+(ln.line_text||"")+"</span></label>";
         html += "<div class='sub' style='grid-column:2'>变卦："+bg+" · 行情："+(ln.market_summary||ln.market_judgement||"—")+" <span class='gua-act gua-act-"+(ln.action_signal||"")+"'>"+act+"</span></div>";
+        // 高岛易断解读（旁挂 sidecar，379/384 覆盖）：有值才渲染，无值不留空行
+        if (ln.gaodao_commerce){
+          html += "<div class='sub' style='grid-column:2;color:#8b6d3f'>高岛："+esc(ln.gaodao_commerce)+"</div>";
+        }
         html += "</div>";
       });
       pane.innerHTML = html;
@@ -10476,7 +10480,8 @@ function renderBtRuleList() {
           div.className = "gua-hit";
           div.dataset.idx = String(idx);
           const bg = emptyDisp(it.biangua || it.changed_hexagram_name);
-          div.innerHTML = "<input type='checkbox' /> <div><b>"+(it.hexagram_symbol||"")+" "+(it.main_hexagram_name||"")+" · "+(it.line_name||"")+"</b><div class='sub'>"+(it.line_text||"")+" · 变卦:"+bg+" · <span class='gua-act gua-act-"+(it.action_signal||"")+"'>"+(it.action_signal||"—")+"</span></div></div>";
+          const gd = it.gaodao_commerce ? "<div class='sub' style='color:#8b6d3f'>高岛："+esc(it.gaodao_commerce)+"</div>" : "";
+          div.innerHTML = "<input type='checkbox' /> <div><b>"+(it.hexagram_symbol||"")+" "+(it.main_hexagram_name||"")+" · "+(it.line_name||"")+"</b><div class='sub'>"+(it.line_text||"")+" · 变卦:"+bg+" · <span class='gua-act gua-act-"+(it.action_signal||"")+"'>"+(it.action_signal||"—")+"</span></div>"+gd+"</div>";
           const cb = div.querySelector("input");
           const cfg = draft || committed;
           cb.checked = (cfg.selected_state_ids||[]).indexOf(it.state_id) >= 0;
@@ -10559,7 +10564,11 @@ function renderBtRuleList() {
           html += "<div class='gua-act-row'>";
           html += "<label class='chk'><input type='checkbox' data-sid='" + sid + "' data-gid='" + item.h.main_hexagram_id + "'" + checked + "/>";
           html += "<span><b>" + (item.h.hexagram_symbol || "") + " " + (item.h.main_hexagram_name || "") + " · " + (item.ln.line_name || "") + "</b>";
-          html += "<div class='sub'>" + (item.ln.line_text || "—") + " · 变卦：" + bg + "</div></span></label>";
+          html += "<div class='sub'>" + (item.ln.line_text || "—") + " · 变卦：" + bg + "</div>";
+          if (item.ln.gaodao_commerce){
+            html += "<div class='sub' style='color:#8b6d3f'>高岛：" + esc(item.ln.gaodao_commerce) + "</div>";
+          }
+          html += "</span></label>";
           html += "</div>";
         });
         html += "</div>";
