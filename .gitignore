@@ -89,3 +89,8 @@ reasonix.toml
 .zcode/
 /index.html
 
+# 指数/ETF 成分股缓存（data/tushare_constituents.py 运行时写出，可再生）
+/cache/
+# 测试/审查产生的临时报告
+/*_test_report.txt
+

@@ -360,6 +360,7 @@ def api_gua_hexagrams(ctx: ApiContext = Depends(get_ctx)) -> dict:
     _bq_export_lock = ctx.bq_export_lock
     _wl_cache = ctx.wl_cache
     from ..service.gua import list_hexagrams, rule_version, load_kb
+    from ..bagua.gaodao import gaodao_coverage
 
     kb = load_kb(cfg)
     return {
@@ -369,6 +370,8 @@ def api_gua_hexagrams(ctx: ApiContext = Depends(get_ctx)) -> dict:
         "count_yao": kb.get("count_yao"),
         "action_signal_counts": kb.get("action_signal_counts") or {},
         "empty_biangua_count": kb.get("empty_biangua_count"),
+        # 高岛易断解读覆盖度（sidecar 缺失时为 null，前端据此隐藏提示）
+        "gaodao_coverage": gaodao_coverage(cfg),
     }
 
 @router.post("/api/v1/gua/preview")

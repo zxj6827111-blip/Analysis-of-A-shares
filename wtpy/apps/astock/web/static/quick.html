@@ -41,6 +41,17 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 .gua-item .lbl{color:var(--muted);font-size:11px;margin-bottom:6px}
 .gua-item .val{font-size:15px;font-weight:700;color:var(--blue2)}
 .gua-note{color:var(--muted);font-size:11.5px;line-height:1.7;margin-top:10px}
+.gua-gaodao{margin-top:10px;padding:10px 12px;background:var(--panel2);border:1px solid #3a3320;border-left:3px solid #c9a227;border-radius:6px;line-height:1.75}
+.gua-gaodao .lbl{color:#c9a227;font-size:11px;font-weight:700;margin-bottom:4px}
+.gua-gaodao .txt{color:#d8dee9;font-size:12.5px}
+.gua-gaodao .src{color:var(--muted);font-size:11px;margin-top:4px}
+/* 说明折叠块：默认收起，避免长串 dataset_id 干扰阅读 */
+.gua-fold{margin-top:8px}
+.gua-fold>summary{cursor:pointer;color:var(--muted);font-size:11.5px;list-style:none;user-select:none}
+.gua-fold>summary::-webkit-details-marker{display:none}
+.gua-fold>summary::before{content:"▸ "}
+.gua-fold[open]>summary::before{content:"▾ "}
+.gua-fold .body{margin-top:6px;word-break:break-all}
 </style>
 </head>
 <body>
@@ -95,6 +106,22 @@ function go(){
   if(!q) return;
   location.href="/quick.html?code="+encodeURIComponent(q);
 }
+function esc(s){
+  return String(s===null||s===undefined?"":s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function gaodaoBlock(summary){
+  var s=summary||{};
+  var text=s.gaodao_commerce;
+  if(!text) return "";  // 原书无该爻占断（384 中 5 爻）时不渲染，避免空白块
+  // 是否兜底类别由后端 gaodao_is_fallback 判定，前端不再硬编码营商类别名，
+  // 避免与 sidecar 的 policy.primary 失步；兜底类别名后端已拼在断语末尾括注中，此处不重复
+  var src=s.gaodao_is_fallback
+    ? "原书该爻无营商类占断，已改用括注所示类别断语（仅供解读，不参与选股）"
+    : "来源：《高岛易断》问"+esc(s.gaodao_category||"营商")+"（仅供解读，不参与选股）";
+  return '<div class="gua-gaodao"><div class="lbl">高岛易断·营商</div>'+
+         '<div class="txt">'+esc(text)+'</div><div class="src">'+src+'</div></div>';
+}
 function renderGua(gridId, noteId, g){
   var grid=$(gridId), note=$(noteId);
   if(!g){ grid.className="empty"; grid.textContent="无卦象数据"; note.textContent=""; return; }
@@ -114,8 +141,14 @@ function renderGua(gridId, noteId, g){
     grid.innerHTML=items.map(function(it){
       return '<div class="gua-item"><div class="lbl">'+it[0]+'</div><div class="val">'+it[1]+'</div></div>';
     }).join("");
-    var notes=g.algorithm&&g.algorithm.notes;
-    note.textContent=(Array.isArray(notes)?notes.join(""):notes)||"";
+    // notes 在 query_bagua 结果的顶层（g.notes），旧写法 g.algorithm.notes 取不到值
+    var notes=g.notes||(g.algorithm&&g.algorithm.notes);
+    var noteText=(Array.isArray(notes)?notes.join(""):notes)||"";
+    // 说明（起卦算法 + 数据集出处）默认收起：日常看卦不需要，排查口径/复现时再展开
+    var noteHtml=noteText
+      ? '<details class="gua-fold"><summary>说明（起卦算法与数据来源）</summary><div class="body">'+esc(noteText)+'</div></details>'
+      : "";
+    note.innerHTML=gaodaoBlock(g.summary)+noteHtml;
   } else { grid.className="empty"; grid.textContent="无卦象数据"; note.textContent=""; }
 }
 function render(d){

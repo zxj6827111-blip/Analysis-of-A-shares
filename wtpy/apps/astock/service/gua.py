@@ -15,6 +15,7 @@ from ..bagua.filter_rules import (
     gua_filter_natural_language,
 )
 from ..bagua.calculator import BaguaKnowledge
+from ..bagua.gaodao import GaodaoIndex, gaodao_coverage, gaodao_index
 from ..config import AStockConfig, get_default_config
 
 
@@ -72,10 +73,17 @@ def state_label_map(cfg: Optional[AStockConfig] = None) -> Dict[str, str]:
     return out
 
 
-def _entry_public(e: dict) -> dict:
+def _entry_public(
+    e: dict,
+    gaodao: Optional[GaodaoIndex] = None,
+    cfg: Optional[AStockConfig] = None,
+) -> dict:
     bg = e.get("biangua") or e.get("changed_hexagram_name") or ""
+    state_id = e.get("state_id") or f"{int(e['gua_order']):02d}-{int(e['yao_order'])}"
+    # 高岛易断为旁挂解读层：缺失（含原书无占断的 5 爻）时留空，由 market_judgement 兜底
+    gi = gaodao if gaodao is not None else gaodao_index(cfg)
     return {
-        "state_id": e.get("state_id") or f"{int(e['gua_order']):02d}-{int(e['yao_order'])}",
+        "state_id": state_id,
         "main_hexagram_id": int(e.get("main_hexagram_id") or e["gua_order"]),
         "main_hexagram_name": e.get("main_hexagram_name") or e.get("gua_name") or "",
         "hexagram_symbol": e.get("hexagram_symbol") or e.get("gua_symbol") or "",
@@ -98,6 +106,10 @@ def _entry_public(e: dict) -> dict:
         "market_judgement": e.get("market_judgement") or e.get("market_summary") or "",
         "action_signal": e.get("action_signal") or "",
         "note": e.get("note") or "",
+        "gaodao_commerce": gi.display(state_id),
+        "gaodao_category": gi.category(state_id),
+        # 兜底类别（时运/功名）标志由后端判定，前端不再自行硬编码类别名
+        "gaodao_is_fallback": gi.is_fallback(state_id),
         "upper": e.get("upper"),
         "lower": e.get("lower"),
     }
@@ -105,6 +117,7 @@ def _entry_public(e: dict) -> dict:
 
 def list_hexagrams(cfg: Optional[AStockConfig] = None) -> List[dict]:
     kb = load_kb(cfg)
+    gi = gaodao_index(cfg)  # 一次加载，避免 384 爻逐条 stat sidecar 文件
     by: Dict[int, dict] = {}
     for e in kb.get("entries") or []:
         go = int(e["gua_order"])
@@ -120,15 +133,19 @@ def list_hexagrams(cfg: Optional[AStockConfig] = None) -> List[dict]:
                 "lines": [],
                 "selected_hint": "0/6",
             }
+        sid = e.get("state_id")
         by[go]["lines"].append(
             {
-                "state_id": e.get("state_id"),
+                "state_id": sid,
                 "line_index": int(e.get("yao_order") or 0),
                 "line_name": e.get("yao_name") or "",
                 "line_text": e.get("yao_ci") or "",
                 "action_signal": e.get("action_signal") or "",
                 "biangua": e.get("biangua") or None,
                 "market_summary": e.get("market_judgement") or "",
+                "gaodao_commerce": gi.display(sid),
+                "gaodao_category": gi.category(sid),
+                "gaodao_is_fallback": gi.is_fallback(sid),
             }
         )
     out = [by[k] for k in sorted(by.keys())]
@@ -179,7 +196,8 @@ def list_states(
     page_size: int = 50,
 ) -> dict:
     kb = load_kb(cfg)
-    items = [_entry_public(e) for e in (kb.get("entries") or [])]
+    gi = gaodao_index(cfg)  # 一次加载，384 爻共用
+    items = [_entry_public(e, gi) for e in (kb.get("entries") or [])]
     if main_hexagram_id is not None:
         mid = int(main_hexagram_id)
         items = [x for x in items if int(x["main_hexagram_id"]) == mid]
@@ -201,6 +219,7 @@ def list_states(
         "rule_version": kb.get("rule_version") or DEFAULT_RULE_VERSION,
         "empty_biangua_count": kb.get("empty_biangua_count"),
         "action_signal_counts": kb.get("action_signal_counts") or {},
+        "gaodao_coverage": gaodao_coverage(cfg),
     }
 
 
@@ -457,8 +476,9 @@ def preview_filter(
             self.bagua = bagua
 
     matched = []
+    gi = gaodao_index(cfg)
     for e in kb.get("entries") or []:
-        pub = _entry_public(e)
+        pub = _entry_public(e, gi)
         bg = {
             "state_id": pub["state_id"],
             "gua_order": pub["gua_order"],

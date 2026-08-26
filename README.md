@@ -23,6 +23,7 @@
 - [命令行工具](#命令行工具)
 - [回测功能说明](#回测功能说明)
 - [指标导入与配对](#指标导入与配对)
+- [高岛易断解读层](#高岛易断解读层)
 - [运行测试](#运行测试)
 
 ---
@@ -37,6 +38,7 @@
 - **预测周报**：每周选股周报导入、搜索、评分与导出
 - **关键发现 Dashboard**：`/dashboard` 只读面板聚合数据健康、同步状态、Top 实验发现与自选池，一键掌握系统状态
 - **个股快速查询**：顶栏搜索框 / `/quick.html` 输入代码或名称，直达行情概览、当前卦象与相关回测
+- **高岛易断解读层**：384 爻旁挂《高岛易断》「问营商」断语（覆盖 379/384），在卦象查询卡片、个股快速查询页、爻象目录与导出 Excel 中展示；**仅作解读，不参与选股与回测**
 - **Web 控制台**：FastAPI（路由按域拆分为 `api_routes/`）+ 单文件前端（`/v3` 为主界面），回测任务异步执行、进度实时推送
 - **数据治理**：不可变 manifest + SHA256 内容寻址、严格发布策略（no_data 必须显式白名单）、幸存者偏差元数据记录、同步任务锁与断点续传
 
@@ -58,6 +60,11 @@ wtpy-master/
 │           ├── config.py        #   运行时配置（路径、环境变量解析）
 │           ├── strategy.py      #   组合回测器
 │           ├── study.py         #   信号研究（DWM 共振、组合信号等）
+│           ├── bagua/           #   卦象体系
+│           │   ├── calculator.py      # OHLC 数字和起卦（不含高岛逻辑）
+│           │   ├── bagua_384.json     # 384 爻知识库（sha256 绑定权威 Excel）
+│           │   ├── bagua_gaodao.json  # ★《高岛易断》营商断语 sidecar（旁挂，379/384）
+│           │   └── gaodao.py          # sidecar 读取模块（fail-open，唯一入口）
 │           ├── data/            #   数据层
 │           │   ├── dataset_store.py   # 内容寻址数据集存储（blobs/manifests）
 │           │   ├── repository.py      # 数据集仓库（解析/绑定/派生）
@@ -75,9 +82,10 @@ wtpy-master/
 │   ├── sync_market_data.py      #   ★ 主同步程序（多源多模式）
 │   ├── sync_ca_events.py        #   公司行动事件同步
 │   ├── sync_tushare_delisted.py #   退市股数据同步
+│   ├── build_gaodao_sidecar.py  #   《高岛易断》营商断语 sidecar 抽取
 │   └── reconcile_sqlite_runs.py #   运行记录对账
 ├── deploy/                      # Linux 部署（install_astock.sh、PM2 配置）
-├── tests/                       # pytest 测试（990 个用例）
+├── tests/                       # pytest 测试（1422 个用例）
 ├── demos/                       # 原始 wtpy 官方示例
 ├── storage/astock/              # 项目内本地存储（见下文）
 ├── 指标/                        # 本地 TN6 包与公式源文件（已 gitignore）
@@ -491,10 +499,63 @@ python -m wtpy.apps.astock list-indicators
 
 ---
 
+## 高岛易断解读层
+
+在既有 384 爻卦象体系之上**旁挂**《高岛易断》「问营商」断语，作为纯解读文本层。
+
+### 定位与边界
+
+- **只解读，不选股**：不参与 `GuaFilter` 过滤、不影响买卖信号、不进入 `signals.csv`，回测结果与加入前完全一致
+- **不动起卦算法**：`bagua/calculator.py` 的 OHLC→卦爻映射（开盘 mod8 定上卦、收盘 mod8 定下卦、(高+低) mod6 定动爻）保持原样
+- **不动知识库**：`bagua_384.json` 头部 `source_sha256` 与权威 Excel 绑定、且 `reimport_excel()` 会整体重建，因此高岛断语单独存 sidecar，互不干扰
+
+### 数据来源与覆盖
+
+| 项 | 值 |
+|---|---|
+| 源文件 | 《高岛易断》全文 txt（本机外挂目录，不入 Git） |
+| sidecar | `wtpy/apps/astock/bagua/bagua_gaodao.json`（记录源文件 sha256 可追溯） |
+| 配对口径 | 按 `(gua_order, yao_order)` —— 原书按通行本顺序编排，64 卦名与知识库逐卦一致 |
+| 营商类命中 | 375 爻（别名：营商/商业/经商/买卖/贸易/营业/生意/财运） |
+| 时运/功名兜底 | 4 爻（展示时追加「（时运）」类别后缀，避免口径误读） |
+| 原书无占断 | 5 爻：`11-4`、`26-2`、`33-4`、`47-4`、`61-5`（留空，由 `market_judgement` 兜底） |
+| **总覆盖** | **379 / 384** |
+
+### 重建 sidecar
+
+```shell
+python -X utf8 scripts/build_gaodao_sidecar.py             # 生成/更新 sidecar
+python -X utf8 scripts/build_gaodao_sidecar.py --dry-run   # 只看覆盖统计不写文件
+python -X utf8 scripts/build_gaodao_sidecar.py --txt "D:\其他路径\高岛易断_全文.txt"
+```
+
+sidecar 缺失或损坏时系统 **fail-open**：所有高岛字段返回空串，卦象查询与导出照常工作。
+
+### 展示位置
+
+| 位置 | 表现 |
+|---|---|
+| `/v3` 卦象查询结果卡片 | 「卦辞 / 爻辞」面板之后新增「高岛易断·营商」面板 |
+| `/quick.html?code=600000` | 日卦与周卦面板各新增一段高岛解读 |
+| `/v3` 爻象勾选列表 / 搜索结果 / 按信号浏览 | 「行情：」之后追加「高岛：」片段 |
+| 导出 Excel | 新增「周·高岛易断」（第 11 列）与「月·高岛易断」（第 14 列），meta sheet 记录来源与覆盖度 |
+| `/api/v1/gua/states`、`/api/v1/gua/hexagrams` | 每爻增 `gaodao_commerce` / `gaodao_category`，返回体增 `gaodao_coverage` |
+| `/api/v1/bagua/query`、`/api/v1/quick/{code}` | `summary.gaodao_commerce` / `summary.gaodao_category` |
+
+导出表格列布局（共 15 列）：
+
+```
+0 code  1 name  2 week_end  3 open  4 high  5 low  6 close  7 日柱
+8 周卦组合  9 爻辞解释  10 周·高岛易断
+11 月卦组合 12 爻辞解释  13 月·高岛易断  14 数据状态
+```
+
+---
+
 ## 运行测试
 
 ```shell
-python -m pytest tests/apps/astock -q        # 全量（990 个用例）
+python -m pytest tests/apps/astock -q        # 全量（1422 个用例）
 ```
 
 仓库带有 GitHub Actions CI（`.github/workflows/ci.yml`）：每次 push / PR 自动在 Python 3.11 / 3.12 上运行全量测试（跳过 live_tdxquant / live_tushare 实盘标记用例）。
