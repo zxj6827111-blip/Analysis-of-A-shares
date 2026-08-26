@@ -2594,6 +2594,12 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
   }
+  // 《高岛易断》营商类别名；不在此列表的类别（时运/功名）属兜底来源，展示时需标注
+  const GAODAO_PRIMARY_CATEGORIES = ["营商", "商业", "经商", "买卖", "贸易", "营业", "生意", "财运"];
+  function gaodaoIsFallback(category) {
+    if (!category) return false;
+    return GAODAO_PRIMARY_CATEGORIES.indexOf(String(category)) < 0;
+  }
   function toast(msg) {
     const el = $("liveToast");
     el.textContent = msg;
@@ -6376,6 +6382,18 @@ async function expCreateAndStart() {
         : "") +
       (b.note ? "<p class='note'>" + esc(b.note) + "</p>" : "") +
       "</div>" +
+      // 高岛易断·营商解读（旁挂 sidecar，379/384 覆盖）：无值不渲染整个面板
+      (s.gaodao_commerce
+        ? '<div class="forecast-panel" style="margin-bottom:12px">' +
+          "<h4>高岛易断·营商</h4>" +
+          "<p>" + esc(s.gaodao_commerce) + "</p>" +
+          (s.gaodao_category && gaodaoIsFallback(s.gaodao_category)
+            ? "<p class='muted' style='font-size:11px'>原书该爻无营商类占断，以「" +
+              esc(s.gaodao_category) + "」类断语替代</p>"
+            : "<p class='muted' style='font-size:11px'>来源：《高岛易断》问" +
+              esc(s.gaodao_category || "营商") + "（仅供解读，不参与选股）</p>") +
+          "</div>"
+        : "") +
       (notes
         ? '<div class="forecast-panel"><h4>说明</h4><ul style="margin:0;padding-left:18px;font-size:12px;color:#9aafc4">' +
           notes +

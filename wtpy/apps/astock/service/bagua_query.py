@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
 from ..bagua.calculator import BaguaCalculator
+from ..bagua.gaodao import gaodao_index
 from ..config import AStockConfig
 from ..data.adjustments import build_factor_series
 from ..data.data_store import DataStore
@@ -882,6 +883,22 @@ def _adjust_day_bars(
     return out, meta
 
 
+def _gaodao_summary_fields(
+    cfg: AStockConfig, bagua: Dict[str, Any]
+) -> Dict[str, str]:
+    """按 state_id 取《高岛易断》营商断语，供 summary 展示。
+
+    仅解读层：sidecar 缺失或该爻无断语时返回空串，
+    前端仍有 market_judgement 兜底，不影响卦象计算与选股。
+    """
+    sid = str(bagua.get("state_id") or "")
+    gi = gaodao_index(cfg)
+    return {
+        "gaodao_commerce": gi.display(sid),
+        "gaodao_category": gi.category(sid),
+    }
+
+
 def _assemble_index_etf_bagua_result(
     cfg: AStockConfig,
     *,
@@ -994,6 +1011,8 @@ def _assemble_index_etf_bagua_result(
             "lower": f"{bagua.get('lower_alias') or bagua.get('lower_name') or ''}"
             f"({bagua.get('lower_id')})",
             "yao_order": bagua.get("yao_order"),
+            # 高岛易断·营商解读（旁挂 sidecar，仅展示，不参与选股/回测）
+            **_gaodao_summary_fields(cfg, bagua),
         },
     }
 
@@ -1230,6 +1249,8 @@ def _assemble_stock_bagua_result(
             "lower": f"{bagua.get('lower_alias') or bagua.get('lower_name') or ''}"
             f"({bagua.get('lower_id')})",
             "yao_order": bagua.get("yao_order"),
+            # 高岛易断·营商解读（旁挂 sidecar，仅展示，不参与选股/回测）
+            **_gaodao_summary_fields(cfg, bagua),
         },
     }
 
