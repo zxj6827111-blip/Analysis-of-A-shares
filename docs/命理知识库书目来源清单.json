@@ -1,0 +1,439 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-08-22",
+  "default_storage_subdir": "metaphysics/corpus/originals",
+  "policy": {
+    "llm_is_authoritative_source": false,
+    "restricted_fulltext_download_allowed": false,
+    "commercial_use_requires_review": true,
+    "notes": [
+      "大模型可辅助抽取、校对和解释，但不能替代可追溯的原始语料。",
+      "现代整理本、译本、注本和邵伟华著作必须独立登记版权状态。",
+      "本清单中的版权状态来自提供方页面，不构成专项法律意见。"
+    ]
+  },
+  "sources": [
+    {
+      "source_id": "iching_wikisource_text",
+      "title": "周易",
+      "author": "传统经典",
+      "edition_id": "iching_wikisource_zh_snapshot",
+      "edition": "维基文库中文页面快照",
+      "language": "zh",
+      "provider": "Wikisource",
+      "provider_page": "https://zh.wikisource.org/zh-hans/周易",
+      "reference_urls": [
+        "https://ctext.org/book-of-changes/zhs"
+      ],
+      "format": "mediawiki_api_json",
+      "completeness": "page_snapshot_requires_structure_validation",
+      "copyright_status": "public_domain_text_site_cc_by_sa_4_0",
+      "redistribution_allowed": true,
+      "automated_download_allowed": true,
+      "recommended_role": "searchable_text_and_384_yao_base",
+      "download_status": "ready",
+      "documents": [
+        {
+          "document_id": "iching_wikisource_page_snapshot",
+          "download_type": "mediawiki_page_snapshot",
+          "api_endpoint": "https://zh.wikisource.org/w/api.php",
+          "page": "周易",
+          "filename": "iching_wikisource_page_snapshot.json"
+        }
+      ],
+      "notes": "卦辞、爻辞、彖、象、文言等应分字段保存。"
+    },
+    {
+      "source_id": "sanming_tonghui_1578_ncl_scan",
+      "title": "三命通会",
+      "author": "万民英",
+      "edition_id": "sanming_tonghui_ming_1578_ncl",
+      "edition": "明万历戊寅六年（1578）刊本",
+      "language": "zh-Hant",
+      "provider": "Wikimedia Commons / National Central Library",
+      "provider_page": "https://commons.wikimedia.org/wiki/File:NCL-06589_1_三命通會.pdf",
+      "reference_urls": [
+        "https://commons.wikimedia.org/wiki/File:NCL-06589_2_三命通會.pdf",
+        "https://ctext.org/library.pl?if=gb&res=702"
+      ],
+      "format": "pdf",
+      "completeness": "complete_12_volumes_two_pdf_parts",
+      "copyright_status": "public_domain",
+      "redistribution_allowed": true,
+      "automated_download_allowed": true,
+      "recommended_role": "authority_scan",
+      "download_status": "ready",
+      "documents": [
+        {
+          "document_id": "sanming_tonghui_1578_part1",
+          "download_type": "wikimedia_commons_pageid",
+          "remote_id": "138125281",
+          "filename": "sanming_tonghui_1578_part1.pdf",
+          "expected_size_bytes": 101956385,
+          "expected_sha1": "c222bc54815d8e5cef15338c03b9fc11d540f41a",
+          "page_count": 1000
+        },
+        {
+          "document_id": "sanming_tonghui_1578_part2",
+          "download_type": "wikimedia_commons_pageid",
+          "remote_id": "138043642",
+          "filename": "sanming_tonghui_1578_part2.pdf",
+          "expected_size_bytes": 18967335,
+          "expected_sha1": "090ce9d53d9aa37bd7d2680b3b69c16385edbe2d",
+          "page_count": 187
+        }
+      ],
+      "notes": "扫描本作为权威底本。"
+    },
+    {
+      "source_id": "sanming_tonghui_wikisource_text_incomplete",
+      "title": "三命通会",
+      "author": "万民英",
+      "edition_id": "sanming_tonghui_wikisource_zh_snapshot",
+      "edition": "维基文库中文页面快照",
+      "language": "zh",
+      "provider": "Wikisource",
+      "provider_page": "https://zh.wikisource.org/zh-hans/三命通會",
+      "format": "mediawiki_api_json",
+      "completeness": "incomplete_missing_volumes_10_to_12",
+      "copyright_status": "public_domain_text_site_cc_by_sa_4_0",
+      "redistribution_allowed": true,
+      "automated_download_allowed": true,
+      "recommended_role": "searchable_text_only",
+      "download_status": "ready_with_known_gap",
+      "documents": [
+        {
+          "document_id": "sanming_tonghui_wikisource_page_snapshot",
+          "download_type": "mediawiki_page_snapshot",
+          "api_endpoint": "https://zh.wikisource.org/w/api.php",
+          "page": "三命通會",
+          "filename": "sanming_tonghui_wikisource_page_snapshot.json"
+        }
+      ],
+      "notes": "页面明确缺卷十至卷十二，不得作为唯一底本。"
+    },
+    {
+      "source_id": "yuanhai_ziping_ming_ncl_scan",
+      "title": "渊海子平",
+      "author": "李钦（提供方著录）",
+      "edition_id": "yuanhai_ziping_ming_ncl_06593",
+      "edition": "《刻京臺增補淵海子平大全》明刊本",
+      "language": "zh-Hant",
+      "provider": "Wikimedia Commons / National Central Library",
+      "provider_page": "https://commons.wikimedia.org/wiki/File:NCL-06593_刻京臺增補淵海子平大全.pdf",
+      "format": "pdf",
+      "completeness": "single_scan_requires_bibliographic_validation",
+      "copyright_status": "public_domain",
+      "redistribution_allowed": true,
+      "automated_download_allowed": true,
+      "recommended_role": "authority_scan",
+      "download_status": "ready",
+      "documents": [
+        {
+          "document_id": "yuanhai_ziping_ming_scan",
+          "download_type": "wikimedia_commons_pageid",
+          "remote_id": "138038342",
+          "filename": "yuanhai_ziping_ming_ncl_06593.pdf",
+          "expected_size_bytes": 173142495,
+          "expected_sha1": "c95e4f851cc30b8011c4982f2d5b9c5b22cfe141",
+          "page_count": 160
+        }
+      ],
+      "notes": "正式切段前需核验卷次、版本系统和题名责任者。"
+    },
+    {
+      "source_id": "yuanhai_ziping_wikisource_text_unverified",
+      "title": "渊海子平",
+      "author": "维基文库著录为杨淙",
+      "edition_id": "yuanhai_ziping_wikisource_zh_snapshot",
+      "edition": "维基文库中文页面快照",
+      "language": "zh",
+      "provider": "Wikisource",
+      "provider_page": "https://zh.wikisource.org/zh-hans/淵海子平",
+      "format": "mediawiki_api_json",
+      "completeness": "incomplete_and_source_unverified",
+      "copyright_status": "public_domain_text_site_cc_by_sa_4_0",
+      "redistribution_allowed": true,
+      "automated_download_allowed": true,
+      "recommended_role": "searchable_text_requires_line_by_line_collation",
+      "download_status": "ready_with_quality_warning",
+      "documents": [
+        {
+          "document_id": "yuanhai_ziping_wikisource_page_snapshot",
+          "download_type": "mediawiki_page_snapshot",
+          "api_endpoint": "https://zh.wikisource.org/w/api.php",
+          "page": "淵海子平",
+          "filename": "yuanhai_ziping_wikisource_page_snapshot.json"
+        }
+      ],
+      "notes": "页面明确标记未完成和来源不明。"
+    },
+    {
+      "source_id": "ditiansui_jiyiao_1936_scan",
+      "title": "滴天髓辑要",
+      "author": "陈素庵辑订",
+      "edition_id": "ditiansui_jiyiao_1936_nlc",
+      "edition": "乾乾书社，1936年",
+      "language": "zh-Hant",
+      "provider": "Wikimedia Commons / National Library of China",
+      "provider_page": "https://commons.wikimedia.org/wiki/File:NLC416-01jh000040-9444_滴天髓輯要.pdf",
+      "format": "pdf",
+      "completeness": "single_complete_scan",
+      "copyright_status": "public_domain",
+      "redistribution_allowed": true,
+      "automated_download_allowed": true,
+      "recommended_role": "first_stage_authority_scan",
+      "download_status": "ready",
+      "documents": [
+        {
+          "document_id": "ditiansui_jiyiao_1936_scan",
+          "download_type": "wikimedia_commons_pageid",
+          "remote_id": "132864064",
+          "filename": "ditiansui_jiyiao_1936_nlc.pdf",
+          "expected_size_bytes": 2699451,
+          "expected_sha1": "c9e8e9d26a694e622a19b32eae37fe0c20e1689e",
+          "page_count": 65
+        }
+      ],
+      "notes": "不要与《滴天髓阐微》等其他注本合并为同一edition。"
+    },
+    {
+      "source_id": "ditiansui_wikisource_text",
+      "title": "滴天髓",
+      "author": "传统题署",
+      "edition_id": "ditiansui_wikisource_zh_snapshot",
+      "edition": "维基文库中文页面快照",
+      "language": "zh",
+      "provider": "Wikisource",
+      "provider_page": "https://zh.wikisource.org/zh-hans/滴天髓",
+      "format": "mediawiki_api_json",
+      "completeness": "page_snapshot_requires_collation",
+      "copyright_status": "public_domain_text_site_cc_by_sa_4_0",
+      "redistribution_allowed": true,
+      "automated_download_allowed": true,
+      "recommended_role": "searchable_text",
+      "download_status": "ready",
+      "documents": [
+        {
+          "document_id": "ditiansui_wikisource_page_snapshot",
+          "download_type": "mediawiki_page_snapshot",
+          "api_endpoint": "https://zh.wikisource.org/w/api.php",
+          "page": "滴天髓",
+          "filename": "ditiansui_wikisource_page_snapshot.json"
+        }
+      ],
+      "notes": "文本必须与指定扫描版本校对。"
+    },
+    {
+      "source_id": "takashima_ekidan_1886_ndl_japanese",
+      "title": "高岛易断",
+      "author": "高岛嘉右卫门",
+      "edition_id": "takashima_ekidan_1886_ndl_vol_1_10",
+      "edition": "1886年日文原版，卷一至卷十",
+      "language": "ja",
+      "provider": "National Diet Library, Japan",
+      "provider_page": "https://ndlsearch.ndl.go.jp/en/books/R100000039-I760542",
+      "format": "iiif_manifest_json",
+      "completeness": "10_volumes_manifest_complete",
+      "copyright_status": "provider_marked_pdm",
+      "redistribution_allowed": "follow_ndl_iiif_terms",
+      "automated_download_allowed": true,
+      "recommended_role": "authority_original_language_reference",
+      "download_status": "manifest_ready_full_images_deferred",
+      "documents": [
+        {
+          "document_id": "takashima_1886_vol01",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760542/manifest.json",
+          "filename": "takashima_ekidan_1886_vol01_760542_iiif_manifest.json",
+          "page_count": 100
+        },
+        {
+          "document_id": "takashima_1886_vol02",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760543/manifest.json",
+          "filename": "takashima_ekidan_1886_vol02_760543_iiif_manifest.json",
+          "page_count": 66
+        },
+        {
+          "document_id": "takashima_1886_vol03",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760544/manifest.json",
+          "filename": "takashima_ekidan_1886_vol03_760544_iiif_manifest.json",
+          "page_count": 44
+        },
+        {
+          "document_id": "takashima_1886_vol04",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760545/manifest.json",
+          "filename": "takashima_ekidan_1886_vol04_760545_iiif_manifest.json",
+          "page_count": 62
+        },
+        {
+          "document_id": "takashima_1886_vol05",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760546/manifest.json",
+          "filename": "takashima_ekidan_1886_vol05_760546_iiif_manifest.json",
+          "page_count": 62
+        },
+        {
+          "document_id": "takashima_1886_vol06",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760547/manifest.json",
+          "filename": "takashima_ekidan_1886_vol06_760547_iiif_manifest.json",
+          "page_count": 63
+        },
+        {
+          "document_id": "takashima_1886_vol07",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760548/manifest.json",
+          "filename": "takashima_ekidan_1886_vol07_760548_iiif_manifest.json",
+          "page_count": 75
+        },
+        {
+          "document_id": "takashima_1886_vol08",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760549/manifest.json",
+          "filename": "takashima_ekidan_1886_vol08_760549_iiif_manifest.json",
+          "page_count": 58
+        },
+        {
+          "document_id": "takashima_1886_vol09",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760550/manifest.json",
+          "filename": "takashima_ekidan_1886_vol09_760550_iiif_manifest.json",
+          "page_count": 64
+        },
+        {
+          "document_id": "takashima_1886_vol10",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760551/manifest.json",
+          "filename": "takashima_ekidan_1886_vol10_760551_iiif_manifest.json",
+          "page_count": 75
+        }
+      ],
+      "notes": "默认只下载IIIF Manifest，不批量下载高清页图。"
+    },
+    {
+      "source_id": "takashima_ekidan_1901_wang_zhiben_ndl",
+      "title": "高岛易断",
+      "author": "高岛嘉右卫门口述；柳田几作笔录；王治本补正",
+      "edition_id": "takashima_ekidan_1901_wang_zhiben_ndl_four_parts",
+      "edition": "1901年增补本，上经元亨、下经利贞四部分",
+      "language": "ja_zh_context",
+      "provider": "National Diet Library, Japan",
+      "provider_page": "https://ndlsearch.ndl.go.jp/books/R100000136-I1970586434810637990",
+      "format": "iiif_manifest_json",
+      "completeness": "4_parts_manifest_complete",
+      "copyright_status": "provider_marked_pdm",
+      "redistribution_allowed": "follow_ndl_iiif_terms",
+      "automated_download_allowed": true,
+      "recommended_role": "preferred_chinese_context_edition_with_japanese_original_comparison",
+      "download_status": "manifest_ready_full_images_deferred",
+      "documents": [
+        {
+          "document_id": "takashima_1901_shangjing_yuan",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760552/manifest.json",
+          "filename": "takashima_ekidan_1901_shangjing_yuan_760552_iiif_manifest.json",
+          "page_count": 203
+        },
+        {
+          "document_id": "takashima_1901_shangjing_heng",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760553/manifest.json",
+          "filename": "takashima_ekidan_1901_shangjing_heng_760553_iiif_manifest.json",
+          "page_count": 144
+        },
+        {
+          "document_id": "takashima_1901_xiajing_li",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760554/manifest.json",
+          "filename": "takashima_ekidan_1901_xiajing_li_760554_iiif_manifest.json",
+          "page_count": 174
+        },
+        {
+          "document_id": "takashima_1901_xiajing_zhen",
+          "download_type": "direct_url",
+          "url": "https://dl.ndl.go.jp/api/iiif/760555/manifest.json",
+          "filename": "takashima_ekidan_1901_xiajing_zhen_760555_iiif_manifest.json",
+          "page_count": 146
+        }
+      ],
+      "notes": "NDL联合目录记录包含王治本补正；IIIF单卷元数据未完整列出王治本，需保留两层来源记录。"
+    },
+    {
+      "source_id": "shaoweihua_zhouyi_yucexue_1990",
+      "title": "周易与预测学",
+      "author": "邵伟华",
+      "edition_id": "shaoweihua_zhouyi_yucexue_huashan_1990",
+      "edition": "花山文艺出版社，1990年",
+      "language": "zh",
+      "provider": "WorldCat / Internet Archive catalog",
+      "provider_page": "https://search.worldcat.org/zh-cn/title/1319803099",
+      "reference_urls": [
+        "https://archive.org/details/zhouyiyuyucexue0000shao",
+        "https://books.google.com/books/about/周易与预测学.html?id=Ii54mEAwJlIC"
+      ],
+      "isbn": [
+        "7805052824",
+        "9787805052823"
+      ],
+      "format": "restricted_borrow_or_user_owned_copy",
+      "completeness": "catalog_record_only",
+      "copyright_status": "copyright_restricted",
+      "redistribution_allowed": false,
+      "automated_download_allowed": false,
+      "recommended_role": "licensed_modern_method_reference",
+      "download_status": "manual_loan_purchase_or_user_owned_copy_required",
+      "documents": [],
+      "notes": "Internet Archive记录为受限借阅、printdisabled，不能绕过限制批量下载。"
+    },
+    {
+      "source_id": "shaoweihua_sizhu_yucexue_1993",
+      "title": "四柱预测学",
+      "author": "邵伟华",
+      "edition_id": "shaoweihua_sizhu_yucexue_dunhuang_1993",
+      "edition": "敦煌文艺出版社，1993年",
+      "language": "zh",
+      "provider": "Google Books catalog",
+      "provider_page": "https://books.google.com/books/about/四柱预测学.html?id=vNzsAAAACAAJ",
+      "isbn": [
+        "7805871671",
+        "9787805871677"
+      ],
+      "format": "user_owned_or_licensed_copy",
+      "completeness": "catalog_record_only",
+      "copyright_status": "copyright_restricted",
+      "redistribution_allowed": false,
+      "automated_download_allowed": false,
+      "recommended_role": "licensed_modern_four_pillars_reference",
+      "download_status": "purchase_library_or_user_owned_copy_required",
+      "documents": [],
+      "notes": "未核验到合法公开全文。"
+    },
+    {
+      "source_id": "chenyuan_shaoweihua_sizhu_intro_1995",
+      "title": "邵伟华四柱预测学入门",
+      "author": "陈园编著；邵伟华审订",
+      "edition_id": "chenyuan_shaoweihua_sizhu_intro_guangzhou_1995",
+      "edition": "广州出版社，1995年",
+      "language": "zh",
+      "provider": "Google Books / WorldCat catalog",
+      "provider_page": "https://books.google.com/books/about/邵伟华四柱预测学入门.html?id=17JL5BHO_NwC",
+      "isbn": [
+        "7805922519",
+        "9787805922515"
+      ],
+      "format": "user_owned_or_licensed_copy",
+      "completeness": "catalog_record_only",
+      "copyright_status": "copyright_restricted",
+      "redistribution_allowed": false,
+      "automated_download_allowed": false,
+      "recommended_role": "candidate_title_for_user_confirmation",
+      "download_status": "purchase_library_or_user_owned_copy_required",
+      "documents": [],
+      "notes": "该书不是邵伟华独著，需避免错误登记作者。"
+    }
+  ]
+}
