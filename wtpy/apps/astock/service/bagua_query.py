@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
 from ..bagua.calculator import BaguaCalculator
+from ..bagua.consensus import consensus as gua_consensus
 from ..bagua.gaodao import gaodao_index
 from ..config import AStockConfig
 from ..data.adjustments import build_factor_series
@@ -885,7 +886,7 @@ def _adjust_day_bars(
 
 def _gaodao_summary_fields(
     cfg: AStockConfig, bagua: Dict[str, Any]
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     """按 state_id 取《高岛易断》营商断语，供 summary 展示。
 
     仅解读层：sidecar 缺失或该爻无断语时返回空串，
@@ -896,6 +897,9 @@ def _gaodao_summary_fields(
     return {
         "gaodao_commerce": gi.display(sid),
         "gaodao_category": gi.category(sid),
+        # 兜底类别（时运/功名）标志：前端据此决定是否标注出处，
+        # 不再各自硬编码营商类别名（避免与 sidecar policy 失步）
+        "gaodao_is_fallback": gi.is_fallback(sid),
     }
 
 
@@ -2004,6 +2008,22 @@ def _bagua_gaodao_explain(row: Optional[Dict[str, Any]]) -> str:
     return _strip_gua_symbols(str(s.get("gaodao_commerce") or ""))
 
 
+def _bagua_consensus_label(row: Optional[Dict[str, Any]]) -> str:
+    """导出列取值：卦象操作信号与高岛断语的共识倾向（▲双好 / ▼双差 / 分歧 / 空）。
+
+    两套解读同源于 384 爻但解读对象不同（现代仓位 vs 清末实体商业），
+    实测约 13% 的行方向对立，故只在一致时给出结论，分歧显式标出交回人工。
+    仅作阅读辅助，不参与选股与回测。
+    """
+    if not row or row.get("error") or not row.get("ok", True):
+        return ""
+    s = row.get("summary") or {}
+    b = row.get("bagua") or {}
+    signal = s.get("action_signal") or b.get("action_signal") or ""
+    text = s.get("gaodao_commerce") or ""
+    return gua_consensus(signal, text)
+
+
 def _fmt_ymd_dash(ymd: Any) -> str:
     try:
         n = int(ymd)
@@ -2435,11 +2455,14 @@ def _weekly_style_row(
 ) -> List[Any]:
     """One stock row in weekly_analysis stock-all layout (周卦列在前、月卦列在后).
 
-    列布局（共 15 列）::
+    列布局（共 17 列）::
 
         0 code, 1 name, 2 week_end, 3 open, 4 high, 5 low, 6 close, 7 日柱,
-        8 周卦组合, 9 爻辞解释, 10 周·高岛易断,
-        11 月卦组合, 12 爻辞解释, 13 月·高岛易断, 14 数据状态
+        8 周卦组合, 9 爻辞解释, 10 周·高岛易断, 11 周·倾向,
+        12 月卦组合, 13 爻辞解释, 14 月·高岛易断, 15 月·倾向, 16 数据状态
+
+    「倾向」列为卦象操作信号与高岛断语的共识（▲双好 / ▼双差 / 分歧 / 空），
+    周月各自独立判定（同一只股票周卦与月卦结论常不同，不可合并）。
 
     ``note``：失败行的结构化原因（data_status/error_reason），写入末尾
     "数据状态" 列；正常行保持空串，避免无行情时留下难以解释的空白。
@@ -2472,9 +2495,11 @@ def _weekly_style_row(
         _bagua_combo(week_row),
         _bagua_yao_explain(week_row),
         _bagua_gaodao_explain(week_row),
+        _bagua_consensus_label(week_row),
         _bagua_combo(month_row),
         _bagua_yao_explain(month_row),
         _bagua_gaodao_explain(month_row),
+        _bagua_consensus_label(month_row),
         note,
     ]
 
@@ -2985,12 +3010,15 @@ def export_bagua_multi_period_xlsx(
 
     Columns:
       code, name, week_end, open, high, low, close, 日柱,
-      周卦周线-组合(周标签), 爻辞解释, 周·高岛易断,
-      月卦月线-组合(月标签), 爻辞解释, 月·高岛易断, 数据状态
+      周卦周线-组合(周标签), 爻辞解释, 周·高岛易断, 周·倾向,
+      月卦月线-组合(月标签), 爻辞解释, 月·高岛易断, 月·倾向, 数据状态
 
     周卦在前、月卦在后；表头标注周卦所在周（ISO 周）与月卦所在月份。
     「高岛易断」列为《高岛易断》问营商断语（覆盖 379/384 爻，仅供解读，
     不参与选股与回测）；原书无该爻占断时留空。
+    「倾向」列为卦象操作信号与高岛断语的共识：两者都看好=▲双好（红），
+    都看差=▼双差（绿），方向对立=分歧，一方中性或语气不明=留空；
+    周月各自独立判定，同一只股票两列结论常不同。同样仅供解读。
     月卦默认取查询月份的上一个月（如8月查询导出7月月卦，避免未收官月卦），
     周卦取查询日期所在周。Always computes WEEK + MONTH (DAY is ignored for
     this layout). 日柱 is joined from Desktop ``股票+卦象/日柱(1).xlsx`` when
@@ -2999,7 +3027,9 @@ def export_bagua_multi_period_xlsx(
     import time
 
     import openpyxl
-    from openpyxl.styles import Font
+    from openpyxl.styles import Font, PatternFill
+
+    from ..bagua.consensus import consensus_style
 
     # Layout always needs week + month combos; keep periods only for meta.
     raw_pers = list(periods or ["WEEK", "MONTH"])
@@ -3164,16 +3194,34 @@ def export_bagua_multi_period_xlsx(
             f"周卦周线-组合({week_label})",
             "爻辞解释",
             "周·高岛易断",
+            "周·倾向",
             f"月卦月线-组合({month_label})",
             "爻辞解释",
             "月·高岛易断",
+            "月·倾向",
             "数据状态",
         ]
         ws.append(headers)
         for cell in ws[1]:
             cell.font = Font(bold=True)
+        # 倾向列与其对应的卦象组合列：双好标红、双差标绿（A股习惯），其余不标。
+        # (倾向列索引, 组合列索引) —— 1-based，供 openpyxl 使用
+        CONSENSUS_COLS = ((12, 9), (16, 13))
         for row in rows:
             ws.append(row)
+            r = ws.max_row
+            for ci_label, ci_combo in CONSENSUS_COLS:
+                label = row[ci_label - 1] if len(row) >= ci_label else ""
+                font_color, fill_color = consensus_style(str(label or ""))
+                if not font_color:
+                    continue
+                c_label = ws.cell(r, ci_label)
+                c_label.font = Font(color=font_color, bold=True)
+                c_label.fill = PatternFill(
+                    fill_type="solid", start_color=fill_color, end_color=fill_color
+                )
+                # 组合列同色（不加底色），便于横向扫读时定位是哪个卦
+                ws.cell(r, ci_combo).font = Font(color=font_color)
         _autofit_columns(ws)
         # combo columns (周卦周线-组合 / 月卦月线-组合) need extra room；
         # 高岛易断为整句古文断语，比组合列更长，单独放宽
@@ -3192,6 +3240,7 @@ def export_bagua_multi_period_xlsx(
     for cell in meta[1]:
         cell.font = Font(bold=True)
     # 高岛覆盖度写入 meta，便于打开表格的人判断空白高岛列是"该爻无断语"还是"数据缺失"
+    from ..bagua.gaodao import coverage_label as _gaodao_coverage_label
     from ..bagua.gaodao import gaodao_coverage as _gaodao_coverage
 
     _gd_cov = _gaodao_coverage(cfg)
@@ -3214,20 +3263,20 @@ def export_bagua_multi_period_xlsx(
         ("rizhu_note", "Excel 日柱表优先；次新股/ETF 按上市日期推算 60 甲子补齐"),
         ("name_note", "name 列优先本地 universe/TDX/forecast，缺失时按 Tushare stock_basic/fund_basic 补齐"),
         ("gaodao_source", _gd_cov.get("source_file") if _gd_cov else ""),
-        (
-            "gaodao_coverage",
-            (
-                "{total}/{state_total}（营商 {primary} + 兜底 {fallback}，缺失 {missing}）".format(
-                    **{k: _gd_cov.get(k) for k in
-                       ("total", "state_total", "primary", "fallback", "missing")}
-                )
-                if _gd_cov
-                else "sidecar 缺失，高岛列为空"
-            ),
-        ),
+        ("gaodao_coverage", _gaodao_coverage_label(cfg)),
         (
             "gaodao_note",
             "《高岛易断》问营商断语（缺失时以时运/功名替代并标注类别）；仅供解读，不参与选股与回测",
+        ),
+        (
+            "consensus_note",
+            "倾向列=卦象操作信号与高岛断语的共识：▲双好(红)/▼双差(绿)/分歧/留空；"
+            "周月独立判定；仅供解读，不参与选股与回测",
+        ),
+        (
+            "consensus_method",
+            "卦象侧取 384 爻人工标注的 action_signal（新开仓·加仓=好，减仓·清仓=差，持有=中）；"
+            "高岛侧为文言关键词推断（褒贬词并存的转折句判为不明、不归类），精度有限",
         ),
         ("exported_at", stamp),
     ]:

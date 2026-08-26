@@ -1676,7 +1676,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
           <button type="button" class="btn btn-export-secondary" id="bqExportBtn" title="导出全市场日/周/月线卦象 Excel">⇩ 导出全市场（后台）</button>
           <span class="bq-export-note">「导出输入的股票」快速导出输入框代码；「导出全市场」为后台任务，耗时较长</span>
         </div>
-        <div class="muted" style="font-size:11px;margin-top:8px" id="bqHint">指数/ETF 无复权口径，卦象按未复权(raw)计算；下拉预设可快速填入（也可手动输入 sh000001、sh510300、sz159915 等）。导出为周报格式：code/name/week_end/OHLC/日柱/周卦组合(标注周)/爻辞/周·高岛易断/月卦组合(标注月)/爻辞/月·高岛易断/数据状态；高岛易断列为《高岛易断》问营商断语（覆盖 379/384 爻，仅供解读、不参与选股，个别爻原书无断语时留空）；月卦默认取查询月份的上一个月（如8月查询导出7月月卦），周卦取查询周；导出全市场=同一 Excel 内 A股(stock-all)与全量ETF(etf-all) 两个 sheet，手动代码含 ETF 时也按类型分 sheet；导出卦象不含卦符。日柱自动读桌面「股票+卦象/日柱(1).xlsx」。Ctrl+F5 强刷后生效。</div>
+        <div class="muted" style="font-size:11px;margin-top:8px" id="bqHint">指数/ETF 无复权口径，卦象按未复权(raw)计算；下拉预设可快速填入（也可手动输入 sh000001、sh510300、sz159915 等）。导出为周报格式：code/name/week_end/OHLC/日柱/周卦组合(标注周)/爻辞/周·高岛易断/周·倾向/月卦组合(标注月)/爻辞/月·高岛易断/月·倾向/数据状态；高岛易断列为《高岛易断》问营商断语（覆盖 379/384 爻，仅供解读、不参与选股，个别爻原书无断语时留空）；倾向列为卦象操作信号与高岛断语的共识——都看好标▲双好(红)、都看差标▼双差(绿)、方向对立标分歧、其余留空，周月各自独立判定，同样仅供解读；月卦默认取查询月份的上一个月（如8月查询导出7月月卦），周卦取查询周；导出全市场=同一 Excel 内 A股(stock-all)与全量ETF(etf-all) 两个 sheet，手动代码含 ETF 时也按类型分 sheet；导出卦象不含卦符。日柱自动读桌面「股票+卦象/日柱(1).xlsx」。Ctrl+F5 强刷后生效。</div>
         <div id="bqGuidePanel" style="display:none;border:1px solid var(--line,#2a3a55);border-radius:8px;padding:12px 14px;margin-top:10px;font-size:12px;line-height:1.9;color:#c3d0e0;background:rgba(24,38,60,.35)">
           <div style="font-weight:600;color:#9fc7ff;margin-bottom:6px">四步使用指南</div>
           <ol style="margin:0;padding-left:20px">
@@ -2598,12 +2598,6 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
-  }
-  // 《高岛易断》营商类别名；不在此列表的类别（时运/功名）属兜底来源，展示时需标注
-  const GAODAO_PRIMARY_CATEGORIES = ["营商", "商业", "经商", "买卖", "贸易", "营业", "生意", "财运"];
-  function gaodaoIsFallback(category) {
-    if (!category) return false;
-    return GAODAO_PRIMARY_CATEGORIES.indexOf(String(category)) < 0;
   }
   function toast(msg) {
     const el = $("liveToast");
@@ -6392,9 +6386,11 @@ async function expCreateAndStart() {
         ? '<div class="forecast-panel" style="margin-bottom:12px">' +
           "<h4>高岛易断·营商</h4>" +
           "<p>" + esc(s.gaodao_commerce) + "</p>" +
-          (s.gaodao_category && gaodaoIsFallback(s.gaodao_category)
-            ? "<p class='muted' style='font-size:11px'>原书该爻无营商类占断，以「" +
-              esc(s.gaodao_category) + "」类断语替代</p>"
+          // 是否兜底类别由后端 gaodao_is_fallback 判定（前端不硬编码类别名）；
+          // 兜底类别名已由后端拼在断语末尾的括注中，此处不再重复
+          (s.gaodao_is_fallback
+            ? "<p class='muted' style='font-size:11px'>原书该爻无营商类占断，" +
+              "已改用括注所示类别断语（仅供解读，不参与选股）</p>"
             : "<p class='muted' style='font-size:11px'>来源：《高岛易断》问" +
               esc(s.gaodao_category || "营商") + "（仅供解读，不参与选股）</p>") +
           "</div>"

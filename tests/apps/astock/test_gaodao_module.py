@@ -107,6 +107,36 @@ def test_fail_open_when_file_corrupted(tmp_path):
     assert gd.load_gaodao(cfg2) is None
 
 
+def test_fail_open_when_by_state_id_wrong_type(tmp_path):
+    """by_state_id 类型错误（非 dict）必须被 _load_raw 拒绝，降级为 None（fail-open）。
+
+    任务显式要求覆盖此类型错误场景：sidecar 顶层是 dict，
+    但 by_state_id 被写成 list / str / null 时，模块不得把它当成映射来查询，
+    否则 GaodaoIndex.__init__ 里 data.get("by_state_id") 会拿到非法对象。
+    """
+    for bad in (
+        json.dumps({"by_state_id": ["01-1", "01-2"]}),          # list
+        json.dumps({"by_state_id": "not-a-dict"}),               # str
+        json.dumps({"by_state_id": None, "counts": {}}),          # null
+        json.dumps({"by_state_id": 123}),                          # int
+    ):
+        p = tmp_path / "bad_type.json"
+        p.write_text(bad, encoding="utf-8")
+        # utime 推进，规避秒级 mtime 分辨率导致的缓存串扰
+        import os as _os
+        import time as _time
+        _os.utime(p, (_time.time() + 1, _time.time() + 1))
+        gd.invalidate_gaodao_cache()
+        cfg = AStockConfig(bagua_gaodao_json=p)
+        assert gd.load_gaodao(cfg) is None
+        # 消费入口一律 fail-open：取断语为 None、展示串为空、覆盖度为 None
+        assert gd.gaodao_for_state("01-1", cfg) is None
+        assert gd.gaodao_display("01-1", cfg) == ""
+        assert gd.gaodao_coverage(cfg) is None
+        # 索引对象也应为空（bool False），列表类接口据此逐爻留空
+        assert not gd.gaodao_index(cfg)
+
+
 def test_fallback_category_gets_suffix(tmp_path):
     p = tmp_path / "side.json"
     _write_sidecar(
@@ -138,3 +168,133 @@ def test_cache_invalidates_on_mtime_change(tmp_path):
     future = time.time() + 2
     os.utime(p, (future, future))
     assert gd.gaodao_for_state("01-1", cfg)["text"] == "新"
+
+
+# ---------------------------------------------------------------------------
+# is_fallback：兜底类别的权威判定（供前端替代硬编码类别名）
+# ---------------------------------------------------------------------------
+
+
+def test_is_fallback_flag(tmp_path):
+    p = tmp_path / "side.json"
+    _write_sidecar(
+        p,
+        {
+            "01-1": {"text": "甲", "category": "营商", "gua_name": "乾为天", "yao_name": "初九"},
+            "05-2": {"text": "乙", "category": "时运", "gua_name": "水天需", "yao_name": "九二"},
+        },
+    )
+    cfg = AStockConfig(bagua_gaodao_json=p)
+    assert gd.gaodao_is_fallback("01-1", cfg) is False   # 营商类
+    assert gd.gaodao_is_fallback("05-2", cfg) is True    # 时运兜底
+    assert gd.gaodao_is_fallback("99-9", cfg) is False   # 无断语的爻不算兜底
+    assert gd.gaodao_is_fallback(None, cfg) is False
+
+
+def test_is_fallback_on_real_sidecar():
+    cfg = get_default_config()
+    if not Path(cfg.bagua_gaodao_json).exists():
+        pytest.skip("bagua_gaodao.json missing")
+    # 营商/商业类不是兜底
+    assert gd.gaodao_is_fallback("01-1", cfg) is False
+    # 实际 sidecar 中的 4 个兜底爻（时运 3 + 功名 1）
+    for sid in ("03-4", "05-2", "09-4", "36-3"):
+        assert gd.gaodao_is_fallback(sid, cfg) is True, sid
+    # 原书无占断的 5 爻不算兜底
+    for sid in ("11-4", "26-2", "33-4", "47-4", "61-5"):
+        assert gd.gaodao_is_fallback(sid, cfg) is False, sid
+
+
+def test_is_fallback_fail_open_without_sidecar(tmp_path):
+    cfg = AStockConfig(bagua_gaodao_json=tmp_path / "nope.json")
+    assert gd.gaodao_is_fallback("05-2", cfg) is False
+
+
+# ---------------------------------------------------------------------------
+# coverage_label：写入导出 meta 的人读串，counts 不完整时必须优雅降级
+# ---------------------------------------------------------------------------
+
+
+def _label_for(tmp_path, name, payload) -> str:
+    p = tmp_path / name
+    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    # 逐个用例换文件名 + 推进 mtime，避免秒级 mtime 分辨率造成缓存串扰
+    future = time.time() + 2
+    os.utime(p, (future, future))
+    gd.invalidate_gaodao_cache()
+    return gd.coverage_label(AStockConfig(bagua_gaodao_json=p))
+
+
+BASE_ENTRY = {"by_state_id": {"01-1": {"text": "x", "category": "营商"}}}
+
+
+def test_coverage_label_complete_counts():
+    cfg = get_default_config()
+    if not Path(cfg.bagua_gaodao_json).exists():
+        pytest.skip("bagua_gaodao.json missing")
+    label = gd.coverage_label(cfg)
+    assert label == "379/384（营商 375 + 兜底 4，缺失 5）"
+
+
+def test_coverage_label_never_prints_none(tmp_path):
+    """counts 缺项时不得把 None 格式化进给人看的表格（回归 review 发现的缺陷）。
+
+    修复前模板直接 .format(**{k: cov.get(k)})，counts 不完整会产出
+    "1/None（营商 None + 兜底 None，缺失 None）" 写进导出 Excel 的 meta sheet。
+    """
+    cases = {
+        "only_total.json": {**BASE_ENTRY, "counts": {"total": 1}},
+        "empty_counts.json": {**BASE_ENTRY, "counts": {}},
+        "no_counts_key.json": dict(BASE_ENTRY),
+        "no_detail.json": {**BASE_ENTRY, "counts": {"total": 1, "state_total": 384}},
+        "partial_detail.json": {
+            **BASE_ENTRY,
+            "counts": {"total": 1, "state_total": 384, "primary": 1},
+        },
+    }
+    for name, payload in cases.items():
+        label = _label_for(tmp_path, name, payload)
+        assert "None" not in label, (name, label)
+        assert label.strip(), name
+
+
+def test_coverage_label_degradation_texts(tmp_path):
+    assert _label_for(
+        tmp_path, "d1.json", {**BASE_ENTRY, "counts": {"total": 1, "state_total": 384}}
+    ) == "1/384（sidecar 未记录明细）"
+    assert _label_for(
+        tmp_path, "d2.json", {**BASE_ENTRY, "counts": {}}
+    ) == "sidecar 未记录 counts，覆盖度未知"
+    assert _label_for(
+        tmp_path, "d3.json", {**BASE_ENTRY, "counts": {"total": 1}}
+    ) == "1/-（sidecar 未记录明细）"
+
+
+def test_coverage_label_without_sidecar(tmp_path):
+    gd.invalidate_gaodao_cache()
+    cfg = AStockConfig(bagua_gaodao_json=tmp_path / "absent.json")
+    assert gd.coverage_label(cfg) == "sidecar 缺失，高岛列为空"
+
+
+# ---------------------------------------------------------------------------
+# 记忆化 resolve 不得破坏 mtime 失效语义（性能修复的回归护栏）
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_memoization_preserves_invalidation(tmp_path):
+    """_canonical 缓存路径解析后，改文件内容仍要能被读到新值。
+
+    resolve() 在 Windows 约 270µs，占单次取用开销 96%，全市场导出上万次调用
+    会白耗约 2.3s，故按路径字符串记忆化；但 mtime 仍每次 stat，
+    失效语义必须保持不变。
+    """
+    p = tmp_path / "memo.json"
+    _write_sidecar(p, {"01-1": {"text": "v1", "category": "营商"}})
+    cfg = AStockConfig(bagua_gaodao_json=p)
+    assert gd.gaodao_for_state("01-1", cfg)["text"] == "v1"
+
+    _write_sidecar(p, {"01-1": {"text": "v2", "category": "营商"}})
+    future = time.time() + 3
+    os.utime(p, (future, future))
+    # 未显式清缓存：仅靠 mtime 变化就应读到新内容
+    assert gd.gaodao_for_state("01-1", cfg)["text"] == "v2"

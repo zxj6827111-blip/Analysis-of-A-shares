@@ -108,6 +108,8 @@ def _entry_public(
         "note": e.get("note") or "",
         "gaodao_commerce": gi.display(state_id),
         "gaodao_category": gi.category(state_id),
+        # 兜底类别（时运/功名）标志由后端判定，前端不再自行硬编码类别名
+        "gaodao_is_fallback": gi.is_fallback(state_id),
         "upper": e.get("upper"),
         "lower": e.get("lower"),
     }
@@ -143,6 +145,7 @@ def list_hexagrams(cfg: Optional[AStockConfig] = None) -> List[dict]:
                 "market_summary": e.get("market_judgement") or "",
                 "gaodao_commerce": gi.display(sid),
                 "gaodao_category": gi.category(sid),
+                "gaodao_is_fallback": gi.is_fallback(sid),
             }
         )
     out = [by[k] for k in sorted(by.keys())]

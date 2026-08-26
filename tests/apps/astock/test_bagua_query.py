@@ -896,11 +896,13 @@ def test_export_bagua_multi_period_xlsx(monkeypatch, tmp_path):
     assert re.match(r"^周卦周线-组合\(\d{4}-W\d{1,2}\)$", headers[8]), headers[8]
     assert headers[9] == "爻辞解释"
     assert headers[10] == "周·高岛易断"
-    assert re.match(r"^月卦月线-组合\(\d{4}-\d{2}\)$", headers[11]), headers[11]
-    assert headers[12] == "爻辞解释"
-    assert headers[13] == "月·高岛易断"
-    assert headers[14] == "数据状态"
-    assert len(headers) == 15
+    assert headers[11] == "周·倾向"
+    assert re.match(r"^月卦月线-组合\(\d{4}-\d{2}\)$", headers[12]), headers[12]
+    assert headers[13] == "爻辞解释"
+    assert headers[14] == "月·高岛易断"
+    assert headers[15] == "月·倾向"
+    assert headers[16] == "数据状态"
+    assert len(headers) == 17
     assert ws.max_row >= 2
     # code / 日柱 columns
     assert ws.cell(2, 1).value in ("600000", "000001")
@@ -908,15 +910,18 @@ def test_export_bagua_multi_period_xlsx(monkeypatch, tmp_path):
     # 高岛易断列：本例 OHLC 6.27/7.33/5.90/5.90 命中 04-3（山水蒙·六三，有营商断语）
     assert (ws.cell(2, 11).value or "").strip()
     # 该 mock 只有 2024-01-03 一根日线，月卦（2023-12）无数据，
-    # 月卦三列（组合/爻辞/高岛）应一致为空，并在数据状态列留下原因
-    assert (ws.cell(2, 12).value or "") == ""
-    assert (ws.cell(2, 14).value or "") == ""
-    assert "MONTH" in str(ws.cell(2, 15).value or "")
+    # 月卦四列（组合/爻辞/高岛/倾向）应一致为空，并在数据状态列留下原因
+    assert (ws.cell(2, 13).value or "") == ""
+    assert (ws.cell(2, 15).value or "") == ""
+    assert (ws.cell(2, 16).value or "") == ""
+    assert "MONTH" in str(ws.cell(2, 17).value or "")
     # meta sheet 记录高岛来源与覆盖度，便于解释空白单元格
     meta_rows = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert "gaodao_source" in meta_rows
     assert "379/384" in str(meta_rows["gaodao_coverage"])
     assert "不参与选股" in str(meta_rows["gaodao_note"])
+    # 覆盖度串是给人看的，任何情况下不得把 None 格式化进去（review 缺陷回归）
+    assert "None" not in str(meta_rows["gaodao_coverage"])
 
 
 def test_export_gaodao_column_blank_for_states_without_judgement(monkeypatch, tmp_path):
@@ -1063,22 +1068,24 @@ def test_export_month_defaults_to_prev_month(monkeypatch, tmp_path):
     assert "stock-all" in wb.sheetnames
     ws = wb["stock-all"]
     headers = [c.value for c in ws[1]]
-    assert len(headers) == 15
+    assert len(headers) == 17
     assert headers[:8] == ["code", "name", "week_end", "open", "high", "low", "close", "日柱"]
-    # 周卦列在前(9)、月卦列在后(12)，标签分别含查询周 ISO 周与上一月
+    # 周卦列在前(9)、月卦列在后(13)，标签分别含查询周 ISO 周与上一月
     assert headers[8].startswith("周卦周线-组合(") and "2024-W02" in headers[8], headers[8]
     assert headers[9] == "爻辞解释"
     assert headers[10] == "周·高岛易断"
-    assert headers[11].startswith("月卦月线-组合(") and "2023-12" in headers[11], headers[11]
-    assert headers[12] == "爻辞解释"
-    assert headers[13] == "月·高岛易断"
+    assert headers[11] == "周·倾向"
+    assert headers[12].startswith("月卦月线-组合(") and "2023-12" in headers[12], headers[12]
+    assert headers[13] == "爻辞解释"
+    assert headers[14] == "月·高岛易断"
+    assert headers[15] == "月·倾向"
     # 末列为数据状态（失败行写 data_status/error_reason，正常行为空）
-    assert headers[14] == "数据状态"
+    assert headers[16] == "数据状态"
 
     # 月卦数据确实取 2023-12：组合与 2023-12-31 的 MONTH 查询完全一致，
     # 且与周卦列（2024-W02 的天水讼）不同
     week_combo = ws.cell(2, 9).value or ""
-    month_combo = ws.cell(2, 12).value or ""
+    month_combo = ws.cell(2, 13).value or ""
     assert week_combo, "周卦组合不应为空"
     assert month_combo, "月卦组合不应为空"
     assert month_combo.startswith(ref_full_plain), f"{month_combo!r} 应以 {ref_full_plain!r} 开头"
@@ -1088,7 +1095,7 @@ def test_export_month_defaults_to_prev_month(monkeypatch, tmp_path):
     # 周月两个高岛易断列都应填到值（本例两个卦象在 sidecar 中均有营商断语），
     # 且与对应爻辞解释列是两条独立文本
     week_gaodao = ws.cell(2, 11).value or ""
-    month_gaodao = ws.cell(2, 14).value or ""
+    month_gaodao = ws.cell(2, 15).value or ""
     assert week_gaodao, "周·高岛易断不应为空"
     assert month_gaodao, "月·高岛易断不应为空"
     assert week_gaodao != month_gaodao
@@ -1185,7 +1192,7 @@ def test_export_all_stocks_two_sheets_and_no_gua_symbol(monkeypatch, tmp_path):
     ws_etf = wb["etf-all"]
     assert ws_stock.max_row >= 2
     assert ws_etf.max_row >= 2
-    assert len([c.value for c in ws_etf[1]]) == 15
+    assert len([c.value for c in ws_etf[1]]) == 17
     # 两个 sheet 的所有单元格均不含卦符（U+4DC0–U+4DFF）
     for ws in (ws_stock, ws_etf):
         for row in ws.iter_rows(values_only=True):
@@ -1200,9 +1207,9 @@ def test_export_all_stocks_two_sheets_and_no_gua_symbol(monkeypatch, tmp_path):
     assert len(etf_rows) == 2, f"etf-all 应写入两行，实际 {len(etf_rows)}"
     etf_codes = [r[0] for r in etf_rows]
     assert set(etf_codes) == {"510300", "159915"}, etf_codes
-    # 组合列（周卦=第9列 r[8]、月卦=第12列 r[11]）均写入真实卦象，非 error 空行
+    # 组合列（周卦=第9列 r[8]、月卦=第13列 r[12]）均写入真实卦象，非 error 空行
     assert all(r[8] for r in etf_rows), f"etf-all 周卦组合列存在空行: {etf_rows}"
-    assert all(r[11] for r in etf_rows), f"etf-all 月卦组合列存在空行: {etf_rows}"
+    assert all(r[12] for r in etf_rows), f"etf-all 月卦组合列存在空行: {etf_rows}"
     # 两只 ETF 数据不同 -> 两行卦象组合互不相同（各自独立计算）
     assert etf_rows[0][8] != etf_rows[1][8], "两只 ETF 卦象不应相同"
     # etf-all 不得混入 stock-all 的股票代码

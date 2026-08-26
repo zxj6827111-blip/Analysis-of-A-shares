@@ -36,6 +36,19 @@ def gaodao_path(cfg: Optional[AStockConfig] = None) -> Path:
     return Path(p)
 
 
+@lru_cache(maxsize=8)
+def _canonical(path_str: str) -> str:
+    """记忆化 Path.resolve()。
+
+    实测 Windows 上 resolve() 约 270µs，占单次索引取用开销的 96%
+    （stat 仅 ~4µs、索引对象构造 ~0.6µs）。全市场导出会按
+    「股票数 × 周期数」量级调用（5400 股 × WEEK/MONTH ≈ 1.08 万次），
+    不记忆化会白耗约 2.3 秒。路径字符串在进程内稳定，
+    按字符串缓存即可；mtime 仍每次 stat，缓存失效语义不受影响。
+    """
+    return str(Path(path_str).resolve())
+
+
 @lru_cache(maxsize=4)
 def _load_raw(path_str: str, mtime: float) -> Optional[dict]:
     """按 (路径, mtime) 缓存读取；任何异常都降级为 None（fail-open）。"""
@@ -59,12 +72,13 @@ def load_gaodao(cfg: Optional[AStockConfig] = None) -> Optional[dict]:
         return None
     if not mtime:
         return None
-    return _load_raw(str(path.resolve()), mtime)
+    return _load_raw(_canonical(str(path)), mtime)
 
 
 def invalidate_gaodao_cache() -> None:
     """清空 sidecar 缓存（重建数据文件后调用）。"""
     _load_raw.cache_clear()
+    _canonical.cache_clear()
 
 
 class GaodaoIndex:
@@ -103,6 +117,17 @@ class GaodaoIndex:
         if not category or not self._primary:
             return True
         return str(category) in self._primary
+
+    def is_fallback(self, state_id: Optional[str]) -> bool:
+        """该爻的断语是否来自兜底类别（时运/功名等非营商类）。
+
+        供前端直接判断是否要标注出处，避免前端各自硬编码营商类别名
+        导致与 sidecar 的 policy.primary 失步。无断语的爻返回 False。
+        """
+        item = self.get(state_id)
+        if not item:
+            return False
+        return not self.is_primary(str(item.get("category") or ""))
 
     def category(self, state_id: Optional[str]) -> str:
         item = self.get(state_id)
@@ -159,6 +184,38 @@ def is_primary_category(
 ) -> bool:
     """判断类别是否属于营商类。sidecar 不可用时保守视为营商（不加后缀）。"""
     return gaodao_index(cfg).is_primary(category)
+
+
+def gaodao_is_fallback(
+    state_id: Optional[str], cfg: Optional[AStockConfig] = None
+) -> bool:
+    """该爻断语是否取自兜底类别（时运/功名等）。无断语或 sidecar 不可用返回 False。"""
+    return gaodao_index(cfg).is_fallback(state_id)
+
+
+def coverage_label(cfg: Optional[AStockConfig] = None) -> str:
+    """人读的覆盖度摘要串，写入导出 Excel 的 meta sheet。
+
+    counts 可能不完整（手工改过的 sidecar、旧版 schema），逐项做缺失降级，
+    避免把 None 直接格式化进给人看的表格里（如 "1/None（营商 None…）"）。
+    """
+    cov = gaodao_coverage(cfg)
+    if not cov:
+        return "sidecar 缺失，高岛列为空"
+    total = cov.get("total")
+    state_total = cov.get("state_total")
+    primary = cov.get("primary")
+    fallback = cov.get("fallback")
+    missing = cov.get("missing")
+    if total is None and state_total is None:
+        return "sidecar 未记录 counts，覆盖度未知"
+    head = "{}/{}".format(
+        total if total is not None else "-",
+        state_total if state_total is not None else "-",
+    )
+    if primary is None or fallback is None or missing is None:
+        return f"{head}（sidecar 未记录明细）"
+    return f"{head}（营商 {primary} + 兜底 {fallback}，缺失 {missing}）"
 
 
 def gaodao_coverage(cfg: Optional[AStockConfig] = None) -> Optional[Dict[str, Any]]:

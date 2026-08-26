@@ -106,4 +106,31 @@ def test_summary_keys_always_present_without_sidecar(monkeypatch, tmp_path):
     out = bq.query_bagua(cfg, code="600000", date="2024-01-03", period="DAY")
     assert out["summary"]["gaodao_commerce"] == ""
     assert out["summary"]["gaodao_category"] == ""
+    assert out["summary"]["gaodao_is_fallback"] is False
     assert out["ok"] is True
+
+
+def test_summary_exposes_fallback_flag(monkeypatch):
+    """summary 透出兜底标志，前端据此决定是否标注出处（替代硬编码类别名）。"""
+    monkeypatch.setattr(bq, "load_day_bars", lambda *_a, **_k: [BARS_HIT])
+    out = bq.query_bagua(make_cfg(), code="600000", date="2024-01-03", period="DAY")
+    assert out["bagua"]["state_id"] == "04-3"          # 营商类断语
+    assert out["summary"]["gaodao_is_fallback"] is False
+
+
+def test_summary_fallback_flag_false_for_missing_state(monkeypatch):
+    """原书无占断的爻：无断语则不算兜底，前端整块不渲染。"""
+    monkeypatch.setattr(bq, "load_day_bars", lambda *_a, **_k: [BARS_MISS])
+    out = bq.query_bagua(make_cfg(), code="600000", date="2024-01-03", period="DAY")
+    assert out["bagua"]["state_id"] == "11-4"
+    assert out["summary"]["gaodao_is_fallback"] is False
+
+
+def test_index_etf_summary_exposes_fallback_flag(monkeypatch):
+    """指数/ETF 是另一条组装路径，同样必须带标志（易漏点回归）。"""
+    monkeypatch.setattr(bq, "load_index_etf_day_bars", lambda *_a, **_k: [BARS_HIT])
+    for code, kind in (("sh000001", "index"), ("sh510300", "etf")):
+        out = bq.query_bagua(make_cfg(), code=code, date="2024-01-03", period="DAY")
+        assert out["symbol_type"] == kind
+        assert "gaodao_is_fallback" in out["summary"], code
+        assert out["summary"]["gaodao_is_fallback"] is False, code
