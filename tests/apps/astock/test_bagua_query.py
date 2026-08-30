@@ -1137,30 +1137,50 @@ def test_export_month_defaults_to_prev_month(monkeypatch, tmp_path):
 
 
 def test_month_attributions():
-    """月卦归属：跨月周按自然日切段、cast=上一自然月月末；非跨月周单组兼容旧口径。"""
-    # 2026-08-31 为周一，所在周 8/31~9/6 跨 8/9 月（用户场景）
+    """月卦归属锚定周报目标周（+3天）：按交易日（周一~周五）切段，周末不计。"""
+    # 2026-08-31 为周一，锚点+3=周四 → 目标周交易日 8/31 + 9/1~9/4 跨 8/9 月（用户场景）
     assert _dt.date(2026, 8, 31).isoweekday() == 1
     attrs = bq._month_attributions(20260831)
     assert [(a["cast_label"], a["applies_label"]) for a in attrs] == [
         ("2026-07", "8/31"),
-        ("2026-08", "9/1-9/6"),
+        ("2026-08", "9/1-9/4"),
     ]
     assert [a["cast_asof"] for a in attrs] == [20260731, 20260831]
 
-    # 非跨月周（2026-09-07 周一，整周在 9 月）：单组且与旧口径完全一致
+    # 周一~周四导出：目标周=当周（2026-09-07 周一，整周在 9 月），单组且与旧口径一致
     attrs1 = bq._month_attributions(20260907)
     assert len(attrs1) == 1
     assert attrs1[0]["cast_asof"] == bq._prev_month_end(20260907) == 20260831
     assert attrs1[0]["cast_label"] == "2026-08"
 
-    # 跨年周：2024-12-30(周一) ~ 2025-01-05(周日)
-    # 适用段统一用完整 M/D-M/D 格式（与主场景 9/1-9/6 一致）
+    # 跨年周：2024-12-30(周一) ~ 2025-01-03(周五)
     attrs2 = bq._month_attributions(20241230)
     assert [(a["cast_label"], a["applies_label"]) for a in attrs2] == [
         ("2024-11", "12/30-12/31"),
-        ("2024-12", "1/1-1/5"),
+        ("2024-12", "1/1-1/3"),
     ]
     assert [a["cast_asof"] for a in attrs2] == [20241130, 20241231]
+
+    # 周五晚/周末导出：目标周 = 下一交易周（周报前瞻）
+    attrs_sun = bq._month_attributions(20260830)  # 周日（用户 8/30 导出场景）
+    assert [(a["cast_label"], a["applies_label"]) for a in attrs_sun] == [
+        ("2026-07", "8/31"),
+        ("2026-08", "9/1-9/4"),
+    ]
+    attrs_fri = bq._month_attributions(20260904)  # 周五晚 → 下周 W37 单组
+    assert [(a["cast_label"], a["applies_label"]) for a in attrs_fri] == [
+        ("2026-08", "9/7-9/11"),
+    ]
+    assert attrs_fri[0]["cast_asof"] == 20260831
+
+    # 月界落在周末：目标周交易日全在 7 月 → 单组（周末不算交易日，用户指出的口径）
+    attrs_wk = bq._month_attributions(20260726)  # 周日，目标周 7/27-7/31
+    assert len(attrs_wk) == 1
+    assert (attrs_wk[0]["cast_label"], attrs_wk[0]["applies_label"]) == (
+        "2026-06",
+        "7/27-7/31",
+    )
+    assert attrs_wk[0]["cast_asof"] == 20260630
 
     # 伪周期键映射：MONTH2 与 MONTH 同为自然月聚合
     assert bq._agg_period("MONTH2") == "MONTH"
@@ -1170,7 +1190,7 @@ def test_month_attributions():
 def test_export_cross_month_week_two_month_groups(monkeypatch, tmp_path):
     """跨月周导出（复刻用户场景）：2026-08-31 所在周输出两组月卦，共 21 列。
 
-    月卦按行内日期归属：8/31 用 2026-07 月卦、9/1-9/6 用 2026-08 月卦，
+    月卦按行内日期归属：8/31 用 2026-07 月卦、9/1-9/4 用 2026-08 月卦，
     两组组合分别与直查 2026-07-31 / 2026-08-31 的 MONTH 结果一致。
     """
     if not JSON_PATH.exists():
@@ -1240,7 +1260,7 @@ def test_export_cross_month_week_two_month_groups(monkeypatch, tmp_path):
     assert headers[13] == "爻辞解释"
     assert headers[14] == "月·高岛易断"
     assert headers[15] == "月·倾向"
-    assert headers[16] == "月卦月线-组合(2026-08,适用9/1-9/6)"
+    assert headers[16] == "月卦月线-组合(2026-08,适用9/1-9/4)"
     assert headers[17] == "爻辞解释"
     assert headers[18] == "月·高岛易断"
     assert headers[19] == "月·倾向"
@@ -1259,13 +1279,20 @@ def test_export_cross_month_week_two_month_groups(monkeypatch, tmp_path):
     assert meta_rows["month_asof"] == 20260731
     assert meta_rows["month_asof_list"] == "20260731,20260831"
     assert "2026-07:适用8/31" in meta_rows["month_applies"]
-    assert "2026-08:适用9/1-9/6" in meta_rows["month_applies"]
+    assert "2026-08:适用9/1-9/4" in meta_rows["month_applies"]
     assert "omitted_month_asof" not in meta_rows
-    assert "跨月周按行内日期归属" in meta_rows["note"]
+    assert "按行内日期归属" in meta_rows["note"]
+    assert "临时卦象" in meta_rows["note"]
 
 
-def test_export_cross_month_week_omits_unfinished_month(monkeypatch, tmp_path):
-    """月K未就绪（数据只到 8/28）时导出 20260831：省略第二组，退化为 17 列。"""
+def test_export_cross_month_week_includes_provisional_second_month(monkeypatch, tmp_path):
+    """周末导出（用户 8/30 场景）：目标周=下一周，跨月周始终列出两组月卦。
+
+    数据只到 8/28（8/31 尚未交易），周日 2026-08-30 导出：目标周 W36
+    （交易日 8/31 + 9/1~9/4），7 月卦（8/31 适用，已收官）+ 8 月卦
+    （9/1-9/4 适用，按 8/1-8/28 临时计算，待 8/31 收盘后更新）。
+    两组组合分别与直查 2026-07-31 / 2026-08-31 的 MONTH 结果一致。
+    """
     if not JSON_PATH.exists():
         pytest.skip("bagua_384.json missing")
 
@@ -1293,14 +1320,20 @@ def test_export_cross_month_week_omits_unfinished_month(monkeypatch, tmp_path):
         universe_path=tmp_path / "universe.json",
         adj_root=tmp_path,
     )
-    ref = bq.query_bagua(
+    # 基准对拍：7 月卦用已收官月线；8 月卦周末导出时按 8/1-8/28 临时计算
+    ref1 = bq.query_bagua(
         cfg, code="600000", date="2026-07-31", period="MONTH", adjust="tushare_qfq"
     )
-    expected = bq._bagua_combo(ref)
+    ref2 = bq.query_bagua(
+        cfg, code="600000", date="2026-08-31", period="MONTH", adjust="tushare_qfq"
+    )
+    expected1 = bq._bagua_combo(ref1)
+    expected2 = bq._bagua_combo(ref2)
+    assert expected1 != expected2
 
     path = bq.export_bagua_multi_period_xlsx(
         cfg,
-        date="2026-08-31",
+        date="2026-08-30",
         periods=["WEEK", "MONTH"],
         adjust="tushare_qfq",
         codes=["600000"],
@@ -1312,19 +1345,21 @@ def test_export_cross_month_week_omits_unfinished_month(monkeypatch, tmp_path):
     wb = openpyxl.load_workbook(path)
     ws = wb["stock-all"]
     headers = [c.value for c in ws[1]]
-    assert len(headers) == 17
-    # 单组模式：列头保持旧文案（无",适用"后缀）
-    assert headers[12] == "月卦月线-组合(2026-07)"
+    assert len(headers) == 21
+    # 周卦=查询日所在周（W35，用户以之读下周）；月卦适用段=目标周 W36 的自然日
+    assert headers[8] == "周卦周线-组合(2026-W35)"
+    assert headers[12] == "月卦月线-组合(2026-07,适用8/31)"
     assert headers[13] == "爻辞解释"
-    assert headers[16] == "数据状态"
-    # 月卦组合为主组（7 月）
-    assert ws.cell(2, 13).value == expected
+    assert headers[16] == "月卦月线-组合(2026-08,适用9/1-9/4)"
+    assert headers[20] == "数据状态"
+    assert ws.cell(2, 13).value == expected1
+    assert ws.cell(2, 17).value == expected2
 
     meta_rows = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert meta_rows["month_asof"] == 20260731
-    assert meta_rows["month_asof_list"] == "20260731"
-    assert meta_rows["omitted_month_asof"] == 20260831
-    assert "省略" in meta_rows["note"]
+    assert meta_rows["month_asof_list"] == "20260731,20260831"
+    assert "omitted_month_asof" not in meta_rows
+    assert "临时卦象" in meta_rows["note"]
 
 
 def test_assemble_stock_result_month2_pseudo_period(tmp_path):
