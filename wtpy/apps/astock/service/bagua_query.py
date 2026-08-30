@@ -19,7 +19,7 @@ import re
 import threading
 import time as _bq_time
 from dataclasses import dataclass
-from datetime import date as _ymd_date
+from datetime import date as _ymd_date, timedelta as _ymd_delta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -92,6 +92,63 @@ def _prev_month_end(ymd: int) -> int:
     else:
         d = 29 if (y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)) else 28
     return y * 10000 + m * 100 + d
+
+
+# 导出伪周期键：跨月周的第二组月卦。仅用于行管道按组取数，底层聚合
+# 经 _agg_period 映射回真实周期名（build_period_bars 只认 DAY/WEEK/MONTH）。
+_EXPORT_MONTH2_KEY = "MONTH2"
+
+
+def _agg_period(per: str) -> str:
+    """伪周期键 -> 真实聚合周期；MONTH2 与 MONTH 同为自然月聚合口径。"""
+    return "MONTH" if per == _EXPORT_MONTH2_KEY else per
+
+
+def _month_attributions(asof: int) -> List[Dict[str, Any]]:
+    """查询日所在 ISO 周（周一~周日自然日）按自然月切分，返回各段的月卦归属。
+
+    目标规则：交易日 D 的月卦 = D 所在自然月的上一自然月整月月K所起之卦。
+    非跨月周整周一段，cast_asof 与 _prev_month_end(asof) 完全一致（兼容旧
+    口径）；跨月周（如 2026-08-31 所在周）切两段：8/31 用 2026-07 月卦、
+    9/1-9/6 用 2026-08 月卦。每段::
+
+        {"cast_asof": 上一自然月月末 YYYYMMDD,
+         "cast_label": "YYYY-MM"（起卦月）,
+         "applies_label": "8/31" 或 "9/1-9/6"（自然日区间，含周末）}
+
+    按起卦月升序排列。适用段按自然日标注，长假跨月周可能出现无交易日的段，
+    由 meta note 说明口径。
+    """
+    y, m, d = asof // 10000, (asof // 100) % 100, asof % 100
+    day = _ymd_date(y, m, d)
+    monday = day - _ymd_delta(days=day.isoweekday() - 1)
+    sunday = monday + _ymd_delta(days=6)
+    attrs: List[Dict[str, Any]] = []
+    seg_start = monday
+    while seg_start <= sunday:
+        if seg_start.month == 12:
+            month_end = _ymd_date(seg_start.year, 12, 31)
+        else:
+            month_end = (
+                _ymd_date(seg_start.year, seg_start.month + 1, 1) - _ymd_delta(days=1)
+            )
+        seg_end = min(sunday, month_end)
+        cast_asof = _prev_month_end(
+            seg_start.year * 10000 + seg_start.month * 100 + 1
+        )
+        if seg_start == seg_end:
+            applies = f"{seg_start.month}/{seg_start.day}"
+        else:
+            applies = f"{seg_start.month}/{seg_start.day}-{seg_end.month}/{seg_end.day}"
+        attrs.append(
+            {
+                "cast_asof": cast_asof,
+                "cast_label": f"{cast_asof // 10000:04d}-{(cast_asof // 100) % 100:02d}",
+                "applies_label": applies,
+            }
+        )
+        seg_start = seg_end + _ymd_delta(days=1)
+    return attrs
 
 
 def normalize_period(period: Optional[str]) -> str:
@@ -932,7 +989,8 @@ def _assemble_index_etf_bagua_result(
         }
         o, h, l, c = bar.open, bar.high, bar.low, bar.close
     else:
-        pb, exact = _find_period_bar(day_bars, per, asof)
+        # MONTH2 为导出伪周期键，聚合口径与 MONTH 相同（见 _agg_period）
+        pb, exact = _find_period_bar(day_bars, _agg_period(per), asof)
         bar_meta = {
             "date": int(pb.date),
             "start_date": int(getattr(pb, "start_date", pb.date)),
@@ -1155,7 +1213,8 @@ def _assemble_stock_bagua_result(
         }
         o, h, l, c = bar.open, bar.high, bar.low, bar.close
     else:
-        pb, exact = _find_period_bar(day_bars, per, asof)
+        # MONTH2 为导出伪周期键，聚合口径与 MONTH 相同（见 _agg_period）
+        pb, exact = _find_period_bar(day_bars, _agg_period(per), asof)
         bar_meta = {
             "date": int(pb.date),
             "start_date": int(getattr(pb, "start_date", pb.date)),
@@ -2448,30 +2507,35 @@ def ensure_name_coverage(
 def _weekly_style_row(
     *,
     week_row: Optional[Dict[str, Any]],
-    month_row: Optional[Dict[str, Any]],
+    month_rows: Sequence[Optional[Dict[str, Any]]],
     rizhu: str = "",
     fallback_code: str = "",
     note: str = "",
 ) -> List[Any]:
     """One stock row in weekly_analysis stock-all layout (周卦列在前、月卦列在后).
 
-    列布局（共 17 列）::
+    列布局（17 + 4×(月组数-1) 列；非跨月周即 17 列）::
 
         0 code, 1 name, 2 week_end, 3 open, 4 high, 5 low, 6 close, 7 日柱,
         8 周卦组合, 9 爻辞解释, 10 周·高岛易断, 11 周·倾向,
-        12 月卦组合, 13 爻辞解释, 14 月·高岛易断, 15 月·倾向, 16 数据状态
+        12+4k 月卦组合, 13+4k 爻辞解释, 14+4k 月·高岛易断, 15+4k 月·倾向
+        （k = 0..月组数-1），末列 数据状态
 
     「倾向」列为卦象操作信号与高岛断语的共识（▲双好 / ▼双差 / 分歧 / 空），
     周月各自独立判定（同一只股票周卦与月卦结论常不同，不可合并）。
 
+    ``month_rows``：月卦行列表，按起卦月升序（非跨月周 1 组、跨月周 2 组）；
+    OHLC 等基础字段的回退取第一组月卦行。
+
     ``note``：失败行的结构化原因（data_status/error_reason），写入末尾
     "数据状态" 列；正常行保持空串，避免无行情时留下难以解释的空白。
     """
-    base = week_row if (week_row and not week_row.get("error")) else month_row
+    month_any = next((m for m in month_rows if m), None)
+    base = week_row if (week_row and not week_row.get("error")) else month_any
     bar = (week_row or {}).get("bar") or (base or {}).get("bar") or {}
     code = (
         (week_row or {}).get("code")
-        or (month_row or {}).get("code")
+        or (month_any or {}).get("code")
         or fallback_code
         or ""
     )
@@ -2479,11 +2543,11 @@ def _weekly_style_row(
     c6 = _code6_from_any(code) or str(code).replace("sh", "").replace("sz", "").replace("bj", "")
     name = (
         (week_row or {}).get("name")
-        or (month_row or {}).get("name")
+        or (month_any or {}).get("name")
         or ""
     )
     week_end = bar.get("end_date") or bar.get("date") or (week_row or {}).get("query_date")
-    return [
+    row: List[Any] = [
         c6,
         name,
         _fmt_ymd_dash(week_end) if week_end else "",
@@ -2496,12 +2560,17 @@ def _weekly_style_row(
         _bagua_yao_explain(week_row),
         _bagua_gaodao_explain(week_row),
         _bagua_consensus_label(week_row),
-        _bagua_combo(month_row),
-        _bagua_yao_explain(month_row),
-        _bagua_gaodao_explain(month_row),
-        _bagua_consensus_label(month_row),
-        note,
     ]
+    # 每组月卦固定输出 4 列（组合/爻辞解释/月·高岛易断/月·倾向），组数决定总列数
+    for month_row in month_rows:
+        row += [
+            _bagua_combo(month_row),
+            _bagua_yao_explain(month_row),
+            _bagua_gaodao_explain(month_row),
+            _bagua_consensus_label(month_row),
+        ]
+    row.append(note)
+    return row
 
 
 def export_bagua_xlsx(
@@ -2795,11 +2864,13 @@ def _query_bagua_periods_for_code(
     for per in periods:
         per_asof = asof_map.get(per, asof) if asof_map else asof
         try:
+            # 伪周期键（MONTH2）映射回真实聚合周期；错误行的 period 字段
+            # 保留伪键，导出"数据状态"列可区分是哪一组月卦失败
             out[per] = query_bagua(
                 cfg,
                 code=code,
                 date=per_asof,
-                period=per,
+                period=_agg_period(per),
                 adjust=adjust,
                 session=session,
                 calc=calc,
@@ -2838,6 +2909,47 @@ def _query_bagua_periods_for_code(
                 "error": str(e),
             }
     return out
+
+
+def _month2_probe_ready(
+    cfg: AStockConfig,
+    *,
+    probe_code: str,
+    cast_asof: int,
+    adj: str,
+    session: Optional["BaguaPlaneSession"],
+    calc: BaguaCalculator,
+) -> bool:
+    """跨月周第二组月卦就绪检查：对探针代码做 1 次 MONTH 参考查询。
+
+    就绪判据：月K end_date 已到达自然月末（cast_asof）；自然月末本身落在
+    周六/周日时，取到该月最后一个交易日即视为完整（当月已无剩余交易日）。
+    不看 closed 标志——aggregate_month 对"查询日与月K同月"的情况恒判
+    open（见 periods.py），end_date 判据才是数据是否到月末的权威信号。
+    法定节假日恰逢月末时保守判为未就绪（省略第二组并在 meta 注明）。
+    """
+    try:
+        probe = query_bagua(
+            cfg,
+            code=probe_code,
+            date=cast_asof,
+            period="MONTH",
+            adjust=adj,
+            session=session,
+            calc=calc,
+        )
+    except Exception:
+        return False
+    bar = (probe or {}).get("bar") or {}
+    end = int(bar.get("end_date") or 0)
+    if not end:
+        return False
+    if end >= cast_asof:
+        return True
+    wd = _ymd_date(
+        cast_asof // 10000, (cast_asof // 100) % 100, cast_asof % 100
+    ).isoweekday()
+    return wd >= 6
 
 
 def _display_width(value: Any) -> float:
@@ -2891,10 +3003,12 @@ def _export_sheet_rows(
     totals: Dict[str, int],
     resolve_names: bool = False,
     name_map: Optional[Dict[str, str]] = None,
-) -> Tuple[List[List[Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+) -> Tuple[List[List[Any]], Optional[Dict[str, Any]], List[Optional[Dict[str, Any]]]]:
     """Query bagua for one code pool and build weekly-style sheet rows.
 
-    Returns (rows, first_week_row, first_month_row). ``base_idx`` offsets this
+    Returns (rows, first_week_row, first_month_rows)。``first_month_rows``
+    按月组（起卦月升序，非跨月周 1 组、跨月周 2 组）记录各组首个成功行，
+    与表头的月组列一一对应。``base_idx`` offsets this
     pool inside the combined progress bar and ``total`` is the combined pool
     size. ``resolve_names`` fills empty name cells via ``resolve_stock_name``
     (used for ETF rows, where display names are sparse). ``name_map`` is a
@@ -2903,7 +3017,8 @@ def _export_sheet_rows(
     """
     sheet_rows: List[List[Any]] = []
     first_week_row: Optional[Dict[str, Any]] = None
-    first_month_row: Optional[Dict[str, Any]] = None
+    month_keys = [p for p in query_pers if p.startswith("MONTH")]
+    first_month_rows: List[Optional[Dict[str, Any]]] = [None] * len(month_keys)
     for k, raw_code in enumerate(pool, 1):
         idx = base_idx + k
         per_rows = _query_bagua_periods_for_code(
@@ -2917,28 +3032,36 @@ def _export_sheet_rows(
             asof_map=asof_map,
         )
         week_row = per_rows.get("WEEK")
-        month_row = per_rows.get("MONTH")
+        month_rows = [per_rows.get(key) for key in month_keys]
         if first_week_row is None and week_row and not week_row.get("error"):
             first_week_row = week_row
-        if first_month_row is None and month_row and not month_row.get("error"):
-            first_month_row = month_row
+        for gi, month_row in enumerate(month_rows):
+            if (
+                first_month_rows[gi] is None
+                and month_row
+                and not month_row.get("error")
+            ):
+                first_month_rows[gi] = month_row
+        month_any = next((m for m in month_rows if m), None)
         c6 = _code6_from_any(
             (week_row or {}).get("code")
-            or (month_row or {}).get("code")
+            or (month_any or {}).get("code")
             or raw_code
         )
         rizhu = rizhu_map.get(c6, "") if c6 else ""
         if rizhu:
             totals["rizhu_hit"] += 1
         ok_w = bool(week_row and week_row.get("ok") and not week_row.get("error"))
-        ok_m = bool(month_row and month_row.get("ok") and not month_row.get("error"))
+        ok_m = any(
+            bool(m and m.get("ok") and not m.get("error")) for m in month_rows
+        )
         if ok_w or ok_m:
             totals["ok"] += 1
         else:
             totals["error"] += 1
         # 失败行的结构化原因（data_status/error_reason），写入"数据状态"列
         note_parts: List[str] = []
-        for failed in (week_row, month_row):
+        for failed in (week_row, *month_rows):
             if failed and failed.get("error"):
                 note_parts.append(
                     "{}[{}]: {}".format(
@@ -2949,7 +3072,7 @@ def _export_sheet_rows(
                 )
         row = _weekly_style_row(
             week_row=week_row,
-            month_row=month_row,
+            month_rows=month_rows,
             rizhu=rizhu,
             fallback_code=raw_code,
             note="；".join(note_parts),
@@ -2979,7 +3102,7 @@ def _export_sheet_rows(
                 )
             except Exception:
                 pass
-    return sheet_rows, first_week_row, first_month_row
+    return sheet_rows, first_week_row, first_month_rows
 
 
 def export_bagua_multi_period_xlsx(
@@ -3011,7 +3134,9 @@ def export_bagua_multi_period_xlsx(
     Columns:
       code, name, week_end, open, high, low, close, 日柱,
       周卦周线-组合(周标签), 爻辞解释, 周·高岛易断, 周·倾向,
-      月卦月线-组合(月标签), 爻辞解释, 月·高岛易断, 月·倾向, 数据状态
+      月卦月线-组合(月标签[,适用日期段]), 爻辞解释, 月·高岛易断, 月·倾向,
+      [跨月周追加第二组月卦 4 列（列名同上）,]
+      数据状态
 
     周卦在前、月卦在后；表头标注周卦所在周（ISO 周）与月卦所在月份。
     「高岛易断」列为《高岛易断》问营商断语（覆盖 379/384 爻，仅供解读，
@@ -3019,10 +3144,16 @@ def export_bagua_multi_period_xlsx(
     「倾向」列为卦象操作信号与高岛断语的共识：两者都看好=▲双好（红），
     都看差=▼双差（绿），方向对立=分歧，一方中性或语气不明=留空；
     周月各自独立判定，同一只股票两列结论常不同。同样仅供解读。
-    月卦默认取查询月份的上一个月（如8月查询导出7月月卦，避免未收官月卦），
-    周卦取查询日期所在周。Always computes WEEK + MONTH (DAY is ignored for
-    this layout). 日柱 is joined from Desktop ``股票+卦象/日柱(1).xlsx`` when
-    available. 导出卦象组合已去除卦符字符（U+4DC0–U+4DFF）。
+    月卦按查询日期所在周的自然日归属上一已完成月份：交易日 D 的月卦 =
+    D 所在自然月的上一自然月整月月K所起之卦。非跨月周整周一组，等价于
+    旧口径「查询月份的上一个月」（如8月查询导出7月月卦）；跨月周（如
+    2026-08-31 所在周）输出两组月卦列（8/31 用 2026-07 月卦、9/1-9/6 用
+    2026-08 月卦），列头以「,适用日期段」标注各自生效的自然日区间；第二组
+    月K未就绪（如月末数据未同步）时自动省略第二组并在 meta 记录
+    ``omitted_month_asof``。周卦取查询日期所在周。Always computes WEEK +
+    MONTH (DAY is ignored for this layout). 日柱 is joined from Desktop
+    ``股票+卦象/日柱(1).xlsx`` when available. 导出卦象组合已去除卦符字符
+    （U+4DC0–U+4DFF）。
     """
     import time
 
@@ -3051,7 +3182,9 @@ def export_bagua_multi_period_xlsx(
             seen_p.add(n)
 
     asof = _parse_ymd(date)
-    month_asof = _prev_month_end(asof)
+    # 月卦按查询日所在周的自然日归属上一已完成月份（非跨月周 1 组、跨月周 2 组）
+    month_attrs = _month_attributions(asof)
+    month_asof = month_attrs[0]["cast_asof"]  # 主组（兼容 meta 既有字段）
     adj = normalize_adjust_mode(adjust)
     use_all = bool(all_stocks)
     stock_pool: List[str] = []
@@ -3142,12 +3275,41 @@ def export_bagua_multi_period_xlsx(
     }
     total = totals["requested"]
     query_pers = ["WEEK", "MONTH"]
-    asof_map = {"WEEK": asof, "MONTH": month_asof}
+    asof_map: Dict[str, int] = {"WEEK": asof, "MONTH": month_asof}
+    # 跨月周的第二组月卦：先用池首代码做一次 MONTH 参考查询，确认该月月K
+    # 已收官（如 8/31 早盘导出、EOD 未同步时省略第二组，行为退化为现状
+    # 17 列并在 meta 记录）。探针依次试 2 只股票 + 1 只 ETF，避免池首恰好
+    # 长期无数据导致整体误省略。
+    omitted_month_asof: Optional[int] = None
+    if len(month_attrs) == 2:
+        probe_candidates: List[str] = list(stock_pool[:2])
+        if etf_pool:
+            probe_candidates.append(etf_pool[0])
+        cast2 = month_attrs[1]["cast_asof"]
+        probe_ready = any(
+            _month2_probe_ready(
+                cfg,
+                probe_code=c,
+                cast_asof=cast2,
+                adj=adj,
+                session=session,
+                calc=calc,
+            )
+            for c in probe_candidates
+        )
+        if probe_ready:
+            query_pers.append(_EXPORT_MONTH2_KEY)
+            asof_map[_EXPORT_MONTH2_KEY] = cast2
+        else:
+            omitted_month_asof = cast2
+    month_groups = month_attrs if omitted_month_asof is None else month_attrs[:1]
     sheet_rows_by_name: Dict[str, List[List[Any]]] = {}
-    first_rows: Dict[str, Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]] = {}
+    first_rows: Dict[
+        str, Tuple[Optional[Dict[str, Any]], List[Optional[Dict[str, Any]]]]
+    ] = {}
     base_idx = 0
     for sheet_name, pool, resolve_names in pools:
-        rows, fw, fm = _export_sheet_rows(
+        rows, fw, fms = _export_sheet_rows(
             cfg,
             pool=pool,
             asof=asof,
@@ -3166,21 +3328,19 @@ def export_bagua_multi_period_xlsx(
         )
         base_idx += len(pool)
         sheet_rows_by_name[sheet_name] = rows
-        first_rows[sheet_name] = (fw, fm)
+        first_rows[sheet_name] = (fw, fms)
 
     wb = openpyxl.Workbook()
     from openpyxl.utils import get_column_letter
 
+    dual_month = len(month_groups) == 2
     for si, (sheet_name, _pool, _rn) in enumerate(pools):
         rows = sheet_rows_by_name[sheet_name]
-        fw, fm = first_rows[sheet_name]
+        fw, fms = first_rows[sheet_name]
         ws = wb.active if si == 0 else wb.create_sheet(sheet_name)
         ws.title = sheet_name
         week_label = _week_iso_label(
             ((fw or {}).get("bar") or {}).get("end_date") or asof
-        )
-        month_label = _month_label(
-            ((fm or {}).get("bar") or {}).get("end_date") or month_asof
         )
         headers = [
             "code",
@@ -3195,18 +3355,29 @@ def export_bagua_multi_period_xlsx(
             "爻辞解释",
             "周·高岛易断",
             "周·倾向",
-            f"月卦月线-组合({month_label})",
-            "爻辞解释",
-            "月·高岛易断",
-            "月·倾向",
-            "数据状态",
         ]
+        for gi, grp in enumerate(month_groups):
+            fm = fms[gi] if gi < len(fms) else None
+            month_label = _month_label(
+                ((fm or {}).get("bar") or {}).get("end_date") or grp["cast_asof"]
+            )
+            title = f"月卦月线-组合({month_label}"
+            if dual_month:
+                # 跨月周：列头标注该组月卦适用的自然日区间（含周末）
+                title += f",适用{grp['applies_label']}"
+            title += ")"
+            headers += [title, "爻辞解释", "月·高岛易断", "月·倾向"]
+        headers.append("数据状态")
         ws.append(headers)
         for cell in ws[1]:
             cell.font = Font(bold=True)
         # 倾向列与其对应的卦象组合列：双好标红、双差标绿（A股习惯），其余不标。
-        # (倾向列索引, 组合列索引) —— 1-based，供 openpyxl 使用
-        CONSENSUS_COLS = ((12, 9), (16, 13))
+        # (倾向列索引, 组合列索引) —— 1-based，供 openpyxl 使用；周组固定，
+        # 月组按组数动态（每组 4 列：组合/爻辞/高岛/倾向）
+        CONSENSUS_COLS = [(12, 9)]
+        for gi in range(len(month_groups)):
+            combo_idx = 13 + 4 * gi
+            CONSENSUS_COLS.append((combo_idx + 3, combo_idx))
         for row in rows:
             ws.append(row)
             r = ws.max_row
@@ -3244,11 +3415,32 @@ def export_bagua_multi_period_xlsx(
     from ..bagua.gaodao import gaodao_coverage as _gaodao_coverage
 
     _gd_cov = _gaodao_coverage(cfg)
+    if len(month_groups) == 2:
+        applies_desc = "；".join(
+            f"{g['applies_label']} 用 {g['cast_label']} 月卦" for g in month_groups
+        )
+        export_note = (
+            f"跨月周按行内日期归属月卦：{applies_desc}；WEEK 列取查询日期所在周"
+        )
+    else:
+        export_note = "MONTH 列取查询月份的上一个月（如8月查询导出7月月卦）；WEEK 列取查询日期所在周"
+    if omitted_month_asof is not None:
+        export_note += f"；{omitted_month_asof} 月K未就绪，第二组月卦已省略"
     for k, v in [
         ("layout", "weekly_analysis stock-all"),
         ("query_date", asof),
         ("month_asof", month_asof),
-        ("note", "MONTH 列取查询月份的上一个月（如8月查询导出7月月卦）；WEEK 列取查询日期所在周"),
+        (
+            "month_asof_list",
+            ",".join(str(g["cast_asof"]) for g in month_groups),
+        ),
+        (
+            "month_applies",
+            ";".join(
+                f"{g['cast_label']}:适用{g['applies_label']}" for g in month_groups
+            ),
+        ),
+        ("note", export_note),
         ("periods", "WEEK,MONTH"),
         ("adjust", adj),
         ("all_stocks", use_all),
@@ -3281,6 +3473,8 @@ def export_bagua_multi_period_xlsx(
         ("exported_at", stamp),
     ]:
         meta.append([k, v])
+    if omitted_month_asof is not None:
+        meta.append(["omitted_month_asof", omitted_month_asof])
 
     wb.save(out)
     return out

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,29 @@ JSON_PATH = (
     / "bagua"
     / "bagua_384.json"
 )
+
+
+def _weekday_ymds(start: str, end: str) -> list:
+    """闭区间 [start, end] 内周一~周五的 YYYYMMDD 列表（导出测试造日K用）。"""
+    out = []
+    cur = _dt.date.fromisoformat(start)
+    end_d = _dt.date.fromisoformat(end)
+    while cur <= end_d:
+        if cur.isoweekday() <= 5:
+            out.append(int(cur.strftime("%Y%m%d")))
+        cur += _dt.timedelta(days=1)
+    return out
+
+
+# 导出测试通用的仓库数据面 mock 元数据（与既有测试内联字典字段一致）
+_DS_META_MOCK = {
+    "dataset_id": "mock",
+    "dataset_source": "tdxquant",
+    "dataset_adjustment": "front",
+    "dataset_status": "ready",
+    "covers_asof": True,
+    "candidate_datasets": 1,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -1110,6 +1134,239 @@ def test_export_month_defaults_to_prev_month(monkeypatch, tmp_path):
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert meta.get("month_asof") == 20231231
     assert meta.get("query_date") == 20240115
+
+
+def test_month_attributions():
+    """月卦归属：跨月周按自然日切段、cast=上一自然月月末；非跨月周单组兼容旧口径。"""
+    # 2026-08-31 为周一，所在周 8/31~9/6 跨 8/9 月（用户场景）
+    assert _dt.date(2026, 8, 31).isoweekday() == 1
+    attrs = bq._month_attributions(20260831)
+    assert [(a["cast_label"], a["applies_label"]) for a in attrs] == [
+        ("2026-07", "8/31"),
+        ("2026-08", "9/1-9/6"),
+    ]
+    assert [a["cast_asof"] for a in attrs] == [20260731, 20260831]
+
+    # 非跨月周（2026-09-07 周一，整周在 9 月）：单组且与旧口径完全一致
+    attrs1 = bq._month_attributions(20260907)
+    assert len(attrs1) == 1
+    assert attrs1[0]["cast_asof"] == bq._prev_month_end(20260907) == 20260831
+    assert attrs1[0]["cast_label"] == "2026-08"
+
+    # 跨年周：2024-12-30(周一) ~ 2025-01-05(周日)
+    # 适用段统一用完整 M/D-M/D 格式（与主场景 9/1-9/6 一致）
+    attrs2 = bq._month_attributions(20241230)
+    assert [(a["cast_label"], a["applies_label"]) for a in attrs2] == [
+        ("2024-11", "12/30-12/31"),
+        ("2024-12", "1/1-1/5"),
+    ]
+    assert [a["cast_asof"] for a in attrs2] == [20241130, 20241231]
+
+    # 伪周期键映射：MONTH2 与 MONTH 同为自然月聚合
+    assert bq._agg_period("MONTH2") == "MONTH"
+    assert bq._agg_period("MONTH") == "MONTH"
+
+
+def test_export_cross_month_week_two_month_groups(monkeypatch, tmp_path):
+    """跨月周导出（复刻用户场景）：2026-08-31 所在周输出两组月卦，共 21 列。
+
+    月卦按行内日期归属：8/31 用 2026-07 月卦、9/1-9/6 用 2026-08 月卦，
+    两组组合分别与直查 2026-07-31 / 2026-08-31 的 MONTH 结果一致。
+    """
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+
+    july = _weekday_ymds("2026-07-01", "2026-07-31")
+    august = _weekday_ymds("2026-08-01", "2026-08-31")
+    assert august[-1] == 20260831
+    # 7 月与 8 月差异化 OHLC；8/31 当日单独给一组 OHLC，
+    # 使周卦（仅 8/31 一根日线）与 8 月月卦（整月聚合）组合不同
+    bars = [DayBar(d, 6.27, 7.33, 5.90, 5.90, 1.0, 1.0) for d in july]
+    bars += [DayBar(d, 10.0, 11.0, 9.0, 9.4, 1.0, 1.0) for d in august if d != 20260831]
+    bars.append(DayBar(20260831, 9.0, 9.8, 8.8, 9.5, 1.0, 1.0))
+    monkeypatch.setattr(
+        bq, "_load_dataset_bars", lambda *_a, **_k: (bars, dict(_DS_META_MOCK))
+    )
+    monkeypatch.setattr(
+        bq,
+        "BaguaPlaneSession",
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("no md")),
+    )
+    monkeypatch.setattr(bq, "load_rizhu_map", lambda _p=None: {"600000": "甲子"})
+
+    cfg = SimpleNamespace(
+        bagua_json=JSON_PATH,
+        storage_root=tmp_path,
+        tdx_root=tmp_path,
+        market_data_root=tmp_path / "md",
+        forecast_root=tmp_path,
+        forecast_weekly_dir=tmp_path,
+        universe_path=tmp_path / "universe.json",
+        adj_root=tmp_path,
+    )
+    # 基准对拍：两组月卦分别等于直查该月起卦日的 MONTH 结果
+    ref1 = bq.query_bagua(
+        cfg, code="600000", date="2026-07-31", period="MONTH", adjust="tushare_qfq"
+    )
+    ref2 = bq.query_bagua(
+        cfg, code="600000", date="2026-08-31", period="MONTH", adjust="tushare_qfq"
+    )
+    expected1 = bq._bagua_combo(ref1)
+    expected2 = bq._bagua_combo(ref2)
+    assert expected1 != expected2  # 两月差异化 OHLC，月卦必不同
+
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2026-08-31",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        codes=["600000"],
+        all_stocks=False,
+    )
+    assert path.exists()
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    ws = wb["stock-all"]
+    headers = [c.value for c in ws[1]]
+    assert len(headers) == 21
+    assert headers[:8] == ["code", "name", "week_end", "open", "high", "low", "close", "日柱"]
+    # 周卦列头用 ISO 周编号（2026-08-31 所在周为 W36，与 %W 口径的 W35 是同一周）
+    assert headers[8] == "周卦周线-组合(2026-W36)"
+    assert headers[9] == "爻辞解释"
+    assert headers[10] == "周·高岛易断"
+    assert headers[11] == "周·倾向"
+    assert headers[12] == "月卦月线-组合(2026-07,适用8/31)"
+    assert headers[13] == "爻辞解释"
+    assert headers[14] == "月·高岛易断"
+    assert headers[15] == "月·倾向"
+    assert headers[16] == "月卦月线-组合(2026-08,适用9/1-9/6)"
+    assert headers[17] == "爻辞解释"
+    assert headers[18] == "月·高岛易断"
+    assert headers[19] == "月·倾向"
+    assert headers[20] == "数据状态"
+
+    # 两组月卦组合分别等于直查该月起卦日结果；周卦与第二组月卦不同
+    assert ws.cell(2, 13).value == expected1
+    assert ws.cell(2, 17).value == expected2
+    assert ws.cell(2, 9).value != ws.cell(2, 17).value
+    # 两组高岛列均非空（OHLC 覆盖的爻有营商断语）
+    assert (ws.cell(2, 15).value or "").strip()
+    assert (ws.cell(2, 19).value or "").strip()
+
+    meta_rows = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta_rows["query_date"] == 20260831
+    assert meta_rows["month_asof"] == 20260731
+    assert meta_rows["month_asof_list"] == "20260731,20260831"
+    assert "2026-07:适用8/31" in meta_rows["month_applies"]
+    assert "2026-08:适用9/1-9/6" in meta_rows["month_applies"]
+    assert "omitted_month_asof" not in meta_rows
+    assert "跨月周按行内日期归属" in meta_rows["note"]
+
+
+def test_export_cross_month_week_omits_unfinished_month(monkeypatch, tmp_path):
+    """月K未就绪（数据只到 8/28）时导出 20260831：省略第二组，退化为 17 列。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+
+    july = _weekday_ymds("2026-07-01", "2026-07-31")
+    august = _weekday_ymds("2026-08-01", "2026-08-28")
+    bars = [DayBar(d, 6.27, 7.33, 5.90, 5.90, 1.0, 1.0) for d in july]
+    bars += [DayBar(d, 10.0, 11.0, 9.0, 9.4, 1.0, 1.0) for d in august]
+    monkeypatch.setattr(
+        bq, "_load_dataset_bars", lambda *_a, **_k: (bars, dict(_DS_META_MOCK))
+    )
+    monkeypatch.setattr(
+        bq,
+        "BaguaPlaneSession",
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("no md")),
+    )
+    monkeypatch.setattr(bq, "load_rizhu_map", lambda _p=None: {"600000": "甲子"})
+
+    cfg = SimpleNamespace(
+        bagua_json=JSON_PATH,
+        storage_root=tmp_path,
+        tdx_root=tmp_path,
+        market_data_root=tmp_path / "md",
+        forecast_root=tmp_path,
+        forecast_weekly_dir=tmp_path,
+        universe_path=tmp_path / "universe.json",
+        adj_root=tmp_path,
+    )
+    ref = bq.query_bagua(
+        cfg, code="600000", date="2026-07-31", period="MONTH", adjust="tushare_qfq"
+    )
+    expected = bq._bagua_combo(ref)
+
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2026-08-31",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        codes=["600000"],
+        all_stocks=False,
+    )
+    assert path.exists()
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    ws = wb["stock-all"]
+    headers = [c.value for c in ws[1]]
+    assert len(headers) == 17
+    # 单组模式：列头保持旧文案（无",适用"后缀）
+    assert headers[12] == "月卦月线-组合(2026-07)"
+    assert headers[13] == "爻辞解释"
+    assert headers[16] == "数据状态"
+    # 月卦组合为主组（7 月）
+    assert ws.cell(2, 13).value == expected
+
+    meta_rows = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta_rows["month_asof"] == 20260731
+    assert meta_rows["month_asof_list"] == "20260731"
+    assert meta_rows["omitted_month_asof"] == 20260831
+    assert "省略" in meta_rows["note"]
+
+
+def test_assemble_stock_result_month2_pseudo_period(tmp_path):
+    """快路径伪周期键 MONTH2：聚合口径与 MONTH 完全一致（仅 period 字段不同）。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+
+    bars = [
+        DayBar(d, 6.27, 7.33, 5.90, 5.90, 1.0, 1.0)
+        for d in _weekday_ymds("2026-07-01", "2026-07-31")
+    ]
+    bars += [
+        DayBar(d, 10.0, 11.0, 9.0, 9.4, 1.0, 1.0)
+        for d in _weekday_ymds("2026-08-01", "2026-08-31")
+    ]
+    cfg = SimpleNamespace(
+        bagua_json=JSON_PATH,
+        storage_root=tmp_path,
+        tdx_root=tmp_path,
+        market_data_root=tmp_path / "md",
+        forecast_root=tmp_path,
+        forecast_weekly_dir=tmp_path,
+        universe_path=tmp_path / "universe.json",
+        adj_root=tmp_path,
+    )
+    calc = BaguaCalculator.from_json(JSON_PATH)
+    adj_meta = bq._warehouse_adj_meta("raw", dict(_DS_META_MOCK))
+    common = dict(
+        cfg=cfg,
+        std="SSE.STK.600000",
+        asof=20260831,
+        adj="raw",
+        calc=calc,
+        day_bars=bars,
+        adj_meta=adj_meta,
+    )
+    r_month = bq._assemble_stock_bagua_result(per="MONTH", **common)
+    r_month2 = bq._assemble_stock_bagua_result(per="MONTH2", **common)
+    assert r_month["period"] == "MONTH"
+    assert r_month2["period"] == "MONTH2"
+    r_month["period"] = "MONTH2"
+    assert r_month2 == r_month
 
 
 def test_export_all_stocks_two_sheets_and_no_gua_symbol(monkeypatch, tmp_path):
