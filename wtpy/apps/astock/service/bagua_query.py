@@ -105,34 +105,40 @@ def _agg_period(per: str) -> str:
 
 
 def _month_attributions(asof: int) -> List[Dict[str, Any]]:
-    """查询日所在 ISO 周（周一~周日自然日）按自然月切分，返回各段的月卦归属。
+    """周报目标周（锚点 = 查询日 + 3 天所在 ISO 周）按自然月切分，返回各段月卦归属。
 
-    目标规则：交易日 D 的月卦 = D 所在自然月的上一自然月整月月K所起之卦。
-    非跨月周整周一段，cast_asof 与 _prev_month_end(asof) 完全一致（兼容旧
-    口径）；跨月周（如 2026-08-31 所在周）切两段：8/31 用 2026-07 月卦、
-    9/1-9/6 用 2026-08 月卦。每段::
+    周报是前瞻的：周五晚~周日导出时目标周 = 下一交易周，周一~周四导出时
+    目标周 = 当周（+3 天恰好落在目标周内，无需交易日历）。目标周内交易日
+    D 的月卦 = D 所在自然月的上一自然月整月月K所起之卦，即 D 当天最近已
+    收官的月线（跨月交界如 8/31 当天 8 月未结束用 2026-07 月卦，9/1 起
+    8 月K闭合改用 2026-08 月卦）。切段与适用段只看交易日（周一~周五），
+    周末不计——月界落在周末时目标周只有一组月卦。锚点周与查询周相同
+    （周一~周四导出）且非跨月周时，cast_asof 与旧口径 _prev_month_end(asof)
+    完全一致。每段::
 
         {"cast_asof": 上一自然月月末 YYYYMMDD,
          "cast_label": "YYYY-MM"（起卦月）,
-         "applies_label": "8/31" 或 "9/1-9/6"（自然日区间，含周末）}
+         "applies_label": "8/31" 或 "9/1-9/4"（目标周内交易日区间，周一~周五）}
 
-    按起卦月升序排列。适用段按自然日标注，长假跨月周可能出现无交易日的段，
-    由 meta note 说明口径。
+    按起卦月升序排列。长假跨月周可能出现无交易日的段，由 meta note 说明
+    口径。周末导出时目标周次月的月K尚未收官，该组为按最新可得日线计算的
+    临时卦象（meta note 注明）。
     """
     y, m, d = asof // 10000, (asof // 100) % 100, asof % 100
-    day = _ymd_date(y, m, d)
+    day = _ymd_date(y, m, d) + _ymd_delta(days=3)
     monday = day - _ymd_delta(days=day.isoweekday() - 1)
-    sunday = monday + _ymd_delta(days=6)
+    # 只按交易日（周一~周五）切段与标注适用段，周末不计
+    week_last = monday + _ymd_delta(days=4)
     attrs: List[Dict[str, Any]] = []
     seg_start = monday
-    while seg_start <= sunday:
+    while seg_start <= week_last:
         if seg_start.month == 12:
             month_end = _ymd_date(seg_start.year, 12, 31)
         else:
             month_end = (
                 _ymd_date(seg_start.year, seg_start.month + 1, 1) - _ymd_delta(days=1)
             )
-        seg_end = min(sunday, month_end)
+        seg_end = min(week_last, month_end)
         cast_asof = _prev_month_end(
             seg_start.year * 10000 + seg_start.month * 100 + 1
         )
@@ -2911,47 +2917,6 @@ def _query_bagua_periods_for_code(
     return out
 
 
-def _month2_probe_ready(
-    cfg: AStockConfig,
-    *,
-    probe_code: str,
-    cast_asof: int,
-    adj: str,
-    session: Optional["BaguaPlaneSession"],
-    calc: BaguaCalculator,
-) -> bool:
-    """跨月周第二组月卦就绪检查：对探针代码做 1 次 MONTH 参考查询。
-
-    就绪判据：月K end_date 已到达自然月末（cast_asof）；自然月末本身落在
-    周六/周日时，取到该月最后一个交易日即视为完整（当月已无剩余交易日）。
-    不看 closed 标志——aggregate_month 对"查询日与月K同月"的情况恒判
-    open（见 periods.py），end_date 判据才是数据是否到月末的权威信号。
-    法定节假日恰逢月末时保守判为未就绪（省略第二组并在 meta 注明）。
-    """
-    try:
-        probe = query_bagua(
-            cfg,
-            code=probe_code,
-            date=cast_asof,
-            period="MONTH",
-            adjust=adj,
-            session=session,
-            calc=calc,
-        )
-    except Exception:
-        return False
-    bar = (probe or {}).get("bar") or {}
-    end = int(bar.get("end_date") or 0)
-    if not end:
-        return False
-    if end >= cast_asof:
-        return True
-    wd = _ymd_date(
-        cast_asof // 10000, (cast_asof // 100) % 100, cast_asof % 100
-    ).isoweekday()
-    return wd >= 6
-
-
 def _display_width(value: Any) -> float:
     """Approx cell width: CJK / full-width chars count as 2 units."""
     s = "" if value is None else str(value)
@@ -3144,13 +3109,14 @@ def export_bagua_multi_period_xlsx(
     「倾向」列为卦象操作信号与高岛断语的共识：两者都看好=▲双好（红），
     都看差=▼双差（绿），方向对立=分歧，一方中性或语气不明=留空；
     周月各自独立判定，同一只股票两列结论常不同。同样仅供解读。
-    月卦按查询日期所在周的自然日归属上一已完成月份：交易日 D 的月卦 =
-    D 所在自然月的上一自然月整月月K所起之卦。非跨月周整周一组，等价于
-    旧口径「查询月份的上一个月」（如8月查询导出7月月卦）；跨月周（如
-    2026-08-31 所在周）输出两组月卦列（8/31 用 2026-07 月卦、9/1-9/6 用
-    2026-08 月卦），列头以「,适用日期段」标注各自生效的自然日区间；第二组
-    月K未就绪（如月末数据未同步）时自动省略第二组并在 meta 记录
-    ``omitted_month_asof``。周卦取查询日期所在周。Always computes WEEK +
+    月卦按周报目标周（锚点=查询日+3天所在 ISO 周：周五晚~周日导出为下一
+    交易周，周一~周四为当周）的交易日（周一~周五，周末不计）归属上一已完成
+    月份：目标周内交易日 D 的月卦 = D 所在自然月的上一自然月整月月K所起之卦
+    （D 当天最近已收官的月线）。非跨月周整周一组，等价于旧口径「查询月份的
+    上一个月」；跨月周（如 2026-08-31 所在周）输出两组月卦列（8/31 用
+    2026-07 月卦、9/1-9/4 用 2026-08 月卦），列头以「,适用日期段」标注各自
+    生效的交易日区间；周末导出时次月月K尚未收官，该组为按最新可得日线计算
+    的临时卦象（meta note 注明）。周卦取查询日期所在周。Always computes WEEK +
     MONTH (DAY is ignored for this layout). 日柱 is joined from Desktop
     ``股票+卦象/日柱(1).xlsx`` when available. 导出卦象组合已去除卦符字符
     （U+4DC0–U+4DFF）。
@@ -3276,33 +3242,13 @@ def export_bagua_multi_period_xlsx(
     total = totals["requested"]
     query_pers = ["WEEK", "MONTH"]
     asof_map: Dict[str, int] = {"WEEK": asof, "MONTH": month_asof}
-    # 跨月周的第二组月卦：先用池首代码做一次 MONTH 参考查询，确认该月月K
-    # 已收官（如 8/31 早盘导出、EOD 未同步时省略第二组，行为退化为现状
-    # 17 列并在 meta 记录）。探针依次试 2 只股票 + 1 只 ETF，避免池首恰好
-    # 长期无数据导致整体误省略。
-    omitted_month_asof: Optional[int] = None
+    # 跨月周的第二组月卦始终列出：周末（周五晚~周日）导出时其次月起卦月
+    # 尚未收官，按最新可得日线计算临时卦象——周报本就前瞻，口径由 meta
+    # note 注明，不再自动省略（用户语义：导出为接下来要交易的日子做准备）
     if len(month_attrs) == 2:
-        probe_candidates: List[str] = list(stock_pool[:2])
-        if etf_pool:
-            probe_candidates.append(etf_pool[0])
-        cast2 = month_attrs[1]["cast_asof"]
-        probe_ready = any(
-            _month2_probe_ready(
-                cfg,
-                probe_code=c,
-                cast_asof=cast2,
-                adj=adj,
-                session=session,
-                calc=calc,
-            )
-            for c in probe_candidates
-        )
-        if probe_ready:
-            query_pers.append(_EXPORT_MONTH2_KEY)
-            asof_map[_EXPORT_MONTH2_KEY] = cast2
-        else:
-            omitted_month_asof = cast2
-    month_groups = month_attrs if omitted_month_asof is None else month_attrs[:1]
+        query_pers.append(_EXPORT_MONTH2_KEY)
+        asof_map[_EXPORT_MONTH2_KEY] = month_attrs[1]["cast_asof"]
+    month_groups = month_attrs
     sheet_rows_by_name: Dict[str, List[List[Any]]] = {}
     first_rows: Dict[
         str, Tuple[Optional[Dict[str, Any]], List[Optional[Dict[str, Any]]]]
@@ -3420,12 +3366,13 @@ def export_bagua_multi_period_xlsx(
             f"{g['applies_label']} 用 {g['cast_label']} 月卦" for g in month_groups
         )
         export_note = (
-            f"跨月周按行内日期归属月卦：{applies_desc}；WEEK 列取查询日期所在周"
+            "周报目标周按行内日期归属月卦（周五晚~周日导出看下周，周一~周四看当周）："
+            f"{applies_desc}；WEEK 列取查询日期所在周；"
+            "若某组起卦月尚未收官（如周末导出时次月还差月末交易日），"
+            "该组为按最新可得日线计算的临时卦象"
         )
     else:
         export_note = "MONTH 列取查询月份的上一个月（如8月查询导出7月月卦）；WEEK 列取查询日期所在周"
-    if omitted_month_asof is not None:
-        export_note += f"；{omitted_month_asof} 月K未就绪，第二组月卦已省略"
     for k, v in [
         ("layout", "weekly_analysis stock-all"),
         ("query_date", asof),
@@ -3473,8 +3420,6 @@ def export_bagua_multi_period_xlsx(
         ("exported_at", stamp),
     ]:
         meta.append([k, v])
-    if omitted_month_asof is not None:
-        meta.append(["omitted_month_asof", omitted_month_asof])
 
     wb.save(out)
     return out
