@@ -497,6 +497,40 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
     print(json.dumps(meta, ensure_ascii=False, indent=2))
     return 0
 
+
+def cmd_review_weekly(args: argparse.Namespace) -> int:
+    """周五链全市场指标复核（735 / 5日外），结果 JSON 供导出侧读取。"""
+    import logging
+
+    from .service.indicator_review import run_weekly_review
+
+    # 周五链把本命令 stdout/stderr 重定向到 indicator_review_*.log：
+    # 不配 logging 就只剩结尾 JSON，5200 票的进度全丢
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    cfg = _cfg_from_args(args)
+    cfg.ensure_dirs()
+    asof = int(args.asof) if getattr(args, "asof", None) else None
+    rule_ids = (
+        [r.strip() for r in str(args.rules).split(",") if r.strip()]
+        if getattr(args, "rules", None)
+        else None
+    )
+    codes = args.codes or None
+    summary = run_weekly_review(
+        cfg,
+        asof=asof,
+        rule_ids=rule_ids,
+        codes=codes,
+        force=bool(getattr(args, "force", False)),
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    # no_go 是合法结论（复权未就绪），退出码仍为 0；异常路径自然非零
+    return 0
+
+
 def cmd_backtest(args: argparse.Namespace) -> int:
     """Backtest via service layer (shared with web API)."""
     from .service.backtest import BacktestRequest, BacktestService
@@ -863,6 +897,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--research-unadjusted", action="store_true")
     sp.add_argument("--run-id", default=None)
     sp.set_defaults(func=cmd_build_signals)
+
+    sp = sub.add_parser(
+        "review-weekly",
+        help="周五链全市场指标复核（735/5日外），产出 review_{asof}.json 供导出读取",
+    )
+    sp.add_argument("--asof", default=None, help="YYYYMMDD，默认取数据面最新可得交易日")
+    sp.add_argument("--rules", default=None, help="逗号分隔规则 ID，默认两条复核规则")
+    sp.add_argument("--codes", default=None, help="逗号分隔代码（默认 universe.json 全市场）")
+    sp.add_argument("--force", action="store_true", help="忽略已有结果强制重算")
+    sp.set_defaults(func=cmd_review_weekly)
 
     sp = sub.add_parser("backtest")
     sp.add_argument("--indicator", action="append", required=True)

@@ -2232,3 +2232,152 @@ def test_export_etf_pool_rejects_tampered_manifest_content(tmp_path, monkeypatch
     assert bq._enumerate_export_etf_pool(cfg) == [
         "SSE.ETF.510300", "SZSE.ETF.159915"
     ]
+
+
+# ---------------------------------------------------------------------------
+# 指标复核 sheet 集成（周五链 review_{asof}.json -> 「735」「5日外」两 sheet）
+# ---------------------------------------------------------------------------
+
+def _review_payload(matched_735, matched_5w):
+    return {
+        "asof": 20240115,
+        "generated_at": "2024-01-15 19:00:00",
+        "status": "ok",
+        "no_go_reason": "",
+        "universe_size": 2,
+        "scanned": 2,
+        "error_count": 0,
+        "rules": [
+            {
+                "rule_id": "txt_735金叉及趋势",
+                "sheet": "735",
+                "count": len(matched_735),
+                "matched": [{"code": c, "close": 5.9} for c in matched_735],
+            },
+            {
+                "rule_id": "txt_先跌后涨新版5日外",
+                "sheet": "5日外",
+                "count": len(matched_5w),
+                "matched": [{"code": c, "close": 5.9} for c in matched_5w],
+            },
+        ],
+    }
+
+
+def _write_review(tmp_path, asof, payload):
+    import json as _json
+
+    d = tmp_path / "indicator_review"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"review_{asof}.json").write_text(
+        _json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _export_review_monkeypatch(monkeypatch, tmp_path):
+    """全市场导出公共 mock：两只股票、无 ETF、卦象面走 _load_dataset_bars。"""
+    stock_bars = [DayBar(20240115, 6.27, 7.33, 5.90, 5.90, 1.0, 1.0)]
+
+    def _fake_load(cfg, std_code, source_key, asof=None, **_kw):
+        return stock_bars, dict(_DS_META_MOCK)
+
+    monkeypatch.setattr(bq, "_load_dataset_bars", _fake_load)
+    monkeypatch.setattr(
+        bq,
+        "BaguaPlaneSession",
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("no md")),
+    )
+    monkeypatch.setattr(
+        bq,
+        "_resolve_batch_codes",
+        lambda cfg, codes=None, *, all_stocks=False: [
+            "SSE.STK.600000",
+            "SSE.STK.000001",
+        ],
+    )
+    monkeypatch.setattr(bq, "list_etf_std_codes", lambda cfg: [])
+    return SimpleNamespace(
+        bagua_json=JSON_PATH,
+        storage_root=tmp_path,
+        tdx_root=tmp_path,
+        market_data_root=tmp_path / "md",
+        forecast_root=tmp_path,
+        forecast_weekly_dir=tmp_path,
+        universe_path=tmp_path / "universe.json",
+        adj_root=tmp_path,
+    )
+
+
+def test_export_includes_indicator_review_sheets(monkeypatch, tmp_path):
+    """有复核文件：导出追加「735」「5日外」两 sheet，行=命中票，meta 注明。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+    _write_review(
+        tmp_path,
+        20240115,
+        _review_payload(["SSE.STK.600000"], []),
+    )
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-15", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True,
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "735" in wb.sheetnames and "5日外" in wb.sheetnames
+    ws735 = wb["735"]
+    # 与 stock-all 同构表头（非跨月周 17 列）
+    assert len([c.value for c in ws735[1]]) == 17
+    rows = list(ws735.iter_rows(min_row=2, values_only=True))
+    assert [r[0] for r in rows] == ["600000"]
+    # 0 命中也出表（只有表头），明确区分"复核跑了没命中"与"没复核"
+    assert wb["5日外"].max_row == 1
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta["indicator_review_asof"] == 20240115
+    assert meta["indicator_review_sheets"] == "735,5日外"
+    assert meta["indicator_review_note"] == "ok"
+    assert meta["sheets"] == "stock-all,735,5日外"
+
+
+def test_export_without_review_file_skips_sheets(monkeypatch, tmp_path):
+    """无复核文件：不加两 sheet，meta 注明 missing 原因。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-15", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True,
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "735" not in wb.sheetnames and "5日外" not in wb.sheetnames
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert str(meta["indicator_review_note"]).startswith("missing")
+    # openpyxl 空字符串单元格读回为 None
+    assert meta["indicator_review_sheets"] in ("", None)
+    assert meta["sheets"] == "stock-all"
+
+
+def test_export_review_fallback_for_weekend_export(monkeypatch, tmp_path):
+    """周日导出（当日无复核）：回看 2 天前的周五复核，meta 注明 fallback。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+    payload = _review_payload(["SSE.STK.000001"], [])
+    payload["asof"] = 20240112
+    _write_review(tmp_path, 20240112, payload)
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-14", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True,
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "735" in wb.sheetnames
+    rows = list(wb["735"].iter_rows(min_row=2, values_only=True))
+    assert [r[0] for r in rows] == ["000001"]
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta["indicator_review_asof"] == 20240112
+    assert str(meta["indicator_review_note"]).startswith("fallback")

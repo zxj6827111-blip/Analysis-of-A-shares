@@ -124,7 +124,9 @@ def test_eod_sync_decide_once_per_weekly_run():
 # --------------------------------------------------- _auto_eod_sync (loop)
 
 def _make_cfg_ctx(tmp_path):
-    cfg = SimpleNamespace(market_data_root=tmp_path)
+    # storage_root：指标复核链显式传 --storage 需要该属性（生产 cfg 为
+    # AStockConfig，天然具备）
+    cfg = SimpleNamespace(market_data_root=tmp_path, storage_root=tmp_path / "astock")
     ctx = SimpleNamespace(
         sync_state={"running": False},
         sync_lock=threading.Lock(),
@@ -169,6 +171,17 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
         subprocess, "Popen",
         lambda cmd, **kw: calls.append((cmd, kw)) or FakeProc(),
     )
+    # _watch 必须同步跑完：真实 daemon 线程会在 monkeypatch 还原后才调用
+    # Popen，导致测试结束后拉起真实的 IE 同步/指标复核子进程（污染真实
+    # storage）。ImmediateThread 让整条链在打补丁窗口内确定性地执行。
+    class ImmediateThread:
+        def __init__(self, target=None, args=(), kwargs=None, **_o):
+            self.target, self.args, self.kwargs = target, args, kwargs or {}
+
+        def start(self):
+            self.target(*self.args, **self.kwargs)
+
+    monkeypatch.setattr(threading, "Thread", ImmediateThread)
     # exit the polling loop right after the startup check (the scheduler now
     # waits on wake_event instead of time.sleep once a run is in flight)
     def _break_sleep(_s):
@@ -182,7 +195,8 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="stop-loop"):
         _auto_eod_sync(cfg, ctx)
 
-    assert len(calls) == 1, "exactly one sync process should be spawned"
+    # 股票链 + 指数/ETF 链（默认开启）+ 指标复核链；治理被本用例显式关闭
+    assert len(calls) == 3, calls
     cmd = calls[0][0]
     assert "--source" in cmd and "tushare" in cmd
     mode_index = cmd.index("--mode")
@@ -190,6 +204,15 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
     write_mode_index = cmd.index("--write-mode")
     assert cmd[write_mode_index + 1] == "delta"
     assert "--fresh" in cmd
+    # 复核链：显式 --storage 锚定导出侧读取的同一 storage
+    review_cmd = calls[2][0]
+    assert "review-weekly" in review_cmd
+    assert review_cmd[review_cmd.index("--storage") + 1] == str(
+        tmp_path / "astock"
+    )
+    assert review_cmd[review_cmd.index("--asof") + 1] == str(
+        int(_dt.date.today().strftime("%Y%m%d"))
+    )
     assert "--token" in cmd and "test_token_123" in cmd
     assert "--storage-root" in cmd and str(tmp_path) in cmd
 
@@ -266,19 +289,26 @@ def test_auto_eod_sync_success_runs_governance(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="stop-loop"):
         _auto_eod_sync(cfg, ctx)
 
-    assert len(calls) == 2
+    assert len(calls) == 3
     sync_cmd = calls[0][0]
     governance_cmd = calls[1][0]
+    review_cmd = calls[2][0]
     assert "sync_market_data.py" in " ".join(sync_cmd)
     assert "govern_market_data.py" in " ".join(governance_cmd)
     assert governance_cmd[-2:] == ["--maintain", "--apply"]
     assert "--storage-root" in governance_cmd
     assert str(tmp_path) in governance_cmd
+    # 指标复核挂在治理之后，asof 取本次同步 end-date（今天）
+    assert "review-weekly" in review_cmd
+    assert "--asof" in review_cmd
 
     state = _json.loads(state_path.read_text(encoding="utf-8"))
     assert state["last_sync_exit_code"] == 0
     assert state["last_governance_exit_code"] == 0
     assert state["last_governance_finished_at"]
+    assert state["last_indicator_review_exit_code"] == 0
+    assert state["last_indicator_review_finished_at"]
+    assert state["last_indicator_review_asof"]
 
 
 def test_auto_eod_sync_skips_when_fresh(monkeypatch, tmp_path):
@@ -860,8 +890,8 @@ def test_auto_eod_sync_index_etf_chain_default_on(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="stop-loop"):
         _auto_eod_sync(cfg, ctx)
 
-    # 股票链 + 指数/ETF 链 + 治理链
-    assert len(calls) == 3, calls
+    # 股票链 + 指数/ETF 链 + 治理链 + 指标复核链
+    assert len(calls) == 4, calls
     ie_cmd = calls[1]
     ie_txt = " ".join(ie_cmd)
     assert "sync_market_data.py" in ie_txt
@@ -953,16 +983,19 @@ def test_auto_eod_sync_ie_warning_partial_still_runs_governance(monkeypatch, tmp
     治理只作用于股票 overlay 层；同时总退出码保持 2，同晚重试与状态
     可观测性不受影响。
     """
-    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 2, 0])
+    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 2, 0, 0])
 
-    # 股票链 -> IE 链 -> 治理链，三段都执行
-    assert len(calls) == 3, calls
+    # 股票链 -> IE 链 -> 治理链 -> 复核链，四段都执行
+    assert len(calls) == 4, calls
     assert "govern_market_data.py" in " ".join(calls[2])
     assert calls[2][-2:] == ["--maintain", "--apply"]
+    assert "review-weekly" in calls[3]
 
     assert state["last_sync_exit_code"] == 2
     assert state["last_governance_exit_code"] == 0
     assert state["last_governance_finished_at"]
+    # 复核只看股票链退出码：IE warning 级 partial 不阻塞复核
+    assert state["last_indicator_review_exit_code"] == 0
     # 治理放行不等于同步成功：非零退出码必须仍触发同晚重试
     assert state["retry_count"] == 1
     assert state["pending_retry_at"]
@@ -970,18 +1003,23 @@ def test_auto_eod_sync_ie_warning_partial_still_runs_governance(monkeypatch, tmp
 
 def test_auto_eod_sync_ie_hard_fail_blocks_governance(monkeypatch, tmp_path):
     """IE 链 exit=1（硬失败）维持"同步不干净就不治理"的既有语义。"""
-    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 1])
+    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 1, 0])
 
-    assert len(calls) == 2, calls
+    # 治理被 IE 硬失败阻塞，但复核只依赖股票链（rc=0）照常执行
+    assert len(calls) == 3, calls
     assert "govern_market_data.py" not in " ".join(map(" ".join, calls))
+    assert "review-weekly" in calls[2]
     assert state["last_sync_exit_code"] == 1
     assert state["last_governance_exit_code"] is None
+    assert state["last_indicator_review_exit_code"] == 0
 
 
 def test_auto_eod_sync_stocks_partial_blocks_governance(monkeypatch, tmp_path):
     """股票链自身 exit=2 仍跳过 IE 链与治理（既有语义回归保护）。"""
     calls, state = _drive_eod_chain(monkeypatch, tmp_path, [2])
 
+    # 股票链失败同样跳过指标复核（复核门控看 stock_rc）
     assert len(calls) == 1, calls
     assert state["last_sync_exit_code"] == 2
     assert state["last_governance_exit_code"] is None
+    assert state["last_indicator_review_exit_code"] is None
