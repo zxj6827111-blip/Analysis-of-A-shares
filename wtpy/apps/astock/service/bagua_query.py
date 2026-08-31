@@ -3089,6 +3089,12 @@ def export_bagua_multi_period_xlsx(
     workbook:
       - ``stock-all``: A-share universe rows
       - ``etf-all``   : every ETF enumerated from the TDX local day files
+    When the Friday EOD chain's indicator review
+    (``storage/astock/indicator_review/review_{asof}.json``) is available,
+    two extra same-layout sheets are appended — ``735`` / ``5日外`` — each
+    holding the stocks whose TDX formula XG fired on the review date
+    (intersected with the stock pool). Missing / no_go / stale review files
+    skip these sheets and record the reason in meta (``indicator_review_*``).
     Manual ``codes`` are split by symbol type — stocks stay in ``stock-all``,
     index/ETF codes go to ``etf-all``.
 
@@ -3233,13 +3239,41 @@ def export_bagua_multi_period_xlsx(
     if etf_pool:
         pools.append(("etf-all", etf_pool, True))
 
+    # 指标复核 sheet（「735」「5日外」）：读取周五链产出的 review_{asof}.json，
+    # 票池 = 当日命中 ∩ stock_pool（保持 universe 顺序）。文件缺失/no_go/过期
+    # 时不加 sheet，原因写入 meta（indicator_review_note），导出不因此失败。
+    review_sheets: List[str] = []
+    review_asof_used: Optional[int] = None
+    review_note = ""
+    try:
+        from .indicator_review import load_review_for_export
+
+        _review, _rv_note = load_review_for_export(cfg, asof)
+        if _review is not None and _review.get("status") == "ok":
+            review_asof_used = int(_review.get("asof") or 0) or None
+            review_note = _rv_note or "ok"
+            _reserved_sheets = {"meta", "stock-all", "etf-all"}
+            for _rule in _review.get("rules", []):
+                _sheet = str(_rule.get("sheet") or _rule.get("rule_id") or "")
+                if not _sheet or _sheet in _reserved_sheets:
+                    continue
+                _hit = {str(m.get("code")) for m in (_rule.get("matched") or [])}
+                _rv_pool = [c for c in stock_pool if c in _hit]
+                pools.append((_sheet, _rv_pool, False))
+                review_sheets.append(_sheet)
+        else:
+            review_note = _rv_note or "missing"
+    except Exception as _re:  # noqa: BLE001
+        review_note = f"error:{_re}"
+
     totals = {
         "requested": len(stock_pool) + len(etf_pool),
         "ok": 0,
         "error": 0,
         "rizhu_hit": 0,
     }
-    total = totals["requested"]
+    # 进度分母含复核 sheet 的重复行（命中票在 stock-all 之外再算一遍卦象）
+    total = sum(len(p) for _n, p, _r in pools)
     query_pers = ["WEEK", "MONTH"]
     asof_map: Dict[str, int] = {"WEEK": asof, "MONTH": month_asof}
     # 跨月周的第二组月卦始终列出：周末（周五晚~周日）导出时其次月起卦月
@@ -3395,6 +3429,16 @@ def export_bagua_multi_period_xlsx(
         ("stock_count", len(stock_pool)),
         ("etf_count", len(etf_pool)),
         ("sheets", ",".join(name for name, _p, _r in pools)),
+        (
+            "indicator_review_asof",
+            review_asof_used if review_asof_used is not None else "",
+        ),
+        ("indicator_review_sheets", ",".join(review_sheets)),
+        (
+            "indicator_review_note",
+            review_note
+            or "missing:未读取到复核结果",
+        ),
         ("ok_total", totals["ok"]),
         ("error_total", totals["error"]),
         ("rizhu_hit", totals["rizhu_hit"]),

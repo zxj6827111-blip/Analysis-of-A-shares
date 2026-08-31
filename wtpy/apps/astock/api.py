@@ -358,6 +358,9 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             scheduler thread is busy; wakes the scheduler via wake_event.
             """
             rc = proc.wait()
+            # 股票链退出码单独留存：后续 rc 会被指数/ETF 链覆盖，而指标复核
+            # 只依赖股票数据面（IE 链 warning 级失败不应阻塞复核）。
+            stock_rc = rc
             # 指数/ETF 链 warning 级失败（exit=2，如 ETF 面指针发布失败）
             # 不阻塞治理链：治理（consolidation/retention/GC）只作用于股票
             # overlay 层，与 IE 链数据无关。rc 保持非零以如实记录 partial
@@ -447,6 +450,58 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                         f"（exit={governance_rc}）"
                     )
 
+            # 周五链指标复核（735/5日外）：股票同步成功即触发，治理失败不阻塞
+            # （复核只依赖股票数据面）。结果写
+            # storage/astock/indicator_review/review_{asof}.json，全市场导出
+            # 读取后追加「735」「5日外」两个 sheet。失败不自动重试：下周五
+            # 重来，或手动 `python -m wtpy.apps.astock review-weekly --asof <日>` 补跑。
+            review_rc = None
+            review_finished_at = None
+            if stock_rc == 0:
+                review_cmd = [
+                    sys.executable, "-u", "-m", "wtpy.apps.astock",
+                    # 显式锚定 storage_root：复核结果必须落在导出侧读取的同一
+                    # storage（不依赖子进程 cwd/env 推导）
+                    "--storage", str(cfg.storage_root),
+                    "review-weekly", "--asof", str(today),
+                ]
+                review_log = None
+                try:
+                    review_log = open(
+                        cfg.market_data_root / "sync_logs"
+                        / f"indicator_review_{today}.log",
+                        "a",
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    review_log = None
+                try:
+                    print("[EOD_SYNC] 启动全市场指标复核（735/5日外）…")
+                    review_proc = subprocess.Popen(
+                        review_cmd,
+                        stdout=review_log or subprocess.DEVNULL,
+                        stderr=(
+                            subprocess.STDOUT if review_log else subprocess.DEVNULL
+                        ),
+                        env=env,
+                        # -m 导入 wtpy 包：显式锚定仓库根，不依赖继承的 cwd
+                        cwd=str(Path(__file__).resolve().parents[3]),
+                    )
+                    review_rc = review_proc.wait()
+                except Exception as e:
+                    review_rc = -1
+                    print(f"[EOD_SYNC] 指标复核启动失败: {e}")
+                finally:
+                    if review_log:
+                        review_log.close()
+                review_finished_at = _dt.datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                if review_rc == 0:
+                    print("[EOD_SYNC] 指标复核完成")
+                else:
+                    print(f"[EOD_SYNC] 指标复核失败（exit={review_rc}）")
+
             st = _load_state()
             prev_retry = int(st.get("retry_count") or 0)
             finished = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -457,6 +512,11 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                 "last_governance_exit_code": governance_rc,
                 "last_governance_finished_at": (
                     finished if governance_rc is not None else None
+                ),
+                "last_indicator_review_exit_code": review_rc,
+                "last_indicator_review_finished_at": review_finished_at,
+                "last_indicator_review_asof": (
+                    str(today) if review_rc is not None else None
                 ),
             }
             if rc == 0:
