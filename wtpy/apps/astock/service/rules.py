@@ -60,6 +60,25 @@ def _slug(name: str) -> str:
     return s
 
 
+def _find_case_insensitive_name(directory: Path, name: str) -> Optional[str]:
+    """目录里与 name 忽略大小写同名的现有条目名，无则 None。
+
+    Windows/macOS 的文件系统本身就把 UPPER.txt 与 upper.txt 当同一个文件，
+    Linux 不会。导入查重若只靠 ``Path.exists()``，同一次操作会在两个平台
+    得到不同结果（Linux 会导入出两条显示名相同、ID 仅大小写不同的规则），
+    所以显式按小写文件名比对，让行为与平台无关。
+    """
+    want = name.lower()
+    try:
+        for entry in directory.iterdir():
+            if entry.name.lower() == want:
+                return entry.name
+    except OSError:
+        # 目录不存在/不可读：视为没有同名文件，交给后续写入路径报错
+        return None
+    return None
+
+
 # 进程级 sidecar 写锁：同一进程内不同 RuleService 实例（不同 storage_root）
 # 也共享，保证 user_registry/categories/hidden 的读-改-写串行、不丢更新。
 _RULE_SIDECAR_LOCK = threading.RLock()
@@ -478,7 +497,8 @@ class RuleService:
 
         filename 取 basename 防路径穿越；后缀统一小写 .txt（Windows 上传
         ``A.TXT`` 在 Linux 上也能被 glob("*.txt") 扫到）；同名文件已存在时
-        抛 FileExistsError（路由映射 400）；写入 tmp + os.replace 原子，
+        抛 FileExistsError（路由映射 400），查重忽略大小写以保证跨平台一致；
+        写入 tmp + os.replace 原子，
         失败清理临时文件并转成 ValueError（路由 400）。.tn6 不做二进制直传，
         提示走 CLI 配对源文件。
         """
@@ -503,8 +523,9 @@ class RuleService:
         ind_dir = Path(self.cfg.indicator_dir)
         target = ind_dir / base
         with self._lock:
-            if target.exists():
-                raise FileExistsError(f"同名文件已存在: {base}")
+            existing = _find_case_insensitive_name(ind_dir, base)
+            if existing is not None:
+                raise FileExistsError(f"同名文件已存在: {existing}")
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 atomic_write_text(target, text)

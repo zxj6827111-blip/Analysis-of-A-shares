@@ -191,11 +191,31 @@ def _record_run(cfg, rule_id, run_id, profile=None):
 # ===========================================================================
 
 
+def _route_paths(routes) -> list:
+    """按注册顺序摊平路由路径，兼容 Starlette 两种内部形状。
+
+    Starlette <=0.5x 把 ``include_router`` 的结果直接铺在 ``app.routes`` 上，
+    每项都带 ``path``；Starlette 1.x 改用没有 ``path`` 的 ``_IncludedRouter``
+    包住子路由，真正的 APIRoute 挂在它的 ``original_router.routes`` 上。
+    只内省 ``app.routes`` 在 1.x 上会退化成空列表，让「静态子路径不被
+    ``/{rule_id}`` 吞掉」这条契约静默失去覆盖（CI 装 1.x，本地是 0.5x）。
+    """
+    out = []
+    for r in routes:
+        path = getattr(r, "path", "")
+        if path:
+            out.append(path)
+        inner = getattr(r, "original_router", None)
+        if inner is not None:
+            out.extend(_route_paths(getattr(inner, "routes", None) or []))
+    return out
+
+
 def test_static_rule_routes_registered_before_dynamic_rule_id(cfg):
     client, app = _client(cfg)
     app.state.astock.jobs = FakeJobStore()
 
-    paths = [getattr(r, "path", "") for r in app.routes]
+    paths = _route_paths(app.routes)
     assert "/api/v1/rules/benchmark-profile" in paths
     assert "/api/v1/rules/{rule_id}" in paths
     assert paths.index("/api/v1/rules/benchmark-profile") < paths.index(

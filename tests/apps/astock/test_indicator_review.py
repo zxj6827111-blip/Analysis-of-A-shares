@@ -12,6 +12,7 @@ import json
 import pytest
 
 import tests.apps.astock.conftest  # noqa: F401
+from tests.apps.astock.conftest import requires_real_formulas  # noqa: F401
 
 from wtpy.apps.astock.config import get_default_config
 from wtpy.apps.astock.data.tdx_reader import DayBar
@@ -92,6 +93,7 @@ def _cfg(tmp_path):
     return get_default_config(storage_root=tmp_path)
 
 
+@requires_real_formulas
 def test_review_hit_judgment_and_json(tmp_path):
     """735 命中缓涨票、5日外命中 V 形票；无命中/停牌票不进 matched。"""
     cfg = _cfg(tmp_path)
@@ -123,6 +125,7 @@ def test_review_hit_judgment_and_json(tmp_path):
         assert key in on_disk
 
 
+@requires_real_formulas
 def test_review_asof_filter(tmp_path):
     """5日外信号仅在最后一根为真：asof 前移一天即不命中。"""
     cfg = _cfg(tmp_path)
@@ -139,6 +142,7 @@ def test_review_asof_filter(tmp_path):
     assert miss["rules"][0]["count"] == 0
 
 
+@requires_real_formulas
 def test_review_idempotent_and_force(tmp_path):
     cfg = _cfg(tmp_path)
     ir.run_weekly_review(
@@ -182,6 +186,7 @@ def test_review_no_go(tmp_path):
     assert ir.review_output_path(cfg, ASOF).exists()
 
 
+@requires_real_formulas
 def test_review_universe_missing_raises(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     # 隔离外部环境：防止开发者机器 MARKET_DATA_ROOT 指向真实仓库导致
@@ -193,6 +198,7 @@ def test_review_universe_missing_raises(tmp_path, monkeypatch):
         )
 
 
+@requires_real_formulas
 def test_review_universe_json_used(tmp_path):
     """codes=None 且 universe.json 存在：票池取文件内容（与导出同源优先项）。"""
     from wtpy.apps.astock.data.universe import AShareUniverse, SymbolInfo
@@ -214,6 +220,7 @@ def test_review_universe_json_used(tmp_path):
     assert summary["rules"][0]["count"] == 1  # 600000 命中 735
 
 
+@requires_real_formulas
 def test_no_go_preserves_existing_ok(tmp_path):
     """已有 ok 结果时，无 force 的 no_go 重跑不得覆盖（导出侧保 sheet）。"""
     cfg = _cfg(tmp_path)
@@ -247,6 +254,7 @@ def test_no_go_preserves_existing_ok(tmp_path):
     assert on_disk["status"] == "no_go"
 
 
+@requires_real_formulas
 def test_review_error_recorded(tmp_path):
     """加载失败的票计入 error_count 且不中断扫描。"""
     cfg = _cfg(tmp_path)
@@ -259,6 +267,7 @@ def test_review_error_recorded(tmp_path):
     assert summary["rules"][0]["count"] == 1  # 好票照常命中
 
 
+@requires_real_formulas
 def test_review_progress_callback(tmp_path):
     cfg = _cfg(tmp_path)
     seen = []
@@ -320,6 +329,7 @@ def test_cli_review_weekly_smoke(tmp_path, monkeypatch, capsys):
     assert captured["force"] is True
 
 
+@requires_real_formulas
 def test_review_persist_false_never_touches_disk(tmp_path):
     """persist=False（导出侧即时计算）：不读缓存、不落盘——
     已有缓存时也强制重算，且结果只返回不写文件（防污染周五链产物）。"""
@@ -358,6 +368,7 @@ def test_review_persist_false_never_touches_disk(tmp_path):
     assert after == before
 
 
+@requires_real_formulas
 def test_review_persist_false_writes_nothing_when_absent(tmp_path):
     """persist=False 在无缓存时也不产生任何文件。"""
     cfg = _cfg(tmp_path)
@@ -463,6 +474,7 @@ def test_resolve_formal_surface_prefers_l1_max_date_over_cutoff(tmp_path, monkey
     assert surface["max_date"] == ASOF
 
 
+@requires_real_formulas
 def test_run_weekly_review_uses_l1_max_date_not_cutoff(tmp_path, monkeypatch):
     """请求日=cutoff（20260910）但 L1 行情止于 ASOF：复核应落在 ASOF 并命中。"""
     md = tmp_path / "md"
@@ -517,6 +529,7 @@ def test_resolve_review_asof_without_surface_keeps_request(tmp_path, monkeypatch
     assert note == ""
 
 
+@requires_real_formulas
 def test_review_explicit_default_rule_ids_keep_short_sheet_names(tmp_path):
     """显式传默认两条规则 ID：sheet 名仍取 DEFAULT_REVIEW_RULES 短名，
     不得退化成完整 rule_id（与预计算路径同工作簿 sheet 名一致）。"""

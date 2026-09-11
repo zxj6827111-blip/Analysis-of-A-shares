@@ -25,6 +25,7 @@ from unittest.mock import patch
 import pytest
 
 import tests.apps.astock.conftest  # noqa: F401
+from tests.apps.astock.conftest import requires_real_formulas  # noqa: F401
 
 from wtpy.apps.astock.config import AStockConfig, get_default_config
 from wtpy.apps.astock.data.tdx_reader import DayBar
@@ -88,6 +89,7 @@ def api_cfg(tmp_path: Path) -> AStockConfig:
 # ===========================================================================
 
 
+@requires_real_formulas
 def test_round2_explicit_default_rule_ids_sheet_names_reversed_order(tmp_path):
     """显式传默认两条（且与默认顺序相反）：sheet 仍精确为 735 / 5日外，
     不得退化为完整 rule_id；顺序按传入顺序保留。"""
