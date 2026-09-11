@@ -2241,6 +2241,17 @@ XG:CROSS(MA5,MA10);</textarea>
       return data;
     }
 
+    // 标准 HTML 转义（文本与属性均可用）：规则名/失败原因/错误信息等
+    // 用户可控字段拼 innerHTML 前必须过一遍，防存储型 XSS。
+    function esc(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
     function daysInMonth(y, m) {
       if (!y || !m) return 31;
       return new Date(y, m, 0).getDate();
@@ -2502,11 +2513,11 @@ XG:CROSS(MA5,MA10);</textarea>
         const delLabel = (r.delete_mode === "hard" || (r.id || "").startsWith("user_")) ? "删除" : "从列表移除";
         div.innerHTML = `<input type="checkbox" ${selected.has(r.id) ? "checked" : ""} style="width:auto;margin-top:0.2rem" />
           <div style="flex:1;min-width:0">
-            <div><strong>${r.name}</strong> ${src} ${bt}</div>
-            <div class="sub" style="font-size:0.75rem;color:var(--muted)">${r.id}</div>
-            <div class="sub" style="font-size:0.75rem;color:var(--muted)">${r.compile_status}${r.failure_reason ? " · " + r.failure_reason : ""}</div>
+            <div><strong>${esc(r.name)}</strong> ${src} ${bt}</div>
+            <div class="sub" style="font-size:0.75rem;color:var(--muted)">${esc(r.id)}</div>
+            <div class="sub" style="font-size:0.75rem;color:var(--muted)">${esc(r.compile_status)}${r.failure_reason ? " · " + esc(r.failure_reason) : ""}</div>
             <div class="rule-actions">
-              <button type="button" class="btn-del" data-del-rule="${r.id}">${delLabel}</button>
+              <button type="button" class="btn-del" data-del-rule="${esc(r.id)}">${delLabel}</button>
             </div>
           </div>`;
         div.onclick = (ev) => {
@@ -2809,7 +2820,7 @@ XG:CROSS(MA5,MA10);</textarea>
         if (Array.isArray(summary.signal_weekdays || repro.signal_weekdays) && (summary.signal_weekdays || repro.signal_weekdays).length) {
           chips.splice(1, 0, "信号" + (summary.signal_weekdays || repro.signal_weekdays).map((d) => wdName(Number(d))).join(""));
         }
-        meta.innerHTML = chips.map((c) => "<span class='detail-chip" + (String(c).indexOf("单票") >= 0 ? " hi" : "") + "'>" + c + "</span>").join("");
+        meta.innerHTML = chips.map((c) => "<span class='detail-chip" + (String(c).indexOf("单票") >= 0 ? " hi" : "") + "'>" + esc(c) + "</span>").join("");
       }
 
       const warn = document.getElementById("perSymbolWarn");
@@ -2857,7 +2868,7 @@ XG:CROSS(MA5,MA10);</textarea>
         if (sch0.buyWeekday == null && sch0.exitWeekday == null) {
           rows.splice(5, 0, ["entry_lag / hold", (lag != null ? lag : "—") + " / " + (hold != null ? hold : "—")]);
         }
-        kv.innerHTML = rows.map(([k, v]) => "<div class='k'>" + k + "</div><div class='v'>" + (v == null || v === "" ? "—" : v) + "</div>").join("");
+        kv.innerHTML = rows.map(([k, v]) => "<div class='k'>" + esc(k) + "</div><div class='v'>" + (v == null || v === "" ? "—" : esc(v)) + "</div>").join("");
       }
 
       const chart = document.getElementById("equityChart");
@@ -2948,11 +2959,11 @@ XG:CROSS(MA5,MA10);</textarea>
             "<div class='core-metric' title='" +
             escAttr(c.tip || c.k) +
             "'><div class='k'>" +
-            c.k +
+            esc(c.k) +
             "</div><div class='v'>" +
             (c.v == null ? "—" : c.v) +
             "</div>" +
-            (c.tip ? "<div class='subtip'>" + c.tip + "</div>" : "") +
+            (c.tip ? "<div class='subtip'>" + esc(c.tip) + "</div>" : "") +
             "</div>"
           );
         })
@@ -3016,7 +3027,7 @@ XG:CROSS(MA5,MA10);</textarea>
       if (mode === "tn") {
         rows.splice(6, 0, ["entry_lag / hold", (lag != null ? lag : "—") + " / " + (hold != null ? hold : "—")]);
       }
-      box.innerHTML = rows.map(([k, v]) => "<div class='k'>" + k + "</div><div class='v'>" + (v == null || v === "" ? "—" : v) + "</div>").join("");
+      box.innerHTML = rows.map(([k, v]) => "<div class='k'>" + esc(k) + "</div><div class='v'>" + (v == null || v === "" ? "—" : esc(v)) + "</div>").join("");
     }
 
     function renderAdvancedKv(summary, detail, artifacts, runId, metrics) {
@@ -3035,7 +3046,7 @@ XG:CROSS(MA5,MA10);</textarea>
       } else if (metrics.final_equity != null) {
         rows.push(["期末权益", formatNumber(metrics.final_equity, 2)]);
       }
-      box.innerHTML = rows.map(([k, v]) => "<div class='k'>" + k + "</div><div class='v' title='" + escAttr(v) + "'>" + v + "</div>").join("");
+      box.innerHTML = rows.map(([k, v]) => "<div class='k'>" + esc(k) + "</div><div class='v' title='" + escAttr(v) + "'>" + esc(v) + "</div>").join("");
     }
 
 
@@ -3139,7 +3150,7 @@ XG:CROSS(MA5,MA10);</textarea>
             v = formatNumber(v, 2);
           }
         }
-        d.innerHTML = "<div class='k'>" + metricLabel(k) + "</div><div class='v'>" + (vHtml != null ? vHtml : v) + "</div>";
+        d.innerHTML = "<div class='k'>" + esc(metricLabel(k)) + "</div><div class='v'>" + (vHtml != null ? vHtml : esc(v)) + "</div>";
         box.appendChild(d);
       });
     }
@@ -4001,7 +4012,7 @@ XG:CROSS(MA5,MA10);</textarea>
               let cls = "hist-tag";
               if (String(tg).indexOf("单票") >= 0) cls += " mode-per";
               if (String(tg).indexOf("共享") >= 0 || String(tg).indexOf("组合") >= 0) cls += " mode-pool";
-              return "<span class='" + cls + "'>" + tg + "</span>";
+              return "<span class='" + cls + "'>" + esc(tg) + "</span>";
             })
             .join("");
 
@@ -4056,7 +4067,7 @@ XG:CROSS(MA5,MA10);</textarea>
             "<div class='hist-title' title=\"" +
             escAttr(primary) +
             '">' +
-            primary +
+            esc(primary) +
             "</div>" +
             (tagHtml ? "<div class='hist-tags'>" + tagHtml + "</div>" : "") +
             (function () {
@@ -4065,7 +4076,7 @@ XG:CROSS(MA5,MA10);</textarea>
                 ? "<div class='hist-range' title='" +
                   escAttr("回测区间 " + rangeText) +
                   "'>" +
-                  rangeText +
+                  esc(rangeText) +
                   "</div>"
                 : "";
             })() +
@@ -4080,10 +4091,10 @@ XG:CROSS(MA5,MA10);</textarea>
             "' title='" +
             stTip +
             "'>" +
-            stLabel +
+            esc(stLabel) +
             "</span></td>" +
             "<td class='col-period'>" +
-            periodText +
+            esc(periodText) +
             "</td>" +
             "<td class='col-mode'><span class='mode-pill " +
             modeCls +
@@ -4480,10 +4491,10 @@ XG:CROSS(MA5,MA10);</textarea>
         if (r.ok) {
           msg.innerHTML = '<span class="okmsg">公式校验通过</span>';
         } else {
-          msg.innerHTML = '<span class="err">' + (r.error || "校验失败") + "</span>";
+          msg.innerHTML = '<span class="err">' + esc(r.error || "校验失败") + "</span>";
         }
       } catch (e) {
-        msg.innerHTML = '<span class="err">' + e.message + "</span>";
+        msg.innerHTML = '<span class="err">' + esc(e.message) + "</span>";
       }
     };
 
@@ -4498,10 +4509,10 @@ XG:CROSS(MA5,MA10);</textarea>
             formula_text: document.getElementById("newFormula").value || "",
           }),
         });
-        msg.innerHTML = '<span class="okmsg">已保存规则 ' + (r.name || r.id) + "</span>";
+        msg.innerHTML = '<span class="okmsg">已保存规则 ' + esc(r.name || r.id) + "</span>";
         await loadRules();
       } catch (e) {
-        msg.innerHTML = '<span class="err">' + e.message + "</span>";
+        msg.innerHTML = '<span class="err">' + esc(e.message) + "</span>";
       }
     };
 
@@ -4789,7 +4800,7 @@ XG:CROSS(MA5,MA10);</textarea>
 
         // Fallback sync path (should be rare)
         msg.textContent = "同步回测计算中…";
-        msg.innerHTML = '<span class="okmsg">回测完成：' + (r.title || r.run_id || "") + " · " + statusLabel(r.status) + "</span>";
+        msg.innerHTML = '<span class="okmsg">回测完成：' + esc(r.title || r.run_id || "") + " · " + statusLabel(r.status) + "</span>";
         setProgressUI(100, "完成", "run_id=" + (r.run_id || ""), { active: true });
         hideProgressSoon();
         await showRunResult(r, { fromHistory: false });
@@ -4798,7 +4809,7 @@ XG:CROSS(MA5,MA10);</textarea>
           renderHistory(rows, r.run_id);
         } catch (_) {}
       } catch (e) {
-        msg.innerHTML = '<span class="err">' + e.message + "</span>";
+        msg.innerHTML = '<span class="err">' + esc(e.message) + "</span>";
         hideResultPanel();
         setProgressUI(0, "失败", String(e.message || e).slice(0, 300), { active: true });
       }
@@ -4949,22 +4960,22 @@ XG:CROSS(MA5,MA10);</textarea>
     function renderSignalBadge(sig) {
       const s = (sig || "").trim();
       if (!s) return "<span class=\"fc-signal fc-signal-empty\">无信号</span>";
-      return "<span class=\"" + signalClass(s) + "\">" + s + "</span>";
+      return "<span class=\"" + escHtml(signalClass(s)) + "\">" + escHtml(s) + "</span>";
     }
     function renderMatchBlock(title, m) {
       if (!m) return "";
       const st = m.match_status || "";
       return "<div class=card style=margin:0>" +
-        "<h2>" + title + " <span class=\"" + matchClass(st) + "\">" + st + "</span></h2>" +
+        "<h2>" + escHtml(title) + " <span class=\"" + escHtml(matchClass(st)) + "\">" + escHtml(st) + "</span></h2>" +
         "<div style=margin-bottom:0.45rem><b>操作信号</b> " + renderSignalBadge(m.operation_signal) + "</div>" +
-        "<div><b>本卦</b> " + (m.raw_ben || m.ben_norm || "—") +
-        "　<b>变卦</b> " + (m.raw_bian || m.bian_norm || "—") +
-        "　<b>爻</b> " + (m.yao_order != null ? m.yao_order : "—") + " " + (m.yao_name || "") + "</div>" +
+        "<div><b>本卦</b> " + escHtml(m.raw_ben || m.ben_norm || "—") +
+        "　<b>变卦</b> " + escHtml(m.raw_bian || m.bian_norm || "—") +
+        "　<b>爻</b> " + escHtml(m.yao_order != null ? m.yao_order : "—") + " " + escHtml(m.yao_name || "") + "</div>" +
         "<div style=margin-top:0.5rem><b>个股行情简判</b><br/>" +
-        (m.judgement ? m.judgement : "<span class=fc-match-bad>空 — 请检查卦象</span>") + "</div>" +
-        (m.note ? "<div style=margin-top:0.35rem;font-size:0.85rem><b>备注</b> " + m.note + "</div>" : "") +
-        (m.core_gang ? "<div style=margin-top:0.4rem;color:var(--muted);font-size:0.85rem>" + m.core_gang + "</div>" : "") +
-        ((m.tips && m.tips.length) ? "<div class=fc-match-warn style=margin-top:0.4rem>" + m.tips.join("；") + "</div>" : "") +
+        (m.judgement ? escHtml(m.judgement) : "<span class=fc-match-bad>空 — 请检查卦象</span>") + "</div>" +
+        (m.note ? "<div style=margin-top:0.35rem;font-size:0.85rem><b>备注</b> " + escHtml(m.note) + "</div>" : "") +
+        (m.core_gang ? "<div style=margin-top:0.4rem;color:var(--muted);font-size:0.85rem>" + escHtml(m.core_gang) + "</div>" : "") +
+        ((m.tips && m.tips.length) ? "<div class=fc-match-warn style=margin-top:0.4rem>" + escHtml(m.tips.join("；")) + "</div>" : "") +
         "</div>";
     }
 
@@ -5200,19 +5211,19 @@ XG:CROSS(MA5,MA10);</textarea>
           const name = r.name || r.rule_id || sid;
           lab.innerHTML =
             '<input type="checkbox" class="exp-yao" value="' +
-            String(sid).replace(/"/g, "") +
+            esc(sid) +
             '" data-state-id="' +
-            String(sid).replace(/"/g, "") +
+            esc(sid) +
             '" data-label="' +
-            String(name).replace(/"/g, "&quot;") +
+            esc(name) +
             '" data-rule-id="' +
-            String(r.rule_id || "").replace(/"/g, "") +
+            esc(r.rule_id || "") +
             '" />' +
             "<span><div class='t'>" +
-            String(name).replace(/</g, "&lt;") +
+            esc(name) +
             "</div><div class='d'>" +
-            String(sid) +
-            (r.group ? " · " + r.group : "") +
+            esc(sid) +
+            (r.group ? " · " + esc(r.group) : "") +
             "</div></span>";
           box.appendChild(lab);
         });
@@ -5320,12 +5331,12 @@ XG:CROSS(MA5,MA10);</textarea>
         const bt = r.backtestable ? '<span class="badge ok">可回测</span>' : '<span class="badge warn">不可回测</span>';
         const isBagua = (r.id === "bagua_ohlc") || (String(r.id || "").indexOf("bagua") >= 0);
         div.innerHTML =
-          '<input type="checkbox" ' + (on ? "checked" : "") + ' data-exp-rule-id="' + String(r.id).replace(/"/g, "") + '" />' +
+          '<input type="checkbox" ' + (on ? "checked" : "") + ' data-exp-rule-id="' + esc(r.id) + '" />' +
           '<div style="min-width:0;flex:1">' +
-          '<div class="nm">' + String(r.name || r.id).replace(/</g, "&lt;") + " " + bt +
+          '<div class="nm">' + esc(r.name || r.id) + " " + bt +
           (isBagua ? ' <span class="badge">标注</span>' : "") + "</div>" +
-          '<div class="sub">' + String(r.id || "").replace(/</g, "&lt;") +
-          (r.compile_status ? " · " + r.compile_status : "") + "</div></div>";
+          '<div class="sub">' + esc(r.id || "") +
+          (r.compile_status ? " · " + esc(r.compile_status) : "") + "</div></div>";
         const toggle = (forceOn) => {
           try {
             if (typeof selected === "undefined" || !selected) {
@@ -5382,8 +5393,7 @@ XG:CROSS(MA5,MA10);</textarea>
       }
       box.className = "exp-rule-box";
       box.innerHTML = "已选规则：<strong>" + labels.map((x) => {
-        // escape minimal
-        return String(x).replace(/</g, "&lt;");
+        return esc(x);
       }).join("、") + "</strong>" +
         "<div class='sub' style='margin-top:0.25rem'>已选 " + labels.length + " 条 · 实验会对以上规则分别做「卦象 × 日程/参数轴」组合。</div>";
     }
@@ -5561,8 +5571,8 @@ XG:CROSS(MA5,MA10);</textarea>
       const nTp = Math.max(1, (body.take_profit_list || [null]).length);
       const riskNote = " × 止损 " + nSl + " × 止盈 " + nTp;
       const guaNames = { none: "不加卦象", best3: "最佳3爻", bull: "偏多信号" };
-      const gLab = (body.gua_keys || []).map((k) => guaNames[k] || k).join("、") || "—";
-      const rLab = _expRuleLabels().join("、") || "（未选规则）";
+      const gLab = (body.gua_keys || []).map((k) => esc(guaNames[k] || k)).join("、") || "—";
+      const rLab = _expRuleLabels().map(esc).join("、") || "（未选规则）";
       if (body.buy_options || body.sell_options || body.signal_weekdays_options) {
         const nSig = (body.signal_weekdays_options || []).length || 1;
         const nBuy = (body.buy_options || []).length || 0;
@@ -5586,7 +5596,7 @@ XG:CROSS(MA5,MA10);</textarea>
         all_signal_tn12: "经典T+1/T+2",
         fri_signal_fri_buy_mon_exit: "周五买下周一平",
       };
-      const wLab = (body.weekday_keys || []).map((k) => wdNames[k] || k).join("、") || "—";
+      const wLab = (body.weekday_keys || []).map((k) => esc(wdNames[k] || k)).join("、") || "—";
       return {
         total,
         text:
@@ -6385,8 +6395,8 @@ XG:CROSS(MA5,MA10);</textarea>
         const htmlParts = [];
         for (const r of rows) {
           if (!r.found) {
-            htmlParts.push("<div class=\"fc-stock-card\"><b>" + (r.code || "") + "</b> <span class=fc-match-bad>" +
-              ((r.tips || []).join("；") || "未找到") + "</span></div>");
+            htmlParts.push("<div class=\"fc-stock-card\"><b>" + esc(r.code || "") + "</b> <span class=fc-match-bad>" +
+              esc((r.tips || []).join("；") || "未找到") + "</span></div>");
             continue;
           }
           try {
@@ -6394,11 +6404,11 @@ XG:CROSS(MA5,MA10);</textarea>
             htmlParts.push(renderQuoteCard(full));
           } catch (e) {
             // fallback compact card from batch row
-            htmlParts.push("<div class=\"fc-stock-card\"><b>" + r.code + " " + (r.name || "") + "</b>" +
+            htmlParts.push("<div class=\"fc-stock-card\"><b>" + esc(r.code) + " " + esc(r.name || "") + "</b>" +
               "<div style=margin-top:0.4rem>周 " + renderSignalBadge(r.week_match && r.week_match.operation_signal) +
-              " " + ((r.week_match && r.week_match.judgement) || "—") + "</div>" +
+              " " + esc((r.week_match && r.week_match.judgement) || "—") + "</div>" +
               "<div style=margin-top:0.3rem>月 " + renderSignalBadge(r.month_match && r.month_match.operation_signal) +
-              " " + ((r.month_match && r.month_match.judgement) || "—") + "</div></div>");
+              " " + esc((r.month_match && r.month_match.judgement) || "—") + "</div></div>");
           }
         }
         if (box) box.innerHTML = htmlParts.join("") || "<div class=sub>无结果</div>";
@@ -6413,8 +6423,8 @@ XG:CROSS(MA5,MA10);</textarea>
         if (card) card.style.display = "none";
         if (cand) {
           cand.innerHTML = data.candidates.map(c =>
-            "<button type=button class=secondary style=margin:0.2rem data-code=\"" + c.code + "\">" +
-            c.code + " " + c.name + "</button>"
+            "<button type=button class=secondary style=margin:0.2rem data-code=\"" + esc(c.code) + "\">" +
+            esc(c.code) + " " + esc(c.name) + "</button>"
           ).join("");
           cand.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
             document.getElementById("fcQuery").value = b.getAttribute("data-code");
@@ -6466,14 +6476,14 @@ XG:CROSS(MA5,MA10);</textarea>
       mains.forEach(id => items.push(typeof GuaUI !== "undefined" ? GuaUI.mainName(id) : ("主卦"+id)));
       acts.forEach(a => items.push(a));
       const max = 8;
-      tags = items.slice(0,max).map(t => "<span class='gua-tag'>"+t+"</span>").join(" ");
+      tags = items.slice(0,max).map(t => "<span class='gua-tag'>"+esc(t)+"</span>").join(" ");
       if (items.length > max) tags += " <span class='gua-tag'>+另外"+(items.length-max)+"项</span>";
       let metricsHtml = "<div class='sub' id='guaMetricsStatus'>正在加载卦象分析…</div>";
       box.innerHTML = "<div style='display:grid;grid-template-columns:1fr 1fr;gap:0.35rem 1rem;font-size:0.85rem'>"
-        + "<div>启用：<b>是</b></div><div>模式：<b>"+(gf.selection_mode||"—")+"</b></div>"
-        + "<div>规则版本：<b>"+(gf.rule_version||"—")+"</b></div><div>保留率：<b>"+rate+"</b></div>"
-        + "<div>原始信号：<b>"+before+"</b></div><div>过滤后：<b>"+after+"</b></div>"
-        + "</div><div class='gua-rule' style='margin-top:0.45rem'>"+nl+"</div>"
+        + "<div>启用：<b>是</b></div><div>模式：<b>"+esc(gf.selection_mode||"—")+"</b></div>"
+        + "<div>规则版本：<b>"+esc(gf.rule_version||"—")+"</b></div><div>保留率：<b>"+esc(rate)+"</b></div>"
+        + "<div>原始信号：<b>"+esc(before)+"</b></div><div>过滤后：<b>"+esc(after)+"</b></div>"
+        + "</div><div class='gua-rule' style='margin-top:0.45rem'>"+esc(nl)+"</div>"
         + "<div class='gua-tags' style='margin-top:0.45rem'>"+tags+"</div>"
         + "<div style='margin-top:0.75rem' id='guaAnalysisBlock'>"+metricsHtml+"</div>";
 
@@ -6487,11 +6497,11 @@ XG:CROSS(MA5,MA10);</textarea>
           host.innerHTML = "<div class='sub'>暂无卦象分布明细（可查看 signals.csv）。</div>";
           return;
         }
-        const warn = (m.warnings || []).map((w) => "<div class='sub' style='color:var(--warn)'>"+w+"</div>").join("");
+        const warn = (m.warnings || []).map((w) => "<div class='sub' style='color:var(--warn)'>"+esc(w)+"</div>").join("");
         const fmtList = (arr, title) => {
           if (!arr || !arr.length) return "";
           return "<div style='margin-top:0.45rem'><div class='sub' style='margin-bottom:0.2rem'>"+title+"</div>"
-            + arr.slice(0,12).map((x) => "<span class='gua-tag'>"+x.key+" ×"+x.count+"</span> ").join("")
+            + arr.slice(0,12).map((x) => "<span class='gua-tag'>"+esc(x.key)+" ×"+esc(x.count)+"</span> ").join("")
             + "</div>";
         };
         const after = m.after || {};
@@ -6499,7 +6509,7 @@ XG:CROSS(MA5,MA10);</textarea>
         host.innerHTML =
           "<div style='font-size:0.85rem;margin-top:0.25rem'>"
           + "<b>卦象分析</b>"
-          + (m.source ? " <span class='sub'>来源："+m.source+"</span>" : "")
+          + (m.source ? " <span class='sub'>来源："+esc(m.source)+"</span>" : "")
           + (m.sample_sufficient === false ? " <span class='sub' style='color:var(--warn)'>· 样本不足</span>" : "")
           + "</div>"
           + warn
@@ -6968,8 +6978,8 @@ XG:CROSS(MA5,MA10);</textarea>
         if (!h){ pane.innerHTML = "<div class='sub'>请选择左侧主卦</div>"; return; }
         const mode = getMode();
         let html = "<div style='margin-bottom:0.65rem'>";
-        html += "<div style='font-size:1.15rem;font-weight:700'>"+(h.hexagram_symbol||"")+" "+(h.main_hexagram_name||"")+" <span class='sub'>第"+String(h.gua_order).padStart(2,"0")+"卦</span></div>";
-        html += "<div class='sub' style='margin-top:0.25rem'>"+ (h.core_gang || h.gua_ci || "—") +"</div>";
+        html += "<div style='font-size:1.15rem;font-weight:700'>"+esc(h.hexagram_symbol||"")+" "+esc(h.main_hexagram_name||"")+" <span class='sub'>第"+esc(String(h.gua_order).padStart(2,"0"))+"卦</span></div>";
+        html += "<div class='sub' style='margin-top:0.25rem'>"+ esc(h.core_gang || h.gua_ci || "—") +"</div>";
         html += "<label style='display:inline-flex;gap:0.35rem;margin-top:0.45rem;font-size:0.85rem'><input type='checkbox' id='guaSelectAll6' /> 选择全部六爻</label>";
         html += "</div>";
         (h.lines||[]).forEach(ln => {
@@ -6979,11 +6989,11 @@ XG:CROSS(MA5,MA10);</textarea>
           } else {
             checked = (cfg.selected_state_ids||[]).indexOf(ln.state_id) >= 0;
           }
-          const bg = emptyDisp(ln.biangua);
+          const bg = esc(emptyDisp(ln.biangua));
           const act = ln.action_signal || "—";
           html += "<div class='gua-line'>";
-          html += "<label class='chk'><input type='checkbox' data-sid='"+ln.state_id+"' data-gid='"+h.main_hexagram_id+"' "+(checked?"checked":"")+" /><span><b>"+(ln.line_name||"")+"</b> "+(ln.line_text||"")+"</span></label>";
-          html += "<div class='sub' style='grid-column:2'>变卦："+bg+" · 行情："+(ln.market_summary||ln.market_judgement||"—")+" <span class='gua-act gua-act-"+(ln.action_signal||"")+"'>"+act+"</span></div>";
+          html += "<label class='chk'><input type='checkbox' data-sid='"+esc(ln.state_id)+"' data-gid='"+esc(h.main_hexagram_id)+"' "+(checked?"checked":"")+" /><span><b>"+esc(ln.line_name||"")+"</b> "+esc(ln.line_text||"")+"</span></label>";
+          html += "<div class='sub' style='grid-column:2'>变卦："+bg+" · 行情："+esc(ln.market_summary||ln.market_judgement||"—")+" <span class='gua-act gua-act-"+esc(ln.action_signal||"")+"'>"+esc(act)+"</span></div>";
           html += "</div>";
         });
         pane.innerHTML = html;
@@ -7078,8 +7088,8 @@ XG:CROSS(MA5,MA10);</textarea>
             const div = document.createElement("div");
             div.className = "gua-hit";
             div.dataset.idx = String(idx);
-            const bg = emptyDisp(it.biangua || it.changed_hexagram_name);
-            div.innerHTML = "<input type='checkbox' /> <div><b>"+(it.hexagram_symbol||"")+" "+(it.main_hexagram_name||"")+" · "+(it.line_name||"")+"</b><div class='sub'>"+(it.line_text||"")+" · 变卦:"+bg+" · <span class='gua-act gua-act-"+(it.action_signal||"")+"'>"+(it.action_signal||"—")+"</span></div></div>";
+            const bg = esc(emptyDisp(it.biangua || it.changed_hexagram_name));
+            div.innerHTML = "<input type='checkbox' /> <div><b>"+esc(it.hexagram_symbol||"")+" "+esc(it.main_hexagram_name||"")+" · "+esc(it.line_name||"")+"</b><div class='sub'>"+esc(it.line_text||"")+" · 变卦:"+bg+" · <span class='gua-act gua-act-"+esc(it.action_signal||"")+"'>"+esc(it.action_signal||"—")+"</span></div></div>";
             const cb = div.querySelector("input");
             const cfg = draft || committed;
             cb.checked = (cfg.selected_state_ids||[]).indexOf(it.state_id) >= 0;
@@ -7158,11 +7168,11 @@ XG:CROSS(MA5,MA10);</textarea>
           rows.forEach(function(item){
             const sid = item.ln.state_id;
             const checked = selected.has(sid) ? " checked" : "";
-            const bg = emptyDisp(item.ln.biangua);
+            const bg = esc(emptyDisp(item.ln.biangua));
             html += "<div class='gua-act-row'>";
-            html += "<label class='chk'><input type='checkbox' data-sid='" + sid + "' data-gid='" + item.h.main_hexagram_id + "'" + checked + "/>";
-            html += "<span><b>" + (item.h.hexagram_symbol || "") + " " + (item.h.main_hexagram_name || "") + " · " + (item.ln.line_name || "") + "</b>";
-            html += "<div class='sub'>" + (item.ln.line_text || "—") + " · 变卦：" + bg + "</div></span></label>";
+            html += "<label class='chk'><input type='checkbox' data-sid='" + esc(sid) + "' data-gid='" + esc(item.h.main_hexagram_id) + "'" + checked + "/>";
+            html += "<span><b>" + esc(item.h.hexagram_symbol || "") + " " + esc(item.h.main_hexagram_name || "") + " · " + esc(item.ln.line_name || "") + "</b>";
+            html += "<div class='sub'>" + esc(item.ln.line_text || "—") + " · 变卦：" + bg + "</div></span></label>";
             html += "</div>";
           });
           html += "</div>";

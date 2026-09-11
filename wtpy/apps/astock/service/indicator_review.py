@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
 import logging
 import time
@@ -64,7 +65,9 @@ def _resolve_formal_surface(cfg: AStockConfig) -> Tuple[Optional[Dict[str, Any]]
         return None, f"formal_product_pair_resolve_failed: {e}"
     if pair is None or not pair.l1_dataset_id:
         return None, "no_formal_l1_product（复权因子未就绪，正式 L1 产品面缺失）"
-    max_date = int(pair.cutoff or pair.l1_max_date or 0)
+    # 真实行情最后日优先于 cutoff：cutoff 可能被 derive 到请求日/今天，
+    # 超前于数据面实际最后一根 K 线，按它扫描会全市场无命中。
+    max_date = int(pair.l1_max_date or pair.cutoff or 0)
     if max_date <= 0:
         return None, "formal_l1_max_date_unknown"
     return {"formal_l1_id": pair.l1_dataset_id, "max_date": max_date}, ""
@@ -105,6 +108,32 @@ def _normalize_asof(cfg: AStockConfig, asof: Optional[int], surface_max: int) ->
         except Exception as e:  # noqa: BLE001
             logger.warning("indicator_review 日历归一失败（按原 asof）: %s", e)
     return out
+
+
+def resolve_review_asof(cfg: AStockConfig, requested_asof: int) -> Tuple[int, str]:
+    """信号基准日收敛到真实数据面，返回 (实际使用的基准日, note)。
+
+    - 请求日 > 数据面最后日：回退到数据面最后日再经 ``_normalize_asof``
+      落到交易日，note 说明回退原因（导出侧写入 meta/响应头）；
+    - 请求日 <= 数据面：按请求日归一（周末/节假日回退最近交易日），note 空串；
+    - 数据面不可用（无正式 L1）：原样返回请求日与空 note，保持旧行为，
+      由调用方走 no_go / 即时计算路径。
+    """
+    requested = int(requested_asof)
+    surface, _reason = _resolve_formal_surface(cfg)
+    if surface is None:
+        return requested, ""
+    surface_max = int(surface.get("max_date") or 0)
+    if surface_max <= 0:
+        return requested, ""
+    if requested > surface_max:
+        eff = _normalize_asof(cfg, surface_max, surface_max)
+        note = (
+            f"fallback_date:请求 {requested} 超出数据覆盖 {surface_max}，"
+            f"信号按 {eff} 计算"
+        )
+        return eff, note
+    return _normalize_asof(cfg, requested, surface_max), ""
 
 
 def _resolve_codes(cfg: AStockConfig, codes: Optional[Sequence[str]]) -> List[str]:
@@ -150,6 +179,109 @@ def _resolve_codes(cfg: AStockConfig, codes: Optional[Sequence[str]]) -> List[st
     return pool
 
 
+_SHEET_ILLEGAL_CHARS = set('[]:*?/\\')
+# Excel 保留 sheet 名（历史追踪用 History）与工作簿自有 sheet，冲突时回退
+_SHEET_RESERVED_NAMES = {"meta", "stock-all", "etf-all", "history"}
+# Excel 会把以这些字符开头的单元格当公式；sheet 名同样禁用其起始
+_SHEET_FORMULA_LEAD = ("=", "+", "-", "@")
+
+
+def _bad_sheet_char(ch: str) -> bool:
+    """Excel/XML 1.0 非法字符：C0、\\x7f、C1、U+FFFE/U+FFFF 与孤立代理。"""
+    code = ord(ch)
+    return (
+        ch in _SHEET_ILLEGAL_CHARS
+        or code < 32
+        or 0x7F <= code <= 0x9F
+        or code in (0xFFFE, 0xFFFF)
+        or 0xD800 <= code <= 0xDFFF
+    )
+
+
+def _sanitize_sheet_name(name: str, rule_id: str) -> str:
+    """把规则名收敛为合法且安全的 Excel sheet 名：过滤非法/控制字符
+    （C0/C1、\\x7f、U+FFFE/U+FFFF、孤立代理）、处理首尾单引号、公式起始
+    字符替换为 ``_``、限 31 字符；空名/保留字冲突时回退 rule_id，回退后
+    仍非法/保留则用 ``rule_<hash>`` 固定安全名，保证任何输入都不抛。
+    非默认规则（如 user_*）做 sheet 名不可读，优先用规则显示名。"""
+
+    def _clean(value: str) -> str:
+        return "".join(
+            "_" if _bad_sheet_char(ch) else ch for ch in str(value)
+        ).strip().strip("'").strip()
+
+    cleaned = _clean(name)
+    if cleaned[:1] in _SHEET_FORMULA_LEAD:
+        cleaned = "_" + cleaned[1:]
+    if len(cleaned) > 31:
+        cleaned = cleaned[:31].rstrip("_").strip()
+    if not cleaned or cleaned.lower() in _SHEET_RESERVED_NAMES:
+        fallback = _clean(rule_id)
+        if fallback[:1] in _SHEET_FORMULA_LEAD:
+            fallback = "_" + fallback[1:]
+        fallback = fallback[:31]
+        if fallback and fallback.lower() not in _SHEET_RESERVED_NAMES:
+            return fallback
+        digest = hashlib.sha1(
+            str(rule_id).encode("utf-8", "replace")
+        ).hexdigest()[:8]
+        return f"rule_{digest}"
+    return cleaned
+
+
+def user_registry_file(cfg: AStockConfig) -> Path:
+    """用户规则注册表路径（RuleService 写入、复核/导出只读合并）。"""
+    return Path(cfg.storage_root) / "indicators" / "user_registry.json"
+
+
+def resolve_rule_sheet_names(
+    cfg: AStockConfig, rule_ids: Sequence[str]
+) -> Dict[str, str]:
+    """解析规则的占位 sheet 名：DEFAULT_REVIEW_RULES 短名 > user_registry.json /
+    系统注册表显示名 > rule_id；结果已过 ``_sanitize_sheet_name``。
+
+    仅用于即时计算整体失败（error/no_go）时的空 sheet 兜底命名，只读用户
+    注册表文件，不触发 RuleService 的全量扫描/写 registry.json 副作用。
+    """
+    out: Dict[str, str] = {}
+    default_sheets = dict(DEFAULT_REVIEW_RULES)
+    for rid in rule_ids:
+        if rid in default_sheets:
+            out[rid] = _sanitize_sheet_name(default_sheets[rid], rid)
+    pending = [rid for rid in rule_ids if rid not in out]
+    if not pending:
+        return out
+
+    names: Dict[str, str] = {}
+    try:
+        upath = user_registry_file(cfg)
+        if upath.exists():
+            from ..indicators.registry import IndicatorRegistry
+
+            for s in IndicatorRegistry.load(upath).list():
+                names.setdefault(s.id, s.name)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("indicator_review 用户注册表读取失败（占位名回退）: %s", e)
+
+    pending = [rid for rid in pending if rid not in names]
+    indicator_dir = getattr(cfg, "indicator_dir", None)
+    mapping_path = getattr(cfg, "mapping_path", None)
+    if pending and indicator_dir and mapping_path:
+        try:
+            from ..indicators.registry import IndicatorRegistry
+
+            reg = IndicatorRegistry.bootstrap(indicator_dir, mapping_path)
+            for s in reg.list():
+                names.setdefault(s.id, s.name)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("indicator_review 系统注册表扫描失败（占位名回退）: %s", e)
+
+    for rid in rule_ids:
+        if rid not in out:
+            out[rid] = _sanitize_sheet_name(names.get(rid) or rid, rid)
+    return out
+
+
 def run_weekly_review(
     cfg: AStockConfig,
     asof: Optional[int] = None,
@@ -160,16 +292,23 @@ def run_weekly_review(
     on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
     bar_loader: Optional[Callable[[str, int], Tuple[List[DayBar], Dict[str, Any]]]] = None,
     surface_resolver: Optional[Callable[[AStockConfig], Tuple[Optional[Dict[str, Any]], str]]] = None,
+    persist: bool = True,
 ) -> Dict[str, Any]:
-    """全市场复核两条指标公式在 asof 当日的 XG 命中，产出 review_{asof}.json。
+    """全市场复核指标公式在 asof 当日的 XG 命中，产出 review_{asof}.json。
 
     返回摘要 dict（同落盘 JSON）。``bar_loader`` / ``surface_resolver`` 为测试
     注入点，默认走正式 L1 产品面 + BaguaPlaneSession 加载。
+    ``persist=False`` 供导出侧即时计算自定义规则：不读也不写
+    review_{asof}.json（该文件是周五链与默认导出的共享数据源，
+    不得被临时计算覆盖），仅返回结果。
     """
     t0 = time.time()
     sheet_of = dict(DEFAULT_REVIEW_RULES)
     rules = list(DEFAULT_REVIEW_RULES)
     if rule_ids:
+        # 非默认规则优先用规则显示名做 sheet 名（user_* ID 不可读）；
+        # 显示名在 spec 解析后再 sanitize（非法字符/31 字符/保留字回退）。
+        # 显式回传的默认规则 ID 先映射回短名，确保 no_go 摘要与 ok 路径一致。
         rules = [(rid, sheet_of.get(rid, rid)) for rid in rule_ids]
 
     resolve_surface = surface_resolver or _resolve_formal_surface
@@ -209,12 +348,13 @@ def run_weekly_review(
                         path,
                     )
                     return existing
-            _atomic_write_json(path, summary)
+            if persist:
+                _atomic_write_json(path, summary)
         return summary
 
     eff_asof = _normalize_asof(cfg, asof, int(surface["max_date"]))
     out_path = review_output_path(cfg, eff_asof)
-    if out_path.exists() and not force:
+    if persist and out_path.exists() and not force:
         try:
             cached = json.loads(out_path.read_text(encoding="utf-8"))
             cached["reused"] = True
@@ -226,13 +366,20 @@ def run_weekly_review(
     # 规则 spec：编译不可用直接抛错（CLI 非零退出），不产出半截结果
     from ..indicators.registry import IndicatorRegistry
 
-    reg = IndicatorRegistry.bootstrap(cfg.indicator_dir, cfg.mapping_path)
+    reg = IndicatorRegistry.bootstrap(
+        cfg.indicator_dir,
+        cfg.mapping_path,
+        user_registry_path=user_registry_file(cfg),
+    )
     specs: List[Tuple[str, str, Any]] = []
     for rid, sheet in rules:
         spec = reg.get(rid)  # KeyError 即规则不存在
         if spec.compile_status != "ready":
             raise RuntimeError(f"规则 {rid} 编译状态 {spec.compile_status}: {spec.failure_reason}")
-        specs.append((rid, sheet, spec))
+        # 默认两条保持既有 sheet 名（显式传 rule_ids 时 rules 内是完整 ID，
+        # 必须回查 sheet_of 取短名）；其余用显示名 sanitize（见 _sanitize_sheet_name）
+        eff_sheet = sheet_of[rid] if rid in sheet_of else _sanitize_sheet_name(spec.name, rid)
+        specs.append((rid, eff_sheet, spec))
 
     universe = _resolve_codes(cfg, codes)
     load = bar_loader or _default_bar_loader_factory(cfg)
@@ -295,7 +442,8 @@ def run_weekly_review(
         ],
         "duration_sec": round(time.time() - t0, 1),
     }
-    _atomic_write_json(out_path, summary)
+    if persist:
+        _atomic_write_json(out_path, summary)
     logger.info(
         "indicator_review 完成 asof=%s scanned=%d 命中 %s 错误 %d 用时 %.1fs",
         eff_asof, scanned,

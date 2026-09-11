@@ -12,6 +12,7 @@ import json
 import pytest
 
 import tests.apps.astock.conftest  # noqa: F401
+from tests.apps.astock.conftest import requires_real_formulas  # noqa: F401
 
 from wtpy.apps.astock.config import get_default_config
 from wtpy.apps.astock.data.tdx_reader import DayBar
@@ -92,6 +93,7 @@ def _cfg(tmp_path):
     return get_default_config(storage_root=tmp_path)
 
 
+@requires_real_formulas
 def test_review_hit_judgment_and_json(tmp_path):
     """735 命中缓涨票、5日外命中 V 形票；无命中/停牌票不进 matched。"""
     cfg = _cfg(tmp_path)
@@ -123,6 +125,7 @@ def test_review_hit_judgment_and_json(tmp_path):
         assert key in on_disk
 
 
+@requires_real_formulas
 def test_review_asof_filter(tmp_path):
     """5日外信号仅在最后一根为真：asof 前移一天即不命中。"""
     cfg = _cfg(tmp_path)
@@ -139,6 +142,7 @@ def test_review_asof_filter(tmp_path):
     assert miss["rules"][0]["count"] == 0
 
 
+@requires_real_formulas
 def test_review_idempotent_and_force(tmp_path):
     cfg = _cfg(tmp_path)
     ir.run_weekly_review(
@@ -182,6 +186,7 @@ def test_review_no_go(tmp_path):
     assert ir.review_output_path(cfg, ASOF).exists()
 
 
+@requires_real_formulas
 def test_review_universe_missing_raises(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     # 隔离外部环境：防止开发者机器 MARKET_DATA_ROOT 指向真实仓库导致
@@ -193,6 +198,7 @@ def test_review_universe_missing_raises(tmp_path, monkeypatch):
         )
 
 
+@requires_real_formulas
 def test_review_universe_json_used(tmp_path):
     """codes=None 且 universe.json 存在：票池取文件内容（与导出同源优先项）。"""
     from wtpy.apps.astock.data.universe import AShareUniverse, SymbolInfo
@@ -214,6 +220,7 @@ def test_review_universe_json_used(tmp_path):
     assert summary["rules"][0]["count"] == 1  # 600000 命中 735
 
 
+@requires_real_formulas
 def test_no_go_preserves_existing_ok(tmp_path):
     """已有 ok 结果时，无 force 的 no_go 重跑不得覆盖（导出侧保 sheet）。"""
     cfg = _cfg(tmp_path)
@@ -247,6 +254,7 @@ def test_no_go_preserves_existing_ok(tmp_path):
     assert on_disk["status"] == "no_go"
 
 
+@requires_real_formulas
 def test_review_error_recorded(tmp_path):
     """加载失败的票计入 error_count 且不中断扫描。"""
     cfg = _cfg(tmp_path)
@@ -259,6 +267,7 @@ def test_review_error_recorded(tmp_path):
     assert summary["rules"][0]["count"] == 1  # 好票照常命中
 
 
+@requires_real_formulas
 def test_review_progress_callback(tmp_path):
     cfg = _cfg(tmp_path)
     seen = []
@@ -318,3 +327,395 @@ def test_cli_review_weekly_smoke(tmp_path, monkeypatch, capsys):
     assert captured["asof"] == ASOF
     assert captured["codes"] == "600000"
     assert captured["force"] is True
+
+
+@requires_real_formulas
+def test_review_persist_false_never_touches_disk(tmp_path):
+    """persist=False（导出侧即时计算）：不读缓存、不落盘——
+    已有缓存时也强制重算，且结果只返回不写文件（防污染周五链产物）。"""
+    cfg = _cfg(tmp_path)
+    # 先用 persist=True 落一份周五链产物
+    first = ir.run_weekly_review(
+        cfg, asof=ASOF, codes=["SSE.STK.600000"],
+        bar_loader=_fake_loader, surface_resolver=_ok_surface,
+    )
+    assert first["status"] == "ok"
+    assert ir.review_output_path(cfg, ASOF).exists()
+
+    # persist=False：即使已有缓存也重算（loader 必须被调用）且不写盘
+    before = ir.review_output_path(cfg, ASOF).read_text(encoding="utf-8")
+
+    def _strict_loader(code, asof):
+        raise AssertionError("persist=False must not read cache")
+
+    # 缓存存在 → persist=False 不复用缓存，走真 loader
+    calls = {"n": 0}
+
+    def _counting_loader(code, asof):
+        calls["n"] += 1
+        return _fake_loader(code, asof)
+
+    out = ir.run_weekly_review(
+        cfg, asof=ASOF, codes=["SSE.STK.600000"], persist=False,
+        bar_loader=_counting_loader, surface_resolver=_ok_surface,
+    )
+    assert out["status"] == "ok"
+    assert "reused" not in out
+    assert calls["n"] == 1  # 真实扫描而非读缓存
+    assert out["rules"][0]["count"] == 1
+    # 磁盘文件原样（未被覆盖、未新增）
+    after = ir.review_output_path(cfg, ASOF).read_text(encoding="utf-8")
+    assert after == before
+
+
+@requires_real_formulas
+def test_review_persist_false_writes_nothing_when_absent(tmp_path):
+    """persist=False 在无缓存时也不产生任何文件。"""
+    cfg = _cfg(tmp_path)
+    out = ir.run_weekly_review(
+        cfg, asof=ASOF, codes=["SSE.STK.600000"], persist=False,
+        bar_loader=_fake_loader, surface_resolver=_ok_surface,
+    )
+    assert out["status"] == "ok"
+    assert not ir.review_output_path(cfg, ASOF).exists()
+    assert not (cfg.storage_root / "indicator_review").exists() or not any(
+        (cfg.storage_root / "indicator_review").glob("review_*.json")
+    )
+
+
+def test_review_no_go_persist_false_no_write(tmp_path):
+    """no_go + persist=False：不落 no_go 文件。"""
+    cfg = _cfg(tmp_path)
+
+    def _bad_surface(_cfg):
+        return None, "no_formal_l1_product"
+
+    out = ir.run_weekly_review(
+        cfg, asof=ASOF, codes=["SSE.STK.600000"], persist=False,
+        bar_loader=_fake_loader, surface_resolver=_bad_surface,
+    )
+    assert out["status"] == "no_go"
+    assert not ir.review_output_path(cfg, ASOF).exists()
+
+
+def test_sanitize_sheet_name():
+    """非法字符替换、31 字符截断、空名/保留字回退 rule_id。"""
+    assert ir._sanitize_sheet_name("735金叉及趋势", "txt_735金叉及趋势") == "735金叉及趋势"
+    assert ir._sanitize_sheet_name("a[b]:*?/\\c", "rid") == "a_b______c"
+    long = "字" * 40
+    assert len(ir._sanitize_sheet_name(long, "rid")) == 31
+    assert ir._sanitize_sheet_name("", "rid") == "rid"
+    assert ir._sanitize_sheet_name("meta", "rid") == "rid"
+    assert ir._sanitize_sheet_name("stock-all", "rid") == "rid"
+    assert ir._sanitize_sheet_name("etf-all", "rid") == "rid"
+
+
+def test_sanitize_sheet_name_controls_reserved_and_formula():
+    """控制字符/首尾引号/Excel 保留名/公式起始字符都被安全化。"""
+    assert ir._sanitize_sheet_name("A\x01B", "rid") == "A_B"
+    assert ir._sanitize_sheet_name("A\x7fB", "rid") == "A_B"
+    assert ir._sanitize_sheet_name("'引号'", "rid") == "引号"
+    assert ir._sanitize_sheet_name("History", "rid") == "rid"
+    assert ir._sanitize_sheet_name("history", "rid") == "rid"
+    for lead in ("=1+1", "+1", "-1", "@x"):
+        cleaned = ir._sanitize_sheet_name(lead, "rid")
+        assert cleaned[:1] not in ("=", "+", "-", "@"), cleaned
+        assert 0 < len(cleaned) <= 31
+    assert ir._sanitize_sheet_name("=1+1", "rid") == "_1+1"
+    # 普通名字不受影响
+    assert ir._sanitize_sheet_name("常规规则A", "rid") == "常规规则A"
+
+
+def test_sanitize_sheet_name_final_fallback_never_reserved_or_illegal():
+    """rule_id 本身为空/保留名/非法时，最终回退固定安全名，任何输入都不抛。"""
+    for rid in ("meta", "History", "stock-all", "etf-all", "", "\x01\x7f", "=" * 5):
+        name = ir._sanitize_sheet_name("meta", rid)
+        assert 0 < len(name) <= 31, (rid, name)
+        assert name.lower() not in {"meta", "stock-all", "etf-all", "history"}
+        assert name[:1] not in ("=", "+", "-", "@")
+        assert not (set(name) & set("[]:*?/\\"))
+        assert all(ord(ch) >= 32 and ord(ch) != 0x7F for ch in name)
+    # 正常显示名优先于 rule_id
+    assert ir._sanitize_sheet_name("正常名", "meta") == "正常名"
+
+
+class _FakeProductPair:
+    """cutoff 超前（derive 到请求日/今天）但 l1_max_date 是真实行情最后日的产品对。"""
+
+    def __init__(self, *, l1_max_date: int, cutoff: int):
+        self.l1_dataset_id = "ds_fake_l1"
+        self.l1_max_date = l1_max_date
+        self.cutoff = cutoff
+
+
+def _fake_pair_modules(monkeypatch, *, l1_max_date: int, cutoff: int):
+    import wtpy.apps.astock.data.tushare_product as tp
+
+    monkeypatch.setattr(
+        tp,
+        "resolve_active_tushare_product_pair",
+        lambda store, *, deep_copy=True: _FakeProductPair(
+            l1_max_date=l1_max_date, cutoff=cutoff
+        ),
+    )
+
+
+def test_resolve_formal_surface_prefers_l1_max_date_over_cutoff(tmp_path, monkeypatch):
+    """cutoff 超前时 max_date 必须取 l1_max_date（真实行情最后日）。"""
+    md = tmp_path / "md"
+    md.mkdir()
+    monkeypatch.setenv("MARKET_DATA_ROOT", str(md))
+    cfg = _cfg(tmp_path)
+    _fake_pair_modules(monkeypatch, l1_max_date=ASOF, cutoff=20260910)
+
+    surface, reason = ir._resolve_formal_surface(cfg)
+    assert reason == ""
+    assert surface is not None
+    assert surface["max_date"] == ASOF
+
+
+@requires_real_formulas
+def test_run_weekly_review_uses_l1_max_date_not_cutoff(tmp_path, monkeypatch):
+    """请求日=cutoff（20260910）但 L1 行情止于 ASOF：复核应落在 ASOF 并命中。"""
+    md = tmp_path / "md"
+    md.mkdir()
+    monkeypatch.setenv("MARKET_DATA_ROOT", str(md))
+    cfg = _cfg(tmp_path)
+    _fake_pair_modules(monkeypatch, l1_max_date=ASOF, cutoff=20260910)
+
+    summary = ir.run_weekly_review(
+        cfg, asof=20260910, codes=["SSE.STK.600000"], bar_loader=_fake_loader,
+    )
+    assert summary["status"] == "ok"
+    assert summary["asof"] == ASOF
+    assert summary["rules"][0]["count"] == 1
+
+
+def test_resolve_review_asof_falls_back_beyond_data(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(
+        ir,
+        "_resolve_formal_surface",
+        lambda _cfg: ({"formal_l1_id": "x", "max_date": ASOF}, ""),
+    )
+    eff, note = ir.resolve_review_asof(cfg, 20260910)
+    assert eff == ASOF
+    assert note.startswith("fallback_date:请求 20260910 超出数据覆盖 20260828")
+    assert f"信号按 {ASOF} 计算" in note
+
+
+def test_resolve_review_asof_keeps_request_within_data(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(
+        ir,
+        "_resolve_formal_surface",
+        lambda _cfg: ({"formal_l1_id": "x", "max_date": ASOF}, ""),
+    )
+    eff, note = ir.resolve_review_asof(cfg, 20260820)
+    assert eff == 20260820
+    assert note == ""
+
+
+def test_resolve_review_asof_without_surface_keeps_request(tmp_path, monkeypatch):
+    """无正式 L1：原样返回请求日与空 note（调用方走 no_go/即时计算）。"""
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(
+        ir,
+        "_resolve_formal_surface",
+        lambda _cfg: (None, "no_formal_l1_product"),
+    )
+    eff, note = ir.resolve_review_asof(cfg, 20260910)
+    assert eff == 20260910
+    assert note == ""
+
+
+@requires_real_formulas
+def test_review_explicit_default_rule_ids_keep_short_sheet_names(tmp_path):
+    """显式传默认两条规则 ID：sheet 名仍取 DEFAULT_REVIEW_RULES 短名，
+    不得退化成完整 rule_id（与预计算路径同工作簿 sheet 名一致）。"""
+    cfg = _cfg(tmp_path)
+    out = ir.run_weekly_review(
+        cfg, asof=ASOF, codes=list(BARS_BY_CODE),
+        rule_ids=[rid for rid, _s in ir.DEFAULT_REVIEW_RULES],
+        persist=False,
+        bar_loader=_fake_loader, surface_resolver=_ok_surface,
+    )
+    assert out["status"] == "ok"
+    assert [(r["rule_id"], r["sheet"]) for r in out["rules"]] == [
+        ("txt_735金叉及趋势", "735"),
+        ("txt_先跌后涨新版5日外", "5日外"),
+    ]
+    assert out["rules"][0]["count"] == 1
+    assert out["rules"][1]["count"] == 1
+
+
+def test_review_custom_rule_sheet_uses_display_name(tmp_path):
+    """非默认规则（用户规则）sheet 名=显示名 sanitize，而非 rule_id。"""
+    cfg = _cfg(tmp_path)
+    from wtpy.apps.astock.indicators.registry import IndicatorRegistry
+
+    # 注册一条用户规则（显示名含非法字符）到 指标/ 目录同源注册表
+    # 直接走 registry bootstrap 需要公式文件；这里用 monkeypatch 替换 bootstrap
+    class _FakeSpec:
+        id = "user_demo"
+        name = "我的[规则]A"
+        compile_status = "ready"
+        failure_reason = None
+
+    def _fake_bootstrap(indicator_dir, mapping_path=None, **kwargs):
+        class _FakeReg:
+            def get(self, rid):
+                if rid == "user_demo":
+                    return _FakeSpec()
+                raise KeyError(rid)
+        return _FakeReg()
+
+    import wtpy.apps.astock.indicators.registry as reg_mod
+
+    orig = reg_mod.IndicatorRegistry.bootstrap
+    reg_mod.IndicatorRegistry.bootstrap = staticmethod(_fake_bootstrap)
+    try:
+        out = ir.run_weekly_review(
+            cfg, asof=ASOF, codes=["SSE.STK.600000"], rule_ids=["user_demo"],
+            persist=False,
+            bar_loader=_fake_loader, surface_resolver=_ok_surface,
+        )
+        assert out["status"] == "ok"
+        assert out["rules"][0]["rule_id"] == "user_demo"
+        assert out["rules"][0]["sheet"] == "我的_规则_A"
+    finally:
+        reg_mod.IndicatorRegistry.bootstrap = orig
+
+
+def test_review_user_rule_resolved_from_user_registry(tmp_path):
+    """用户规则只在 storage_root/indicators/user_registry.json：复核热路径的
+    bootstrap 必须合并该文件（只读），否则 reg.get(user_*) 抛 KeyError、
+    整体即时计算失败、导出漏 sheet。"""
+    from wtpy.apps.astock.config import get_default_config
+    from wtpy.apps.astock.service.rules import RuleService
+
+    cfg = get_default_config(
+        storage_root=tmp_path, indicator_dir=tmp_path / "empty_ind"
+    )
+    svc = RuleService(cfg)
+    created = svc.create_rule(name="趋势回踩低吸", formula_text="XG:C>0;")
+    assert created["id"].startswith("user_")
+    assert (tmp_path / "indicators" / "user_registry.json").exists()
+
+    out = ir.run_weekly_review(
+        cfg, asof=ASOF, codes=["SSE.STK.600000"], rule_ids=[created["id"]],
+        persist=False,
+        bar_loader=_fake_loader, surface_resolver=_ok_surface,
+    )
+    assert out["status"] == "ok"
+    assert out["rules"][0]["rule_id"] == created["id"]
+    assert out["rules"][0]["sheet"] == "趋势回踩低吸"
+    assert out["rules"][0]["count"] == 1
+
+
+def test_resolve_rule_sheet_names_fallback_chain(tmp_path):
+    """占位 sheet 名解析：默认短名 > 用户注册表显示名 > rule_id。"""
+    from wtpy.apps.astock.config import get_default_config
+    from wtpy.apps.astock.indicators.models import IndicatorSpec
+    from wtpy.apps.astock.indicators.registry import IndicatorRegistry
+
+    cfg = get_default_config(
+        storage_root=tmp_path, indicator_dir=tmp_path / "empty_ind"
+    )
+    upath = tmp_path / "indicators" / "user_registry.json"
+    upath.parent.mkdir(parents=True, exist_ok=True)
+    IndicatorRegistry(
+        [
+            IndicatorSpec(
+                id="user_demo",
+                name="我的[规则]",
+                version="user:x",
+                kind="tdx_formula",
+                output_type="signal",
+                supported_periods=("DAY",),
+                compile_status="ready",
+                formula_text="XG:C>0;",
+                dependencies=[],
+            )
+        ]
+    ).save(upath)
+
+    names = ir.resolve_rule_sheet_names(
+        cfg, ["txt_735金叉及趋势", "user_demo", "user_missing"]
+    )
+    assert names["txt_735金叉及趋势"] == "735"
+    assert names["user_demo"] == "我的_规则_"
+    assert names["user_missing"] == "user_missing"
+
+
+def test_resolve_rule_sheet_names_system_registry_branch(tmp_path):
+    """用户注册表缺失时占位名回退系统注册表（指标目录 .txt 显示名）。"""
+    from wtpy.apps.astock.config import get_default_config
+
+    ind = tmp_path / "ind"
+    ind.mkdir()
+    (ind / "系统规则.txt").write_text("XG:C>0;", encoding="utf-8")
+    cfg = get_default_config(
+        storage_root=tmp_path / "st", indicator_dir=ind
+    )
+    names = ir.resolve_rule_sheet_names(cfg, ["txt_系统规则", "user_missing"])
+    assert names["txt_系统规则"] == "系统规则"
+    assert names["user_missing"] == "user_missing"
+
+
+def test_review_no_go_explicit_default_ids_keep_short_sheet_names(tmp_path):
+    """no_go 摘要中显式回传的默认规则 ID 也映射回短 sheet 名（与 ok 一致）。"""
+    cfg = _cfg(tmp_path)
+
+    def _bad_surface(_cfg):
+        return None, "no_formal_l1_product"
+
+    out = ir.run_weekly_review(
+        cfg,
+        asof=ASOF,
+        codes=["SSE.STK.600000"],
+        rule_ids=[rid for rid, _s in ir.DEFAULT_REVIEW_RULES],
+        persist=False,
+        surface_resolver=_bad_surface,
+    )
+    assert out["status"] == "no_go"
+    assert [(r["rule_id"], r["sheet"]) for r in out["rules"]] == [
+        ("txt_735金叉及趋势", "735"),
+        ("txt_先跌后涨新版5日外", "5日外"),
+    ]
+
+    custom = ir.run_weekly_review(
+        cfg,
+        asof=ASOF,
+        codes=["SSE.STK.600000"],
+        rule_ids=["user_custom"],
+        persist=False,
+        surface_resolver=_bad_surface,
+    )
+    assert custom["rules"][0]["sheet"] == "user_custom"
+
+
+def test_review_user_rule_formula_like_name_sheet_sanitized(tmp_path):
+    """规则名形如公式/含控制字符：sheet 名被安全化，复核不抛异常。"""
+    from wtpy.apps.astock.service.rules import RuleService
+
+    cfg = get_default_config(
+        storage_root=tmp_path, indicator_dir=tmp_path / "empty_ind"
+    )
+    svc = RuleService(cfg)
+    eq = svc.create_rule(name="=1+1", formula_text="XG:C>0;")
+    ctrl = svc.create_rule(name="A\x01B", formula_text="XG:C>0;")
+
+    out = ir.run_weekly_review(
+        cfg,
+        asof=ASOF,
+        codes=["SSE.STK.600000"],
+        rule_ids=[eq["id"], ctrl["id"]],
+        persist=False,
+        bar_loader=_fake_loader,
+        surface_resolver=_ok_surface,
+    )
+    assert out["status"] == "ok"
+    sheets = {r["rule_id"]: r["sheet"] for r in out["rules"]}
+    assert sheets[eq["id"]] == "_1+1"
+    assert sheets[ctrl["id"]] == "A_B"

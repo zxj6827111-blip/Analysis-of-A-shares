@@ -56,6 +56,44 @@ bootstrap()
 
 
 # ---------------------------------------------------------------------------
+# 真实指标公式依赖（指标/ 目录被 .gitignore，CI 检出没有）
+# ---------------------------------------------------------------------------
+
+
+def real_formulas_available(*rule_ids: str) -> bool:
+    """每个 rule_id 都能在磁盘公式注册表里解析出来才返回 True。
+
+    ``指标/*.txt`` 与 ``storage/astock/indicators/tn6_source_map.json`` 都是
+    机器本地文件（前者在 .gitignore 里），所以全新检出（含 CI）根本构不出
+   这些 spec。依赖真实公式的用例据此跳过，而不是把「环境缺文件」报成失败——
+   否则 CI 会长期恒红，真回归反而淹没在噪声里。
+    """
+    from wtpy.apps.astock.config import get_default_config
+    from wtpy.apps.astock.indicators.registry import IndicatorRegistry
+
+    try:
+        cfg = get_default_config()
+        reg = IndicatorRegistry.bootstrap(cfg.indicator_dir, cfg.mapping_path)
+    except Exception:  # noqa: BLE001 目录/映射缺失或损坏一律视为不可用
+        return False
+    for rid in rule_ids:
+        try:
+            reg.get(rid)
+        except KeyError:
+            return False
+    return True
+
+
+requires_real_formulas = pytest.mark.skipif(
+    not real_formulas_available("txt_735金叉及趋势", "txt_先跌后涨新版5日外"),
+    reason=(
+        "本机指标公式不可用：指标/ 与 tn6_source_map.json 被 .gitignore，"
+        "全新检出（CI）没有这些文件"
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # overlay / delta storage fixtures (overlay_v1 改造)
 # ---------------------------------------------------------------------------
 

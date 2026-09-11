@@ -31,6 +31,34 @@ def _resolve_hard_max_variants() -> int:
 
 HARD_MAX_VARIANTS = _resolve_hard_max_variants()
 
+
+def clamp_concurrency(n: Any, *, default: int = 1) -> int:
+    """Clamp experiment concurrency to [1, backtest hard cap].
+
+    Invalid input (bool, non-integral float, non-numeric string) falls back
+    to ``default`` (1). Mirrors the runtime worker-pool cap so an experiment
+    can never oversubscribe the backtest queue.
+    """
+    from .jobs import HARD_MAX_BT_WORKERS
+
+    if isinstance(n, bool):
+        v: Optional[int] = None
+    elif isinstance(n, int):
+        v = n
+    elif isinstance(n, float):
+        v = int(n) if n.is_integer() else None
+    elif isinstance(n, str):
+        try:
+            v = int(n.strip())
+        except ValueError:
+            v = None
+    else:
+        v = None
+    if v is None:
+        v = default
+    return max(1, min(int(v or 1), HARD_MAX_BT_WORKERS))
+
+
 # Weekday schedule templates (UI labels → engine fields)
 WEEKDAY_TEMPLATES = {
     "fri_signal_mon_buy_thu_exit": {
@@ -1327,6 +1355,9 @@ def create_experiment_from_grid(
     """
     cfg = cfg or get_default_config()
     from .yao_rules import resolve_universe_codes, normalize_periods
+
+    # Server-side fallback for direct callers; the API clamps too.
+    concurrency = clamp_concurrency(concurrency)
 
     # Gate B7: survivorship-safe baseline selector. Explicit user fields win;
     # the baseline fills whatever is unset. Fail-closed: missing baseline

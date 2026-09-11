@@ -925,14 +925,14 @@ def calendar_range(ctx: ApiContext = Depends(get_ctx)) -> dict:
 
     # Extend max_date to the freshest ready dataset cutoff so the UI
     # end-date dropdown matches the data the user actually synced.
+    best_cut = 0
     try:
         from ..data.dataset_store import DatasetStore
         from ..data.repository import MarketDataRepository
 
-        if cfg.market_data_root.exists():
+        if Path(cfg.market_data_root).exists():
             store = DatasetStore(cfg.market_data_root)
             repo = MarketDataRepository(store)
-            best_cut = 0
             for d in repo.list_datasets():
                 if (d.status or "") not in ("ready", "partial"):
                     continue
@@ -950,10 +950,35 @@ def calendar_range(ctx: ApiContext = Depends(get_ctx)) -> dict:
     except Exception:
         pass
 
+    # Real last available trading day (overlay-aware), for backtest/experiment
+    # default end dates. max_date may be the static calendar end (e.g. a future
+    # 20261231); data_max_date tracks the actual data surface. Falls back to
+    # max_date when nothing can be resolved.
+    data_max_date = best_cut
+    try:
+        from ..data.dataset_store import DatasetStore
+        from ..data.tushare_product import resolve_active_tushare_product_pair
+
+        if Path(cfg.market_data_root).exists():
+            store = DatasetStore(cfg.market_data_root)
+            pair = resolve_active_tushare_product_pair(store, deep_copy=False)
+            if pair is not None:
+                pair_max = max(
+                    int(pair.l1_max_date or 0),
+                    int(pair.l2_max_date or 0),
+                )
+                if pair_max > data_max_date:
+                    data_max_date = pair_max
+    except Exception:
+        pass
+    if data_max_date <= 0:
+        data_max_date = int(max_d or 0)
+
     data = {
         "years": years,
         "min_date": min_d,
         "max_date": max_d,
+        "data_max_date": data_max_date,
         "months": list(range(1, 13)),
         "days": list(range(1, 32)),
     }

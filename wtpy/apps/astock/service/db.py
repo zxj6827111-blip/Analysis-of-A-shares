@@ -25,6 +25,39 @@ _LOCK = threading.RLock()
 
 logger = logging.getLogger("astock.db")
 
+# Runtime app settings (e.g. backtest concurrency). Executed unconditionally
+# on every init_db so legacy databases whose schema_version is already at the
+# latest value still get the table (it is not part of the versioned chain).
+APP_SETTINGS_DDL = """
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TEXT
+);
+"""
+
+# Rule-center standardized benchmark records. Executed unconditionally on
+# every init_db (like app_settings) so legacy databases at the latest
+# schema_version still get the table.
+RULE_BENCHMARKS_DDL = """
+CREATE TABLE IF NOT EXISTS rule_benchmarks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rule_id TEXT NOT NULL,
+  job_id TEXT,
+  run_id TEXT,
+  status TEXT,
+  profile_json TEXT,
+  error TEXT,
+  created_at INTEGER,
+  updated_at INTEGER
+);
+"""
+
+RULE_BENCHMARKS_INDEX_DDL = """
+CREATE INDEX IF NOT EXISTS idx_rule_benchmarks_rule
+  ON rule_benchmarks(rule_id, created_at DESC);
+"""
+
 
 class SchemaMigrationError(RuntimeError):
     """Raised when a schema migration fails; the DB is rolled back to the
@@ -207,6 +240,11 @@ def init_db(cfg: Optional[AStockConfig] = None) -> Path:
         conn = connect(cfg)
         try:
             conn.executescript(SCHEMA_SQL)
+            # Idempotent, version-independent DDL: app_settings backs runtime
+            # config and must exist even when schema_version is already latest.
+            conn.execute(APP_SETTINGS_DDL)
+            conn.execute(RULE_BENCHMARKS_DDL)
+            conn.execute(RULE_BENCHMARKS_INDEX_DDL)
             conn.commit()
             row = conn.execute(
                 "SELECT value FROM schema_meta WHERE key='schema_version'"
@@ -371,6 +409,51 @@ def get_schema_version(cfg: Optional[AStockConfig] = None) -> int:
             except sqlite3.OperationalError:
                 return 0
             return int(row[0]) if row else 0
+        finally:
+            conn.close()
+
+
+def get_app_setting(cfg: Optional[AStockConfig], key: str) -> Optional[str]:
+    """Read a persisted app setting, or None when missing/unreadable.
+
+    Tolerant by design: ``create_app`` may call this before the DB has been
+    initialized, so a missing table (or any read error) is logged and
+    reported as None instead of raising to the caller.
+    """
+    try:
+        with _LOCK:
+            conn = connect(cfg)
+            try:
+                row = conn.execute(
+                    "SELECT value FROM app_settings WHERE key=?",
+                    (str(key),),
+                ).fetchone()
+            finally:
+                conn.close()
+        if row is None or row[0] is None:
+            return None
+        return str(row[0])
+    except Exception as e:  # noqa: BLE001 - settings must never break startup
+        logger.warning("app setting %r unreadable: %s", key, e)
+        return None
+
+
+def set_app_setting(cfg: Optional[AStockConfig], key: str, value: Optional[str]) -> None:
+    """Persist an app setting (upsert). Creates the schema if needed."""
+    init_db(cfg)
+    now = str(int(time.time()))
+    with _LOCK:
+        conn = connect(cfg)
+        try:
+            conn.execute(
+                """
+                INSERT INTO app_settings(key, value, updated_at) VALUES(?,?,?)
+                ON CONFLICT(key) DO UPDATE SET
+                  value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (str(key), None if value is None else str(value), now),
+            )
+            conn.commit()
         finally:
             conn.close()
 
@@ -1492,3 +1575,157 @@ def experiment_findings_batch(
         finally:
             conn.close()
     return tables
+
+
+# ----- rule benchmarks -----
+
+
+def _rule_benchmark_row(row: sqlite3.Row) -> dict:
+    d = dict(row)
+    d["profile"] = _json_loads(d.get("profile_json"), default={})
+    if not isinstance(d["profile"], dict):
+        d["profile"] = {}
+    return d
+
+
+def create_rule_benchmark(
+    cfg: AStockConfig,
+    rule_id: str,
+    job_id: Optional[str],
+    profile_json: Any,
+) -> int:
+    """Insert a rule benchmark record; returns the new row id."""
+    init_db(cfg)
+    now = int(time.time())
+    if not isinstance(profile_json, str):
+        profile_json = _json_dumps(profile_json)
+    with _LOCK:
+        conn = connect(cfg)
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO rule_benchmarks(
+                  rule_id, job_id, run_id, status, profile_json, error,
+                  created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?)
+                """,
+                (
+                    str(rule_id),
+                    None if job_id is None else str(job_id),
+                    None,
+                    "queued",
+                    profile_json,
+                    None,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            return int(cur.lastrowid or 0)
+        finally:
+            conn.close()
+
+
+def get_latest_rule_benchmark(
+    cfg: AStockConfig, rule_id: str
+) -> Optional[dict]:
+    """Latest benchmark record for a rule (profile_json parsed as ``profile``)."""
+    init_db(cfg)
+    with _LOCK:
+        conn = connect(cfg)
+        try:
+            row = conn.execute(
+                """
+                SELECT * FROM rule_benchmarks
+                WHERE rule_id=?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (str(rule_id),),
+            ).fetchone()
+        finally:
+            conn.close()
+    return _rule_benchmark_row(row) if row else None
+
+
+def get_rule_benchmark_by_job(
+    cfg: AStockConfig, job_id: str
+) -> Optional[dict]:
+    """Latest benchmark record created for a job id."""
+    init_db(cfg)
+    with _LOCK:
+        conn = connect(cfg)
+        try:
+            row = conn.execute(
+                """
+                SELECT * FROM rule_benchmarks
+                WHERE job_id=?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (str(job_id),),
+            ).fetchone()
+        finally:
+            conn.close()
+    return _rule_benchmark_row(row) if row else None
+
+
+def list_rule_benchmarks(
+    cfg: AStockConfig, rule_id: str, *, limit: int = 20
+) -> List[dict]:
+    init_db(cfg)
+    limit = max(1, min(200, int(limit or 20)))
+    with _LOCK:
+        conn = connect(cfg)
+        try:
+            rows = conn.execute(
+                """
+                SELECT * FROM rule_benchmarks
+                WHERE rule_id=?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (str(rule_id), limit),
+            ).fetchall()
+        finally:
+            conn.close()
+    return [_rule_benchmark_row(r) for r in rows]
+
+
+def update_rule_benchmark(
+    cfg: AStockConfig,
+    bench_id: int,
+    *,
+    job_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+    status: Optional[str] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Patch non-None fields on a benchmark record (COALESCE semantics)."""
+    init_db(cfg)
+    now = int(time.time())
+    with _LOCK:
+        conn = connect(cfg)
+        try:
+            conn.execute(
+                """
+                UPDATE rule_benchmarks
+                SET job_id=COALESCE(?, job_id),
+                    run_id=COALESCE(?, run_id),
+                    status=COALESCE(?, status),
+                    error=COALESCE(?, error),
+                    updated_at=?
+                WHERE id=?
+                """,
+                (
+                    None if job_id is None else str(job_id),
+                    None if run_id is None else str(run_id),
+                    status,
+                    error,
+                    now,
+                    int(bench_id),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()

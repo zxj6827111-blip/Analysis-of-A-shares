@@ -171,14 +171,32 @@
     .btn-ghost{background:transparent}
     .btn-danger{color:#ff7897;border-color:rgba(255,79,123,.45);background:rgba(255,79,123,.08)}
     .btn-large{height:52px;font-size:17px;width:100%}
-    /* 卦象查询：查询 / 导出分区（导出为独立功能区） */
+    /* 卦象查询：导出分区——自上而下即操作顺序：1 信号规则配置 →（面板）→ 2 导出执行 */
     .bq-export-bar{
-      display:flex;align-items:center;flex-wrap:wrap;gap:10px;
       margin-top:10px;padding:10px 12px;border-radius:9px;
       border:1px solid var(--line2);border-left:3px solid var(--green);
       background:rgba(24,38,60,.35)
     }
-    .bq-export-label{font-weight:800;font-size:13px;color:#9fc7ff;flex:none}
+    .bq-export-title{font-weight:800;font-size:14px;color:#e9f1fb;margin-bottom:8px}
+    .bq-export-step{font-weight:800;font-size:13px;color:#9fc7ff;margin-bottom:6px}
+    .bq-export-row{display:flex;align-items:flex-start;flex-wrap:wrap;gap:10px}
+    .bq-rule-summary{display:flex;align-items:center;flex-wrap:wrap;gap:6px;flex:1;min-width:140px;font-size:12px;color:#a9c3e0}
+    .bq-rule-summary .sum-empty{color:var(--muted)}
+    .bq-chip{
+      display:inline-flex;align-items:center;padding:2px 8px;border-radius:6px;
+      border:1px solid var(--line);background:#14243a;color:#dce8f8;font-size:11px;white-space:nowrap
+    }
+    .bq-chip.more{color:var(--muted);border-color:var(--line2);background:transparent}
+    .bq-export-action{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+    .bq-export-action-sub{font-size:11px;color:var(--muted);line-height:1.4}
+    .bq-export-warn{
+      flex-basis:100%;padding:5px 8px;border-radius:6px;line-height:1.5;
+      font-size:11px;color:var(--orange);border:1px solid rgba(255,173,51,.35);background:rgba(255,173,51,.08)
+    }
+    .bq-export-help{margin-top:10px;padding-top:8px;border-top:1px solid var(--line2)}
+    .bq-export-help summary{cursor:pointer;font-size:11px;color:#9fc7ff;outline:none;user-select:none}
+    .bq-export-help summary:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+    .bq-export-help-body{margin-top:6px;font-size:11px;line-height:1.9;color:var(--muted)}
     .btn-export-primary{
       border-color:#2ecc9a;background:linear-gradient(180deg,#2fbd8d,#1f9e73);
       box-shadow:0 7px 22px rgba(46,204,154,.2)
@@ -188,7 +206,11 @@
       border-color:#3a5678;background:#14243a;color:#a9c3e0
     }
     .btn-export-secondary:hover{border-color:#41658e;background:#1d304a}
-    .bq-export-note{font-size:11px;color:var(--muted);flex-basis:100%;margin-top:2px}
+    /* 信号规则勾选 chip（复用回测 bt-rule-item 视觉，小号化适配导出条） */
+    .bq-rule-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:#122034;cursor:pointer;font-size:12px;user-select:none}
+    .bq-rule-chip.on{border-color:var(--blue);background:rgba(47,128,255,.1)}
+    .bq-rule-chip input{width:auto;cursor:pointer}
+    .bq-rule-chip .chip-hidden{font-size:10px;color:var(--muted);border:1px solid var(--line2);border-radius:5px;padding:0 4px;line-height:16px}
     .input,.select{
       height:38px;border-radius:8px;border:1px solid #345071;background:#08121f;
       color:var(--text);padding:0 12px;outline:none;width:100%;
@@ -301,6 +323,17 @@
     .op-row{display:flex;gap:6px;white-space:nowrap}
     .op-btn{height:28px;border-radius:6px;border:1px solid #334b6a;background:#17263a;color:#dbe7f6;padding:0 9px;font-size:11px}
     .op-btn.primary{background:#266fef;border-color:#2f80ff}
+    .op-btn:disabled{opacity:.45;cursor:not-allowed}
+    .rule-toolbar .btn:disabled{opacity:.55;cursor:not-allowed}
+    .rule-row-flash td{animation:ruleRowFlash 1.8s ease-out 1}
+    @keyframes ruleRowFlash{0%{background:rgba(47,128,255,.45)}100%{background:transparent}}
+    .rule-batch-result{margin:0 0 14px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:#111e30}
+    .rule-batch-result.all-ok{border-color:rgba(53,212,147,.45)}
+    .rule-batch-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .rule-batch-title{font-size:13px;font-weight:800}
+    .rule-batch-result.all-ok .rule-batch-title{color:var(--green)}
+    .rule-batch-list{margin-top:10px;display:grid;gap:6px;max-height:260px;overflow:auto}
+    .rule-batch-item{padding:8px 10px;border:1px solid rgba(255,79,123,.35);border-radius:8px;background:#1a1220;font-size:12px;line-height:1.5}
     .rules-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:14px;align-items:start}
     .drawer-panel{position:sticky;top:80px;padding:18px}
     .drawer-tabs{display:flex;gap:16px;border-bottom:1px solid var(--line);margin:10px 0 16px}
@@ -1014,6 +1047,16 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
 .task-kv{display:grid;grid-template-columns:140px 1fr;gap:8px 12px;font-size:13px}
 .task-kv .k{color:var(--muted)}
 .task-kv .v{color:#e8f1ff;word-break:break-all}
+/* 信号周涨幅（选股后 N 个交易日涨幅）*/
+.sr-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.sr-wrap{overflow:auto;max-height:540px;border:1px solid var(--line2);border-radius:10px}
+.sr-table{width:100%;min-width:1000px;border-collapse:separate;border-spacing:0;font-size:12px;table-layout:fixed}
+.sr-table th,.sr-table td{border-bottom:1px solid var(--line2);padding:7px 10px;text-align:left;background:#0b1522;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sr-table th{color:var(--muted);background:#0e1928;position:sticky;top:0;z-index:2}
+.sr-table tr.sr-dim td{color:var(--muted);opacity:.55}
+.sr-summary{display:flex;flex-wrap:wrap;gap:10px 22px;font-size:13px;margin-bottom:4px}
+.sr-summary .l{color:var(--muted);font-size:12px;margin-right:6px}
+.sr-summary b{font-variant-numeric:tabular-nums}
 .task-chart-wrap{border:1px solid var(--line);border-radius:12px;background:#0e1928;padding:12px;margin-bottom:12px}
 .task-chart-wrap canvas{width:100%;height:200px;display:block}
 .task-chart-wrap.dd canvas{height:150px}
@@ -1524,7 +1567,12 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
 
       <div class="task-queue-bar" id="taskQueueBarBt">
         <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px">
-          <h4>任务队列 <span class="tq-meta" id="taskQueueMetaBt">（可并行；提交后自动排队）</span></h4>
+          <h4 style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">任务队列 <span class="tq-meta" id="taskQueueMetaBt">（可并行；提交后自动排队）</span>
+            <label id="btQueueWorkersWrap" style="display:none;font-size:12px;font-weight:400;color:var(--muted);white-space:nowrap">回测并发
+              <select class="select" id="btQueueWorkers" title="回测并发数（立即生效）" style="height:30px;width:auto;min-width:68px;padding:0 22px 0 8px;display:inline-block;vertical-align:middle;margin-left:4px"></select>
+              <span id="btQueueWorkersHint" class="muted" style="font-size:11px;margin-left:6px"></span>
+            </label>
+          </h4>
           <button type="button" class="btn" id="btnRefreshTaskQueueBt" style="height:32px;padding:0 12px">刷新队列</button>
         </div>
         <div id="taskQueueBodyBt" class="tq-sub" style="margin-top:4px">暂无进行中任务。点「开始回测」后会出现在这里。</div>
@@ -1671,12 +1719,41 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
           <button type="button" class="btn btn-primary" id="bqSearchBtn">查询卦象</button>
         </div>
         <div class="bq-export-bar">
-          <span class="bq-export-label">导出</span>
-          <button type="button" class="btn btn-export-primary" id="bqExportOnePeriodBtn" title="导出输入框内股票的日/周/月线卦象 Excel">⇩ 导出输入的股票</button>
-          <button type="button" class="btn btn-export-secondary" id="bqExportBtn" title="导出全市场日/周/月线卦象 Excel">⇩ 导出全市场（后台）</button>
-          <span class="bq-export-note">「导出输入的股票」快速导出输入框代码；「导出全市场」为后台任务，耗时较长</span>
+          <div class="bq-export-title">导出 Excel</div>
+          <div class="bq-export-step">① 附带信号 sheet（可选）</div>
+          <div class="bq-export-row">
+            <button type="button" class="btn btn-export-secondary" id="bqRulePickBtn" title="第 1 步：勾选导出附带的信号规则 sheet（默认 735 / 5日外，可增删任意规则）">⚙ 信号规则（已选 <span id="bqRulePickCount">2</span>）<span id="bqRulePickArrow">▾</span></button>
+            <span id="bqRulePickSummary" class="bq-rule-summary" title="当前勾选的信号规则，导出时各成一个 sheet"></span>
+          </div>
+          <div id="bqRulePickPanel" style="display:none;margin-top:8px;border:1px solid var(--line2);border-radius:9px;padding:10px 12px;background:rgba(8,18,31,.5)">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+              <span style="font-weight:800;font-size:13px;color:#9fc7ff">信号规则勾选（导出附带 sheet）</span>
+              <input class="input" id="bqRulePickSearch" placeholder="搜索规则…" style="max-width:180px;height:30px;font-size:12px" />
+              <button type="button" class="btn" id="bqRulePickAll" style="font-size:12px;padding:4px 10px">全选</button>
+              <button type="button" class="btn" id="bqRulePickNone" style="font-size:12px;padding:4px 10px">清空</button>
+              <button type="button" class="btn" id="bqRulePickReset" style="font-size:12px;padding:4px 10px">恢复默认</button>
+            </div>
+            <div id="bqRulePickList" style="display:flex;flex-wrap:wrap;gap:8px;max-height:240px;overflow-y:auto"></div>
+            <div class="muted" style="font-size:11px;margin-top:6px">勾选的规则在导出 Excel 中各成一个 sheet（票池=规则当日命中∩导出票池）；周五链已预计算的规则直接用预计算结果（7 天回看口径），未预计算的规则导出时即时计算（按导出日）。ⓘ=指标公式目录导入的隐藏规则（735 / 5日外 即此类）。规则列表每次打开本面板实时拉取，规则中心新导入的指标立即可见。勾好后点下方导出按钮。</div>
+          </div>
+          <div class="bq-export-step" style="margin-top:12px">② 选择导出范围</div>
+          <div class="bq-export-row" style="margin-top:8px">
+            <div class="bq-export-action">
+              <button type="button" class="btn btn-export-primary" id="bqExportOnePeriodBtn" title="第 2 步：导出输入框内股票的日/周/月线卦象 Excel">⇩ 导出输入的股票</button>
+              <span class="bq-export-action-sub">快速下载输入框内代码</span>
+            </div>
+            <div class="bq-export-action">
+              <button type="button" class="btn btn-export-secondary" id="bqExportBtn" title="第 2 步：导出全市场日/周/月线卦象 Excel（后台任务）">⇩ 导出全市场（后台）</button>
+              <span class="bq-export-action-sub">后台任务，耗时较长，完成后自动下载</span>
+            </div>
+            <div id="bqExtraRuleWarn" class="bq-export-warn" style="display:none">⚠ 已勾选未预计算规则：全市场导出将即时计算，预计多耗数分钟</div>
+          </div>
+          <details class="bq-export-help">
+            <summary>导出格式与口径说明</summary>
+            <div class="bq-export-help-body">指数/ETF 无复权口径，卦象按未复权(raw)计算；下拉预设可快速填入（也可手动输入 sh000001、sh510300、sz159915 等）。<br><br>导出为周报格式：code/name/week_end/OHLC/日柱/周卦组合(标注周)/爻辞/周·高岛易断/周·倾向/月卦组合(标注月)/爻辞/月·高岛易断/月·倾向/数据状态；高岛易断列为《高岛易断》问营商断语（覆盖 379/384 爻，仅供解读、不参与选股，个别爻原书无断语时留空）；倾向列为卦象操作信号与高岛断语的共识——都看好标▲双好(红)、都看差标▼双差(绿)、方向对立标分歧、其余留空，周月各自独立判定，同样仅供解读；月卦按周报目标周归属上一已完成月份（周一~周四导出看当周，周五晚~周日导出看下周）：目标周只按交易日（周一~周五）切段，周末不计；非跨月周整周一组（等价于查询月份的上一个月，如8月查询导出7月月卦），跨月周输出两组月卦列并在列头标注适用日期段（如8/31用7月卦、9/1-9/4用8月卦，共21列；周末导出时次月卦为按最新可得日线计算的临时值），周卦取查询周；导出全市场=同一 Excel 内 A股(stock-all)与全量ETF(etf-all) 两个 sheet，手动代码含 ETF 时也按类型分 sheet；导出卦象不含卦符。<br><br>信号规则：点「⚙ 信号规则」勾选导出附带的信号 sheet（默认 735 / 5日外，可增删任意规则；勾选周五链未预计算的规则会即时计算、全市场导出耗时增加数分钟；全不勾=纯卦象导出）。<br><br>日柱自动读桌面「股票+卦象/日柱(1).xlsx」。<br><br>Ctrl+F5 强刷后生效。</div>
+          </details>
         </div>
-        <div class="muted" style="font-size:11px;margin-top:8px" id="bqHint">指数/ETF 无复权口径，卦象按未复权(raw)计算；下拉预设可快速填入（也可手动输入 sh000001、sh510300、sz159915 等）。导出为周报格式：code/name/week_end/OHLC/日柱/周卦组合(标注周)/爻辞/周·高岛易断/周·倾向/月卦组合(标注月)/爻辞/月·高岛易断/月·倾向/数据状态；高岛易断列为《高岛易断》问营商断语（覆盖 379/384 爻，仅供解读、不参与选股，个别爻原书无断语时留空）；倾向列为卦象操作信号与高岛断语的共识——都看好标▲双好(红)、都看差标▼双差(绿)、方向对立标分歧、其余留空，周月各自独立判定，同样仅供解读；月卦按周报目标周归属上一已完成月份（周一~周四导出看当周，周五晚~周日导出看下周）：目标周只按交易日（周一~周五）切段，周末不计；非跨月周整周一组（等价于查询月份的上一个月，如8月查询导出7月月卦），跨月周输出两组月卦列并在列头标注适用日期段（如8/31用7月卦、9/1-9/4用8月卦，共21列；周末导出时次月卦为按最新可得日线计算的临时值），周卦取查询周；导出全市场=同一 Excel 内 A股(stock-all)与全量ETF(etf-all) 两个 sheet，手动代码含 ETF 时也按类型分 sheet；导出卦象不含卦符。日柱自动读桌面「股票+卦象/日柱(1).xlsx」。Ctrl+F5 强刷后生效。</div>
+        <div class="muted" style="font-size:11px;margin-top:8px" id="bqHint"></div>
         <div id="bqGuidePanel" style="display:none;border:1px solid var(--line,#2a3a55);border-radius:8px;padding:12px 14px;margin-top:10px;font-size:12px;line-height:1.9;color:#c3d0e0;background:rgba(24,38,60,.35)">
           <div style="font-weight:600;color:#9fc7ff;margin-bottom:6px">四步使用指南</div>
           <ol style="margin:0;padding-left:20px">
@@ -1685,7 +1762,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
             <li><b>选复权口径</b>：股票可选未复权 / 通达信前复权 / Tushare前复权；指数与 ETF 无复权概念，自动按未复权计算。</li>
             <li><b>查询与成分股</b>：点「查询卦象」查看结果；查询指数 / ETF 后结果下方会出现「查看成分股卦象」按钮，可一键批量计算成分股卦象。查询股票后会出现「查看同卦股票」（全市场 384 态主卦+动爻相同）与「查看同日柱」按钮。</li>
           </ol>
-          <div class="muted" style="margin-top:6px">批量查询：用逗号 / 分号分隔多只股票代码。「导出全市场」为后台任务，「导出输入的股票」按输入框内代码导出。</div>
+          <div class="muted" style="margin-top:6px">批量查询：用逗号 / 分号分隔多只股票代码。导出：先点「⚙ 信号规则」勾选附带的信号 sheet（默认 735 / 5日外，已选规则显示在按钮旁），再点导出按钮——「导出全市场」为后台任务，「导出输入的股票」按输入框内代码导出。</div>
         </div>
       </div>
       <div class="card section-pad" id="bqResultCard" style="display:none">
@@ -1720,6 +1797,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
         <button type="button" class="btn" id="btnImportRule">⇧ 导入规则</button>
         <button type="button" class="btn" id="btnBatchTest">批量测试</button>
         <button type="button" class="btn" id="btnNewCat">新建分类</button>
+        <input type="file" id="ruleImportFile" accept=".txt" style="display:none" />
         <input class="input search" id="ruleSearch" placeholder="搜索规则名称 / 关键词" />
         <select class="select" id="ruleFilterCat" style="width:130px"><option value="">全部分类</option></select>
         <select class="select" id="ruleFilterStatus" style="width:130px">
@@ -1732,6 +1810,13 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
           <option value="pending">待测试</option>
         </select>
         <button type="button" class="btn" id="btnRefreshRules">刷新</button>
+      </div>
+      <div class="rule-batch-result" id="ruleBatchResult" style="display:none">
+        <div class="rule-batch-head">
+          <div class="rule-batch-title" id="ruleBatchSummary">批量测试结果</div>
+          <button type="button" class="op-btn" id="btnCloseBatchResult">关闭</button>
+        </div>
+        <div class="rule-batch-list" id="ruleBatchList"></div>
       </div>
       <div class="table-wrap">
         <table>
@@ -2224,7 +2309,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     </div>
         <div class="task-queue-bar" id="taskQueueBar">
       <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px">
-        <h4>任务队列 <span class="tq-meta" id="taskQueueMeta">（可并行；可连续提交，自动排队）</span></h4>
+        <h4 style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">任务队列 <span class="tq-meta" id="taskQueueMeta">（可并行；可连续提交，自动排队）</span></h4>
         <button type="button" class="btn" id="btnRefreshTaskQueue" style="height:32px;padding:0 12px">刷新队列</button>
       </div>
       <div id="taskQueueBody" class="tq-sub" style="margin-top:4px">暂无进行中任务。在回测页提交后会出现在这里。</div>
@@ -2316,6 +2401,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
         <button type="button" class="task-detail-tab active" data-tpane="overview">概览</button>
         <button type="button" class="task-detail-tab" data-tpane="equity">净值与回撤</button>
         <button type="button" class="task-detail-tab" data-tpane="trades">交易统计</button>
+        <button type="button" class="task-detail-tab" data-tpane="weekret">信号周涨幅</button>
         <button type="button" class="task-detail-tab" data-tpane="settings">回测设置</button>
         <button type="button" class="task-detail-tab" data-tpane="gua">卦象条件</button>
         <button type="button" class="task-detail-tab" data-tpane="advanced">高级信息</button>
@@ -2329,6 +2415,22 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       </div>
       <div class="task-detail-pane" id="taskPane-trades">
         <div class="task-kv" id="taskTradeStats"></div>
+      </div>
+      <div class="task-detail-pane" id="taskPane-weekret">
+        <div class="sr-toolbar">
+          <span class="muted" style="font-size:12px">选出股票自信号日收盘起算的后 <b id="srHorizonLabel">5</b> 个交易日涨幅（前复权）</span>
+          <select class="select" id="srHorizon" title="涨幅观察窗口" style="height:30px;width:auto;min-width:150px;padding:0 22px 0 8px">
+            <option value="3">3 个交易日</option>
+            <option value="5" selected>5 个交易日（一周）</option>
+            <option value="10">10 个交易日</option>
+            <option value="20">20 个交易日</option>
+          </select>
+          <button type="button" class="btn" id="btnSrRefresh" style="font-size:12px;padding:3px 10px">↻ 重新计算</button>
+          <button type="button" class="btn" id="btnSrCsv" style="font-size:12px;padding:3px 10px">下载 CSV</button>
+          <span class="muted" id="srMeta" style="font-size:11px;margin-left:auto">—</span>
+        </div>
+        <div class="sr-summary" id="taskWeekRetSummary"></div>
+        <div class="sr-wrap" id="taskWeekRetTable" style="margin-top:10px"><div class="muted" style="padding:12px">尚未加载。</div></div>
       </div>
       <div class="task-detail-pane" id="taskPane-settings">
         <div class="task-kv" id="taskSettingsKv"></div>
@@ -2529,12 +2631,16 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
 </div>
 <div class="rule-pick-modal" id="ruleCreateModal">
   <div class="rule-pick-dialog">
-    <div style="font-size:16px;font-weight:800;margin-bottom:12px">新建规则</div>
+    <div id="ruleModalTitle" style="font-size:16px;font-weight:800;margin-bottom:12px">新建规则</div>
     <div class="field" style="margin-bottom:10px"><label>名称</label><input class="input" id="newRuleName" /></div>
     <div class="field" style="margin-bottom:10px"><label>公式文本</label>
       <textarea id="newRuleFormula" class="input" style="height:120px;padding:10px;resize:vertical" placeholder="通达信公式…"></textarea>
     </div>
     <div class="field" style="margin-bottom:10px"><label>说明</label><input class="input" id="newRuleDesc" /></div>
+    <div class="field" style="margin-bottom:10px"><label>分类</label>
+      <input class="input" id="newRuleCategory" list="ruleCategoryOptions" placeholder="自定义 / 动量 / 卦象…" />
+      <datalist id="ruleCategoryOptions"></datalist>
+    </div>
     <div class="muted" id="newRuleStatus" style="margin-bottom:10px"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button type="button" class="btn" id="btnValidateRule">校验</button>
@@ -2578,8 +2684,10 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     tasks: [],
 
     rules: [],
+    ruleCategories: [],
     selectedRuleIds: new Set(),
     activeRule: null,
+    ruleDrawerOpen: false,
     runs: [],
     activeRun: null,
     experiments: [],
@@ -2597,7 +2705,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
   function esc(s) {
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
   function toast(msg) {
     const el = $("liveToast");
@@ -2660,11 +2768,24 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     return map[p] || p || "—";
   }
   function ruleCategory(r) {
+    r = r || {};
+    const custom = String(r.category || "").trim();
+    if (custom) return custom;
     if (r.source === "user") return "自定义";
     if ((r.name || "").includes("卦") || (r.id || "").includes("gua")) return "卦象";
     if ((r.name || "").includes("735") || (r.name || "").includes("金叉")) return "动量";
     if ((r.name || "").includes("跌") || (r.name || "").includes("涨")) return "反转";
     return "内置";
+  }
+  function refreshRuleCategoryOptions() {
+    const dl = $("ruleCategoryOptions");
+    if (!dl) return;
+    const set = new Set((AppState.ruleCategories || []).concat((AppState.rules || []).map(ruleCategory)));
+    dl.innerHTML = Array.from(set)
+      .filter(Boolean)
+      .sort()
+      .map((c) => '<option value="' + esc(c) + '"></option>')
+      .join("");
   }
   function catTagClass(cat) {
     if (cat === "自定义") return "tag-purple";
@@ -2860,6 +2981,19 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     return AppState.rules;
   }
 
+  async function loadRuleCategories() {
+    if (VISUAL_TEST) return AppState.ruleCategories || [];
+    try {
+      const d = await api("/api/v1/rules/categories");
+      const cats = d && Array.isArray(d.categories) ? d.categories : [];
+      AppState.ruleCategories = cats.filter(Boolean);
+    } catch (e) {
+      // 404 / not-yet-deployed: silently fall back to frontend-derived categories
+      AppState.ruleCategories = AppState.ruleCategories || [];
+    }
+    return AppState.ruleCategories;
+  }
+
   function filteredRules() {
     const q = (($("ruleSearch") && $("ruleSearch").value) || "").trim().toLowerCase();
     const cat = ($("ruleFilterCat") && $("ruleFilterCat").value) || "";
@@ -2916,6 +3050,10 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       } else if (r.failure_reason) {
         testCell = '<span style="color:var(--orange)">失败</span>';
       }
+      const isUserRule = r.source === "user";
+      const editOp = isUserRule
+        ? '<button type="button" class="op-btn" data-act="edit" data-id="' + esc(r.id) + '">编辑</button>'
+        : '<button type="button" class="op-btn" data-act="edit" data-id="' + esc(r.id) + '" disabled title="内置规则只读">编辑</button>';
       const primaryOp = r.backtestable
         ? '<button type="button" class="op-btn primary" data-act="bt" data-id="' + esc(r.id) + '">用于回测</button>'
         : '<button type="button" class="op-btn primary" data-act="exp" data-id="' + esc(r.id) + '">加入实验</button>';
@@ -2931,7 +3069,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
         "<td>" + desc + "</td>" +
         '<td><div class="op-row">' +
         '<button type="button" class="op-btn" data-act="view" data-id="' + esc(r.id) + '">查看</button>' +
-        '<button type="button" class="op-btn" data-act="edit" data-id="' + esc(r.id) + '">编辑</button>' +
+        editOp +
         '<button type="button" class="op-btn" data-act="test" data-id="' + esc(r.id) + '">测试</button>' +
         primaryOp +
         (r.deletable !== false
@@ -2959,6 +3097,20 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
         onRuleAction(btn.getAttribute("data-act"), btn.getAttribute("data-id"));
       });
     });
+  }
+
+  function highlightRuleRow(id) {
+    if (!id) return;
+    const body = $("ruleTableBody");
+    if (!body) return;
+    const trs = body.querySelectorAll("tr[data-rule-id]");
+    for (const tr of trs) {
+      if (tr.getAttribute("data-rule-id") !== id) continue;
+      tr.classList.add("rule-row-flash");
+      try { tr.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+      setTimeout(() => tr.classList.remove("rule-row-flash"), 2000);
+      return;
+    }
   }
 
   var __rulePerfReqToken = 0;
@@ -3095,6 +3247,8 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     state = state || {};
     var box = $("rulePerfPanel");
     if (!box) return;
+    if (box.__perfAutoTimer) { clearTimeout(box.__perfAutoTimer); box.__perfAutoTimer = 0; }
+    box.__perfStatus = "";
     if (state.loading) {
       box.innerHTML = '<div class="rule-perf-empty">正在加载基准回测表现…</div>';
       return;
@@ -3116,6 +3270,34 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     }
     var validity = (data && data.validity) || (data && data.has_performance ? "valid" : "untested");
     if (!data || !data.has_performance || validity === "untested") {
+      var bmStatus = data && data.benchmark_status;
+      if (bmStatus === "queued" || bmStatus === "running") {
+        var bmLabel = bmStatus === "queued" ? "排队中" : "运行中";
+        var bmMsg = data.message || (bmStatus === "queued" ? "基准回测任务排队中，请稍后刷新" : "基准回测任务运行中，请稍后刷新");
+        var bmJob = data.benchmark_job_id ? "任务编号：" + esc(data.benchmark_job_id) : "";
+        box.__perfStatus = bmStatus;
+        box.innerHTML =
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
+          '<span style="font-weight:800">基准回测表现</span>' +
+          '<span class="tag tag-blue">' + bmLabel + "</span></div>" +
+          '<div class="rule-perf-empty">' + esc(bmMsg) + "</div>" +
+          '<div class="rule-perf-actions">' +
+          '<button type="button" class="btn btn-primary" id="btnRulePerfRefresh">刷新状态</button>' +
+          '<button type="button" class="btn" id="btnRuleRunBenchmark">运行基准测试</button></div>' +
+          '<div class="muted" id="ruleBenchJobMsg" style="font-size:11px;margin-top:8px">' + bmJob + "</div>";
+        _bindRulePerfEmptyActions(rule);
+        if ($("btnRulePerfRefresh")) $("btnRulePerfRefresh").onclick = function () { loadRulePerformance(rule); };
+        box.__perfAutoTimer = setTimeout(function () {
+          box.__perfAutoTimer = 0;
+          if (box.__perfStatus !== bmStatus) return;
+          if (!AppState.ruleDrawerOpen || !AppState.activeRule || AppState.activeRule.id !== rule.id) return;
+          try {
+            var pending = loadRulePerformance(rule, { silent: true });
+            if (pending && pending.catch) pending.catch(function () {});
+          } catch (e) {}
+        }, 8000);
+        return;
+      }
       box.innerHTML =
         '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
         '<span style="font-weight:800">基准回测表现</span>' +
@@ -3199,11 +3381,12 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       };
     }
   }
-  async function loadRulePerformance(rule) {
+  async function loadRulePerformance(rule, opts) {
     if (!rule || !rule.id) return;
+    opts = opts || {};
     var token = ++__rulePerfReqToken;
     var rid = rule.id;
-    renderRulePerformancePanel(rule, { loading: true });
+    if (!opts.silent) renderRulePerformancePanel(rule, { loading: true });
     if (VISUAL_TEST) {
       renderRulePerformancePanel(rule, { data: _demoRulePerformance(rule) });
       return;
@@ -3227,6 +3410,11 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     var msg = $("ruleBenchJobMsg");
     var allowProxy = !!opts.allow_research_proxy;
     // Pre-check MIN60 dependency
+    if (rule.min60_native) {
+      toast("该规则依赖原生 60 分钟数据，暂不支持基准回测");
+      if (msg) msg.textContent = "该规则依赖原生 60 分钟数据，暂不支持基准回测";
+      return;
+    }
     var needsProxy = !!(rule.min60_day_proxy || (rule.dependencies || []).indexOf("MIN60") >= 0);
     if (needsProxy && !allowProxy) {
       var ok = confirm(
@@ -3264,7 +3452,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       toast(r.research_proxy ? "已提交研究代理基准测试" : "基准测试已提交");
       for (var i = 0; i < 600; i++) {
         await new Promise(function (res) { setTimeout(res, 1500); });
-        if (!AppState.activeRule || AppState.activeRule.id !== rule.id) return;
+        if (!AppState.ruleDrawerOpen || !AppState.activeRule || AppState.activeRule.id !== rule.id) return;
         var j = await api("/api/v1/backtests/jobs/" + encodeURIComponent(jobId));
         var prog = j.progress || {};
         if (msg) {
@@ -3293,10 +3481,16 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
   function renderRuleDetail(rule) {
     const empty = $("ruleDetailEmpty");
     const body = $("ruleDetailBody");
+    AppState.ruleDrawerOpen = !!rule;
     if (!rule) {
       if (empty) empty.style.display = "";
       if (body) body.style.display = "none";
       __rulePerfReqToken += 1;
+      var perfBox = $("rulePerfPanel");
+      if (perfBox && perfBox.__perfAutoTimer) {
+        clearTimeout(perfBox.__perfAutoTimer);
+        perfBox.__perfAutoTimer = 0;
+      }
       return;
     }
     if (empty) empty.style.display = "none";
@@ -3383,8 +3577,10 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
 
   function renderRuleCenter() {
     renderRuleMetrics();
-    // category filter options
-    const cats = Array.from(new Set(AppState.rules.map(ruleCategory))).sort();
+    // category filter options: backend-defined categories + frontend-derived
+    const cats = Array.from(new Set(
+      (AppState.ruleCategories || []).concat(AppState.rules.map(ruleCategory))
+    )).filter(Boolean).sort();
     const sel = $("ruleFilterCat");
     if (sel) {
       const cur = sel.value;
@@ -3392,6 +3588,7 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
         cats.map((c) => '<option value="' + esc(c) + '">' + esc(c) + "</option>").join("");
       sel.value = cur;
     }
+    refreshRuleCategoryOptions();
     renderRuleTable();
     if (AppState.activeRule) {
       const r = AppState.rules.find((x) => x.id === AppState.activeRule.id) || AppState.activeRule;
@@ -3408,11 +3605,18 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
   async function onRuleAction(act, id) {
     const rule = AppState.rules.find((x) => x.id === id);
     if (!rule && act !== "del") return;
-    if (act === "view" || act === "edit") {
+    if (act === "edit") {
+      if (rule.source !== "user") {
+        toast("内置规则只读");
+        return;
+      }
+      await openRuleEditor(id);
+      return;
+    }
+    if (act === "view") {
       AppState.activeRule = rule;
       renderRuleTable();
       renderRuleDetail(rule);
-      if (act === "edit") toast("编辑：可在「新建规则」中创建/更新自定义规则（内置规则只读）");
       return;
     }
     if (act === "test") {
@@ -3446,11 +3650,11 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       }
       if (!confirm("确定删除/移除规则 " + id + " ？")) return;
       try {
-        await api("/api/v1/rules/" + encodeURIComponent(id) + "?permanent=true", { method: "DELETE" });
+        const res = await api("/api/v1/rules/" + encodeURIComponent(id) + "?permanent=true", { method: "DELETE" });
         await loadRules();
         AppState.activeRule = null;
         renderRuleCenter();
-        toast("已删除");
+        toast(res && res.mode === "hide" ? "已从列表移除（可恢复）" : "已删除");
       } catch (e) {
         toast("删除失败: " + e.message);
       }
@@ -4541,26 +4745,201 @@ async function expCreateAndStart() {
     // clicking the row (label) already toggles via native label; keep change handlers
   }
 
-/* create rule */
+/* create / edit rule */
+  var __ruleEditId = null;
+
+  function resetRuleForm() {
+    __ruleEditId = null;
+    if ($("newRuleName")) $("newRuleName").value = "";
+    if ($("newRuleFormula")) $("newRuleFormula").value = "";
+    if ($("newRuleDesc")) $("newRuleDesc").value = "";
+    if ($("newRuleCategory")) $("newRuleCategory").value = "";
+    if ($("newRuleStatus")) $("newRuleStatus").textContent = "";
+    if ($("ruleModalTitle")) $("ruleModalTitle").textContent = "新建规则";
+  }
+
+  function ruleFormBody() {
+    return {
+      name: $("newRuleName").value.trim(),
+      formula_text: $("newRuleFormula").value,
+      description: $("newRuleDesc").value.trim(),
+      category: $("newRuleCategory") ? $("newRuleCategory").value.trim() : "",
+    };
+  }
+
+  async function openRuleEditor(ruleId) {
+    let rule = (AppState.rules || []).find((x) => x.id === ruleId) || null;
+    if (!VISUAL_TEST) {
+      try {
+        const d = await api("/api/v1/rules/" + encodeURIComponent(ruleId));
+        if (d && typeof d === "object") rule = d;
+      } catch (e) {
+        toast("加载规则失败: " + e.message);
+        return;
+      }
+    }
+    if (!rule) { toast("规则不存在: " + ruleId); return; }
+    resetRuleForm();
+    __ruleEditId = rule.id || ruleId;
+    if ($("ruleModalTitle")) $("ruleModalTitle").textContent = "编辑规则";
+    if ($("newRuleName")) $("newRuleName").value = rule.name || "";
+    if ($("newRuleFormula")) $("newRuleFormula").value = rule.formula_text || "";
+    if ($("newRuleDesc")) $("newRuleDesc").value = rule.description || "";
+    if ($("newRuleCategory")) {
+      $("newRuleCategory").value = String(rule.category || "").trim();
+    }
+    if ($("newRuleStatus")) $("newRuleStatus").textContent = "";
+    if ($("ruleCreateModal")) $("ruleCreateModal").classList.add("show");
+  }
+
   async function saveNewRule() {
     if (VISUAL_TEST) { toast("视觉模式不写入"); return; }
-    const name = $("newRuleName").value.trim();
-    const formula = $("newRuleFormula").value;
-    const description = $("newRuleDesc").value.trim();
-    if (!name || !formula) { toast("请填写名称与公式"); return; }
+    const body = ruleFormBody();
+    if (!body.name || !body.formula_text) { toast("请填写名称与公式"); return; }
+    const editing = !!__ruleEditId;
     try {
       $("newRuleStatus").textContent = "保存中…";
-      await api("/api/v1/rules", {
-        method: "POST",
-        body: JSON.stringify({ name, formula_text: formula, description, periods: ["DAY"] }),
-      });
+      if (editing) {
+        await api("/api/v1/rules/" + encodeURIComponent(__ruleEditId), {
+          method: "PATCH",
+          body: JSON.stringify(body),
+        });
+      } else {
+        await api("/api/v1/rules", {
+          method: "POST",
+          body: JSON.stringify({ ...body, periods: ["DAY"] }),
+        });
+      }
+      resetRuleForm();
       $("ruleCreateModal").classList.remove("show");
       await loadRules();
+      await loadRuleCategories();
       renderRuleCenter();
-      toast("规则已创建");
+      toast(editing ? "规则已更新" : "规则已创建");
     } catch (e) {
       $("newRuleStatus").textContent = "失败：" + e.message;
     }
+  }
+
+  function decodeRuleImportBuffer(buf) {
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(buf);
+    } catch (e) {
+      try {
+        return new TextDecoder("gbk").decode(buf);
+      } catch (e2) {
+        return new TextDecoder("utf-8").decode(buf);
+      }
+    }
+  }
+
+  async function onRuleImportFileChange(ev) {
+    const inp = (ev && ev.target) || $("ruleImportFile");
+    const file = inp && inp.files && inp.files[0];
+    if (!file) return;
+    if (file.size > 512 * 1024) {
+      inp.value = "";
+      toast("文件超过 512KB");
+      return;
+    }
+    if (VISUAL_TEST) { inp.value = ""; toast("视觉模式不导入"); return; }
+    try {
+      const buf = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => reject(new Error("读取文件失败"));
+        fr.readAsArrayBuffer(file);
+      });
+      const content = decodeRuleImportBuffer(buf);
+      const d = await api("/api/v1/rules/import", {
+        method: "POST",
+        body: JSON.stringify({ filename: file.name, content }),
+      });
+      await loadRules();
+      renderRuleCenter();
+      highlightRuleRow(d && d.id);
+      toast("已导入规则：" + ((d && (d.name || d.id)) || file.name));
+    } catch (e) {
+      toast("导入失败: " + e.message);
+    } finally {
+      inp.value = "";
+    }
+  }
+
+  async function createRuleCategory() {
+    const input = prompt("新分类名称");
+    if (input == null) return;
+    const name = input.trim();
+    if (!name) { toast("分类名称不能为空"); return; }
+    if (VISUAL_TEST) { toast("视觉模式不写入"); return; }
+    let errMsg = "";
+    try {
+      const d = await api("/api/v1/rules/categories", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      const cats = d && Array.isArray(d.categories) ? d.categories.filter(Boolean) : [];
+      if (cats.length) AppState.ruleCategories = cats;
+      else if ((AppState.ruleCategories || []).indexOf(name) < 0) {
+        AppState.ruleCategories = (AppState.ruleCategories || []).concat([name]);
+      }
+    } catch (e) {
+      errMsg = e && e.message ? e.message : String(e);
+      if ((AppState.ruleCategories || []).indexOf(name) < 0) {
+        AppState.ruleCategories = (AppState.ruleCategories || []).concat([name]);
+      }
+    }
+    renderRuleCenter();
+    if (errMsg) toast("创建分类失败（" + errMsg + "），已在前端本地生效：" + name);
+    else toast("已创建分类：" + name);
+  }
+
+  async function runBatchRuleTest() {
+    const btn = $("btnBatchTest");
+    if (VISUAL_TEST) { toast("视觉模式跳过批量测试"); return; }
+    if (btn) { btn.disabled = true; btn.textContent = "测试中…"; }
+    try {
+      const d = await api("/api/v1/rules/batch-validate", {
+        method: "POST",
+        body: JSON.stringify({ ids: null }),
+      });
+      renderBatchRuleResult(d);
+    } catch (e) {
+      const box = $("ruleBatchResult");
+      if (box) box.style.display = "none";
+      toast("批量测试失败: " + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "批量测试"; }
+    }
+  }
+
+  function renderBatchRuleResult(d) {
+    const box = $("ruleBatchResult");
+    const sum = $("ruleBatchSummary");
+    const list = $("ruleBatchList");
+    if (!box || !sum || !list) return;
+    d = d || {};
+    const results = Array.isArray(d.results) ? d.results : [];
+    const s = d.summary || {};
+    const total = s.total != null ? s.total : results.length;
+    const failed = s.failed != null ? s.failed : results.filter((x) => x && !x.ok).length;
+    const ok = s.ok != null ? s.ok : Math.max(0, total - failed);
+    box.style.display = "";
+    box.classList.toggle("all-ok", failed === 0);
+    sum.innerHTML = "共 " + esc(total) + " 条：通过 " +
+      '<span style="color:var(--green)">' + esc(ok) + "</span> / 失败 " +
+      '<span style="color:' + (failed ? "var(--orange)" : "var(--muted)") + '">' + esc(failed) + "</span>";
+    const fails = results.filter((x) => x && !x.ok);
+    if (!fails.length) {
+      list.innerHTML = '<div class="muted" style="font-size:12px">全部规则通过校验</div>';
+      return;
+    }
+    list.innerHTML = fails.map((x) => {
+      const nm = x.name || x.id || "未知规则";
+      return '<div class="rule-batch-item"><div><b>' + esc(nm) +
+        '</b><span class="sub-id" style="margin-left:8px">' + esc(x.id || "") + "</span></div>" +
+        '<div style="color:var(--orange)">' + esc(x.error || "校验失败") + "</div></div>";
+    }).join("");
   }
 
   /* stubs required by prompt */
@@ -5736,6 +6115,7 @@ async function expCreateAndStart() {
         });
       });
     }
+    initBqRulePick();
     const code = $("bqCode");
     if (code && !code._bqBound) {
       code._bqBound = true;
@@ -6082,6 +6462,32 @@ async function expCreateAndStart() {
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
   }
 
+  function bqDecodeHeader(v) {
+    if (!v) return "";
+    try { return decodeURIComponent(v); } catch (e) { return v; }
+  }
+
+  // 信号 sheet 回退说明后缀：优先用后端 review_note，否则由回退日期合成
+  function bqExportReviewSuffix(st) {
+    if (!st) return "";
+    var fallback = st.review_fallback === true || st.review_fallback === 1 || String(st.review_fallback) === "1";
+    var asof = st.review_asof_used != null ? String(st.review_asof_used) : "";
+    var qdate = st.query_date != null ? String(st.query_date) : "";
+    var note = st.review_note != null ? String(st.review_note) : "";
+    if (note === "ok") note = "";
+    var text = "";
+    if (fallback || (asof && qdate && asof !== qdate)) {
+      if (note) text = note;
+      else if (asof) text = "信号 sheet 按最后可用日 " + asof + " 生成" + (qdate && qdate !== asof ? "；请求日 " + qdate + " 无数据" : "");
+      else text = "信号 sheet 已按最后可用日生成";
+    } else if (note) {
+      text = note;
+    }
+    if (!text) return "";
+    if (text.charAt(0) !== "（") text = "（" + text + "）";
+    return text;
+  }
+
   async function bqPollExportJob(jobId, hint, label) {
     let tries = 0;
     const maxTries = 600;
@@ -6113,7 +6519,8 @@ async function expCreateAndStart() {
         const blob = await dl.blob();
         const filename = st.filename || "bagua_export.xlsx";
         bqTriggerDownload(blob, filename);
-        if (hint) hint.textContent = (label || "导出") + "完成 · " + filename;
+        var reviewSuffix = bqExportReviewSuffix(st);
+        if (hint) hint.textContent = (label || "导出") + "完成 · " + filename + reviewSuffix;
         toast((label || "卦象") + "已导出");
         return;
       }
@@ -6141,7 +6548,7 @@ async function expCreateAndStart() {
       const job = await res.json();
       if (!job || !job.job_id) throw new Error("未返回导出任务 id");
       if (hint) hint.textContent = "后台导出中 · " + job.job_id + " · " + (job.message || "");
-      toast("已开始" + (label || "导出"));
+      toast("已提交" + (label || "导出") + "，完成后自动下载");
       await bqPollExportJob(job.job_id, hint, label);
       return;
     }
@@ -6151,8 +6558,200 @@ async function expCreateAndStart() {
     const m = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(cd);
     if (m && m[1]) filename = decodeURIComponent(m[1].replace(/['"]/g, ""));
     bqTriggerDownload(blob, filename);
-    if (hint) hint.textContent = (label || "导出") + "完成 · " + filename;
+    var reviewSuffix = bqExportReviewSuffix({
+      review_fallback: res.headers.get("X-Bagua-Review-Fallback"),
+      review_asof_used: bqDecodeHeader(res.headers.get("X-Bagua-Review-AsOf")),
+      review_note: bqDecodeHeader(res.headers.get("X-Bagua-Review-Note")),
+    });
+    if (hint) hint.textContent = (label || "导出") + "完成 · " + filename + reviewSuffix;
     toast((label || "卦象") + "已导出");
+  }
+
+  /* ========== 卦象导出：信号规则勾选（默认 735 / 5日外） ========== */
+  // 与后端 indicator_review.DEFAULT_REVIEW_RULES 保持一致；若后端调整默认规则需同步此处
+  AppState.bqRulePickIds = AppState.bqRulePickIds || null; // null=未初始化（首渲染前）
+  AppState.bqExportRules = AppState.bqExportRules || null; // {id,name,hidden,compile_status}[] 缓存
+
+  function bqDefaultRuleIds() {
+    return ["txt_735金叉及趋势", "txt_先跌后涨新版5日外"];
+  }
+
+  // 默认两条的短名（规则列表未加载时摘要仍可读）；键与后端 DEFAULT_REVIEW_RULES 对应
+  const BQ_DEFAULT_RULE_SHORT = { "txt_735金叉及趋势": "735", "txt_先跌后涨新版5日外": "5日外" };
+
+  function bqRuleDisplayName(id) {
+    const r = (AppState.bqExportRules || []).find(function (x) { return x.id === id; });
+    if (r && r.name) return r.name;
+    return BQ_DEFAULT_RULE_SHORT[id] || id;
+  }
+
+  function bqRuleSummaryText() {
+    const ids = bqGetSelectedRuleIds();
+    if (!ids.length) return "";
+    const names = ids.map(bqRuleDisplayName);
+    const head = names.slice(0, 3).join("、");
+    return names.length > 3 ? head + " 等 " + names.length + " 条" : head;
+  }
+
+  function renderBqRuleSummary() {
+    const ids = bqGetSelectedRuleIds();
+    const cnt = $("bqRulePickCount");
+    if (cnt) cnt.textContent = String(ids.length);
+    updateBqExtraRuleWarn();
+    const el = $("bqRulePickSummary");
+    if (!el) return;
+    if (!ids.length) {
+      el.innerHTML = '<span class="sum-empty">未勾选任何规则——纯卦象导出（不带信号 sheet）</span>';
+    } else {
+      const names = ids.map(bqRuleDisplayName);
+      const chips = names.slice(0, 4).map(function (n) {
+        return '<span class="bq-chip">' + esc(n) + "</span>";
+      });
+      if (names.length > 4) chips.push('<span class="bq-chip more">+' + (names.length - 4) + "</span>");
+      el.innerHTML = chips.join("");
+    }
+    el.title = "当前勾选的信号规则，导出时各成一个 sheet：" + (ids.map(bqRuleDisplayName).join("、") || "无");
+  }
+
+  function bqHasExtraRules() {
+    const ruleIds = bqGetSelectedRuleIds();
+    const defaults = bqDefaultRuleIds();
+    return AppState.bqExportRules
+      ? ruleIds.some(function (id) {
+          const r = AppState.bqExportRules.find(function (x) { return x.id === id; });
+          return !!r && defaults.indexOf(id) < 0;
+        })
+      : ruleIds.some(function (id) { return defaults.indexOf(id) < 0; });
+  }
+
+  function updateBqExtraRuleWarn() {
+    const el = $("bqExtraRuleWarn");
+    if (!el) return;
+    el.style.display = bqHasExtraRules() ? "block" : "none";
+  }
+
+  function bqGetSelectedRuleIds() {
+    // 初始化前用默认（与后端未传 review_rules 的行为一致）
+    if (!AppState.bqRulePickIds) return bqDefaultRuleIds().slice();
+    return AppState.bqRulePickIds.slice();
+  }
+
+  async function bqEnsureExportRules() {
+    // 每次打开面板都重新拉取：规则中心新导入的指标无需刷新页面即可见。
+    // 拉取失败时保留上次的缓存（首拉失败则为空列表，渲染层给出提示）。
+    let rules = [];
+    try {
+      const res = await fetch("/api/v1/rules?include_hidden=true");
+      if (res.ok) {
+        const data = await res.json();
+        rules = Array.isArray(data) ? data : [];
+      }
+    } catch (e) { /* 网络失败回退旧缓存 */ }
+    // 只列出可计算（编译 ready）的规则；其余勾了也无法出信号
+    const filtered = rules.filter(function (r) {
+      return r && r.id && (!r.compile_status || r.compile_status === "ready");
+    });
+    if (filtered.length || !AppState.bqExportRules) {
+      AppState.bqExportRules = filtered;
+    }
+    return AppState.bqExportRules;
+  }
+
+  function renderBqRulePick() {
+    const box = $("bqRulePickList");
+    const cnt = $("bqRulePickCount");
+    if (!box) return;
+    const sel = new Set(bqGetSelectedRuleIds());
+    if (cnt) cnt.textContent = String(sel.size);
+    renderBqRuleSummary();
+    const rules = AppState.bqExportRules || [];
+    if (!rules.length) {
+      box.innerHTML = '<div class="muted">规则加载失败或为空，稍后重开本面板重试；默认 735 / 5日外 仍会随导出携带</div>';
+      return;
+    }
+    const q = (($("bqRulePickSearch") && $("bqRulePickSearch").value) || "").trim().toLowerCase();
+    const shown = rules.filter(function (r) {
+      if (!q) return true;
+      return (r.name || "").toLowerCase().indexOf(q) >= 0 || (r.id || "").toLowerCase().indexOf(q) >= 0;
+    });
+    if (!shown.length) {
+      box.innerHTML = '<div class="muted">无匹配规则</div>';
+      return;
+    }
+    box.innerHTML = shown.map(function (r) {
+      const on = sel.has(r.id);
+      const cls = on ? "bq-rule-chip on" : "bq-rule-chip";
+      const hid = r.hidden ? ' <span class="chip-hidden" title="指标公式目录导入的隐藏规则">ⓘ</span>' : "";
+      return (
+        '<label class="' + cls + '" title="' + esc(r.id) + '">' +
+        '<input type="checkbox" value="' + esc(r.id) + '"' + (on ? " checked" : "") + " />" +
+        esc(r.name || r.id) + hid + "</label>"
+      );
+    }).join("");
+    box.querySelectorAll("input[type=checkbox]").forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        const cur = new Set(bqGetSelectedRuleIds());
+        if (cb.checked) cur.add(cb.value); else cur.delete(cb.value);
+        AppState.bqRulePickIds = Array.from(cur);
+        renderBqRulePick();
+      });
+    });
+  }
+
+  function initBqRulePick() {
+    const btn = $("bqRulePickBtn");
+    const panel = $("bqRulePickPanel");
+    renderBqRuleSummary(); // 初始摘要（默认 735 / 5日外）
+    if (btn && !btn._bqBound) {
+      btn._bqBound = true;
+      btn.addEventListener("click", async function () {
+        if (!panel) return;
+        const willShow = panel.style.display === "none";
+        panel.style.display = willShow ? "block" : "none";
+        const arrow = $("bqRulePickArrow");
+        if (arrow) arrow.textContent = willShow ? "▴" : "▾";
+        if (willShow) {
+          if (!AppState.bqRulePickIds) AppState.bqRulePickIds = bqDefaultRuleIds().slice();
+          await bqEnsureExportRules();
+          renderBqRulePick();
+        }
+      });
+    }
+    const search = $("bqRulePickSearch");
+    if (search && !search._bqBound) {
+      search._bqBound = true;
+      search.addEventListener("input", renderBqRulePick);
+    }
+    const allBtn = $("bqRulePickAll");
+    if (allBtn && !allBtn._bqBound) {
+      allBtn._bqBound = true;
+      allBtn.addEventListener("click", function () {
+        const rules = AppState.bqExportRules || [];
+        AppState.bqRulePickIds = rules.map(function (r) { return r.id; });
+        renderBqRulePick();
+      });
+    }
+    const noneBtn = $("bqRulePickNone");
+    if (noneBtn && !noneBtn._bqBound) {
+      noneBtn._bqBound = true;
+      noneBtn.addEventListener("click", function () {
+        AppState.bqRulePickIds = [];
+        renderBqRulePick();
+      });
+    }
+    const resetBtn = $("bqRulePickReset");
+    if (resetBtn && !resetBtn._bqBound) {
+      resetBtn._bqBound = true;
+      resetBtn.addEventListener("click", function () {
+        AppState.bqRulePickIds = bqDefaultRuleIds().slice();
+        renderBqRulePick();
+      });
+    }
+    if (panel) {
+      panel.style.display = "none";
+      const arrow = $("bqRulePickArrow");
+      if (arrow) arrow.textContent = "▾";
+    }
   }
 
   async function runBaguaExportQueried() {
@@ -6172,7 +6771,10 @@ async function expCreateAndStart() {
       if (hint) hint.textContent = "导出需要先选择日期。";
       return;
     }
-    if (hint) hint.textContent = "正在导出 " + codes.length + " 只股票的日/周/月卦象…";
+    if (hint) {
+      const sumText = bqRuleSummaryText();
+      hint.textContent = "正在导出 " + codes.length + " 只股票的日/周/月卦象（信号 sheet：" + (sumText || "无") + "）…";
+    }
     const btn = $("bqExportBtn");
     const btn2 = $("bqExportOnePeriodBtn");
     if (btn) btn.disabled = true;
@@ -6188,6 +6790,7 @@ async function expCreateAndStart() {
           date: date,
           periods: ["DAY", "WEEK", "MONTH"],
           adjust: adjust,
+          review_rules: bqGetSelectedRuleIds(),
         }),
       });
       await bqHandleExportResponse(res, hint, "查询股票日/周/月");
@@ -6214,7 +6817,17 @@ async function expCreateAndStart() {
       if (hint) hint.textContent = "导出需要先选择日期。";
       return;
     }
-    if (!confirm("将按当前日期与复权源导出" + label + "（" + periods + "）卦象 Excel（后台任务）。确定？")) {
+    const ruleIds = bqGetSelectedRuleIds();
+    // 勾选了非默认（周五链未预计算）规则时提醒耗时：全市场即时计算约数分钟
+    const hasExtraRules = bqHasExtraRules();
+    let confirmMsg = "将按当前日期与复权源导出" + label + "（" + periods + "）卦象 Excel（后台任务）。";
+    const sumText = bqRuleSummaryText();
+    confirmMsg += "\n附带信号 sheet：" + (sumText || "无（纯卦象导出）");
+    if (hasExtraRules) {
+      confirmMsg += "\n注意：已勾选周五链未预计算的信号规则，导出时将即时计算，耗时增加数分钟。";
+    }
+    confirmMsg += "\n确定？";
+    if (!confirm(confirmMsg)) {
       return;
     }
     if (hint) hint.textContent = "已提交导出任务…";
@@ -6230,7 +6843,9 @@ async function expCreateAndStart() {
         encodeURIComponent(periods) +
         "&adjust=" +
         encodeURIComponent(adjust) +
-        "&all_stocks=true&async_mode=true";
+        "&all_stocks=true&async_mode=true" +
+        "&review_rules=" +
+        encodeURIComponent(ruleIds.join(","));
       const res = await fetch(startUrl);
       await bqHandleExportResponse(res, hint, label);
     } catch (e) {
@@ -8173,6 +8788,216 @@ function renderForecastPage() {
       return html;
     } catch (e) { return ""; }
   }
+  /* ===== 信号周涨幅：选出的股票在信号日之后 N 个交易日的涨幅 ===== */
+  AppState.srPayload = null;
+  AppState.srCacheKey = "";
+  AppState.srLoading = false;
+  AppState.srRuleNames = {};
+  var __srReqToken = 0;
+
+  function srActiveRunId() {
+    return String((AppState.activeTask && (AppState.activeTask.id || AppState.activeTask.run_id)) || "");
+  }
+
+  function srBuildRuleNameMap(summary) {
+    const ids = (summary && summary.indicator_ids) || [];
+    const names = (summary && summary.indicator_names) || [];
+    const map = {};
+    if (Array.isArray(ids) && Array.isArray(names) && ids.length && ids.length === names.length) {
+      ids.forEach(function (id, i) { if (id) map[String(id)] = String(names[i] || ""); });
+    }
+    return map;
+  }
+  function srRuleLabel(ids) {
+    const arr = Array.isArray(ids) ? ids : [];
+    if (!arr.length) return "—";
+    return arr.map(function (id) {
+      return AppState.srRuleNames[String(id)] || String(id);
+    }).join("、");
+  }
+  function srPctHtml(v) {
+    if (v == null || v === "" || Number.isNaN(Number(v))) return "—";
+    return fmtPctUi(v);
+  }
+  function _demoSignalReturns(horizon) {
+    // visual_test 专用：固定演示数据，结构与后端 signal-returns 响应一致
+    return {
+      horizon: horizon || 5,
+      plane: "qfq",
+      plane_meta: { dataset_id: "demo_dataset" },
+      reused: false,
+      demo: true,
+      summary: {
+        n_ok: 2, n_pending: 1, n_no_data: 1,
+        mean: 0.0123, median: 0.0123, win_rate: 0.5,
+        max: 0.0337, min: -0.0091, p25: -0.0016, p75: 0.023,
+      },
+      rows: [
+        { std_code: "600519.SH", name: "贵州茅台", signal_date: "20260714", period: "DAY",
+          indicator_ids: ["rule_000128"], entry_close: 1420.5, exit_date: "20260721",
+          exit_close: 1468.3, ret: 0.0337, status: "ok" },
+        { std_code: "000858.SZ", name: "五粮液", signal_date: "20260714", period: "DAY",
+          indicator_ids: ["rule_000125"], entry_close: 128.42, exit_date: "20260721",
+          exit_close: 127.25, ret: -0.0091, status: "ok" },
+        { std_code: "601318.SH", name: "中国平安", signal_date: "20260715", period: "DAY",
+          indicator_ids: ["rule_000124"], entry_close: 51.2, exit_date: null,
+          exit_close: null, ret: null, status: "pending" },
+        { std_code: "300750.SZ", name: "宁德时代", signal_date: "20260716", period: "DAY",
+          indicator_ids: ["rule_000126"], entry_close: 214.8, exit_date: null,
+          exit_close: null, ret: null, status: "no_data" },
+      ],
+    };
+  }
+  function renderTaskWeekRet(payload) {
+    const sumBox = $("taskWeekRetSummary");
+    const tableBox = $("taskWeekRetTable");
+    const metaEl = $("srMeta");
+    const s = (payload && payload.summary) || {};
+    if (metaEl) {
+      const pm = (payload && payload.plane_meta) || {};
+      const parts = [
+        "窗口 " + (payload.horizon != null ? payload.horizon : "—") + " 个交易日",
+        "价格面 " + (payload.plane === "raw" ? "未复权" : "前复权"),
+      ];
+      if (pm.dataset_id) parts.push("数据 " + String(pm.dataset_id).slice(0, 20));
+      if (payload.reused) parts.push("读缓存");
+      if (payload.demo) parts.push("演示数据");
+      metaEl.textContent = parts.join(" · ");
+    }
+    if (sumBox) {
+      const items = [
+        ["有效样本", s.n_ok != null ? String(s.n_ok) : "—"],
+        ["平均涨幅", srPctHtml(s.mean)],
+        ["中位涨幅", srPctHtml(s.median)],
+        ["上涨占比", s.win_rate != null ? formatPercent(s.win_rate) : "—"],
+        ["最好", srPctHtml(s.max)],
+        ["最差", srPctHtml(s.min)],
+        ["25 分位", srPctHtml(s.p25)],
+        ["75 分位", srPctHtml(s.p75)],
+        ["数据不足", s.n_pending != null ? String(s.n_pending) : "—"],
+        ["无行情", s.n_no_data != null ? String(s.n_no_data) : "—"],
+      ];
+      sumBox.innerHTML = items.map(function (it) {
+        return '<span><span class="l">' + it[0] + "</span><b>" + it[1] + "</b></span>";
+      }).join("");
+    }
+    if (!tableBox) return;
+    const rows = (payload && payload.rows) || [];
+    if (!rows.length) {
+      tableBox.innerHTML = '<div class="muted" style="padding:12px">该回测没有信号明细（signals.csv 为空）。</div>';
+      return;
+    }
+    const head = ["代码", "名称", "信号日", "规则", "信号日收盘", "退出日", "退出收盘", "涨幅", "备注"];
+    let html = '<table class="sr-table"><thead><tr>';
+    head.forEach(function (h) { html += "<th>" + esc(h) + "</th>"; });
+    html += "</tr></thead><tbody>";
+    rows.forEach(function (r) {
+      const note = r.status === "pending" ? "数据不足"
+        : (r.status === "no_bar" ? "信号日无K线"
+        : (r.status === "no_data" ? "无行情数据"
+        : (r.status === "bad_price" ? "价格异常" : "")));
+      const dim = r.status === "ok" ? "" : ' class="sr-dim"';
+      html += "<tr" + dim + ">" +
+        "<td>" + esc(r.std_code || "—") + "</td>" +
+        "<td>" + esc(r.name || "") + "</td>" +
+        "<td>" + esc(fmtYmd(r.signal_date)) + "</td>" +
+        '<td title="' + esc((r.indicator_ids || []).join(", ")) + '">' + esc(srRuleLabel(r.indicator_ids)) + "</td>" +
+        "<td>" + (r.entry_close != null ? formatNumber(r.entry_close, 2) : "—") + "</td>" +
+        "<td>" + (r.exit_date != null ? esc(fmtYmd(r.exit_date)) : "—") + "</td>" +
+        "<td>" + (r.exit_close != null ? formatNumber(r.exit_close, 2) : "—") + "</td>" +
+        "<td>" + srPctHtml(r.ret) + "</td>" +
+        "<td>" + esc(note) + "</td>" +
+        "</tr>";
+    });
+    tableBox.innerHTML = html + "</tbody></table>";
+  }
+  async function loadTaskSignalReturns(runId, opts) {
+    runId = runId || srActiveRunId();
+    if (!runId) return;
+    const force = !!(opts && opts.force);
+    const horizon = (($("srHorizon") && parseInt($("srHorizon").value, 10)) || 5);
+    const key = String(runId) + ":" + horizon;
+    if (!force && AppState.srPayload && AppState.srCacheKey === key) return;
+    if ($("srHorizonLabel")) $("srHorizonLabel").textContent = String(horizon);
+    if (VISUAL_TEST) {
+      const demoRuleNames = {};
+      DEMO_RULES.forEach(function (r) { demoRuleNames[r.id] = r.name; });
+      AppState.srRuleNames = Object.assign(demoRuleNames, srBuildRuleNameMap(window.__lastTaskDetail || {}));
+      renderTaskWeekRet(_demoSignalReturns(horizon));
+      return;
+    }
+    var token = ++__srReqToken;
+    const box = $("taskWeekRetTable");
+    if (box) box.innerHTML = '<div class="muted" style="padding:12px">计算中…（首次需加载行情）</div>';
+    AppState.srLoading = true;
+    try {
+      const qs = "?horizon=" + encodeURIComponent(horizon) + (force ? "&force=1" : "");
+      const res = await api("/api/v1/backtests/" + encodeURIComponent(runId) + "/signal-returns" + qs);
+      if (token !== __srReqToken || String(runId) !== srActiveRunId()) return;
+      AppState.srPayload = res;
+      AppState.srCacheKey = key;
+      AppState.srRuleNames = srBuildRuleNameMap(window.__lastTaskDetail || {});
+      renderTaskWeekRet(res);
+    } catch (e) {
+      if (token !== __srReqToken || String(runId) !== srActiveRunId()) return;
+      AppState.srPayload = null;
+      AppState.srCacheKey = "";
+      if (box) box.innerHTML = '<div class="muted" style="padding:12px">加载失败：' + esc(e.message || String(e)) + "</div>";
+    } finally {
+      if (token === __srReqToken) AppState.srLoading = false;
+    }
+  }
+  function downloadTaskWeekRetCsv() {
+    const p = AppState.srPayload;
+    if (!p || !(p.rows || []).length) { toast("暂无可导出的数据"); return; }
+    const head = ["std_code", "name", "signal_date", "period", "indicator_ids",
+                  "entry_close", "exit_date", "exit_close", "ret", "status"];
+    const lines = [head.join(",")];
+    p.rows.forEach(function (r) {
+      const vals = [
+        r.std_code || "", r.name || "", r.signal_date != null ? r.signal_date : "",
+        r.period || "", (r.indicator_ids || []).join("|"),
+        r.entry_close != null ? r.entry_close : "",
+        r.exit_date != null ? r.exit_date : "",
+        r.exit_close != null ? r.exit_close : "",
+        r.ret != null ? r.ret : "", r.status || "",
+      ];
+      lines.push(vals.map(function (v) {
+        const s = String(v);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }).join(","));
+    });
+    const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "signal_returns_" + (AppState.srCacheKey.split(":")[0] || "run") + "_h" + (p.horizon || 5) + ".csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+  function bindTaskWeekRetUi() {
+    const sel = $("srHorizon");
+    if (sel && !sel.dataset.bound) {
+      sel.dataset.bound = "1";
+      sel.addEventListener("change", function () {
+        AppState.srPayload = null;
+        AppState.srCacheKey = "";
+        loadTaskSignalReturns();
+      });
+    }
+    const refresh = $("btnSrRefresh");
+    if (refresh && !refresh.dataset.bound) {
+      refresh.dataset.bound = "1";
+      refresh.addEventListener("click", function () {
+        loadTaskSignalReturns(null, { force: true });
+      });
+    }
+    const csv = $("btnSrCsv");
+    if (csv && !csv.dataset.bound) {
+      csv.dataset.bound = "1";
+      csv.addEventListener("click", downloadTaskWeekRetCsv);
+    }
+  }
+
   function renderTaskSettingsKv(summary, repro, metrics, runId) {
     const box = $("taskSettingsKv");
     if (!box) return;
@@ -8514,6 +9339,12 @@ function renderForecastPage() {
     window.__lastTaskDetail = summary;
     window.__lastTaskMetrics = metrics;
     AppState.activeTask = Object.assign({}, task, { raw: summary, metrics: metrics });
+    // 切换 run 时清空「信号周涨幅」缓存，避免展示上一个回测的结果
+    if (String(AppState.srCacheKey.split(":")[0]) !== String(task.id)) {
+      AppState.srPayload = null;
+      AppState.srCacheKey = "";
+    }
+    bindTaskWeekRetUi();
 
     const repro = (detail.meta && detail.meta.repro) || summary.repro || {};
     const primary = typeof strategyPrimaryName === "function"
@@ -9790,6 +10621,12 @@ function renderForecastPage() {
             }, 30);
           } catch (e) {}
         }
+        if (k === "weekret") {
+          try {
+            bindTaskWeekRetUi((AppState.activeTask && AppState.activeTask.id) || "");
+            loadTaskSignalReturns((AppState.activeTask && AppState.activeTask.id) || "");
+          } catch (e) {}
+        }
       });
     });
 
@@ -10384,8 +11221,8 @@ function renderBtRuleList() {
       if (!h){ pane.innerHTML = "<div class='sub'>请选择左侧主卦</div>"; return; }
       const mode = getMode();
       let html = "<div style='margin-bottom:0.65rem'>";
-      html += "<div style='font-size:1.15rem;font-weight:700'>"+(h.hexagram_symbol||"")+" "+(h.main_hexagram_name||"")+" <span class='sub'>第"+String(h.gua_order).padStart(2,"0")+"卦</span></div>";
-      html += "<div class='sub' style='margin-top:0.25rem'>"+ (h.core_gang || h.gua_ci || "—") +"</div>";
+      html += "<div style='font-size:1.15rem;font-weight:700'>"+esc(h.hexagram_symbol||"")+" "+esc(h.main_hexagram_name||"")+" <span class='sub'>第"+esc(String(h.gua_order).padStart(2,"0"))+"卦</span></div>";
+      html += "<div class='sub' style='margin-top:0.25rem'>"+ esc(h.core_gang || h.gua_ci || "—") +"</div>";
       html += "<label style='display:inline-flex;gap:0.35rem;margin-top:0.45rem;font-size:0.85rem'><input type='checkbox' id='guaSelectAll6' /> 选择全部六爻</label>";
       html += "</div>";
       (h.lines||[]).forEach(ln => {
@@ -10395,11 +11232,11 @@ function renderBtRuleList() {
         } else {
           checked = (cfg.selected_state_ids||[]).indexOf(ln.state_id) >= 0;
         }
-        const bg = emptyDisp(ln.biangua);
+        const bg = esc(emptyDisp(ln.biangua));
         const act = ln.action_signal || "—";
         html += "<div class='gua-line'>";
-        html += "<label class='chk'><input type='checkbox' data-sid='"+ln.state_id+"' data-gid='"+h.main_hexagram_id+"' "+(checked?"checked":"")+" /><span><b>"+(ln.line_name||"")+"</b> "+(ln.line_text||"")+"</span></label>";
-        html += "<div class='sub' style='grid-column:2'>变卦："+bg+" · 行情："+(ln.market_summary||ln.market_judgement||"—")+" <span class='gua-act gua-act-"+(ln.action_signal||"")+"'>"+act+"</span></div>";
+        html += "<label class='chk'><input type='checkbox' data-sid='"+esc(ln.state_id)+"' data-gid='"+esc(h.main_hexagram_id)+"' "+(checked?"checked":"")+" /><span><b>"+esc(ln.line_name||"")+"</b> "+esc(ln.line_text||"")+"</span></label>";
+        html += "<div class='sub' style='grid-column:2'>变卦："+bg+" · 行情："+esc(ln.market_summary||ln.market_judgement||"—")+" <span class='gua-act gua-act-"+esc(ln.action_signal||"")+"'>"+esc(act)+"</span></div>";
         // 高岛易断解读（旁挂 sidecar，379/384 覆盖）：有值才渲染，无值不留空行
         if (ln.gaodao_commerce){
           html += "<div class='sub' style='grid-column:2;color:#8b6d3f'>高岛："+esc(ln.gaodao_commerce)+"</div>";
@@ -10498,9 +11335,9 @@ function renderBtRuleList() {
           const div = document.createElement("div");
           div.className = "gua-hit";
           div.dataset.idx = String(idx);
-          const bg = emptyDisp(it.biangua || it.changed_hexagram_name);
+          const bg = esc(emptyDisp(it.biangua || it.changed_hexagram_name));
           const gd = it.gaodao_commerce ? "<div class='sub' style='color:#8b6d3f'>高岛："+esc(it.gaodao_commerce)+"</div>" : "";
-          div.innerHTML = "<input type='checkbox' /> <div><b>"+(it.hexagram_symbol||"")+" "+(it.main_hexagram_name||"")+" · "+(it.line_name||"")+"</b><div class='sub'>"+(it.line_text||"")+" · 变卦:"+bg+" · <span class='gua-act gua-act-"+(it.action_signal||"")+"'>"+(it.action_signal||"—")+"</span></div>"+gd+"</div>";
+          div.innerHTML = "<input type='checkbox' /> <div><b>"+esc(it.hexagram_symbol||"")+" "+esc(it.main_hexagram_name||"")+" · "+esc(it.line_name||"")+"</b><div class='sub'>"+esc(it.line_text||"")+" · 变卦:"+bg+" · <span class='gua-act gua-act-"+esc(it.action_signal||"")+"'>"+esc(it.action_signal||"—")+"</span></div>"+gd+"</div>";
           const cb = div.querySelector("input");
           const cfg = draft || committed;
           cb.checked = (cfg.selected_state_ids||[]).indexOf(it.state_id) >= 0;
@@ -10579,11 +11416,11 @@ function renderBtRuleList() {
         rows.forEach(function(item){
           const sid = item.ln.state_id;
           const checked = selected.has(sid) ? " checked" : "";
-          const bg = emptyDisp(item.ln.biangua);
+          const bg = esc(emptyDisp(item.ln.biangua));
           html += "<div class='gua-act-row'>";
-          html += "<label class='chk'><input type='checkbox' data-sid='" + sid + "' data-gid='" + item.h.main_hexagram_id + "'" + checked + "/>";
-          html += "<span><b>" + (item.h.hexagram_symbol || "") + " " + (item.h.main_hexagram_name || "") + " · " + (item.ln.line_name || "") + "</b>";
-          html += "<div class='sub'>" + (item.ln.line_text || "—") + " · 变卦：" + bg + "</div>";
+          html += "<label class='chk'><input type='checkbox' data-sid='" + esc(sid) + "' data-gid='" + esc(item.h.main_hexagram_id) + "'" + checked + "/>";
+          html += "<span><b>" + esc(item.h.hexagram_symbol || "") + " " + esc(item.h.main_hexagram_name || "") + " · " + esc(item.ln.line_name || "") + "</b>";
+          html += "<div class='sub'>" + esc(item.ln.line_text || "—") + " · 变卦：" + bg + "</div>";
           if (item.ln.gaodao_commerce){
             html += "<div class='sub' style='color:#8b6d3f'>高岛：" + esc(item.ln.gaodao_commerce) + "</div>";
           }
@@ -11323,7 +12160,191 @@ function renderBtRuleList() {
     });
   }
 
+  /* ========== 回测并发配置（GET/PUT /api/v1/backtests/queue/config） ========== */
+  var __btQueueWorkersState = {
+    current: null,
+    hard: 8,
+    loading: false,
+    unsupported: false,
+    userExpTouched: false,
+  };
+
+  function btQueueWorkersHint(text) {
+    var el = $("btQueueWorkersHint");
+    if (el) el.textContent = text || "";
+  }
+
+  function btQueueWorkersShow(show) {
+    var wrap = $("btQueueWorkersWrap");
+    if (wrap) wrap.style.display = show ? "" : "none";
+  }
+
+  function btQueueWorkersSetBusy(busy) {
+    var sel = $("btQueueWorkers");
+    if (sel) sel.disabled = !!busy;
+  }
+
+  function btQueueWorkersMount() {
+    var wrap = $("btQueueWorkersWrap");
+    if (!wrap) return;
+    var meta = (AppState.activeModule === "tasks") ? $("taskQueueMeta") : $("taskQueueMetaBt");
+    var host = meta && meta.parentNode;
+    if (host && wrap.parentNode !== host) host.appendChild(wrap);
+  }
+
+  function btQueueWorkersBindExpGuard() {
+    var exp = $("expConcurrency");
+    if (!exp || exp.dataset.btQwGuard === "1") return;
+    exp.dataset.btQwGuard = "1";
+    exp.addEventListener("change", function () {
+      __btQueueWorkersState.userExpTouched = true;
+    });
+  }
+
+  function btQueueWorkersSyncExp(n) {
+    var exp = $("expConcurrency");
+    if (!exp || !n) return;
+    // 仅当用户未手动改过实验中心并行下拉时才覆盖
+    if (__btQueueWorkersState.userExpTouched) return;
+    var val = String(n);
+    var olds = exp.querySelectorAll('option[data-bt-current="1"]');
+    for (var k = 0; k < olds.length; k++) {
+      if (olds[k] && olds[k].parentNode) olds[k].parentNode.removeChild(olds[k]);
+    }
+    var exists = false;
+    for (var i = 0; i < exp.options.length; i++) {
+      if (exp.options[i].value === val) { exists = true; break; }
+    }
+    if (!exists) {
+      var o = document.createElement("option");
+      o.value = val;
+      o.setAttribute("data-bt-current", "1");
+      o.textContent = val + "（当前设置）";
+      exp.appendChild(o);
+    }
+    exp.value = val;
+  }
+
+  async function btQueueWorkersRequest(method, body) {
+    var res;
+    try {
+      res = await fetch("/api/v1/backtests/queue/config", {
+        method: method,
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    } catch (netErr) {
+      var netE = new Error("网络请求失败: " + ((netErr && netErr.message) || netErr));
+      netE.status = 0;
+      throw netE;
+    }
+    var text = "";
+    try { text = await res.text(); } catch (eRead) {}
+    var data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (eParse) { data = text; }
+    if (!res.ok) {
+      var detail = (data && data.detail !== undefined) ? data.detail : ((data && data.message) || text);
+      if (detail && typeof detail === "object") detail = detail.message || JSON.stringify(detail);
+      var err = new Error(detail || ("HTTP " + res.status));
+      err.status = res.status;
+      throw err;
+    }
+    return data || {};
+  }
+
+  function btQueueWorkersFill(cfg) {
+    var sel = $("btQueueWorkers");
+    if (!sel) return null;
+    var hard = parseInt(cfg && cfg.hard_max_workers, 10);
+    if (!hard || hard < 1) hard = 8;
+    var cur = parseInt(cfg && cfg.max_workers, 10);
+    if (!cur || cur < 1) cur = parseInt(cfg && cfg.default_workers, 10) || 1;
+    cur = Math.max(1, Math.min(cur, hard));
+    var html = "";
+    for (var i = 1; i <= hard; i++) html += '<option value="' + i + '">' + i + "</option>";
+    sel.innerHTML = html;
+    sel.value = String(cur);
+    __btQueueWorkersState.current = cur;
+    __btQueueWorkersState.hard = hard;
+    btQueueWorkersShow(true);
+    btQueueWorkersHint("上限 " + hard);
+    return cur;
+  }
+
+  async function initBtQueueWorkers() {
+    btQueueWorkersMount();
+    btQueueWorkersBindExpGuard();
+    if (__btQueueWorkersState.unsupported || __btQueueWorkersState.loading) return;
+    __btQueueWorkersState.loading = true;
+    try {
+      var cfg = await btQueueWorkersRequest("GET");
+      if (cfg.hard_max_workers == null && cfg.max_workers == null) {
+        // 200 但不是配置接口（如 SPA 兜底页）：不展示脏控件
+        btQueueWorkersShow(false);
+        return;
+      }
+      btQueueWorkersFill(cfg);
+      btQueueWorkersSyncExp(parseInt(cfg && cfg.max_workers, 10));
+    } catch (e) {
+      if (e && e.status === 404) {
+        // 后端未部署该接口：隐藏控件，不弹窗刷错误
+        __btQueueWorkersState.unsupported = true;
+        btQueueWorkersShow(false);
+        try { console.info("回测并发配置接口未部署，已隐藏并发控件"); } catch (eLog) {}
+      } else {
+        btQueueWorkersShow(false);
+        try { console.warn("回测并发配置加载失败", e); } catch (eLog2) {}
+      }
+    } finally {
+      __btQueueWorkersState.loading = false;
+    }
+  }
+
+  async function btQueueWorkersOnChange() {
+    var sel = $("btQueueWorkers");
+    if (!sel) return;
+    var prev = __btQueueWorkersState.current;
+    var next = parseInt(sel.value, 10);
+    if (!next || next === prev) {
+      if (prev) sel.value = String(prev);
+      return;
+    }
+    btQueueWorkersSetBusy(true);
+    btQueueWorkersHint("保存中…");
+    try {
+      var cfg = await btQueueWorkersRequest("PUT", { max_workers: next });
+      var applied = parseInt(cfg && cfg.max_workers, 10) || next;
+      __btQueueWorkersState.current = applied;
+      sel.value = String(applied);
+      var hard = parseInt(cfg && cfg.hard_max_workers, 10) || __btQueueWorkersState.hard || applied;
+      __btQueueWorkersState.hard = hard;
+      btQueueWorkersHint("上限 " + hard);
+      btQueueWorkersSyncExp(applied);
+      toast("回测并发已调整为 " + applied + "（立即生效）");
+      try { await refreshTaskQueueBar(); } catch (eR) {}
+    } catch (e) {
+      if (e && e.status === 404) {
+        __btQueueWorkersState.unsupported = true;
+        btQueueWorkersShow(false);
+      } else {
+        toast("回测并发调整失败：" + ((e && e.message) || e) + "，已回滚");
+        btQueueWorkersHint("上限 " + (__btQueueWorkersState.hard || ""));
+      }
+      if (prev) sel.value = String(prev);
+    } finally {
+      btQueueWorkersSetBusy(false);
+    }
+  }
+
+  function bindBtQueueWorkersUi() {
+    if (bindBtQueueWorkersUi._done) return;
+    bindBtQueueWorkersUi._done = true;
+    var sel = $("btQueueWorkers");
+    if (sel) sel.addEventListener("change", btQueueWorkersOnChange);
+  }
+
   async function refreshTaskQueueBar() {
+    try { btQueueWorkersMount(); } catch (eMount) {}
     const targets = [
       { bar: "taskQueueBar", body: "taskQueueBody", meta: "taskQueueMeta" },
       { bar: "taskQueueBarBt", body: "taskQueueBodyBt", meta: "taskQueueMetaBt" },
@@ -11462,6 +12483,7 @@ function renderBtRuleList() {
       }
     }
     ensureQueueRefresh();
+    try { bindBtQueueWorkersUi(); initBtQueueWorkers(); } catch (eBTQW) {}
   }
 
 
@@ -11584,11 +12606,13 @@ function renderBtRuleList() {
       : Array.from({ length: 20 }, function (_, i) { return 2008 + i; });
     var defStart = 20200101;
     var defEnd = 20240701;
-    if (__btCalMeta.max_date && __btCalMeta.min_date) {
-      var maxY = Math.floor(Number(__btCalMeta.max_date) / 10000);
+    // 优先真实数据最后可用日；日历上限 max_date 仅作回退
+    var calEnd = Number(__btCalMeta.data_max_date) || Number(__btCalMeta.max_date);
+    if (calEnd && __btCalMeta.min_date) {
+      var maxY = Math.floor(calEnd / 10000);
       var startY = Math.max(years[0] || (maxY - 2), maxY - 2);
       defStart = startY * 10000 + 101;
-      defEnd = Number(__btCalMeta.max_date);
+      defEnd = calEnd;
     }
     (prefixes || []).forEach(function (pair) {
       // only set if empty (avoid overwriting user/copy values on re-init)
@@ -11630,10 +12654,13 @@ function renderBtRuleList() {
     try {
       __btCalMeta = await api("/api/v1/calendar/range");
     } catch (e) {
+      var nowD = new Date();
+      var todayYmd = nowD.getFullYear() * 10000 + (nowD.getMonth() + 1) * 100 + nowD.getDate();
       __btCalMeta = {
         years: Array.from({ length: 16 }, function (_, i) { return 2010 + i; }),
         min_date: 20100104,
-        max_date: 20251231
+        max_date: todayYmd,
+        data_max_date: todayYmd
       };
     }
     initBtDateDropdowns();
@@ -11942,17 +12969,28 @@ function renderBtRuleList() {
     if ($("ruleFilterCat")) if ($("ruleFilterCat")) $("ruleFilterCat").addEventListener("change", () => renderRuleTable());
     if ($("ruleFilterStatus")) if ($("ruleFilterStatus")) $("ruleFilterStatus").addEventListener("change", () => renderRuleTable());
     if ($("btnRefreshRules")) $("btnRefreshRules").onclick = async () => {
-      try { await loadRules(); renderRuleCenter(); toast("规则已刷新"); }
+      try { await loadRules(); await loadRuleCategories(); renderRuleCenter(); toast("规则已刷新"); }
       catch (e) { toast("刷新失败: " + e.message); }
     };
     if ($("btnNewRule")) $("btnNewRule").onclick = () => {
-      $("newRuleStatus").textContent = "";
+      resetRuleForm();
       $("ruleCreateModal").classList.add("show");
     };
-    if ($("btnImportRule")) $("btnImportRule").onclick = () => toast("导入：请将公式放入规则目录或使用新建规则");
-    if ($("btnBatchTest")) $("btnBatchTest").onclick = () => toast("批量测试：与回测任务打通");
-    if ($("btnNewCat")) $("btnNewCat").onclick = () => toast("分类为前端展示维度，由规则特征自动归类");
-    if ($("btnCancelCreate")) $("btnCancelCreate").onclick = () => $("ruleCreateModal").classList.remove("show");
+    if ($("btnImportRule")) $("btnImportRule").onclick = () => {
+      const inp = $("ruleImportFile");
+      if (inp) inp.click();
+    };
+    if ($("ruleImportFile")) $("ruleImportFile").onchange = onRuleImportFileChange;
+    if ($("btnBatchTest")) $("btnBatchTest").onclick = runBatchRuleTest;
+    if ($("btnCloseBatchResult")) $("btnCloseBatchResult").onclick = () => {
+      const box = $("ruleBatchResult");
+      if (box) box.style.display = "none";
+    };
+    if ($("btnNewCat")) $("btnNewCat").onclick = createRuleCategory;
+    if ($("btnCancelCreate")) $("btnCancelCreate").onclick = () => {
+      resetRuleForm();
+      $("ruleCreateModal").classList.remove("show");
+    };
     if ($("btnSaveRule")) $("btnSaveRule").onclick = saveNewRule;
     if ($("btnValidateRule")) $("btnValidateRule").onclick = async () => {
       if (VISUAL_TEST) { toast("视觉模式跳过校验"); return; }
@@ -12255,6 +13293,7 @@ async function boot() {
       toast("规则加载失败: " + e.message);
       AppState.rules = [];
     }
+    await loadRuleCategories();
     try { initGuaUIForV3(); } catch (e) {}
     try { initBaguaQueryPage(); } catch (e) {}
     if (isTaskDetailRoute) {

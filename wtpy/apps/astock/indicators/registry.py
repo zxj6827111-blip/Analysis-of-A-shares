@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from ..data.io_util import atomic_write_json
 from .models import IndicatorSpec
 from .tn6_importer import build_specs_from_indicator_dir, load_source_map
+
+logger = logging.getLogger(__name__)
 
 
 BAGUA_SPEC = IndicatorSpec(
@@ -56,12 +60,11 @@ class IndicatorRegistry:
 
     def save(self, path: Path) -> None:
         path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "indicators": [s.to_dict() for s in self.list()],
         }
         # do not persist full formula text optionally huge — keep it
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_json(path, payload)
 
     @classmethod
     def load(cls, path: Path) -> "IndicatorRegistry":
@@ -77,6 +80,7 @@ class IndicatorRegistry:
         *,
         min60_available: bool = False,
         include_bagua: bool = True,
+        user_registry_path: Optional[Path] = None,
     ) -> "IndicatorRegistry":
         mapping = load_source_map(mapping_path)
         specs = build_specs_from_indicator_dir(
@@ -85,4 +89,20 @@ class IndicatorRegistry:
         reg = cls(specs)
         if include_bagua:
             reg.register(BAGUA_SPEC)
+        # user rules load after system specs so same-id user entries win
+        # (read-only merge; system bootstrap stays independent of RuleService)
+        if user_registry_path is not None:
+            upath = Path(user_registry_path)
+            if upath.exists():
+                try:
+                    user = cls.load(upath)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "user registry load failed (%s), system specs kept: %s",
+                        upath,
+                        e,
+                    )
+                else:
+                    for s in user.list():
+                        reg.register(s)
         return reg

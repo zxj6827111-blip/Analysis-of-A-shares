@@ -2917,6 +2917,51 @@ def _query_bagua_periods_for_code(
     return out
 
 
+def _note_reason(text: Any, limit: int = 80) -> str:
+    """把异常/失败原因压缩为 meta note 安全的单行文本。
+
+    换行与半角/全角分号会破坏 ``；``/``;`` 拼接的 note 与
+    ``indicator_review_placeholders`` 键值对，统一替换为全角逗号并截断。"""
+    s = " ".join(str(text or "").split())
+    s = s.replace(";", "，").replace("；", "，")
+    return s[:limit]
+
+
+_EXCEL_FORMULA_LEAD = ("=", "+", "-", "@")
+
+# openpyxl / XML 1.0 不允许的字符：C0（保留 \t\n\r）、\x7f、C1、U+FFFE/U+FFFF
+# 与孤立代理（UTF-8 编码必炸）。单元格清洗后再套公式前缀。
+_EXCEL_ILLEGAL_CHARS = frozenset(
+    [chr(c) for c in range(0x00, 0x09)]
+    + [chr(c) for c in range(0x0B, 0x0D)]
+    + [chr(c) for c in range(0x0E, 0x20)]
+    + [chr(c) for c in range(0x7F, 0xA0)]
+    + ["\ufffe", "\uffff"]
+) | frozenset(chr(c) for c in range(0xD800, 0xE000))
+
+_EXCEL_MAX_CELL_LEN = 32767
+
+
+def _excel_safe_cell(value: Any) -> Any:
+    """清洗 + 防 Excel 公式注入。
+
+    字符串先移除/替换 Excel 与 XML 非法的控制字符/非字符/孤立代理；以
+    ``=+-@`` 开头的先截到 32766 再加前缀单引号（保证含前缀后不超 32767），
+    其余截到 32767，使 openpyxl 落成普通文本（data_type='s'）而非公式。
+    数值/日期/None 原样返回。
+    """
+    if isinstance(value, str):
+        if any(ch in _EXCEL_ILLEGAL_CHARS for ch in value):
+            value = "".join(
+                "_" if ch in _EXCEL_ILLEGAL_CHARS else ch for ch in value
+            )
+        if value[:1] in _EXCEL_FORMULA_LEAD:
+            value = "'" + value[:_EXCEL_MAX_CELL_LEN - 1]
+        elif len(value) > _EXCEL_MAX_CELL_LEN:
+            value = value[:_EXCEL_MAX_CELL_LEN]
+    return value
+
+
 def _display_width(value: Any) -> float:
     """Approx cell width: CJK / full-width chars count as 2 units."""
     s = "" if value is None else str(value)
@@ -3070,6 +3115,62 @@ def _export_sheet_rows(
     return sheet_rows, first_week_row, first_month_rows
 
 
+def _compute_rules_for_export(
+    cfg: AStockConfig,
+    asof: int,
+    rule_ids: Sequence[str],
+    *,
+    codes: Optional[Sequence[str]] = None,
+    on_progress: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """导出侧即时计算信号规则命中（勾选了周五链未预计算的规则时）。
+
+    包装 run_weekly_review：persist=False（绝不读写 review_{asof}.json，
+    防污染周五链产物）；异常不外抛，降级为带 error_note 的 dict——
+    调用方据此跳过对应 sheet 并记 meta，导出不因此失败。
+    codes 传导出票池（全市场导出为 None 即全市场口径；「导出输入的
+    股票」只扫输入票，秒级）。
+    """
+    from .indicator_review import run_weekly_review
+
+    def _prog(info: Dict[str, Any]) -> None:
+        if on_progress is None:
+            return
+        try:
+            on_progress(
+                {
+                    # 导出 job 进度格式：period 文本标注阶段 + done/total
+                    "period": "信号计算",
+                    "period_index": 1,
+                    "period_count": 1,
+                    "done": info.get("done") or 0,
+                    "total": info.get("total") or 0,
+                    "ok_count": info.get("done") or 0,
+                    "error_count": 0,
+                    "message": info.get("message") or "",
+                }
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        return run_weekly_review(
+            cfg,
+            asof,
+            rule_ids=rule_ids,
+            codes=codes,
+            persist=False,
+            on_progress=_prog if on_progress is not None else None,
+        )
+    except Exception as e:  # noqa: BLE001
+        return {
+            "asof": int(asof),
+            "status": "error",
+            "error_note": f"即时计算失败（规则 {'、'.join(rule_ids)}）: {e}",
+            "rules": [],
+        }
+
+
 def export_bagua_multi_period_xlsx(
     cfg: AStockConfig,
     *,
@@ -3082,6 +3183,8 @@ def export_bagua_multi_period_xlsx(
     path: Optional[Path] = None,
     on_progress: Optional[Any] = None,
     rizhu_path: Optional[Path] = None,
+    review_rules: Optional[Sequence[str]] = None,
+    info_out: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """Export bagua in weekly_analysis stock-all layout, one sheet per pool.
 
@@ -3091,10 +3194,21 @@ def export_bagua_multi_period_xlsx(
       - ``etf-all``   : every ETF enumerated from the TDX local day files
     When the Friday EOD chain's indicator review
     (``storage/astock/indicator_review/review_{asof}.json``) is available,
-    two extra same-layout sheets are appended — ``735`` / ``5日外`` — each
-    holding the stocks whose TDX formula XG fired on the review date
+    extra same-layout sheets are appended — default ``735`` / ``5日外`` —
+    each holding the stocks whose TDX formula XG fired on the review date
     (intersected with the stock pool). Missing / no_go / stale review files
     skip these sheets and record the reason in meta (``indicator_review_*``).
+    ``review_rules`` customizes which signal rules are exported: ``None``
+    keeps the legacy behavior (all rules in the review JSON), ``[]`` exports
+    no signal sheets, and a list of rule ids selects sheets — ids missing
+    from the precomputed JSON are computed on the fly (never persisted, so
+    the Friday chain's review JSON is never overwritten).
+    Signal sheets clamp the review asof to the real data surface (request
+    beyond data coverage falls back to the last available day); rows, week /
+    month headers and month groups are generated from that same review asof,
+    while stock-all / etf-all keep the requested date. ``info_out`` (optional,
+    updated in place) receives ``query_date`` / ``review_asof_used`` /
+    ``review_fallback`` / ``review_note``.
     Manual ``codes`` are split by symbol type — stocks stay in ``stock-all``,
     index/ETF codes go to ``etf-all``.
 
@@ -3156,6 +3270,7 @@ def export_bagua_multi_period_xlsx(
     asof = _parse_ymd(date)
     # 月卦按查询日所在周的自然日归属上一已完成月份（非跨月周 1 组、跨月周 2 组）
     month_attrs = _month_attributions(asof)
+    month_groups = month_attrs  # 请求口径（meta 既有字段；信号 sheet 用 review_asof）
     month_asof = month_attrs[0]["cast_asof"]  # 主组（兼容 meta 既有字段）
     adj = normalize_adjust_mode(adjust)
     use_all = bool(all_stocks)
@@ -3233,36 +3348,238 @@ def export_bagua_multi_period_xlsx(
     )
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    pools: List[Tuple[str, List[str], bool]] = []
+    pools: List[Tuple[str, List[str], bool, int]] = []
     if stock_pool:
-        pools.append(("stock-all", stock_pool, False))
+        pools.append(("stock-all", stock_pool, False, asof))
     if etf_pool:
-        pools.append(("etf-all", etf_pool, True))
+        pools.append(("etf-all", etf_pool, True, asof))
 
-    # 指标复核 sheet（「735」「5日外」）：读取周五链产出的 review_{asof}.json，
+    # 指标复核 sheet（「735」「5日外」等）：读取周五链产出的 review_{asof}.json，
     # 票池 = 当日命中 ∩ stock_pool（保持 universe 顺序）。文件缺失/no_go/过期
     # 时不加 sheet，原因写入 meta（indicator_review_note），导出不因此失败。
+    #
+    # review_rules（卦象查询页勾选）：
+    # - None（未传）= 现状行为：读 JSON 全量追加其内所有规则（CLI/旧调用兼容）
+    # - [] = 明确不加任何信号 sheet
+    # - 非空 = 逐条合并：JSON 已预计算的规则直接用 matched（零计算成本）；
+    #   JSON 缺失的规则即时计算（_compute_rules_for_export，persist=False
+    #   绝不写 review_{asof}.json，防污染周五链产物）。即时计算失败（规则
+    #   不存在/编译失败/数据面 no_go）只跳过该规则并记入 meta，导出不失败。
     review_sheets: List[str] = []
     review_asof_used: Optional[int] = None
     review_note = ""
-    try:
-        from .indicator_review import load_review_for_export
+    review_fallback = False
+    review_rules_selected: Optional[List[str]] = None
+    review_rule_sources: Dict[str, str] = {}  # rule_id -> precomputed:{asof} / computed:{asof}
+    review_placeholders: Dict[str, str] = {}  # sheet -> 占位原因（error/no_go 兜底）
+    review_sheets_done: set = set()  # 已产出真实/占位 sheet 的 rule_id（防重复补表）
+    _reserved_sheets = {"meta", "stock-all", "etf-all"}
+    _used_sheets = set(_reserved_sheets) | {name for name, _p, _rn, _a in pools}
+    _ILLEGAL_SHEET_CHARS = set('[]:*?/\\')
 
-        _review, _rv_note = load_review_for_export(cfg, asof)
-        if _review is not None and _review.get("status") == "ok":
-            review_asof_used = int(_review.get("asof") or 0) or None
-            review_note = _rv_note or "ok"
-            _reserved_sheets = {"meta", "stock-all", "etf-all"}
-            for _rule in _review.get("rules", []):
-                _sheet = str(_rule.get("sheet") or _rule.get("rule_id") or "")
-                if not _sheet or _sheet in _reserved_sheets:
-                    continue
-                _hit = {str(m.get("code")) for m in (_rule.get("matched") or [])}
-                _rv_pool = [c for c in stock_pool if c in _hit]
-                pools.append((_sheet, _rv_pool, False))
-                review_sheets.append(_sheet)
+    def _unique_sheet_name(name: str, rule_id: str) -> str:
+        """规则 sheet 名冲突消解：显示名 sanitize/31 字符截断后可能撞车，
+        冲突时追加可读后缀（~规则ID，再退化 ~2、~3...），总长 ≤31 且合法；
+        保留名（meta/stock-all/etf-all）不参与生成。"""
+        if name not in _used_sheets:
+            _used_sheets.add(name)
+            return name
+        seed = "".join(
+            ch for ch in str(rule_id or "") if ch not in _ILLEGAL_SHEET_CHARS
+        ).strip()[:12]
+        if seed:
+            cand = name[: max(0, 31 - len(seed) - 1)] + "~" + seed
+            if cand not in _used_sheets:
+                _used_sheets.add(cand)
+                return cand
+        i = 2
+        while True:
+            suffix = "~%d" % i
+            cand = name[: max(0, 31 - len(suffix))] + suffix
+            if cand not in _used_sheets:
+                _used_sheets.add(cand)
+                return cand
+            i += 1
+
+    def _append_rule_sheet(rule: Dict[str, Any], source: str, src_asof: Any) -> None:
+        rid = str(rule.get("rule_id") or "")
+        sheet = str(rule.get("sheet") or rid or "")
+        if not sheet or sheet in _reserved_sheets:
+            return
+        # 预计算 JSON 可能来自旧版本（sheet 名未 sanitize）：统一过一遍
+        try:
+            from .indicator_review import _sanitize_sheet_name
+
+            sheet = _sanitize_sheet_name(sheet, rid)
+        except Exception:  # noqa: BLE001
+            pass
+        if not sheet or sheet in _reserved_sheets:
+            return
+        sheet = _unique_sheet_name(sheet, rid)
+        hit = {str(m.get("code")) for m in (rule.get("matched") or [])}
+        rv_pool = [c for c in stock_pool if c in hit]
+        # 该 sheet 的日期口径 = 命中数据源的实际基准日（预计算=复核文件日，
+        # 即时计算=计算返回日），保证成员日期与行内卦象/列头一致。
+        sheet_asof = int(src_asof) if src_asof else asof
+        pools.append((sheet, rv_pool, False, sheet_asof))
+        review_sheets.append(sheet)
+        review_rule_sources[rid or sheet] = f"{source}:{src_asof}"
+        if rid:
+            review_sheets_done.add(rid)
+
+    def _append_placeholder_sheets(
+        rule_ids: Sequence[str], *, reason: str, src_asof: Any
+    ) -> None:
+        """error/no_go 兜底：勾选但最终无 sheet 的规则补空表（仅表头）。
+
+        保持 review_sheets/review_rule_sources 与真实 sheet 一致（source
+        用 placeholder），note 追加 placeholder:规则ID(原因)。原因先压成
+        单行并截断（≤80），避免分隔符 ``;``/换行把 meta 键值对截断。
+        """
+        nonlocal review_note
+        if not rule_ids:
+            return
+        try:
+            from .indicator_review import _sanitize_sheet_name, resolve_rule_sheet_names
+
+            names = resolve_rule_sheet_names(cfg, list(rule_ids))
+        except Exception:  # noqa: BLE001
+            _sanitize_sheet_name = None  # type: ignore[assignment]
+            names = {}
+        safe_reason = _note_reason(reason)
+        base_asof = int(src_asof) if src_asof else asof
+        parts: List[str] = []
+        seen_parts = set()
+        for rid in rule_ids:
+            if rid in review_sheets_done:
+                continue
+            raw_name = str(names.get(rid) or rid)
+            if _sanitize_sheet_name is not None:
+                try:
+                    raw_name = _sanitize_sheet_name(raw_name, rid)
+                except Exception:  # noqa: BLE001
+                    pass
+            sheet = _unique_sheet_name(raw_name, rid)
+            if not sheet or sheet in _reserved_sheets:
+                continue
+            pools.append((sheet, [], False, base_asof))
+            review_sheets.append(sheet)
+            review_rule_sources[rid] = f"placeholder:{base_asof}"
+            review_placeholders[sheet] = safe_reason
+            review_sheets_done.add(rid)
+            part = f"placeholder:{rid}({safe_reason})"
+            if part not in seen_parts:
+                seen_parts.add(part)
+                parts.append(part)
+        if parts:
+            review_note = (review_note + "；" + "；".join(parts)).strip("；")
+
+    try:
+        from .indicator_review import load_review_for_export, resolve_review_asof
+
+        select_ids: Optional[List[str]] = None
+        if review_rules is not None:
+            select_ids = list(
+                dict.fromkeys(
+                    str(r).strip() for r in review_rules if str(r).strip()
+                )
+            )
+            review_rules_selected = list(select_ids)
+
+        if select_ids == []:
+            # 明确不导出信号 sheet：不解析数据面、不读复核、不做即时计算
+            review_note = "select:未勾选任何信号规则"
         else:
-            review_note = _rv_note or "missing"
+            # 信号基准日先收敛到真实数据面（请求日超出数据覆盖时回退到
+            # 最后可用日）；主表/文件名仍按请求 asof，只有信号 sheet 回退。
+            resolved_asof, rv_fallback_note = resolve_review_asof(cfg, asof)
+            review, rv_note = load_review_for_export(cfg, resolved_asof)
+            review_ok = review is not None and review.get("status") == "ok"
+            if review_ok:
+                review_asof_used = int(review.get("asof") or 0) or resolved_asof
+                review_note = rv_note or "ok"
+                known_ids = {str(r.get("rule_id")) for r in review.get("rules") or []}
+                for _rule in review.get("rules", []):
+                    _rid = str(_rule.get("rule_id") or "")
+                    if select_ids is not None and _rid not in select_ids:
+                        continue  # JSON 有但未勾选
+                    _append_rule_sheet(_rule, "precomputed", review_asof_used)
+                missing_ids = [rid for rid in (select_ids or []) if rid not in known_ids]
+            else:
+                # 复核文件缺失/no_go/过期：仍先记下收敛后的基准日，供即时
+                # 计算与 meta 使用（修复即时计算时 indicator_review_asof 为空）
+                review_asof_used = resolved_asof
+                review_note = rv_note or "missing"
+                missing_ids = list(select_ids or [])
+            missing_ids = list(dict.fromkeys(missing_ids))
+            if missing_ids and stock_pool:
+                computed = _compute_rules_for_export(
+                    cfg, resolved_asof, missing_ids, codes=stock_pool,
+                    on_progress=on_progress,
+                )
+                if computed.get("status") == "ok":
+                    comp_asof = computed.get("asof")
+                    for _rule in computed.get("rules", []):
+                        _append_rule_sheet(_rule, "computed", comp_asof)
+                    if not review_ok:
+                        review_asof_used = int(comp_asof or resolved_asof)
+                    # 整体 ok 但某已选规则未产 sheet（缺行/名字被跳过等）：
+                    # 同样补占位空表，保证「勾了就有一张表」。
+                    _missing_after = [
+                        rid for rid in missing_ids if rid not in review_sheets_done
+                    ]
+                    if _missing_after:
+                        _append_placeholder_sheets(
+                            _missing_after,
+                            reason="computed_ok_no_sheet",
+                            src_asof=comp_asof or resolved_asof,
+                        )
+                    # 口径注明：预计算命中按周五链复核日（7 天回看），即时计算
+                    # 按导出日；两者不同天时明确写出，防跨日误读
+                    if review_ok and review_asof_used is not None and comp_asof != review_asof_used:
+                        review_note = (
+                            f"{review_note}；预计算规则按复核日 {review_asof_used}，"
+                            f"即时计算规则按导出日 {comp_asof}"
+                        )
+                    else:
+                        review_note = (
+                            f"{review_note}；未预计算的勾选规则已即时计算（asof={comp_asof}）"
+                        )
+                else:
+                    status = str(computed.get("status") or "")
+                    extra = _note_reason(computed.get("error_note") or "")
+                    if not extra and status == "no_go":
+                        extra = f"no_go:{_note_reason(computed.get('no_go_reason') or 'unknown')}"
+                    if extra:
+                        review_note = (review_note + "；" + extra).strip("；")
+                    if status in ("error", "no_go"):
+                        # 规则解析/整体计算失败：勾选规则补占位空 sheet
+                        # （仅表头），保证「勾了就有一张表」的用户语义。
+                        _ph_asof = (
+                            review_asof_used
+                            if review_asof_used is not None
+                            else resolved_asof
+                        )
+                        _append_placeholder_sheets(
+                            missing_ids,
+                            reason=computed.get("error_note")
+                            or computed.get("no_go_reason")
+                            or status,
+                            src_asof=_ph_asof,
+                        )
+            elif missing_ids:
+                # 导出票池为空（如只输入 ETF/指数）：_resolve_codes 会把空列表
+                # 当"未传"而回退全市场扫描，必须显式跳过即时计算。
+                review_note = (
+                    f"{review_note}；skip:导出票池为空，信号规则未计算"
+                ).strip("；")
+            # 回退说明追加在既有 note 之后（不覆盖 missing/fallback/no_go 前缀）
+            if rv_fallback_note:
+                review_fallback = True
+                review_note = f"{review_note}；{rv_fallback_note}"
+            # 复核文件按回看窗口命中更早日期（周末导出场景）也算回退
+            if review_ok and review_asof_used and int(review_asof_used) != int(asof):
+                review_fallback = True
     except Exception as _re:  # noqa: BLE001
         review_note = f"error:{_re}"
 
@@ -3273,31 +3590,52 @@ def export_bagua_multi_period_xlsx(
         "rizhu_hit": 0,
     }
     # 进度分母含复核 sheet 的重复行（命中票在 stock-all 之外再算一遍卦象）
-    total = sum(len(p) for _n, p, _r in pools)
-    query_pers = ["WEEK", "MONTH"]
-    asof_map: Dict[str, int] = {"WEEK": asof, "MONTH": month_asof}
-    # 跨月周的第二组月卦始终列出：周末（周五晚~周日）导出时其次月起卦月
-    # 尚未收官，按最新可得日线计算临时卦象——周报本就前瞻，口径由 meta
-    # note 注明，不再自动省略（用户语义：导出为接下来要交易的日子做准备）
-    if len(month_attrs) == 2:
-        query_pers.append(_EXPORT_MONTH2_KEY)
-        asof_map[_EXPORT_MONTH2_KEY] = month_attrs[1]["cast_asof"]
-    month_groups = month_attrs
+    total = sum(len(p) for _n, p, _r, _a in pools)
+
+    # 每张 sheet 独立的日期口径（主表=请求 asof；信号 sheet=review_asof）。
+    # 一张 sheet 内「查询日/月卦归属/周月列头」必须来自同一 spec。
+    _sheet_specs: Dict[int, Dict[str, Any]] = {}
+
+    def _sheet_spec(sheet_asof: int) -> Dict[str, Any]:
+        key = int(sheet_asof)
+        spec = _sheet_specs.get(key)
+        if spec is None:
+            attrs = _month_attributions(key)
+            qps = ["WEEK", "MONTH"]
+            amap: Dict[str, int] = {"WEEK": key, "MONTH": attrs[0]["cast_asof"]}
+            # 跨月周的第二组月卦始终列出：周末（周五晚~周日）导出时其次月
+            # 起卦月尚未收官，按最新可得日线计算临时卦象——周报本就前瞻，
+            # 口径由 meta note 注明，不再自动省略（用户语义：导出为接下来
+            # 要交易的日子做准备）
+            if len(attrs) == 2:
+                qps.append(_EXPORT_MONTH2_KEY)
+                amap[_EXPORT_MONTH2_KEY] = attrs[1]["cast_asof"]
+            spec = {
+                "asof": key,
+                "month_groups": attrs,
+                "month_asof": attrs[0]["cast_asof"],
+                "query_pers": qps,
+                "asof_map": amap,
+            }
+            _sheet_specs[key] = spec
+        return spec
+
     sheet_rows_by_name: Dict[str, List[List[Any]]] = {}
     first_rows: Dict[
         str, Tuple[Optional[Dict[str, Any]], List[Optional[Dict[str, Any]]]]
     ] = {}
     base_idx = 0
-    for sheet_name, pool, resolve_names in pools:
+    for sheet_name, pool, resolve_names, sheet_asof in pools:
+        spec = _sheet_spec(sheet_asof)
         rows, fw, fms = _export_sheet_rows(
             cfg,
             pool=pool,
-            asof=asof,
-            query_pers=query_pers,
+            asof=sheet_asof,
+            query_pers=spec["query_pers"],
             adjust=adj,
             session=session,
             calc=calc,
-            asof_map=asof_map,
+            asof_map=spec["asof_map"],
             rizhu_map=rizhu_map,
             on_progress=on_progress,
             base_idx=base_idx,
@@ -3313,14 +3651,17 @@ def export_bagua_multi_period_xlsx(
     wb = openpyxl.Workbook()
     from openpyxl.utils import get_column_letter
 
-    dual_month = len(month_groups) == 2
-    for si, (sheet_name, _pool, _rn) in enumerate(pools):
+    for si, (sheet_name, _pool, _rn, sheet_asof) in enumerate(pools):
+        sheet_month_groups = _sheet_spec(sheet_asof)["month_groups"]
+        dual_month = len(sheet_month_groups) == 2
         rows = sheet_rows_by_name[sheet_name]
         fw, fms = first_rows[sheet_name]
         ws = wb.active if si == 0 else wb.create_sheet(sheet_name)
         ws.title = sheet_name
+        # 无成员行的信号 sheet 也要用该 sheet 的 review_asof 生成列头，
+        # 不能用请求 asof（否则空表的周列头会指到请求周）
         week_label = _week_iso_label(
-            ((fw or {}).get("bar") or {}).get("end_date") or asof
+            ((fw or {}).get("bar") or {}).get("end_date") or sheet_asof
         )
         headers = [
             "code",
@@ -3336,7 +3677,7 @@ def export_bagua_multi_period_xlsx(
             "周·高岛易断",
             "周·倾向",
         ]
-        for gi, grp in enumerate(month_groups):
+        for gi, grp in enumerate(sheet_month_groups):
             fm = fms[gi] if gi < len(fms) else None
             month_label = _month_label(
                 ((fm or {}).get("bar") or {}).get("end_date") or grp["cast_asof"]
@@ -3348,18 +3689,18 @@ def export_bagua_multi_period_xlsx(
             title += ")"
             headers += [title, "爻辞解释", "月·高岛易断", "月·倾向"]
         headers.append("数据状态")
-        ws.append(headers)
+        ws.append([_excel_safe_cell(h) for h in headers])
         for cell in ws[1]:
             cell.font = Font(bold=True)
         # 倾向列与其对应的卦象组合列：双好标红、双差标绿（A股习惯），其余不标。
         # (倾向列索引, 组合列索引) —— 1-based，供 openpyxl 使用；周组固定，
         # 月组按组数动态（每组 4 列：组合/爻辞/高岛/倾向）
         CONSENSUS_COLS = [(12, 9)]
-        for gi in range(len(month_groups)):
+        for gi in range(len(sheet_month_groups)):
             combo_idx = 13 + 4 * gi
             CONSENSUS_COLS.append((combo_idx + 3, combo_idx))
         for row in rows:
-            ws.append(row)
+            ws.append([_excel_safe_cell(v) for v in row])
             r = ws.max_row
             for ci_label, ci_combo in CONSENSUS_COLS:
                 label = row[ci_label - 1] if len(row) >= ci_label else ""
@@ -3387,7 +3728,7 @@ def export_bagua_multi_period_xlsx(
                 ws.column_dimensions[letter].width = max(cur, 32)
 
     meta = wb.create_sheet("meta", 0)
-    meta.append(["key", "value"])
+    meta.append([_excel_safe_cell("key"), _excel_safe_cell("value")])
     for cell in meta[1]:
         cell.font = Font(bold=True)
     # 高岛覆盖度写入 meta，便于打开表格的人判断空白高岛列是"该爻无断语"还是"数据缺失"
@@ -3428,12 +3769,25 @@ def export_bagua_multi_period_xlsx(
         ("requested", totals["requested"]),
         ("stock_count", len(stock_pool)),
         ("etf_count", len(etf_pool)),
-        ("sheets", ",".join(name for name, _p, _r in pools)),
+        ("sheets", ",".join(name for name, _p, _r, _a in pools)),
         (
             "indicator_review_asof",
             review_asof_used if review_asof_used is not None else "",
         ),
+        ("indicator_review_query_date", asof),
         ("indicator_review_sheets", ",".join(review_sheets)),
+        (
+            "indicator_review_rules_selected",
+            ",".join(review_rules_selected) if review_rules_selected is not None else "(default)",
+        ),
+        (
+            "indicator_review_rule_sources",
+            ";".join(f"{k}={v}" for k, v in review_rule_sources.items()),
+        ),
+        (
+            "indicator_review_placeholders",
+            ";".join(f"{k}={v}" for k, v in review_placeholders.items()),
+        ),
         (
             "indicator_review_note",
             review_note
@@ -3463,7 +3817,20 @@ def export_bagua_multi_period_xlsx(
         ),
         ("exported_at", stamp),
     ]:
-        meta.append([k, v])
+        meta.append([_excel_safe_cell(k), _excel_safe_cell(v)])
 
     wb.save(out)
+    # 原地填充导出摘要（旧调用不接返回值，必须就地更新同一 dict）
+    if info_out is not None:
+        try:
+            info_out.update(
+                {
+                    "query_date": asof,
+                    "review_asof_used": review_asof_used,
+                    "review_fallback": bool(review_fallback),
+                    "review_note": review_note,
+                }
+            )
+        except Exception:  # noqa: BLE001
+            pass
     return out
