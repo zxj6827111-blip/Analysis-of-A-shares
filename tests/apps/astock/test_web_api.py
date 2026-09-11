@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import tests.apps.astock.conftest  # noqa: F401
@@ -61,6 +65,475 @@ def test_api_health_and_rules(tmp_path: Path):
     page = client.get("/")
     assert page.status_code == 200
     assert "回测" in page.text
+
+
+def _rules_client(tmp_path: Path):
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    storage = tmp_path / "st"
+    ind = tmp_path / "ind"
+    ind.mkdir(parents=True, exist_ok=True)
+    storage.mkdir(parents=True, exist_ok=True)
+    cfg = get_default_config(storage_root=storage, indicator_dir=ind)
+    return TestClient(create_app(cfg)), cfg
+
+
+def test_rules_patch_recomputes_formula_state(tmp_path: Path):
+    client, _cfg = _rules_client(tmp_path)
+    created = client.post(
+        "/api/v1/rules",
+        json={
+            "name": "回踩",
+            "formula_text": "XG:C>0;",
+            "description": "初版",
+            "category": "趋势",
+        },
+    )
+    assert created.status_code == 200, created.text
+    rid = created.json()["id"]
+    assert created.json()["description"] == "初版"
+    assert created.json()["category"] == "趋势"
+
+    m60 = 'DIF60:="MACD.DIF#MIN60";\nXG:C>0 AND DIF60>0;'
+    patched = client.patch(
+        f"/api/v1/rules/{rid}",
+        json={
+            "name": "回踩改",
+            "formula_text": m60,
+            "description": "新版",
+            "category": "低吸",
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    body = patched.json()
+    assert body["name"] == "回踩改"
+    assert body["dependencies"] == ["MIN60"]
+    assert body["min60_day_proxy"] is True
+    assert body["failure_reason"]
+    assert body["description"] == "新版"
+    assert body["category"] == "低吸"
+
+    got = client.get(f"/api/v1/rules/{rid}").json()
+    assert got["description"] == "新版" and got["category"] == "低吸"
+    row = next(r for r in client.get("/api/v1/rules").json() if r["id"] == rid)
+    assert row["description"] == "新版" and row["category"] == "低吸"
+    assert row["min60_day_proxy"] is True
+
+    back = client.patch(
+        f"/api/v1/rules/{rid}", json={"formula_text": "XG:C>0;"}
+    ).json()
+    assert back["dependencies"] == []
+    assert back["min60_day_proxy"] is False
+    assert not back["failure_reason"]
+    assert back["description"] == "新版" and back["category"] == "低吸"
+
+
+def test_rules_categories_get_post_idempotent_and_validation(tmp_path: Path):
+    client, cfg = _rules_client(tmp_path)
+    # 静态路径先于 GET /{rule_id} 注册：必须返回列表而非 404 rule not found
+    assert client.get("/api/v1/rules/categories").json() == {"categories": []}
+
+    r1 = client.post("/api/v1/rules/categories", json={"name": "趋势"})
+    assert r1.status_code == 200 and r1.json() == {"categories": ["趋势"]}
+    # 重复幂等
+    r2 = client.post("/api/v1/rules/categories", json={"name": "趋势"})
+    assert r2.status_code == 200 and r2.json() == {"categories": ["趋势"]}
+    r3 = client.post("/api/v1/rules/categories", json={"name": "低吸"})
+    assert r3.json() == {"categories": ["趋势", "低吸"]}
+    assert client.get("/api/v1/rules/categories").json() == {
+        "categories": ["趋势", "低吸"]
+    }
+    path = Path(cfg.storage_root) / "indicators" / "rule_categories.json"
+    assert path.exists()
+
+    assert client.post(
+        "/api/v1/rules/categories", json={"name": "   "}
+    ).status_code == 400
+    assert client.post(
+        "/api/v1/rules/categories", json={"name": "x" * 21}
+    ).status_code == 400
+
+
+def test_rules_import_route_guards_and_basename(tmp_path: Path):
+    client, cfg = _rules_client(tmp_path)
+    ind = Path(cfg.indicator_dir)
+
+    ok = client.post(
+        "/api/v1/rules/import",
+        json={"filename": "导入公式.txt", "content": "XG:C>0;"},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json() == {"id": "txt_导入公式", "name": "导入公式"}
+    assert (ind / "导入公式.txt").read_text(encoding="utf-8") == "XG:C>0;"
+
+    dup = client.post(
+        "/api/v1/rules/import",
+        json={"filename": "导入公式.txt", "content": "XG:C>1;"},
+    )
+    assert dup.status_code == 400 and "已存在" in dup.json()["detail"]
+
+    # 路径穿越：取 basename，不得写出指标目录
+    trav = client.post(
+        "/api/v1/rules/import",
+        json={"filename": "..\\evil.txt", "content": "XG:C>0;"},
+    )
+    assert trav.status_code == 200, trav.text
+    assert (ind / "evil.txt").exists()
+    assert not (tmp_path / "evil.txt").exists()
+
+    assert client.post(
+        "/api/v1/rules/import", json={"filename": "pkg.tn6", "content": "x"}
+    ).status_code == 400
+    assert client.post(
+        "/api/v1/rules/import", json={"filename": "note.md", "content": "x"}
+    ).status_code == 400
+    assert client.post(
+        "/api/v1/rules/import", json={"filename": "empty.txt", "content": " "}
+    ).status_code == 400
+
+
+def test_rules_batch_validate_route_summary(tmp_path: Path):
+    client, cfg = _rules_client(tmp_path)
+    created = client.post(
+        "/api/v1/rules", json={"name": "ok规则", "formula_text": "XG:C>0;"}
+    ).json()
+    (Path(cfg.indicator_dir) / "broken.txt").write_text(
+        "MA5:=MA(C,5);\n", encoding="utf-8"
+    )
+    (Path(cfg.indicator_dir) / "pkg.tn6").write_bytes(b"pkg")
+
+    r = client.post(
+        "/api/v1/rules/batch-validate",
+        json={"ids": [created["id"], "txt_broken", "tn6_pkg", "nope"]},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["summary"] == {"total": 4, "ok": 1, "failed": 3}
+    by_id = {x["id"]: x for x in body["results"]}
+    assert by_id[created["id"]]["ok"] is True
+    assert by_id["txt_broken"]["ok"] is False
+    assert by_id["tn6_pkg"]["ok"] is False and by_id["tn6_pkg"]["error"]
+    assert by_id["nope"]["ok"] is False
+
+    # ids 缺省 = 全量
+    all_body = client.post("/api/v1/rules/batch-validate", json={}).json()
+    s = all_body["summary"]
+    assert s["total"] >= 4
+    assert s["ok"] == s["total"] - s["failed"]
+
+
+# --- 安全回归：HTTP 层路径穿越 / 长度上限 / 请求体大小 -----------------------
+
+
+def test_rules_update_delete_reject_backslash_traversal(tmp_path: Path):
+    client, cfg = _rules_client(tmp_path)
+    created = client.post(
+        "/api/v1/rules", json={"name": "穿越防护", "formula_text": "XG:C>0;"}
+    ).json()
+    rid = created["id"]
+
+    sentinel = tmp_path / "xxx.txt"
+    sentinel.write_text("SENTINEL", encoding="utf-8")
+    before = {p.name for p in tmp_path.iterdir()}
+
+    evil = "user_..%5C..%5C..%5Cxxx"
+    patched = client.patch(f"/api/v1/rules/{evil}", json={"formula_text": "XG:C>1;"})
+    assert patched.status_code in (400, 404), patched.text
+    deleted = client.delete(f"/api/v1/rules/{evil}?permanent=true")
+    assert deleted.status_code in (400, 404), deleted.text
+
+    assert sentinel.read_text(encoding="utf-8") == "SENTINEL"
+    assert {p.name for p in tmp_path.iterdir()} == before
+    user_dir = Path(cfg.storage_root) / "indicators" / "user"
+    assert (user_dir / f"{rid}.txt").exists()
+
+
+def test_rules_patch_alias_writes_canonical_file(tmp_path: Path):
+    client, cfg = _rules_client(tmp_path)
+    created = client.post(
+        "/api/v1/rules", json={"name": "user_HTTP别名", "formula_text": "XG:C>0;"}
+    ).json()
+    canonical = created["id"]
+
+    patched = client.patch(
+        "/api/v1/rules/user_HTTP别名", json={"formula_text": "XG:C>1;"}
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["id"] == canonical
+
+    user_dir = Path(cfg.storage_root) / "indicators" / "user"
+    assert (user_dir / f"{canonical}.txt").read_text(
+        encoding="utf-8"
+    ).strip() == "XG:C>1;"
+
+
+def test_rules_payload_length_limits(tmp_path: Path):
+    client, _cfg = _rules_client(tmp_path)
+    assert client.post(
+        "/api/v1/rules", json={"name": "x" * 65, "formula_text": "XG:C>0;"}
+    ).status_code == 422
+    assert client.post(
+        "/api/v1/rules",
+        json={"name": "ok", "formula_text": "XG:C>0;", "description": "d" * 501},
+    ).status_code == 422
+    assert client.post(
+        "/api/v1/rules",
+        json={"name": "ok", "formula_text": "XG:C>0;", "category": "c" * 21},
+    ).status_code == 422
+
+    rid = client.post(
+        "/api/v1/rules", json={"name": "边界", "formula_text": "XG:C>0;"}
+    ).json()["id"]
+    assert client.patch(
+        f"/api/v1/rules/{rid}", json={"name": "n" * 65}
+    ).status_code == 422
+    assert client.patch(
+        f"/api/v1/rules/{rid}", json={"category": "c" * 21}
+    ).status_code == 422
+    assert client.post(
+        "/api/v1/rules/batch-validate", json={"ids": ["r"] * 201}
+    ).status_code == 422
+    # 边界内仍正常
+    assert client.patch(
+        f"/api/v1/rules/{rid}", json={"name": "n" * 64, "category": "c" * 20}
+    ).status_code == 200
+
+
+def test_oversized_request_body_rejected_413(tmp_path: Path):
+    client, _cfg = _rules_client(tmp_path)
+    big = "x" * (2 * 1024 * 1024 + 1)
+    r = client.post(
+        "/api/v1/rules/validate", json={"formula_text": big, "name": "t"}
+    )
+    assert r.status_code == 413, r.text
+    # GET 不受影响
+    assert client.get("/api/v1/health").status_code == 200
+
+
+def test_rules_body_limits_import_reaches_service(tmp_path: Path):
+    """/rules 小上限 2MB：513KB 到达业务层（服务层 512KB -> 400），>2MB 413。"""
+    client, _cfg = _rules_client(tmp_path)
+    over_service = "x" * (513 * 1024)
+    r = client.post(
+        "/api/v1/rules/import",
+        json={"filename": "big513.txt", "content": over_service},
+    )
+    assert r.status_code == 400, r.text
+    assert "512KB" in str(r.json().get("detail"))
+    under_service = "XG:C>0;\n" + "x" * (500 * 1024)
+    ok = client.post(
+        "/api/v1/rules/import",
+        json={"filename": "ok500.txt", "content": under_service},
+    )
+    assert ok.status_code == 200, ok.text
+    huge = "x" * (2 * 1024 * 1024 + 10)
+    assert client.post(
+        "/api/v1/rules/import",
+        json={"filename": "huge.txt", "content": huge},
+    ).status_code == 413
+
+
+def test_chunked_rules_body_rejected_411_413(tmp_path: Path):
+    """无 Content-Length 的 chunked 请求不得绕过 /rules 的 2MB 上限。"""
+    client, _cfg = _rules_client(tmp_path)
+
+    def _gen():
+        yield b'{"formula_text": "'
+        yield b"XG:C>0;"
+        yield b'", "name": "t"}'
+
+    r = client.post("/api/v1/rules/validate", content=_gen())
+    assert r.status_code in (411, 413), (r.status_code, r.text)
+
+    # 明确无 body（既无 CL 也无 TE）不误伤：由路由层 422，而非中间件 411/413
+    lenient = client.post("/api/v1/rules/batch-validate")
+    assert lenient.status_code not in (411, 413), lenient.text
+
+
+def test_large_body_allowed_outside_rules_paths(tmp_path: Path):
+    """>2MB 非 rules 路径不再被 2MB 中间件误伤（宽松 64MB 上限）。"""
+    from fastapi.testclient import TestClient
+
+    storage = tmp_path / "st"
+    ind = tmp_path / "ind"
+    ind.mkdir(parents=True, exist_ok=True)
+    storage.mkdir(parents=True, exist_ok=True)
+    cfg = get_default_config(storage_root=storage, indicator_dir=ind)
+    app = create_app(cfg)
+
+    @app.post("/api/v1/_probe_large_body")
+    def _probe_large_body(payload: dict = None):  # noqa: ANN001
+        return {"ok": True, "size": len((payload or {}).get("data") or "")}
+
+    client = TestClient(app)
+    big = "x" * (3 * 1024 * 1024)
+    r = client.post("/api/v1/_probe_large_body", json={"data": big})
+    assert r.status_code == 200, (r.status_code, r.text[:200])
+    assert r.json()["size"] == len(big)
+
+
+def test_rules_delete_hide_restore_via_api(tmp_path: Path):
+    client, _cfg = _rules_client(tmp_path)
+    imp = client.post(
+        "/api/v1/rules/import",
+        json={"filename": "API隐藏.txt", "content": "XG:C>0;"},
+    ).json()
+    rid = imp["id"]
+    assert rid.startswith("txt_")
+
+    deleted = client.delete(f"/api/v1/rules/{rid}?permanent=true")
+    assert deleted.status_code == 200, deleted.text
+    body = deleted.json()
+    assert body["id"] == rid and body["deleted"] is False and body["mode"] == "hide"
+    assert rid not in {x["id"] for x in client.get("/api/v1/rules").json()}
+    full = {x["id"]: x for x in client.get("/api/v1/rules?include_hidden=true").json()}
+    assert full[rid]["hidden"] is True
+
+    restored = client.post(f"/api/v1/rules/{rid}/restore")
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["hidden"] is False
+    assert rid in {x["id"] for x in client.get("/api/v1/rules").json()}
+
+
+def test_rules_unicode_ids_patch_delete_via_api(tmp_path: Path):
+    from urllib.parse import quote
+
+    client, _cfg = _rules_client(tmp_path)
+    for name in ("Café趋势", "テスト規則", "Кирилл", "한국규칙"):
+        created = client.post(
+            "/api/v1/rules", json={"name": name, "formula_text": "XG:C>0;"}
+        )
+        assert created.status_code == 200, created.text
+        rid = created.json()["id"]
+        url = quote(rid, safe="")
+        patched = client.patch(f"/api/v1/rules/{url}", json={"description": "d"})
+        assert patched.status_code == 200, (rid, patched.text)
+        deleted = client.delete(f"/api/v1/rules/{url}?permanent=true")
+        assert deleted.status_code == 200, (rid, deleted.text)
+        assert deleted.json()["mode"] == "hard"
+
+    sentinel = tmp_path / "sentinel.txt"
+    sentinel.write_text("SENTINEL", encoding="utf-8")
+    for evil in ("user_..%5C..%5C..%5Csentinel", "user_..%2e%2e%2f..%2fsentinel"):
+        assert client.patch(
+            f"/api/v1/rules/{evil}", json={"description": "x"}
+        ).status_code in (400, 404)
+        assert client.delete(
+            f"/api/v1/rules/{evil}?permanent=true"
+        ).status_code in (400, 404)
+    assert sentinel.read_text(encoding="utf-8") == "SENTINEL"
+
+
+def test_rule_illegal_unicode_name_sanitized(tmp_path: Path):
+    """x\\uffff 之类的规则名入口清洗为 `_`，列表/详情响应编码不炸。"""
+    client, _cfg = _rules_client(tmp_path)
+    r = client.post(
+        "/api/v1/rules", json={"name": "x\uffff", "formula_text": "XG:C>0;"}
+    )
+    assert r.status_code == 200, r.text
+    assert "\uffff" not in r.json()["name"]
+    listed = client.get("/api/v1/rules")
+    assert listed.status_code == 200
+    assert all("\uffff" not in x["name"] for x in listed.json())
+
+
+def test_bagua_export_review_rules_entry_validation(tmp_path: Path):
+    client, _cfg = _rules_client(tmp_path)
+    base = {
+        "date": "2026-08-28",
+        "periods": ["WEEK", "MONTH"],
+        "adjust": "tushare_qfq",
+        "all_stocks": False,
+        "codes": ["SSE.STK.600000"],
+    }
+    params = {"async_mode": "false"}
+    ctrl = dict(base, review_rules=["bad\x01id"])
+    assert client.post(
+        "/api/v1/bagua/export", json=ctrl, params=params
+    ).status_code == 400
+    too_many = dict(base, review_rules=["r"] * 201)
+    assert client.post(
+        "/api/v1/bagua/export", json=too_many, params=params
+    ).status_code == 400
+    too_long = dict(base, review_rules=["r" * 129])
+    assert client.post(
+        "/api/v1/bagua/export", json=too_long, params=params
+    ).status_code == 400
+    nonchar = dict(base, review_rules=["bad\ufffeid", "bad\uffffid"])
+    assert client.post(
+        "/api/v1/bagua/export", json=nonchar, params=params
+    ).status_code == 400
+    get_bad = client.get(
+        "/api/v1/bagua/export",
+        params={
+            "date": "2026-08-28",
+            "all_stocks": "false",
+            "codes": "600000",
+            "review_rules": "bad\x01id",
+        },
+    )
+    assert get_bad.status_code == 400
+    get_nonchar = client.get(
+        "/api/v1/bagua/export",
+        params={
+            "date": "2026-08-28",
+            "all_stocks": "false",
+            "codes": "600000",
+            "review_rules": "bad\uffffid",
+        },
+    )
+    assert get_nonchar.status_code == 400
+
+
+def test_legacy_index_escapes_rule_fields():
+    text = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    assert "function esc(" in text
+
+    m = re.search(r"function renderRules\(\)\s*\{", text)
+    assert m, "renderRules not found"
+    brace = text.index("{", m.start())
+    depth = 0
+    fn = ""
+    for j in range(brace, len(text)):
+        if text[j] == "{":
+            depth += 1
+        elif text[j] == "}":
+            depth -= 1
+            if depth == 0:
+                fn = text[m.start(): j + 1]
+                break
+    assert fn
+    for token in (
+        "esc(r.name)",
+        "esc(r.id)",
+        "esc(r.compile_status)",
+        "esc(r.failure_reason)",
+    ):
+        assert token in fn, token
+    assert 'esc(r.error || "校验失败")' in text
+    assert "esc(r.name || r.id)" in text
+    assert "esc(r.compile_status)" in text
+
+
+def test_legacy_index_script_node_syntax():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not available")
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    scripts = re.findall(r"<script[^>]*>(.*?)</script>", html, flags=re.I | re.S)
+    assert scripts
+    main = max(scripts, key=len)
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".js", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(main)
+        path = f.name
+    try:
+        proc = subprocess.run([node, "--check", path], capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+    finally:
+        Path(path).unlink(missing_ok=True)
 
 
 def test_backtest_request_to_dict_includes_entry_lag():
@@ -1131,3 +1604,46 @@ class _FakeCtx:
         self.sync_state = {}
         self.sync_proc = {}
         self.sync_lock = None
+
+
+def test_rules_min60_proxy_note_exposed(tmp_path: Path):
+    client, _cfg = _rules_client(tmp_path)
+    m60 = 'DIF60:="MACD.DIF#MIN60";\nXG:C>0 AND DIF60>0;'
+    created = client.post(
+        "/api/v1/rules", json={"name": "代理note", "formula_text": m60}
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["min60_proxy_note"]
+    listed = next(
+        r for r in client.get("/api/v1/rules").json()
+        if r["id"] == created.json()["id"]
+    )
+    assert listed["min60_proxy_note"] == created.json()["min60_proxy_note"]
+
+    plain = client.post(
+        "/api/v1/rules", json={"name": "普通note", "formula_text": "XG:C>0;"}
+    ).json()
+    assert plain["min60_proxy_note"] == ""
+
+
+def test_rules_min60_native_exposed_default_false(tmp_path: Path):
+    client, _cfg = _rules_client(tmp_path)
+    created = client.post(
+        "/api/v1/rules", json={"name": "原生标记", "formula_text": "XG:C>0;"}
+    )
+    assert created.status_code == 200, created.text
+    rid = created.json()["id"]
+    assert created.json()["min60_native"] is False
+
+    listed = next(r for r in client.get("/api/v1/rules").json() if r["id"] == rid)
+    assert listed["min60_native"] is False
+
+    detail = client.get(f"/api/v1/rules/{rid}").json()
+    assert detail["min60_native"] is False
+
+
+def test_rules_benchmark_profile_route_order(tmp_path: Path):
+    client, _cfg = _rules_client(tmp_path)
+    r = client.get("/api/v1/rules/benchmark-profile")
+    assert r.status_code == 200, r.text
+    assert r.json()["profile"]["profile_id"] == "rule_benchmark_v1"

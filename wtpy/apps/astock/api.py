@@ -15,12 +15,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import AStockConfig, get_default_config
 from .forecast.service import ForecastService
 from .service.backtest import BacktestService
-from .service.jobs import JobStore
+from .service.db import get_app_setting
+from .service.jobs import JobStore, resolve_bt_max_workers
 from .service.rules import RuleService
 from .version import get_version_string
 from .api_routes import (
@@ -57,6 +59,19 @@ _ALL_ROUTERS = (
 # thread and the CA auto-sync thread both persist to the same state file
 # (read-modify-write without a lock could lose updates or corrupt the JSON).
 _EOD_STATE_LOCK = threading.Lock()
+
+# Small JSON endpoints (/api/v1/rules) keep a tight cap (import has its own
+# 512KB service check); all other paths get a loose app-wide abuse guard so
+# xlsx / multipart uploads (weekly reports can exceed 2MB) are not rejected.
+_MAX_RULES_BODY_BYTES = 2 * 1024 * 1024
+_MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
+_LARGE_BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
+
+
+def _body_size_limit(path: str) -> int:
+    if path.startswith("/api/v1/rules"):
+        return _MAX_RULES_BODY_BYTES
+    return _MAX_REQUEST_BODY_BYTES
 
 
 def eod_sync_decide(
@@ -761,10 +776,49 @@ def create_app(cfg: Optional[AStockConfig] = None) -> FastAPI:
         title="AStock Backtest Console",
         version=get_version_string(),
     )
+
+    @app.middleware("http")
+    async def _reject_oversized_body(request, call_next):
+        if request.method in _LARGE_BODY_METHODS:
+            path = request.url.path
+            raw = request.headers.get("content-length")
+            if raw is None:
+                # No declared length: chunked bodies could bypass the small
+                # rules cap, so require Content-Length there. A request with
+                # neither header explicitly has no body and passes through.
+                if path.startswith("/api/v1/rules") and request.headers.get(
+                    "transfer-encoding"
+                ):
+                    return JSONResponse(
+                        {"detail": "Content-Length required for this endpoint"},
+                        status_code=411,
+                    )
+            else:
+                try:
+                    length = int(raw)
+                except ValueError:
+                    length = None
+                if length is not None:
+                    limit = _body_size_limit(path)
+                    if length > limit:
+                        return JSONResponse(
+                            {
+                                "detail": "request body too large "
+                                f"(max {limit // (1024 * 1024)}MB)"
+                            },
+                            status_code=413,
+                        )
+        return await call_next(request)
+
     app.state.astock = ApiContext(
         cfg=cfg,
         rules=RuleService(cfg),
-        jobs=JobStore(cfg),
+        jobs=JobStore(
+            cfg,
+            max_workers=resolve_bt_max_workers(
+                None, persisted=get_app_setting(cfg, "bt_max_workers")
+            ),
+        ),
         bt_svc=BacktestService(cfg),
         forecast=ForecastService(cfg),
     )

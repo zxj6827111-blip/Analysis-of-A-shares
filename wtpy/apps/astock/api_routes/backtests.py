@@ -1,6 +1,7 @@
 """Backtest + run routes."""
 from __future__ import annotations
 
+import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query
@@ -8,6 +9,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from ..service.backtest import BacktestRequest
+from ..service.db import get_app_setting, set_app_setting
+from ..service.jobs import HARD_MAX_BT_WORKERS, bt_max_workers_info
 from ..service.runs import (
     compare_runs,
     delete_run,
@@ -19,6 +22,10 @@ from ..service.runs import (
 from .context import ApiContext, get_ctx
 
 router = APIRouter()
+
+# 并发 PUT queue/config 时，串行化「DB 持久化 + 运行时线程池扩容」，
+# 防两个请求交错导致 DB 与运行时长期不一致。
+_QUEUE_CONFIG_LOCK = threading.Lock()
 
 class BacktestBody(BaseModel):
     rule_ids: List[str] = Field(default_factory=list)
@@ -198,6 +205,67 @@ def api_jobs_queue(ctx: ApiContext = Depends(get_ctx)) -> dict:
     """
     return jobs.queue_snapshot()
 
+
+def _parse_max_workers(raw: Any) -> int:
+    """Parse the queue-config body value into an int.
+
+    Integers, integral floats (e.g. ``3.0``) and numeric strings are accepted;
+    bool, fractional floats and other types raise ValueError.
+    """
+    if isinstance(raw, bool):
+        raise ValueError("bool is not an integer")
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        if not raw.is_integer():
+            raise ValueError("fractional max_workers")
+        return int(raw)
+    if isinstance(raw, str):
+        return int(raw.strip())
+    raise ValueError("max_workers is required")
+
+
+@router.get("/api/v1/backtests/queue/config")
+def api_backtest_queue_config(ctx: ApiContext = Depends(get_ctx)) -> dict:
+    """Current backtest concurrency settings.
+
+    Priority: persisted DB setting (see PUT below) > ``ASTOCK_BT_MAX_WORKERS``
+    > product default (6). ``source`` reports the winning layer; the DB value
+    always wins while present.
+    """
+    info = bt_max_workers_info(get_app_setting(ctx.cfg, "bt_max_workers"))
+    info["max_workers"] = ctx.jobs.max_workers
+    return info
+
+
+@router.put("/api/v1/backtests/queue/config")
+def api_update_backtest_queue_config(
+    payload: Dict[str, Any] = Body(...), ctx: ApiContext = Depends(get_ctx)
+) -> dict:
+    """Persist backtest concurrency and resize the live worker pool.
+
+    The DB setting takes priority over the ``ASTOCK_BT_MAX_WORKERS`` env var
+    (which remains a deployment-level default only). Values outside
+    [1, HARD_MAX_BT_WORKERS] are rejected with 400.
+    """
+    raw = payload.get("max_workers") if isinstance(payload, dict) else None
+    try:
+        n = _parse_max_workers(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            400, "max_workers must be an integer in [1, %d]" % HARD_MAX_BT_WORKERS
+        ) from None
+    if not 1 <= n <= HARD_MAX_BT_WORKERS:
+        raise HTTPException(
+            400, "max_workers must be an integer in [1, %d]" % HARD_MAX_BT_WORKERS
+        )
+    with _QUEUE_CONFIG_LOCK:
+        set_app_setting(ctx.cfg, "bt_max_workers", str(n))
+        effective = ctx.jobs.set_max_workers(n)
+    info = bt_max_workers_info(str(n))
+    info["max_workers"] = effective
+    return info
+
 @router.get("/api/v1/backtests/jobs")
 def api_jobs(limit: int = Query(50, ge=1, le=200), ctx: ApiContext = Depends(get_ctx)) -> List[dict]:
     cfg = ctx.cfg
@@ -329,6 +397,34 @@ def api_delete_backtest_run(
         raise HTTPException(400, str(e)) from e
     except Exception as e:
         raise HTTPException(500, str(e)) from e
+
+@router.get("/api/v1/backtests/{run_id}/signal-returns")
+def api_run_signal_returns(
+    run_id: str,
+    horizon: int = Query(5, ge=1, le=60, description="forward trading days (5=one week)"),
+    plane: str = Query("tushare_qfq", description="raw | tushare_qfq"),
+    force: bool = Query(False, description="ignore the cached result"),
+    ctx: ApiContext = Depends(get_ctx),
+) -> dict:
+    """Forward returns of the stocks this run picked (信号周涨幅).
+
+    Entry = signal-date close, exit = close ``horizon`` trading days later on
+    the forward-adjusted plane. Cached in the run folder, invalidated when
+    signals.csv changes.
+    """
+    from ..service.signal_returns import compute_signal_forward_returns
+
+    try:
+        return compute_signal_forward_returns(
+            ctx.cfg, run_id, horizon=horizon, plane=plane, force=force
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from None
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:
+        raise HTTPException(500, str(e)) from e
+
 
 @router.get("/api/v1/backtests/{run_id}/bagua-metrics")
 def api_run_bagua_metrics(run_id: str, ctx: ApiContext = Depends(get_ctx)) -> dict:

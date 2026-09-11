@@ -31,6 +31,9 @@ class BaguaExportBody(BaseModel):
     periods: Optional[List[str]] = None  # DAY/WEEK/MONTH multi-sheet
     adjust: str = "tushare_qfq"
     limit: Optional[int] = None
+    # 信号规则勾选（卦象查询页导出）：None=默认行为（读周五链复核 JSON 全量），
+    # []=不带信号 sheet，非空=按勾选规则导出（未预计算的即时计算）
+    review_rules: Optional[List[str]] = None
 
 class BaguaSameGuaBody(BaseModel):
     code: str
@@ -44,6 +47,36 @@ class BaguaSameRizhuBody(BaseModel):
     code: str
     scope: Optional[List[str]] = None
     limit: Optional[int] = None
+
+_MAX_REVIEW_RULES = 200
+_MAX_REVIEW_RULE_ID_LEN = 128
+
+
+def _bq_validate_review_rules(review_rules: Optional[List[str]]) -> None:
+    """review_rules 勾选入口校验：数量/长度/控制字符（含 C1、非字符与孤立代理）。"""
+    if review_rules is None:
+        return
+    if len(review_rules) > _MAX_REVIEW_RULES:
+        raise HTTPException(
+            400, f"review_rules 数量超限（最多 {_MAX_REVIEW_RULES} 条）"
+        )
+    for raw in review_rules:
+        rid = str(raw)
+        if len(rid) > _MAX_REVIEW_RULE_ID_LEN:
+            raise HTTPException(
+                400,
+                f"review_rules 规则 ID 过长（最多 {_MAX_REVIEW_RULE_ID_LEN} 字符）",
+            )
+        for ch in rid:
+            code = ord(ch)
+            if (
+                code < 32
+                or 0x7F <= code <= 0x9F
+                or 0xD800 <= code <= 0xDFFF
+                or code in (0xFFFE, 0xFFFF)
+            ):
+                raise HTTPException(400, "review_rules 含非法控制字符")
+
 
 def _bq_normalize_periods(
     period: Optional[str] = None,
@@ -90,6 +123,7 @@ def _bq_run_export_job(ctx: ApiContext, job_id: str, params: Dict[str, Any]) -> 
                 f"（成功 {info.get('ok_count', 0)} / 失败 {info.get('error_count', 0)}）"
             )
 
+    info: Dict[str, Any] = {}
     try:
         path = export_bagua_multi_period_xlsx(
             cfg,
@@ -100,6 +134,8 @@ def _bq_run_export_job(ctx: ApiContext, job_id: str, params: Dict[str, Any]) -> 
             all_stocks=bool(params.get("all_stocks")),
             limit=params.get("limit"),
             on_progress=_prog,
+            review_rules=params.get("review_rules"),
+            info_out=info,
         )
         with _bq_export_lock:
             job = _bq_export_jobs.get(job_id)
@@ -109,6 +145,10 @@ def _bq_run_export_job(ctx: ApiContext, job_id: str, params: Dict[str, Any]) -> 
                 job["path"] = str(path)
                 job["filename"] = path.name
                 job["message"] = "导出完成"
+                job["query_date"] = info.get("query_date")
+                job["review_asof_used"] = info.get("review_asof_used")
+                job["review_fallback"] = bool(info.get("review_fallback"))
+                job["review_note"] = info.get("review_note") or ""
     except Exception as e:
         with _bq_export_lock:
             job = _bq_export_jobs.get(job_id)
@@ -126,6 +166,7 @@ def _bq_start_export_job(
     codes: Optional[List[str]],
     all_stocks: bool,
     limit: Optional[int],
+    review_rules: Optional[List[str]] = None,
 ) -> dict:
     cfg = ctx.cfg
     _bq_export_jobs = ctx.bq_export_jobs
@@ -144,6 +185,11 @@ def _bq_start_export_job(
         "all_stocks": all_stocks,
         "codes_count": len(codes or []) if codes else None,
         "limit": limit,
+        "review_rules": review_rules,
+        "query_date": None,
+        "review_asof_used": None,
+        "review_fallback": False,
+        "review_note": "",
         "path": None,
         "filename": None,
         "error": None,
@@ -165,6 +211,7 @@ def _bq_start_export_job(
         "codes": codes,
         "all_stocks": all_stocks,
         "limit": limit,
+        "review_rules": review_rules,
     }
     t = _bq_threading.Thread(
         target=_bq_run_export_job,
@@ -181,6 +228,22 @@ def _bq_should_async(all_stocks: bool, codes: Optional[List[str]], limit: Option
         return True
     n = len(codes or [])
     return n > 50
+def _bq_export_file_response(path: Path, info: Dict[str, Any]) -> FileResponse:
+    """同步导出响应：附信号复核基准日/回退说明响应头（note 用 URL 编码）。"""
+    from urllib.parse import quote as _quote
+
+    asof_used = info.get("review_asof_used")
+    note = str(info.get("review_note") or "")
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=path.name,
+        headers={
+            "X-Bagua-Review-AsOf": str(asof_used) if asof_used else "",
+            "X-Bagua-Review-Note": _quote(note, safe=""),
+            "X-Bagua-Review-Fallback": "1" if info.get("review_fallback") else "0",
+        },
+    )
 
 def _bq_same_gua_should_async(scope: Optional[List[str]]) -> bool:
     """Full-market same-hexagram scan takes minutes -> background job."""
@@ -732,19 +795,22 @@ def api_bagua_export(
 
     if not payload.all_stocks and not payload.codes:
         raise HTTPException(400, "codes or all_stocks required")
+    _bq_validate_review_rules(payload.review_rules)
     periods = _bq_normalize_periods(payload.period, payload.periods)
     use_async = async_mode and _bq_should_async(
         payload.all_stocks, payload.codes, payload.limit
     )
     if use_async:
-        return _bq_start_export_job(ctx, 
+        return _bq_start_export_job(ctx,
             date=payload.date,
             periods=periods,
             adjust=payload.adjust,
             codes=payload.codes,
             all_stocks=payload.all_stocks,
             limit=payload.limit,
+            review_rules=payload.review_rules,
         )
+    info: Dict[str, Any] = {}
     try:
         path = export_bagua_multi_period_xlsx(
             cfg,
@@ -754,6 +820,8 @@ def api_bagua_export(
             codes=payload.codes,
             all_stocks=payload.all_stocks,
             limit=payload.limit,
+            review_rules=payload.review_rules,
+            info_out=info,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -761,11 +829,7 @@ def api_bagua_export(
         raise HTTPException(404, str(e)) from e
     except Exception as e:
         raise HTTPException(500, f"bagua export failed: {e}") from e
-    return FileResponse(
-        path,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=path.name,
-    )
+    return _bq_export_file_response(path, info)
 
 @router.get("/api/v1/bagua/export")
 def api_bagua_export_get(
@@ -779,6 +843,10 @@ def api_bagua_export_get(
     codes: Optional[str] = Query(None, description="comma-separated codes if not all_stocks"),
     limit: Optional[int] = Query(None, ge=1),
     async_mode: bool = Query(True, description="full-market -> background job"),
+    review_rules: Optional[str] = Query(
+        None,
+        description="comma-separated signal rule ids; empty string = no signal sheets",
+    ),
 
     ctx: ApiContext = Depends(get_ctx),
 ):
@@ -794,17 +862,24 @@ def api_bagua_export_get(
         code_list = [c.strip() for c in codes.replace(";", ",").split(",") if c.strip()]
     if not all_stocks and not code_list:
         raise HTTPException(400, "codes or all_stocks required")
+    # review_rules 未出现在 query（None）= 默认行为；空串/空列表 = 不带信号 sheet
+    rule_list: Optional[List[str]] = None
+    if review_rules is not None:
+        rule_list = [r.strip() for r in review_rules.replace(";", ",").split(",") if r.strip()]
+    _bq_validate_review_rules(rule_list)
     periods = _bq_normalize_periods(period, None)
     use_async = async_mode and _bq_should_async(all_stocks, code_list, limit)
     if use_async:
-        return _bq_start_export_job(ctx, 
+        return _bq_start_export_job(ctx,
             date=date,
             periods=periods,
             adjust=adjust,
             codes=code_list,
             all_stocks=all_stocks,
             limit=limit,
+            review_rules=rule_list,
         )
+    info: Dict[str, Any] = {}
     try:
         path = export_bagua_multi_period_xlsx(
             cfg,
@@ -814,6 +889,8 @@ def api_bagua_export_get(
             codes=code_list,
             all_stocks=all_stocks,
             limit=limit,
+            review_rules=rule_list,
+            info_out=info,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -821,11 +898,7 @@ def api_bagua_export_get(
         raise HTTPException(404, str(e)) from e
     except Exception as e:
         raise HTTPException(500, f"bagua export failed: {e}") from e
-    return FileResponse(
-        path,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=path.name,
-    )
+    return _bq_export_file_response(path, info)
 
 @router.get("/api/v1/bagua/export/jobs")
 def api_bagua_export_jobs_list(ctx: ApiContext = Depends(get_ctx)) -> dict:

@@ -97,6 +97,8 @@ def test_api_calendar_and_full_market_flag(tmp_path: Path):
     assert 2024 in body["years"]
     assert body["min_date"] == 20240102
     assert body["max_date"] == 20241231
+    # 无法获知真实数据面时 data_max_date 回退为 max_date
+    assert body["data_max_date"] == 20241231
 
     u = client.get("/api/v1/universe/summary")
     assert u.status_code == 200
@@ -112,6 +114,77 @@ def test_api_calendar_and_full_market_flag(tmp_path: Path):
     from wtpy.apps.astock.api import STATIC_DIR
 
     assert "startYear" in (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+
+def test_calendar_range_data_max_date_lags_calendar_end(tmp_path: Path, monkeypatch):
+    """data_max_date 取真实数据最后日（20240630），max_date 仍是日历末日。"""
+    import numpy as np
+    import pytest
+
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from wtpy.apps.astock.api import create_app
+    from wtpy.apps.astock.config import get_default_config
+    from wtpy.apps.astock.data.dataset_store import (
+        DatasetManifest,
+        DatasetStore,
+        SymbolRecord,
+    )
+
+    storage = tmp_path / "st"
+    storage.mkdir()
+    md = tmp_path / "md"
+    md.mkdir()
+    monkeypatch.setenv("MARKET_DATA_ROOT", str(md))
+    (storage / "calendar.json").write_text(
+        json.dumps({"dates": [20240102, 20240630, 20241231]}),
+        encoding="utf-8",
+    )
+    cfg = get_default_config(storage_root=storage)
+
+    store = DatasetStore(md)
+    dates = np.array([20240102, 20240630], dtype=np.int64)
+    close = np.array([10.0, 11.0])
+    sha = store.store_bar_arrays(
+        "SSE.STK.600000",
+        {
+            "trade_date": dates,
+            "open": close,
+            "high": close,
+            "low": close,
+            "close": close,
+            "volume": np.ones(2),
+            "amount": np.ones(2),
+        },
+    )
+    store.publish(
+        DatasetManifest(
+            dataset_id="tushare_none_1d_20240630_test",
+            source="tushare",
+            adjustment="none",
+            period="1d",
+            status="ready",
+            data_cutoff_date=20240630,
+            symbols=[
+                SymbolRecord(
+                    symbol="SSE.STK.600000",
+                    blob_sha256=sha,
+                    first_date=20240102,
+                    last_date=20240630,
+                    row_count=2,
+                    quality="ok",
+                )
+            ],
+            symbol_count=1,
+            row_count=2,
+        )
+    )
+
+    client = TestClient(create_app(cfg))
+    body = client.get("/api/v1/calendar/range").json()
+    assert body["max_date"] == 20241231
+    assert body["data_max_date"] == 20240630
 
 
 def _publish_raw_base(store, symbols: dict) -> None:

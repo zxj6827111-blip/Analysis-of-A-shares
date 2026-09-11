@@ -13,7 +13,9 @@ router = APIRouter()
 @router.get("/api/v1/experiments/presets")
 def api_experiment_presets(ctx: ApiContext = Depends(get_ctx)) -> dict:
     cfg = ctx.cfg
+    from ..service.db import get_app_setting
     from ..service.experiments import GUA_PRESETS, WEEKDAY_TEMPLATES
+    from ..service.jobs import HARD_MAX_BT_WORKERS, bt_max_workers_info
     from ..service.yao_rules import (
         HOLD_TEMPLATE_DAYS,
         DEMO_CODES,
@@ -23,6 +25,7 @@ def api_experiment_presets(ctx: ApiContext = Depends(get_ctx)) -> dict:
 
     man = load_yao_manifest()
     confirmed = manifest_rules(status=["confirmed"])
+    queue_cfg = bt_max_workers_info(get_app_setting(cfg, "bt_max_workers"))
     return {
         "gua_presets": [
             {"key": k, "label": v.get("label")} for k, v in GUA_PRESETS.items()
@@ -44,6 +47,8 @@ def api_experiment_presets(ctx: ApiContext = Depends(get_ctx)) -> dict:
         "hard_max_variants": __import__(
             "wtpy.apps.astock.service.experiments", fromlist=["HARD_MAX_VARIANTS"]
         ).HARD_MAX_VARIANTS,
+        "default_concurrency": queue_cfg["max_workers"],
+        "hard_max_concurrency": HARD_MAX_BT_WORKERS,
     }
 
 @router.post("/api/v1/experiments/estimate")
@@ -64,7 +69,7 @@ def api_experiment_estimate(payload: dict = Body(...), ctx: ApiContext = Depends
 @router.post("/api/v1/experiments")
 def api_create_experiment(payload: dict = Body(...), ctx: ApiContext = Depends(get_ctx)) -> dict:
     cfg = ctx.cfg
-    from ..service.experiments import create_experiment_from_grid
+    from ..service.experiments import clamp_concurrency, create_experiment_from_grid
     from ..data.dataset_binding import DatasetBindingError
 
     try:
@@ -85,7 +90,7 @@ def api_create_experiment(payload: dict = Body(...), ctx: ApiContext = Depends(g
             account_mode=payload.get("account_mode") or "portfolio",
             research_unadjusted=bool(payload.get("research_unadjusted")),
             max_variants=int(payload.get("max_variants") or 50),
-            concurrency=int(payload.get("concurrency") or 1),
+            concurrency=clamp_concurrency(payload.get("concurrency")),
             force=bool(payload.get("force")),
             note=str(payload.get("note") or ""),
             signal_weekdays_options=payload.get("signal_weekdays_options"),

@@ -3,7 +3,9 @@
 Design:
 - Submit always returns immediately with status ``queued``.
 - Up to ``max_workers`` dedicated worker threads pull jobs in order and run
-  them concurrently (default 6, hard cap 8; override via ASTOCK_BT_MAX_WORKERS).
+  them concurrently (default 6, hard cap 8; runtime-adjustable via
+  :meth:`JobStore.set_max_workers` with the persisted app setting winning
+  over the ASTOCK_BT_MAX_WORKERS env fallback).
 - Additional submits beyond capacity stay queued until a worker is free.
 - Queue order is FIFO by submit sequence; parallel slots fill from the head.
 """
@@ -27,11 +29,39 @@ DEFAULT_BT_MAX_WORKERS = 6
 HARD_MAX_BT_WORKERS = 8
 
 
-def resolve_bt_max_workers(explicit: Optional[int] = None) -> int:
-    """Resolve worker count: explicit arg > env ASTOCK_BT_MAX_WORKERS > default.
+class _WorkerRetire:
+    """Sentinel: exactly one worker should exit (resize-down).
+
+    Distinct from the ``None`` shutdown sentinel, which re-signals its peers
+    so the whole pool drains; retiring one extra worker must never cascade.
+    """
+
+    __slots__ = ()
+
+
+_WORKER_RETIRE = _WorkerRetire()
+
+
+def parse_env_bt_max_workers() -> Optional[int]:
+    """ASTOCK_BT_MAX_WORKERS parsed + clamped; None when unset or invalid."""
+    raw = (os.environ.get("ASTOCK_BT_MAX_WORKERS") or "").strip()
+    if not raw:
+        return None
+    try:
+        n = int(raw)
+    except ValueError:
+        return None
+    return max(1, min(n, HARD_MAX_BT_WORKERS))
+
+
+def resolve_bt_max_workers(
+    explicit: Optional[int] = None, persisted: Optional[str] = None
+) -> int:
+    """Resolve worker count: explicit > persisted DB > env > default.
 
     An explicit non-integer raises ValueError naming the parameter and the
-    valid range (the env var stays tolerant and falls back to the default).
+    valid range (env/persisted stay tolerant and fall back to the next
+    source). All results are clamped to [1, HARD_MAX_BT_WORKERS].
     """
     if explicit is not None:
         try:
@@ -42,15 +72,48 @@ def resolve_bt_max_workers(explicit: Optional[int] = None) -> int:
                 % (explicit, HARD_MAX_BT_WORKERS)
             ) from None
     else:
-        raw = (os.environ.get("ASTOCK_BT_MAX_WORKERS") or "").strip()
-        if raw:
+        n = None
+        if persisted is not None:
             try:
-                n = int(raw)
-            except ValueError:
-                n = DEFAULT_BT_MAX_WORKERS
-        else:
+                n = int(str(persisted).strip())
+            except (TypeError, ValueError):
+                n = None
+        if n is None:
+            n = parse_env_bt_max_workers()
+        if n is None:
             n = DEFAULT_BT_MAX_WORKERS
     return max(1, min(int(n or 1), HARD_MAX_BT_WORKERS))
+
+
+def bt_max_workers_info(persisted: Optional[str] = None) -> Dict[str, Any]:
+    """Effective concurrency + provenance for API payloads.
+
+    Priority matches :func:`resolve_bt_max_workers`: persisted DB setting >
+    ASTOCK_BT_MAX_WORKERS > default. ``source`` names the winning layer.
+    """
+    env = parse_env_bt_max_workers()
+    db_val: Optional[int] = None
+    if persisted is not None:
+        try:
+            db_val = int(str(persisted).strip())
+        except (TypeError, ValueError):
+            db_val = None
+    if db_val is not None:
+        n = max(1, min(db_val, HARD_MAX_BT_WORKERS))
+        source = "db"
+    elif env is not None:
+        n = env
+        source = "env"
+    else:
+        n = DEFAULT_BT_MAX_WORKERS
+        source = "default"
+    return {
+        "max_workers": n,
+        "hard_max_workers": HARD_MAX_BT_WORKERS,
+        "default_workers": DEFAULT_BT_MAX_WORKERS,
+        "env_override": env,
+        "source": source,
+    }
 
 
 @dataclass
@@ -77,17 +140,55 @@ class JobStore:
         self._jobs: Dict[str, JobRecord] = {}
         self._lock = threading.RLock()
         self._seq = 0
-        self._q: "queue.Queue[Optional[str]]" = queue.Queue()
+        self._worker_seq = 0
+        self._q: "queue.Queue[Any]" = queue.Queue()
         self._stop = threading.Event()
         self._workers: List[threading.Thread] = []
-        for i in range(self.max_workers):
-            t = threading.Thread(
-                target=self._worker_loop,
-                name=f"astock-bt-queue-worker-{i + 1}",
-                daemon=True,
-            )
-            t.start()
-            self._workers.append(t)
+        for _ in range(self.max_workers):
+            self._start_worker_unlocked()
+
+    def _start_worker_unlocked(self) -> threading.Thread:
+        """Start one worker; caller must hold ``self._lock``."""
+        self._worker_seq += 1
+        t = threading.Thread(
+            target=self._worker_loop,
+            name=f"astock-bt-queue-worker-{self._worker_seq}",
+            daemon=True,
+        )
+        t.start()
+        self._workers.append(t)
+        return t
+
+    def _prune_dead_workers_unlocked(self) -> None:
+        """Drop exited worker threads; caller must hold ``self._lock``."""
+        self._workers = [t for t in self._workers if t.is_alive()]
+
+    def set_max_workers(self, n: int) -> int:
+        """Resize the live worker pool, clamped to [1, HARD_MAX_BT_WORKERS].
+
+        Growing starts the missing number of threads. Shrinking posts one
+        retire sentinel per surplus worker; each sentinel retires exactly one
+        worker and is never re-signalled, so a resize-down cannot cascade like
+         the ``None`` shutdown sentinel. Returns the effective value.
+        """
+        if self._stop.is_set():
+            # shutdown 之后不得再扩容：新线程会在循环条件处立即退出
+            return self.max_workers
+        n = max(1, min(int(n), HARD_MAX_BT_WORKERS))
+        with self._lock:
+            self._prune_dead_workers_unlocked()
+            current = self.max_workers
+            if n == current:
+                return current
+            if n > current:
+                for _ in range(n - current):
+                    self._start_worker_unlocked()
+            else:
+                for _ in range(current - n):
+                    self._q.put_nowait(_WORKER_RETIRE)
+            self.max_workers = n
+            self._refresh_queue_messages_unlocked()
+        return n
 
     def _title_hint(self, req: BacktestRequest) -> str:
         ids = list(getattr(req, "rule_ids", None) or [])
@@ -215,6 +316,10 @@ class JobStore:
                     self._q.put_nowait(None)
                 except Exception:
                     pass
+                break
+            if job_id is _WORKER_RETIRE:
+                # Resize-down marker: retire this worker only, never cascade.
+                self._q.task_done()
                 break
             try:
                 self._execute_job(job_id)
@@ -430,12 +535,15 @@ class JobStore:
     def shutdown(self, wait: bool = False) -> None:
         """Stop workers (for tests). Daemon threads also exit with process."""
         self._stop.set()
-        for _ in self._workers:
+        with self._lock:
+            self._prune_dead_workers_unlocked()
+            workers = list(self._workers)
+        for _ in workers:
             try:
                 self._q.put_nowait(None)
             except Exception:
                 self._q.put(None)
         if wait:
-            for t in self._workers:
+            for t in workers:
                 if t.is_alive():
                     t.join(timeout=2.0)

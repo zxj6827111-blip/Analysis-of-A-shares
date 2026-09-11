@@ -2381,3 +2381,694 @@ def test_export_review_fallback_for_weekend_export(monkeypatch, tmp_path):
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert meta["indicator_review_asof"] == 20240112
     assert str(meta["indicator_review_note"]).startswith("fallback")
+
+
+# ---------------------------------------------------------------------------
+# review_rules 勾选（卦象查询页自定义信号规则导出）
+# ---------------------------------------------------------------------------
+
+def test_export_review_rules_none_keeps_legacy(monkeypatch, tmp_path):
+    """review_rules=None：现状行为——复核 JSON 内全部规则全量追加。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+    _write_review(
+        tmp_path, 20240115,
+        _review_payload(["SSE.STK.600000"], ["SSE.STK.000001"]),
+    )
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-15", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True, review_rules=None,
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "735" in wb.sheetnames and "5日外" in wb.sheetnames
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta["indicator_review_rules_selected"] == "(default)"
+    assert meta["indicator_review_sheets"] == "735,5日外"
+
+
+def test_export_review_rules_empty_excludes_sheets(monkeypatch, tmp_path):
+    """review_rules=[]：明确不带任何信号 sheet（纯卦象导出）。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+    _write_review(tmp_path, 20240115, _review_payload(["SSE.STK.600000"], []))
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-15", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True, review_rules=[],
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "735" not in wb.sheetnames and "5日外" not in wb.sheetnames
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert str(meta["indicator_review_note"]).startswith("select:")
+    assert meta["indicator_review_rules_selected"] in ("", None)
+
+
+def test_export_review_rules_filters_precomputed(monkeypatch, tmp_path):
+    """只勾 5日外：735 不出 sheet（JSON 有但未勾选被过滤），零即时计算。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+    _write_review(tmp_path, 20240115, _review_payload(["SSE.STK.600000"], ["SSE.STK.000001"]))
+    # 即时计算绝不能被触发（勾选全部来自预计算）
+    import wtpy.apps.astock.service.bagua_query as bq_mod
+
+    def _no_compute(*_a, **_k):
+        raise AssertionError("precomputed rules must not trigger on-the-fly compute")
+
+    monkeypatch.setattr(bq_mod, "_compute_rules_for_export", _no_compute)
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-15", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True,
+        review_rules=["txt_先跌后涨新版5日外"],
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "735" not in wb.sheetnames
+    assert "5日外" in wb.sheetnames
+    rows = list(wb["5日外"].iter_rows(min_row=2, values_only=True))
+    assert [r[0] for r in rows] == ["000001"]
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta["indicator_review_rules_selected"] == "txt_先跌后涨新版5日外"
+    assert (
+        meta["indicator_review_rule_sources"]
+        == "txt_先跌后涨新版5日外=precomputed:20240115"
+    )
+
+
+def test_export_review_rules_missing_rule_computed_on_fly(monkeypatch, tmp_path):
+    """勾选 JSON 没有的规则：即时计算补 sheet（persist=False 不写盘）。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+    _write_review(tmp_path, 20240115, _review_payload(["SSE.STK.600000"], []))
+
+    called = {}
+
+    def _fake_compute(cfg_, asof, rule_ids, *, codes=None, on_progress=None):
+        called["rule_ids"] = list(rule_ids)
+        called["codes"] = list(codes or [])
+        return {
+            "asof": asof,
+            "status": "ok",
+            "rules": [
+                {
+                    "rule_id": "user_demo",
+                    "sheet": "我的规则",
+                    "count": 1,
+                    "matched": [{"code": "SSE.STK.000001", "close": 5.9}],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(bq, "_compute_rules_for_export", _fake_compute)
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-15", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True,
+        review_rules=["txt_735金叉及趋势", "user_demo"],
+    )
+    import openpyxl
+
+    # 只把 JSON 缺的规则传给即时计算；codes 传导出票池
+    assert called["rule_ids"] == ["user_demo"]
+    assert called["codes"] == ["SSE.STK.600000", "SSE.STK.000001"]
+    wb = openpyxl.load_workbook(path)
+    assert "735" in wb.sheetnames  # 预计算规则照常出 sheet
+    assert "我的规则" in wb.sheetnames
+    rows = list(wb["我的规则"].iter_rows(min_row=2, values_only=True))
+    assert [r[0] for r in rows] == ["000001"]
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    sources = str(meta["indicator_review_rule_sources"])
+    assert "txt_735金叉及趋势=precomputed:20240115" in sources
+    assert "user_demo=computed:20240115" in sources
+    assert "即时计算" in str(meta["indicator_review_note"])
+
+
+def test_export_review_rules_no_review_json_computes_all(monkeypatch, tmp_path):
+    """无复核文件 + 勾选规则：全部走即时计算，导出不失败。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+
+    def _fake_compute(cfg_, asof, rule_ids, *, codes=None, on_progress=None):
+        return {
+            "asof": asof,
+            "status": "ok",
+            "rules": [
+                {
+                    "rule_id": "txt_735金叉及趋势",
+                    "sheet": "735",
+                    "count": 0,
+                    "matched": [],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(bq, "_compute_rules_for_export", _fake_compute)
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-15", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True,
+        review_rules=["txt_735金叉及趋势"],
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "735" in wb.sheetnames  # 0 命中也出表（同构表头）
+    assert wb["735"].max_row == 1
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert str(meta["indicator_review_note"]).startswith("missing")
+    assert "即时计算" in str(meta["indicator_review_note"])
+
+
+# ---------------------------------------------------------------------------
+# 信号 sheet 基准日回退（请求日超出数据覆盖 / 复核文件回看）
+# ---------------------------------------------------------------------------
+
+def _review_export_cfg_with_bars(
+    monkeypatch, tmp_path, *, data_end: int, surface_max: int
+):
+    """复核导出 mock：日线止于 data_end，L1 数据面截止 surface_max。"""
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+    cfg.calendar_path = tmp_path / "calendar.json"
+    days = [d for d in _weekday_ymds("2024-01-02", "2024-03-05") if d <= data_end]
+
+    def _fake_load(cfg_, std_code, source_key, asof=None, **_kw):
+        sel = [d for d in days if asof is None or d <= int(asof)]
+        return (
+            [DayBar(d, 6.27, 7.33, 5.90, 5.90, 1.0, 1.0) for d in sel],
+            dict(_DS_META_MOCK),
+        )
+
+    monkeypatch.setattr(bq, "_load_dataset_bars", _fake_load)
+
+    from wtpy.apps.astock.service import indicator_review as ir
+
+    monkeypatch.setattr(
+        ir,
+        "_resolve_formal_surface",
+        lambda _cfg: ({"formal_l1_id": "mock_l1", "max_date": surface_max}, ""),
+    )
+    return cfg
+
+
+def test_export_review_request_beyond_data_falls_back(monkeypatch, tmp_path):
+    """请求日 20240122 超出数据覆盖 20240115：信号 sheet 仍生成、按回退日。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _review_export_cfg_with_bars(
+        monkeypatch, tmp_path, data_end=20240115, surface_max=20240115
+    )
+    _write_review(tmp_path, 20240115, _review_payload(["SSE.STK.600000"], []))
+    info = {}
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-22", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True, info_out=info,
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "735" in wb.sheetnames
+    week_label = bq._week_iso_label(20240115)
+    headers = [c.value for c in wb["735"][1]]
+    assert headers[8] == f"周卦周线-组合({week_label})"
+    rows = list(wb["735"].iter_rows(min_row=2, values_only=True))
+    assert [r[0] for r in rows] == ["600000"]
+    assert rows[0][2] == "2024-01-15"  # 成员行日期 = 列头所在周
+    # 0 命中的空信号 sheet 的周列头也必须用回退日，而不是请求日所在周
+    empty_headers = [c.value for c in wb["5日外"][1]]
+    assert empty_headers[8] == f"周卦周线-组合({week_label})"
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta["indicator_review_asof"] == 20240115
+    assert meta["indicator_review_query_date"] == 20240122
+    note = str(meta["indicator_review_note"])
+    assert "fallback_date:请求 20240122 超出数据覆盖 20240115" in note
+    assert info == {
+        "query_date": 20240122,
+        "review_asof_used": 20240115,
+        "review_fallback": True,
+        "review_note": note,
+    }
+
+
+def test_export_review_uses_review_file_date_for_signal_sheet(monkeypatch, tmp_path):
+    """复核文件回看命中更早日期：信号 sheet 按文件日，主表按请求日。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _review_export_cfg_with_bars(
+        monkeypatch, tmp_path, data_end=20240122, surface_max=20240122
+    )
+    _write_review(tmp_path, 20240115, _review_payload(["SSE.STK.600000"], []))
+    info = {}
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-22", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True, info_out=info,
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    main_headers = [c.value for c in wb["stock-all"][1]]
+    signal_headers = [c.value for c in wb["735"][1]]
+    assert main_headers[8] == f"周卦周线-组合({bq._week_iso_label(20240122)})"
+    assert signal_headers[8] == f"周卦周线-组合({bq._week_iso_label(20240115)})"
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta["indicator_review_asof"] == 20240115
+    assert str(meta["indicator_review_note"]).startswith("fallback")
+    assert info["query_date"] == 20240122
+    assert info["review_asof_used"] == 20240115
+    assert info["review_fallback"] is True
+
+
+def test_export_info_out_no_signal_rules(monkeypatch, tmp_path):
+    """review_rules=[]：不解析数据面，info_out 的 review_asof_used 为 None。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+    info = {}
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-15", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True, review_rules=[], info_out=info,
+    )
+    assert path.exists()
+    assert info["query_date"] == 20240115
+    assert info["review_asof_used"] is None
+    assert info["review_fallback"] is False
+    assert str(info["review_note"]).startswith("select:")
+
+
+def test_export_review_rules_compute_error_only_notes(monkeypatch, tmp_path):
+    """即时计算失败（规则不存在等）：导出不失败，原因写入 meta；
+    勾选规则补占位空 sheet（只有表头）。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+
+    def _fake_compute(cfg_, asof, rule_ids, *, codes=None, on_progress=None):
+        return {
+            "asof": asof,
+            "status": "error",
+            "error_note": "即时计算失败（规则 user_bad）: KeyError",
+            "rules": [],
+        }
+
+    monkeypatch.setattr(bq, "_compute_rules_for_export", _fake_compute)
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-15", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True,
+        review_rules=["user_bad"],
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert wb.sheetnames == ["meta", "stock-all", "user_bad"]
+    assert wb["user_bad"].max_row == 1  # 占位空表（仅表头）
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    note = str(meta["indicator_review_note"])
+    assert "即时计算失败" in note
+    assert "placeholder:user_bad(" in note
+    assert meta["indicator_review_rules_selected"] == "user_bad"
+    assert meta["indicator_review_sheets"] == "user_bad"
+    assert "user_bad=placeholder:20240115" in str(
+        meta["indicator_review_rule_sources"]
+    )
+    assert "user_bad=" in str(meta["indicator_review_placeholders"])
+
+
+def test_export_review_rules_compute_no_go_placeholder_sheet(monkeypatch, tmp_path):
+    """即时计算 no_go（正式 L1 缺失）：同样补占位空 sheet，reason 用 no_go 原因。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+
+    def _fake_compute(cfg_, asof, rule_ids, *, codes=None, on_progress=None):
+        return {
+            "asof": asof,
+            "status": "no_go",
+            "no_go_reason": "no_formal_l1_product",
+            "rules": [
+                {"rule_id": "user_wait", "sheet": "user_wait", "count": 0,
+                 "matched": []}
+            ],
+        }
+
+    monkeypatch.setattr(bq, "_compute_rules_for_export", _fake_compute)
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-15", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True,
+        review_rules=["user_wait"],
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "user_wait" in wb.sheetnames
+    assert wb["user_wait"].max_row == 1
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    note = str(meta["indicator_review_note"])
+    assert "no_go:no_formal_l1_product" in note
+    assert "placeholder:user_wait(no_formal_l1_product)" in note
+    assert "user_wait=no_formal_l1_product" in str(
+        meta["indicator_review_placeholders"]
+    )
+
+
+def test_export_user_rule_from_user_registry_zero_hit_keeps_sheet(
+    monkeypatch, tmp_path
+):
+    """真实链路（不 mock registry）：用户规则只在 user_registry.json，
+    review_rules=[user_*] 且 0 命中时 sheet 仍存在（max_row==1），
+    不再因 KeyError 漏 sheet。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    from wtpy.apps.astock.config import get_default_config
+    from wtpy.apps.astock.service import indicator_review as ir
+    from wtpy.apps.astock.service.rules import RuleService
+
+    cfg = get_default_config(
+        storage_root=tmp_path / "st",
+        indicator_dir=tmp_path / "ind",
+        output_root=tmp_path / "out",
+    )
+    Path(cfg.storage_root).mkdir(parents=True, exist_ok=True)
+    Path(cfg.indicator_dir).mkdir(parents=True, exist_ok=True)
+
+    days = _weekday_ymds("2023-12-01", "2024-01-15")
+    bars = [DayBar(d, 6.27, 7.33, 5.90, 5.90, 1.0, 1.0) for d in days]
+    monkeypatch.setattr(
+        bq, "_load_dataset_bars", lambda *_a, **_k: (bars, dict(_DS_META_MOCK))
+    )
+    monkeypatch.setattr(
+        bq,
+        "BaguaPlaneSession",
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("no md")),
+    )
+    monkeypatch.setattr(
+        bq,
+        "_resolve_batch_codes",
+        lambda cfg_, codes=None, *, all_stocks=False: [
+            "SSE.STK.600000",
+            "SSE.STK.000001",
+        ],
+    )
+    monkeypatch.setattr(bq, "list_etf_std_codes", lambda cfg_: [])
+    monkeypatch.setattr(
+        ir,
+        "_resolve_formal_surface",
+        lambda _cfg: ({"formal_l1_id": "mock_l1", "max_date": 20240115}, ""),
+    )
+
+    svc = RuleService(cfg)
+    created = svc.create_rule(name="趋势回踩低吸", formula_text="XG:C>0;")
+    assert created["id"].startswith("user_")
+
+    info = {}
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg, date="2024-01-15", periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq", all_stocks=True,
+        review_rules=[created["id"]], info_out=info,
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "趋势回踩低吸" in wb.sheetnames, wb.sheetnames
+    assert wb["趋势回踩低吸"].max_row == 1
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert f"{created['id']}=computed:20240115" in str(
+        meta["indicator_review_rule_sources"]
+    )
+
+
+def test_export_review_rules_empty_stock_pool_skips_compute(monkeypatch, tmp_path):
+    """ETF-only（stock_pool 空）+ 未预计算规则：不得触发即时计算/全市场扫描，
+    note 写入 skip 说明，导出本体（meta+etf-all）成功。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+
+    etf_days = _weekday_ymds("2023-12-04", "2024-01-05")
+    etf_bars = [DayBar(d, 4.05, 4.12, 3.98, 4.06, 1.0, 1.0) for d in etf_days]
+    monkeypatch.setattr(
+        bq,
+        "_load_dataset_bars",
+        lambda *_a, **_k: (etf_bars, dict(_DS_META_MOCK)),
+    )
+    monkeypatch.setattr(
+        bq,
+        "BaguaPlaneSession",
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("no md")),
+    )
+
+    def _no_compute(*_a, **_k):
+        raise AssertionError("空 stock_pool 不得触发即时计算（全市场扫描）")
+
+    monkeypatch.setattr(bq, "_compute_rules_for_export", _no_compute)
+
+    cfg = SimpleNamespace(
+        bagua_json=JSON_PATH,
+        storage_root=tmp_path,
+        tdx_root=tmp_path,
+        market_data_root=tmp_path / "md",
+        forecast_root=tmp_path,
+        forecast_weekly_dir=tmp_path,
+        universe_path=tmp_path / "universe.json",
+        adj_root=tmp_path,
+    )
+    info = {}
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2024-01-15",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        codes=["sh510300"],
+        all_stocks=False,
+        review_rules=["txt_735金叉及趋势"],
+        info_out=info,
+    )
+    assert path.exists()
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert set(wb.sheetnames) == {"meta", "etf-all"}, wb.sheetnames
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert "skip:导出票池为空，信号规则未计算" in str(meta["indicator_review_note"])
+    assert meta["indicator_review_sheets"] in ("", None)
+    # info_out 语义：基准日可为 resolve 日，但 note 必须解释未计算
+    assert info["query_date"] == 20240115
+    assert info["review_asof_used"] == 20240115
+    assert "skip:导出票池为空" in str(info["review_note"])
+
+
+def test_export_duplicate_rule_sheet_names_not_overwritten(monkeypatch, tmp_path):
+    """两条规则显示名 sanitize 后撞车（31 字符截断）：两个 sheet 都必须存在
+    且各自内容正确；重复勾选同一规则只出一张 sheet。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+    from wtpy.apps.astock.service import indicator_review as ir
+
+    shared_prefix = "字" * 31
+    sheet_a = ir._sanitize_sheet_name(shared_prefix + "甲甲", "user_long_a")
+    sheet_b = ir._sanitize_sheet_name(shared_prefix + "乙乙", "user_long_b")
+    assert sheet_a == sheet_b == shared_prefix, "构造前提：截断后同名"
+    payload = {
+        "asof": 20240115,
+        "generated_at": "2024-01-15 19:00:00",
+        "status": "ok",
+        "no_go_reason": "",
+        "universe_size": 2,
+        "scanned": 2,
+        "error_count": 0,
+        "rules": [
+            {
+                "rule_id": "user_long_a",
+                "sheet": sheet_a,
+                "count": 1,
+                "matched": [{"code": "SSE.STK.600000", "close": 5.9}],
+            },
+            {
+                "rule_id": "user_long_b",
+                "sheet": sheet_b,
+                "count": 1,
+                "matched": [{"code": "SSE.STK.000001", "close": 5.9}],
+            },
+        ],
+    }
+    _write_review(tmp_path, 20240115, payload)
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2024-01-15",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        all_stocks=True,
+        review_rules=["user_long_a", "user_long_a", "user_long_b"],
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    signal_sheets = [n for n in wb.sheetnames if n not in ("meta", "stock-all")]
+    assert len(signal_sheets) == 2, wb.sheetnames
+    assert len(set(signal_sheets)) == 2
+    assert shared_prefix in signal_sheets
+    assert all(len(n) <= 31 for n in signal_sheets)
+    rows_by_sheet = {
+        n: [r[0] for r in wb[n].iter_rows(min_row=2, values_only=True)]
+        for n in signal_sheets
+    }
+    other = [n for n in signal_sheets if n != shared_prefix][0]
+    assert rows_by_sheet[shared_prefix] == ["600000"]
+    assert rows_by_sheet[other] == ["000001"]
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert str(meta["indicator_review_sheets"]).split(",") == signal_sheets
+    sources = str(meta["indicator_review_rule_sources"])
+    assert "user_long_a=precomputed:20240115" in sources
+    assert "user_long_b=precomputed:20240115" in sources
+
+
+# ---------------------------------------------------------------------------
+# Excel 注入防护 + 占位 note 安全化 + computed ok 无 sheet 兜底
+# ---------------------------------------------------------------------------
+
+
+def test_export_unsafe_sheet_names_sanitized_and_cells_not_formula(
+    monkeypatch, tmp_path
+):
+    """规则名 =1+1 / 含控制字符：sheet 名安全化，导出不抛异常；
+    meta 与信号 sheet 单元格不得落成公式（data_type != 'f'）。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+    payload = _review_payload(["SSE.STK.600000"], [])
+    payload["rules"] = [
+        {
+            "rule_id": "user_danger",
+            "sheet": "=1+1",
+            "count": 1,
+            "matched": [{"code": "SSE.STK.600000", "close": 5.9}],
+        },
+        {
+            "rule_id": "user_ctrl",
+            "sheet": "A\x01B",
+            "count": 0,
+            "matched": [],
+        },
+    ]
+    _write_review(tmp_path, 20240115, payload)
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2024-01-15",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        all_stocks=True,
+        review_rules=["user_danger", "user_ctrl"],
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "_1+1" in wb.sheetnames, wb.sheetnames
+    assert "A_B" in wb.sheetnames, wb.sheetnames
+    for name in ("meta", "_1+1", "A_B", "stock-all"):
+        for row in wb[name].iter_rows():
+            for cell in row:
+                assert cell.data_type != "f", (name, cell.coordinate, cell.value)
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert "user_danger=precomputed:20240115" in str(
+        meta["indicator_review_rule_sources"]
+    )
+
+
+def test_excel_safe_cell_cleans_controls_noncharacters_and_truncates():
+    """C0(除 tab/CR/LF)/C1/\\x7f/U+FFFE/U+FFFF/孤立代理清洗，超长截断；
+    公式前缀后总长不超过 32767；数值/日期/None 不受影响，=+-@ 前缀行为不回退。"""
+    from wtpy.apps.astock.service.bagua_query import _excel_safe_cell
+
+    assert _excel_safe_cell("a\x01b") == "a_b"
+    assert _excel_safe_cell("a\x7fb") == "a_b"
+    assert _excel_safe_cell("a\x85b") == "a_b"
+    assert _excel_safe_cell("a\ufffeb") == "a_b"
+    assert _excel_safe_cell("a\uffffb") == "a_b"
+    assert _excel_safe_cell("a\ud800b") == "a_b"
+    assert _excel_safe_cell("a\tb\nc\rd") == "a\tb\nc\rd"
+    assert _excel_safe_cell("x" * 40000) == "x" * 32767
+    assert len(_excel_safe_cell("=" + "x" * 40000)) == 32767
+    assert _excel_safe_cell("=" + "x" * 40000) == "'=" + "x" * 32765
+    assert _excel_safe_cell("=" + "x" * 32765) == "'=" + "x" * 32765
+    assert len(_excel_safe_cell("=" + "x" * 32766)) == 32767
+    assert _excel_safe_cell("x" * 32767) == "x" * 32767
+    assert _excel_safe_cell(None) is None
+    assert _excel_safe_cell(3.14) == 3.14
+    for lead in ("=", "+", "-", "@"):
+        assert _excel_safe_cell(lead + "x") == "'" + lead + "x"
+
+
+def test_export_placeholder_reason_single_line_and_truncated(monkeypatch, tmp_path):
+    """error reason 中的换行/分号会被压平替换并截断，避免 meta
+    键值对与 note 被分隔符截断。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+
+    def _fake_compute(cfg_, asof, rule_ids, *, codes=None, on_progress=None):
+        return {
+            "asof": asof,
+            "status": "error",
+            "error_note": "boom; line1\nline2 " + "x" * 200,
+            "rules": [],
+        }
+
+    monkeypatch.setattr(bq, "_compute_rules_for_export", _fake_compute)
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2024-01-15",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        all_stocks=True,
+        review_rules=["user_bad"],
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    ph = str(meta["indicator_review_placeholders"])
+    assert "user_bad=" in ph
+    reason = ph.split("user_bad=", 1)[1]
+    assert 0 < len(reason) <= 80, reason
+    assert "\n" not in reason and ";" not in reason
+    note = str(meta["indicator_review_note"])
+    assert "\n" not in note
+    assert "boom" in note
+
+
+def test_export_computed_ok_but_no_sheet_gets_placeholder(monkeypatch, tmp_path):
+    """即时计算整体 ok 但某已选规则未产 sheet：仍补占位空表。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+
+    def _fake_compute(cfg_, asof, rule_ids, *, codes=None, on_progress=None):
+        return {"asof": asof, "status": "ok", "rules": []}
+
+    monkeypatch.setattr(bq, "_compute_rules_for_export", _fake_compute)
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2024-01-15",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        all_stocks=True,
+        review_rules=["user_no_sheet"],
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    assert "user_no_sheet" in wb.sheetnames, wb.sheetnames
+    assert wb["user_no_sheet"].max_row == 1
+    meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
+    assert meta["indicator_review_sheets"] == "user_no_sheet"
+    assert "user_no_sheet=placeholder:" in str(
+        meta["indicator_review_rule_sources"]
+    )
+    assert "user_no_sheet=computed_ok_no_sheet" in str(
+        meta["indicator_review_placeholders"]
+    )
