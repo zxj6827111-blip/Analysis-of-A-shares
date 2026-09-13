@@ -89,6 +89,7 @@ def rule_to_public(spec: IndicatorSpec, *, include_formula: bool = False) -> Dic
     d = {
         "id": spec.id,
         "name": spec.name,
+        "version": spec.version,
         "description": str(params.get("description") or ""),
         "category": str(params.get("category") or ""),
         "kind": spec.kind,

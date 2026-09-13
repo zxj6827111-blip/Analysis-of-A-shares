@@ -1,0 +1,11 @@
+{735金叉及趋势}
+{来源=human; 类型=trend_following; 显式配对735金叉及趋势.tn6}
+{风格=balanced; 约3%止损、约8%止盈由回测参数 stop_loss/take_profit 落地，非公式内置}
+MA7:=MA(C,7);
+MA35:=MA(C,35);
+DEV:=(MA7-MA35)/MA35*100;
+UP7:=MA7>REF(MA7,1);
+UP35:=MA35>REF(MA35,1);
+TJ1:=CROSS(MA7,MA35) AND UP7 AND UP35;
+TJ2:=MA7>MA35 AND UP7 AND UP35 AND DEV<=2;
+XG:TJ1 OR TJ2;

@@ -23,6 +23,7 @@ from urllib.parse import unquote
 import pytest
 
 import tests.apps.astock.conftest  # noqa: F401
+from tests.apps.astock.export_layout import data_rows, header_values
 
 from wtpy.apps.astock.config import AStockConfig, get_default_config
 from wtpy.apps.astock.service.backtest import BacktestRequest
@@ -161,8 +162,8 @@ def test_queue_config_default_put_persist_restart_and_400(
             "env_override",
             "source",
         }
-        assert d["max_workers"] == DEFAULT_BT_MAX_WORKERS == 6
-        assert d["default_workers"] == 6
+        assert d["max_workers"] == DEFAULT_BT_MAX_WORKERS == 1
+        assert d["default_workers"] == 1
         assert d["hard_max_workers"] == HARD_MAX_BT_WORKERS == 8
         assert d["env_override"] is None
         assert d["source"] == "default"
@@ -208,7 +209,7 @@ def test_experiments_presets_concurrency_reflects_config(
     client = _make_client(app)
     try:
         body = client.get("/api/v1/experiments/presets").json()
-        assert body["default_concurrency"] == 6
+        assert body["default_concurrency"] == DEFAULT_BT_MAX_WORKERS == 1
         assert body["hard_max_concurrency"] == HARD_MAX_BT_WORKERS == 8
 
         client.put("/api/v1/backtests/queue/config", json={"max_workers": 4})
@@ -345,9 +346,9 @@ def test_missing_app_settings_table_tolerated_and_startup_default(
 
     app = _make_app(api_cfg)
     try:
-        assert app.state.astock.jobs.max_workers == 6
+        assert app.state.astock.jobs.max_workers == DEFAULT_BT_MAX_WORKERS == 1
         d = _make_client(app).get("/api/v1/backtests/queue/config").json()
-        assert d["max_workers"] == 6
+        assert d["max_workers"] == 1
         assert d["source"] == "default"
     finally:
         app.state.astock.jobs.shutdown(wait=True)
@@ -495,11 +496,11 @@ def test_calendar_range_data_max_date_lags_future_calendar(
 # ---------------------------------------------------------------------------
 
 
-def _review_payload(asof: int, matched_735=None, matched_5w=None) -> dict:
+def _review_payload(asof: int, matched_735=None, matched_5w=None, cfg=None) -> dict:
     def _matched(codes):
         return [{"code": c, "close": 5.9} for c in (codes or [])]
 
-    return {
+    payload = {
         "asof": int(asof),
         "generated_at": "2026-08-14 19:00:00",
         "status": "ok",
@@ -522,6 +523,19 @@ def _review_payload(asof: int, matched_735=None, matched_5w=None) -> dict:
             },
         ],
     }
+    # 规则指纹：真实注册表解析（导出复用的前置校验，缺指纹 = stale）
+    if cfg is not None:
+        from wtpy.apps.astock.service import indicator_review as ir
+
+        specs = ir._resolve_rules_for_fingerprint(cfg, list(ir.DEFAULT_REVIEW_RULES))
+        if specs is not None:
+            payload[ir._FP_RULE] = {
+                rid: ir._spec_fingerprint(sp) for rid, _s, sp in specs
+            }
+            payload[ir._FP_UNIVERSE] = "u"
+            payload[ir._FP_NAME] = "n"
+            payload[ir._FP_SURFACE] = "s"
+    return payload
 
 
 def _write_review(cfg: AStockConfig, asof: int, payload: dict) -> None:
@@ -591,14 +605,11 @@ def _mock_export_surface(
 
 
 def _export_cfg(tmp_path: Path) -> AStockConfig:
-    cfg = get_default_config(
-        storage_root=tmp_path / "st",
-        indicator_dir=tmp_path / "ind",
-        output_root=tmp_path / "out",
-    )
-    Path(cfg.storage_root).mkdir(parents=True, exist_ok=True)
-    Path(cfg.indicator_dir).mkdir(parents=True, exist_ok=True)
-    return cfg
+    """隔离 cfg：indicator_dir 为 tmp 下公式源副本（可解析默认复核公式，
+    且不依赖真实 指标/ ——CI 靠 tests/fixtures/formulas 同样可解析）。"""
+    from tests.apps.astock.conftest import isolated_formula_cfg
+
+    return isolated_formula_cfg(tmp_path)
 
 
 def test_export_signal_sheet_uses_review_file_after_surface_fallback(
@@ -610,7 +621,7 @@ def test_export_signal_sheet_uses_review_file_after_surface_fallback(
         pytest.skip("bagua_384.json missing")
     cfg = _export_cfg(tmp_path)
     _mock_export_surface(monkeypatch, cfg, surface_max=20260828)
-    _write_review(cfg, 20260814, _review_payload(20260814, ["SSE.STK.600000"], []))
+    _write_review(cfg, 20260814, _review_payload(20260814, ["SSE.STK.600000"], [], cfg=cfg))
 
     from wtpy.apps.astock.service import bagua_query as bq
 
@@ -628,16 +639,16 @@ def test_export_signal_sheet_uses_review_file_after_surface_fallback(
 
     wb = openpyxl.load_workbook(path)
     assert "735" in wb.sheetnames, "复核文件在窗口内时必须出信号 sheet"
-    rows = list(wb["735"].iter_rows(min_row=2, values_only=True))
+    rows = data_rows(wb["735"])
     assert [r[0] for r in rows] == ["600000"], "成员必须来自复核文件命中"
     assert rows[0][2] == "2026-08-14"
 
     # 成员行/行内卦象/周列头都取复核文件日（周标签一致）
     week_label = bq._week_iso_label(20260814)
-    headers_735 = [c.value for c in wb["735"][1]]
+    headers_735 = header_values(wb["735"])
     assert headers_735[8] == f"周卦周线-组合({week_label})"
     # 0 命中的空信号 sheet 列头也必须用回退日，而非请求日所在周
-    headers_5w = [c.value for c in wb["5日外"][1]]
+    headers_5w = header_values(wb["5日外"])
     assert headers_5w[8] == f"周卦周线-组合({week_label})"
 
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
@@ -663,7 +674,7 @@ def test_export_signal_sheet_stale_policy_observation(
         pytest.skip("bagua_384.json missing")
     cfg = _export_cfg(tmp_path)
     _mock_export_surface(monkeypatch, cfg, surface_max=20260828, review_max_age=7)
-    _write_review(cfg, 20260814, _review_payload(20260814, ["SSE.STK.600000"], []))
+    _write_review(cfg, 20260814, _review_payload(20260814, ["SSE.STK.600000"], [], cfg=cfg))
 
     from wtpy.apps.astock.service import bagua_query as bq
 
@@ -695,7 +706,7 @@ def test_bagua_export_sync_route_review_headers(tmp_path: Path, monkeypatch):
         pytest.skip("bagua_384.json missing")
     cfg = _export_cfg(tmp_path)
     _mock_export_surface(monkeypatch, cfg, surface_max=20260828)
-    _write_review(cfg, 20260814, _review_payload(20260814, ["SSE.STK.600000"], []))
+    _write_review(cfg, 20260814, _review_payload(20260814, ["SSE.STK.600000"], [], cfg=cfg))
 
     app = _make_app(cfg)
     try:
@@ -720,8 +731,7 @@ def test_bagua_export_sync_route_review_headers(tmp_path: Path, monkeypatch):
 
         wb = openpyxl.load_workbook(io.BytesIO(r.content))
         assert "735" in wb.sheetnames
-        rows = list(wb["735"].iter_rows(min_row=2, values_only=True))
-        assert [row[0] for row in rows] == ["600000"]
+        assert [row[0] for row in data_rows(wb["735"])] == ["600000"]
     finally:
         app.state.astock.jobs.shutdown(wait=False)
 
@@ -734,7 +744,7 @@ def test_bagua_export_async_job_review_fields(tmp_path: Path, monkeypatch):
         pytest.skip("bagua_384.json missing")
     cfg = _export_cfg(tmp_path)
     _mock_export_surface(monkeypatch, cfg, surface_max=20260828)
-    _write_review(cfg, 20260814, _review_payload(20260814, ["SSE.STK.600000"], []))
+    _write_review(cfg, 20260814, _review_payload(20260814, ["SSE.STK.600000"], [], cfg=cfg))
 
     app = _make_app(cfg)
     try:
@@ -822,7 +832,9 @@ def test_ui_default_date_prefers_data_max_date_and_no_hardcoded_calendar_end():
 
 def test_ui_bq_hint_review_fallback_text_function_exists_and_used():
     src = _v3_html()
-    assert src.count('id="bqHint"') == 1
+    # PLAN-BAGUA-UX-V1.1 整改后旧查询页 UI（含 #bqHint）已被工作台三页签替代；
+    # 本断言保留 bqExportReviewSuffix 及其两条导出路径调用链的代码级保护
+    assert src.count('id="bqHint"') == 0
     fn = _extract_js_function(src, "bqExportReviewSuffix")
     assert "review_asof_used" in fn
     assert "最后可用日" in fn

@@ -129,10 +129,13 @@ def tokenize(source: str) -> List[Token]:
             advance()
             continue
 
-        if ch == '"':
+        if ch in ('"', "'"):
+            # 通达信公式单双引号等价（NAMELIKE('ST') 等常用单引号），统一产出
+            # STRING token；是否跨周期引用由 _string_to_node 按「含 #」判定。
+            quote = ch
             advance()
             buf = []
-            while i < n and source[i] != '"':
+            while i < n and source[i] != quote:
                 buf.append(source[i])
                 advance()
             if i >= n:

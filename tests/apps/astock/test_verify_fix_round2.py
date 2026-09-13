@@ -25,6 +25,7 @@ from unittest.mock import patch
 import pytest
 
 import tests.apps.astock.conftest  # noqa: F401
+from tests.apps.astock.export_layout import data_rows
 from tests.apps.astock.conftest import requires_real_formulas  # noqa: F401
 
 from wtpy.apps.astock.config import AStockConfig, get_default_config
@@ -95,7 +96,9 @@ def test_round2_explicit_default_rule_ids_sheet_names_reversed_order(tmp_path):
     不得退化为完整 rule_id；顺序按传入顺序保留。"""
     from wtpy.apps.astock.service import indicator_review as ir
 
-    cfg = get_default_config(storage_root=tmp_path)
+    from tests.apps.astock.conftest import formula_cfg
+
+    cfg = formula_cfg(tmp_path)
     days = _weekdays("2026-06-01", "2026-08-28")
     bars = [DayBar(d, 10.0, 10.1, 9.9, 10.0, 1e6, 1e7) for d in days]
 
@@ -243,7 +246,7 @@ def test_round2_empty_stock_pool_skips_compute_and_full_market(tmp_path, monkeyp
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    assert set(wb.sheetnames) == {"meta", "etf-all"}, wb.sheetnames
+    assert set(wb.sheetnames) == {"meta", "index-all", "etf-all"}, wb.sheetnames
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     note = str(meta["indicator_review_note"])
     assert "skip:导出票池为空，信号规则未计算" in note
@@ -390,14 +393,13 @@ def test_round2_duplicate_sheet_names_from_compute_and_select_dedup(
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    signal_sheets = [n for n in wb.sheetnames if n not in ("meta", "stock-all")]
+    signal_sheets = [
+        n for n in wb.sheetnames if n not in ("meta", "stock-all", "index-all")
+    ]
     assert len(signal_sheets) == 2, wb.sheetnames
     assert len(set(signal_sheets)) == 2
     assert all(len(n) <= 31 for n in signal_sheets)
-    rows = {
-        n: [r[0] for r in wb[n].iter_rows(min_row=2, values_only=True)]
-        for n in signal_sheets
-    }
+    rows = {n: [r[0] for r in data_rows(wb[n])] for n in signal_sheets}
     by_members = {tuple(v): k for k, v in rows.items()}
     assert ("600000",) in by_members and ("000001",) in by_members
     assert by_members[("600000",)] != by_members[("000001",)]
@@ -458,7 +460,9 @@ def test_round2_duplicate_selection_precomputed_path_single_sheet(
     wb = openpyxl.load_workbook(path)
     assert "735" in wb.sheetnames
     assert [n for n in wb.sheetnames if n.startswith("735~")] == []
-    signal_sheets = [n for n in wb.sheetnames if n not in ("meta", "stock-all")]
+    signal_sheets = [
+        n for n in wb.sheetnames if n not in ("meta", "stock-all", "index-all")
+    ]
     assert signal_sheets == ["735"], wb.sheetnames
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert meta["indicator_review_rules_selected"] == "txt_735金叉及趋势"

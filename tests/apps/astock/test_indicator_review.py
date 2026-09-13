@@ -12,7 +12,7 @@ import json
 import pytest
 
 import tests.apps.astock.conftest  # noqa: F401
-from tests.apps.astock.conftest import requires_real_formulas  # noqa: F401
+from tests.apps.astock.conftest import formula_cfg, requires_real_formulas  # noqa: F401
 
 from wtpy.apps.astock.config import get_default_config
 from wtpy.apps.astock.data.tdx_reader import DayBar
@@ -90,7 +90,8 @@ def _ok_surface(cfg):
 
 
 def _cfg(tmp_path):
-    return get_default_config(storage_root=tmp_path)
+    # 公式目录：真实 指标/ 优先，仓库 fixture 兜底（CI 无 指标/ 也能跑）
+    return formula_cfg(tmp_path)
 
 
 @requires_real_formulas
@@ -284,10 +285,25 @@ def test_load_review_for_export_exact_and_fallback(tmp_path):
     # 无文件
     review, note = ir.load_review_for_export(cfg, ASOF)
     assert review is None and note.startswith("missing")
-    # 精确命中
+    # 精确命中（带规则指纹——指纹校验是导出复用的前置条件）。
+    # 用用户规则取指纹：不依赖 指标/ 或 tests/fixtures（CI 同样可解析）。
+    from wtpy.apps.astock.service.rules import RuleService
+
+    svc = RuleService(cfg)
+    rid = svc.create_rule(name="导出手纹", formula_text="XG:C>0;\n")["id"]
+    specs = ir._resolve_rules_for_fingerprint(cfg, [(rid, "导出手纹")])
+    assert specs is not None
     ir._atomic_write_json(
         ir.review_output_path(cfg, ASOF),
-        {"asof": ASOF, "status": "ok", "rules": []},
+        {
+            "asof": ASOF,
+            "status": "ok",
+            "rules": [],
+            ir._FP_RULE: {rid: ir._spec_fingerprint(sp) for rid, _s, sp in specs},
+            ir._FP_UNIVERSE: "u",
+            ir._FP_NAME: "n",
+            ir._FP_SURFACE: "s",
+        },
     )
     review, note = ir.load_review_for_export(cfg, ASOF)
     assert review is not None and note == ""
@@ -527,6 +543,52 @@ def test_resolve_review_asof_without_surface_keeps_request(tmp_path, monkeypatch
     eff, note = ir.resolve_review_asof(cfg, 20260910)
     assert eff == 20260910
     assert note == ""
+
+
+def test_review_persist_false_no_go_never_reuses_cached_ok(tmp_path, monkeypatch):
+    """persist=False + 数据面不可用：即使磁盘上已有 ok 复核缓存，
+    也必须原样返回 no_go，不得把周报缓存冒充本次临时计算结果。
+    （导出/筛选的即时计算走此路径，Plan-BAGUA-UX-V1.1 明确要求。）"""
+    cfg = _cfg(tmp_path)
+    # 预置一份 status=ok 的历史复核缓存
+    asof_key = ir.review_output_path(cfg, ASOF)
+    asof_key.parent.mkdir(parents=True, exist_ok=True)
+    asof_key.write_text(
+        json.dumps({"asof": ASOF, "status": "ok", "rules": []}),
+        encoding="utf-8",
+    )
+
+    def _bad_surface(_cfg):
+        return None, "no_formal_l1_product"
+
+    out = ir.run_weekly_review(
+        cfg,
+        asof=ASOF,
+        codes=["SSE.STK.600000"],
+        rule_ids=["user_x"],
+        persist=False,
+        surface_resolver=_bad_surface,
+    )
+    assert out["status"] == "no_go"
+    assert out["no_go_reason"] == "no_formal_l1_product"
+    assert out.get("reused") is None
+
+    # persist=True + 旧 ok 缺指纹（无法验证规则/池/名称快照）→ 不复用，
+    # 返回 no_go 而非把旧结果冒充本次结果（GPT6 复核约束：旧文件缺指纹
+    # 按无法验证处理，不能默认匹配）。
+    monkeypatch.setattr(
+        ir, "_resolve_formal_surface", lambda _cfg: (None, "no_formal_l1_product")
+    )
+    out2 = ir.run_weekly_review(
+        cfg,
+        asof=ASOF,
+        codes=["SSE.STK.600000"],
+        rule_ids=["user_x"],
+        persist=True,
+        surface_resolver=_bad_surface,
+    )
+    assert out2["status"] == "no_go"
+    assert out2.get("reused") is None
 
 
 @requires_real_formulas

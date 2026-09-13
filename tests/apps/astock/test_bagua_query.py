@@ -10,6 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
+import tests.apps.astock.conftest  # noqa: F401
+from tests.apps.astock.export_layout import data_rows, header_values, table_start
+
 from wtpy.apps.astock.bagua.calculator import BaguaCalculator
 from wtpy.apps.astock.data.tdx_reader import DayBar
 from wtpy.apps.astock.service import bagua_query as bq
@@ -1513,11 +1516,20 @@ def test_export_all_stocks_two_sheets_and_no_gua_symbol(monkeypatch, tmp_path):
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert meta.get("stock_count") == 1
     assert meta.get("etf_count") == 2
-    assert meta.get("sheets") == "stock-all,etf-all"
+    assert meta.get("index_count") == 9
+    assert meta.get("sheets") == "stock-all,index-all,etf-all"
+    # 大盘指数单独成表（9 个内置指数），不与 ETF/股票混放
+    assert "index-all" in wb.sheetnames
+    index_rows = data_rows(wb["index-all"])
+    assert len(index_rows) == 9, f"index-all 应有 9 行指数，实际 {len(index_rows)}"
+    assert {r[0] for r in index_rows} == {
+        "000001", "399001", "000300", "399300", "000016",
+        "000905", "000852", "399006", "000688",
+    }
 
 
 def test_export_etf_only_codes_skips_empty_stock_sheet(monkeypatch, tmp_path):
-    """手动 codes 全为 ETF：导出只有 etf-all + meta 两个 sheet（无空 stock-all）。"""
+    """手动 codes 全为 ETF：导出只有 etf-all + index-all + meta（无空 stock-all）。"""
     if not JSON_PATH.exists():
         pytest.skip("bagua_384.json missing")
 
@@ -1578,7 +1590,7 @@ def test_export_etf_only_codes_skips_empty_stock_sheet(monkeypatch, tmp_path):
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    assert set(wb.sheetnames) == {"meta", "etf-all"}, wb.sheetnames
+    assert set(wb.sheetnames) == {"meta", "index-all", "etf-all"}, wb.sheetnames
     ws_etf = wb["etf-all"]
     assert ws_etf.max_row >= 2
     etf_rows = list(ws_etf.iter_rows(min_row=2, values_only=True))
@@ -1661,7 +1673,9 @@ def test_export_mixed_codes_with_invalid_dropped(monkeypatch, tmp_path):
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    assert set(wb.sheetnames) == {"meta", "stock-all", "etf-all"}, wb.sheetnames
+    assert set(wb.sheetnames) == {
+        "meta", "stock-all", "index-all", "etf-all"
+    }, wb.sheetnames
     ws_stock = wb["stock-all"]
     ws_etf = wb["etf-all"]
     stock_rows = list(ws_stock.iter_rows(min_row=2, values_only=True))
@@ -1672,7 +1686,7 @@ def test_export_mixed_codes_with_invalid_dropped(monkeypatch, tmp_path):
     assert stock_rows[0][0] == "600000"
     assert etf_rows[0][0] == "510300"
     # "garbage" 未出现在任何 sheet 的 code 列
-    for ws in (ws_stock, ws_etf):
+    for ws in (ws_stock, wb["index-all"], ws_etf):
         codes_col = [str(r[0] or "") for r in ws.iter_rows(min_row=2, values_only=True)]
         assert "garbage" not in codes_col, f"{ws.title} code 列残留无效代码: {codes_col}"
     # 全表（含 name 等列）也不应残留 garbage 字样
@@ -1683,10 +1697,12 @@ def test_export_mixed_codes_with_invalid_dropped(monkeypatch, tmp_path):
                     pytest.fail(f"无效代码残留: {cell!r}")
 
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
-    assert meta.get("requested") == 2
+    # requested = 用户输入的 2 只 + 每次导出固定附带的 9 个大盘指数
+    assert meta.get("requested") == 11
     assert meta.get("stock_count") == 1
+    assert meta.get("index_count") == 9
     assert meta.get("etf_count") == 1
-    assert meta.get("sheets") == "stock-all,etf-all"
+    assert meta.get("sheets") == "stock-all,index-all,etf-all"
 
     # 更严格的回归场景：ETF + 仅无效代码（股票池全部无效）。
     # 修复前 "garbage" 会无过滤进入股票池，_resolve_batch_codes 对全无效
@@ -1702,7 +1718,7 @@ def test_export_mixed_codes_with_invalid_dropped(monkeypatch, tmp_path):
     assert path2.exists()
 
     wb2 = openpyxl.load_workbook(path2)
-    assert set(wb2.sheetnames) == {"meta", "etf-all"}, wb2.sheetnames
+    assert set(wb2.sheetnames) == {"meta", "index-all", "etf-all"}, wb2.sheetnames
     etf_rows2 = list(wb2["etf-all"].iter_rows(min_row=2, values_only=True))
     assert len(etf_rows2) == 1
     assert etf_rows2[0][0] == "510300"
@@ -1713,7 +1729,7 @@ def test_export_mixed_codes_with_invalid_dropped(monkeypatch, tmp_path):
     meta2 = {r[0]: r[1] for r in wb2["meta"].iter_rows(min_row=2, values_only=True)}
     assert meta2.get("stock_count") == 0
     assert meta2.get("etf_count") == 1
-    assert meta2.get("sheets") == "etf-all"
+    assert meta2.get("sheets") == "index-all,etf-all"
 
 
 # ---- 日柱补齐：上市日期推算 60 甲子 ----
@@ -2238,8 +2254,10 @@ def test_export_etf_pool_rejects_tampered_manifest_content(tmp_path, monkeypatch
 # 指标复核 sheet 集成（周五链 review_{asof}.json -> 「735」「5日外」两 sheet）
 # ---------------------------------------------------------------------------
 
-def _review_payload(matched_735, matched_5w):
-    return {
+def _review_payload(matched_735, matched_5w, *, with_fp=True):
+    from wtpy.apps.astock.service import indicator_review as _ir
+
+    payload = {
         "asof": 20240115,
         "generated_at": "2024-01-15 19:00:00",
         "status": "ok",
@@ -2262,6 +2280,32 @@ def _review_payload(matched_735, matched_5w):
             },
         ],
     }
+    if with_fp:
+        # 真实规则指纹（导出复用前置校验）；解析失败时跳过（对应测试
+        # 显式断言 stale 行为时传 with_fp=False）
+        try:
+            from wtpy.apps.astock.config import get_default_config as _gdc
+            from tests.apps.astock.conftest import formula_indicator_dir
+
+            _cfg = _gdc()
+            _src = formula_indicator_dir()
+            if _src is not None:
+                # CI 无真实 指标/（.gitignore）：公式目录落到仓库 fixture，
+                # 内容与真实一致（fixture 即从真实拷贝），指纹算出来相同
+                _cfg.indicator_dir = _src
+            specs = _ir._resolve_rules_for_fingerprint(
+                _cfg, list(_ir.DEFAULT_REVIEW_RULES)
+            )
+        except Exception:  # noqa: BLE001
+            specs = None
+        if specs is not None:
+            payload[_ir._FP_RULE] = {
+                rid: _ir._spec_fingerprint(sp) for rid, _s, sp in specs
+            }
+            payload[_ir._FP_UNIVERSE] = "u"
+            payload[_ir._FP_NAME] = "n"
+            payload[_ir._FP_SURFACE] = "s"
+    return payload
 
 
 def _write_review(tmp_path, asof, payload):
@@ -2276,6 +2320,11 @@ def _write_review(tmp_path, asof, payload):
 
 def _export_review_monkeypatch(monkeypatch, tmp_path):
     """全市场导出公共 mock：两只股票、无 ETF、卦象面走 _load_dataset_bars。"""
+    # 公式目录 = tmp 下公式源副本：既能解析默认复核公式（导出复用的指纹
+    # 校验走真实路径），又不写真实 指标/（CI 无 指标/ 时靠 fixtures 拷贝）
+    from tests.apps.astock.conftest import isolated_indicator_dir
+
+    _ind_dir = isolated_indicator_dir(tmp_path)
     stock_bars = [DayBar(20240115, 6.27, 7.33, 5.90, 5.90, 1.0, 1.0)]
 
     def _fake_load(cfg, std_code, source_key, asof=None, **_kw):
@@ -2296,7 +2345,7 @@ def _export_review_monkeypatch(monkeypatch, tmp_path):
         ],
     )
     monkeypatch.setattr(bq, "list_etf_std_codes", lambda cfg: [])
-    return SimpleNamespace(
+    cfg = SimpleNamespace(
         bagua_json=JSON_PATH,
         storage_root=tmp_path,
         tdx_root=tmp_path,
@@ -2305,7 +2354,11 @@ def _export_review_monkeypatch(monkeypatch, tmp_path):
         forecast_weekly_dir=tmp_path,
         universe_path=tmp_path / "universe.json",
         adj_root=tmp_path,
+        # 注册表路径（规则指纹校验用）：tmp 副本目录
+        indicator_dir=_ind_dir,
+        mapping_path=Path(_ind_dir) / "_no_tn6_map.json",
     )
+    return cfg
 
 
 def test_export_includes_indicator_review_sheets(monkeypatch, tmp_path):
@@ -2327,17 +2380,23 @@ def test_export_includes_indicator_review_sheets(monkeypatch, tmp_path):
     wb = openpyxl.load_workbook(path)
     assert "735" in wb.sheetnames and "5日外" in wb.sheetnames
     ws735 = wb["735"]
+    # 表头上方是规则说明区（名称/ID/来源/基准日/命中数/描述）
+    brief_keys = [ws735.cell(r, 1).value for r in range(1, table_start(ws735))]
+    assert "规则名称" in brief_keys and "信号基准日" in brief_keys
+    assert "命中只数" in brief_keys and "规则说明" in brief_keys, brief_keys
+    assert ws735.cell(1, 2).value  # 规则名称非空
     # 与 stock-all 同构表头（非跨月周 17 列）
-    assert len([c.value for c in ws735[1]]) == 17
-    rows = list(ws735.iter_rows(min_row=2, values_only=True))
+    assert len(header_values(ws735)) == 17
+    rows = data_rows(ws735)
     assert [r[0] for r in rows] == ["600000"]
-    # 0 命中也出表（只有表头），明确区分"复核跑了没命中"与"没复核"
-    assert wb["5日外"].max_row == 1
+    # 0 命中也出表（说明区 + 表头、无数据行），区分"复核跑了没命中"与"没复核"
+    assert data_rows(wb["5日外"]) == []
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert meta["indicator_review_asof"] == 20240115
     assert meta["indicator_review_sheets"] == "735,5日外"
     assert meta["indicator_review_note"] == "ok"
-    assert meta["sheets"] == "stock-all,735,5日外"
+    assert meta["sheets"] == "stock-all,index-all,735,5日外"
+    assert "规则说明区" in str(meta["rule_brief_note"])
 
 
 def test_export_without_review_file_skips_sheets(monkeypatch, tmp_path):
@@ -2357,7 +2416,7 @@ def test_export_without_review_file_skips_sheets(monkeypatch, tmp_path):
     assert str(meta["indicator_review_note"]).startswith("missing")
     # openpyxl 空字符串单元格读回为 None
     assert meta["indicator_review_sheets"] in ("", None)
-    assert meta["sheets"] == "stock-all"
+    assert meta["sheets"] == "stock-all,index-all"
 
 
 def test_export_review_fallback_for_weekend_export(monkeypatch, tmp_path):
@@ -2376,7 +2435,7 @@ def test_export_review_fallback_for_weekend_export(monkeypatch, tmp_path):
 
     wb = openpyxl.load_workbook(path)
     assert "735" in wb.sheetnames
-    rows = list(wb["735"].iter_rows(min_row=2, values_only=True))
+    rows = data_rows(wb["735"])
     assert [r[0] for r in rows] == ["000001"]
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert meta["indicator_review_asof"] == 20240112
@@ -2451,7 +2510,7 @@ def test_export_review_rules_filters_precomputed(monkeypatch, tmp_path):
     wb = openpyxl.load_workbook(path)
     assert "735" not in wb.sheetnames
     assert "5日外" in wb.sheetnames
-    rows = list(wb["5日外"].iter_rows(min_row=2, values_only=True))
+    rows = data_rows(wb["5日外"])
     assert [r[0] for r in rows] == ["000001"]
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert meta["indicator_review_rules_selected"] == "txt_先跌后涨新版5日外"
@@ -2500,7 +2559,7 @@ def test_export_review_rules_missing_rule_computed_on_fly(monkeypatch, tmp_path)
     wb = openpyxl.load_workbook(path)
     assert "735" in wb.sheetnames  # 预计算规则照常出 sheet
     assert "我的规则" in wb.sheetnames
-    rows = list(wb["我的规则"].iter_rows(min_row=2, values_only=True))
+    rows = data_rows(wb["我的规则"])
     assert [r[0] for r in rows] == ["000001"]
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     sources = str(meta["indicator_review_rule_sources"])
@@ -2539,7 +2598,7 @@ def test_export_review_rules_no_review_json_computes_all(monkeypatch, tmp_path):
 
     wb = openpyxl.load_workbook(path)
     assert "735" in wb.sheetnames  # 0 命中也出表（同构表头）
-    assert wb["735"].max_row == 1
+    assert data_rows(wb["735"]) == []
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert str(meta["indicator_review_note"]).startswith("missing")
     assert "即时计算" in str(meta["indicator_review_note"])
@@ -2594,13 +2653,13 @@ def test_export_review_request_beyond_data_falls_back(monkeypatch, tmp_path):
     wb = openpyxl.load_workbook(path)
     assert "735" in wb.sheetnames
     week_label = bq._week_iso_label(20240115)
-    headers = [c.value for c in wb["735"][1]]
+    headers = header_values(wb["735"])
     assert headers[8] == f"周卦周线-组合({week_label})"
-    rows = list(wb["735"].iter_rows(min_row=2, values_only=True))
+    rows = data_rows(wb["735"])
     assert [r[0] for r in rows] == ["600000"]
     assert rows[0][2] == "2024-01-15"  # 成员行日期 = 列头所在周
     # 0 命中的空信号 sheet 的周列头也必须用回退日，而不是请求日所在周
-    empty_headers = [c.value for c in wb["5日外"][1]]
+    empty_headers = header_values(wb["5日外"])
     assert empty_headers[8] == f"周卦周线-组合({week_label})"
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert meta["indicator_review_asof"] == 20240115
@@ -2632,7 +2691,7 @@ def test_export_review_uses_review_file_date_for_signal_sheet(monkeypatch, tmp_p
 
     wb = openpyxl.load_workbook(path)
     main_headers = [c.value for c in wb["stock-all"][1]]
-    signal_headers = [c.value for c in wb["735"][1]]
+    signal_headers = header_values(wb["735"])
     assert main_headers[8] == f"周卦周线-组合({bq._week_iso_label(20240122)})"
     assert signal_headers[8] == f"周卦周线-组合({bq._week_iso_label(20240115)})"
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
@@ -2662,7 +2721,7 @@ def test_export_info_out_no_signal_rules(monkeypatch, tmp_path):
 
 def test_export_review_rules_compute_error_only_notes(monkeypatch, tmp_path):
     """即时计算失败（规则不存在等）：导出不失败，原因写入 meta；
-    勾选规则补占位空 sheet（只有表头）。"""
+    勾选规则补占位空 sheet（规则说明区 + 表头，无数据行）。"""
     if not JSON_PATH.exists():
         pytest.skip("bagua_384.json missing")
     cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
@@ -2684,8 +2743,13 @@ def test_export_review_rules_compute_error_only_notes(monkeypatch, tmp_path):
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    assert wb.sheetnames == ["meta", "stock-all", "user_bad"]
-    assert wb["user_bad"].max_row == 1  # 占位空表（仅表头）
+    assert wb.sheetnames == ["meta", "stock-all", "index-all", "user_bad"]
+    assert data_rows(wb["user_bad"]) == []  # 占位空表（说明区 + 表头，无数据行）
+    # 占位表也要说明为什么没有命中数据
+    assert wb["user_bad"].cell(1, 1).value == "规则名称"
+    assert "占位原因" in [
+        wb["user_bad"].cell(r, 1).value for r in range(1, table_start(wb["user_bad"]))
+    ]
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     note = str(meta["indicator_review_note"])
     assert "即时计算失败" in note
@@ -2725,7 +2789,7 @@ def test_export_review_rules_compute_no_go_placeholder_sheet(monkeypatch, tmp_pa
 
     wb = openpyxl.load_workbook(path)
     assert "user_wait" in wb.sheetnames
-    assert wb["user_wait"].max_row == 1
+    assert data_rows(wb["user_wait"]) == []
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     note = str(meta["indicator_review_note"])
     assert "no_go:no_formal_l1_product" in note
@@ -2794,7 +2858,7 @@ def test_export_user_rule_from_user_registry_zero_hit_keeps_sheet(
 
     wb = openpyxl.load_workbook(path)
     assert "趋势回踩低吸" in wb.sheetnames, wb.sheetnames
-    assert wb["趋势回踩低吸"].max_row == 1
+    assert data_rows(wb["趋势回踩低吸"]) == []
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert f"{created['id']}=computed:20240115" in str(
         meta["indicator_review_rule_sources"]
@@ -2851,7 +2915,7 @@ def test_export_review_rules_empty_stock_pool_skips_compute(monkeypatch, tmp_pat
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    assert set(wb.sheetnames) == {"meta", "etf-all"}, wb.sheetnames
+    assert set(wb.sheetnames) == {"meta", "index-all", "etf-all"}, wb.sheetnames
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert "skip:导出票池为空，信号规则未计算" in str(meta["indicator_review_note"])
     assert meta["indicator_review_sheets"] in ("", None)
@@ -2859,6 +2923,30 @@ def test_export_review_rules_empty_stock_pool_skips_compute(monkeypatch, tmp_pat
     assert info["query_date"] == 20240115
     assert info["review_asof_used"] == 20240115
     assert "skip:导出票池为空" in str(info["review_note"])
+
+
+def _register_fake_rule(cfg, rule_id: str, name: str) -> str:
+    """在沙箱注册表里真实创建 fake 规则并返回其实际 rule_id。
+
+    导出侧指纹校验要求复核 JSON 里的 rule_id 在注册表可解析且指纹一致；
+    fake 规则（user_long_a 等）必须真实注册，否则 precomputed 路径被
+    stale 拒绝、走即时计算兜底，sheet 名/内容与测试意图不符。
+    """
+    from wtpy.apps.astock.config import get_default_config as _gdc
+    from wtpy.apps.astock.service.rules import RuleService
+
+    # SimpleNamespace cfg 无 user 目录约定字段——用 storage_root 派生隔离环境
+    real_cfg = _gdc(
+        storage_root=Path(cfg.storage_root),
+        indicator_dir=Path(cfg.indicator_dir),
+        tdx_root=Path(cfg.tdx_root),
+        forecast_root=Path(getattr(cfg, "forecast_root", "") or ""),
+        forecast_weekly_dir=Path(getattr(cfg, "forecast_weekly_dir", "") or ""),
+    )
+    svc = RuleService(real_cfg)
+    # create_rule 按名称生成 id；测试里的 rule_id 仅是语义占位，返回真实 id
+    created = svc.create_rule(name=name, formula_text="MA3:=MA(C,3);\nXG:C>MA3;\n")
+    return created["id"]
 
 
 def test_export_duplicate_rule_sheet_names_not_overwritten(monkeypatch, tmp_path):
@@ -2869,10 +2957,16 @@ def test_export_duplicate_rule_sheet_names_not_overwritten(monkeypatch, tmp_path
     cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
     from wtpy.apps.astock.service import indicator_review as ir
 
-    shared_prefix = "字" * 31
-    sheet_a = ir._sanitize_sheet_name(shared_prefix + "甲甲", "user_long_a")
-    sheet_b = ir._sanitize_sheet_name(shared_prefix + "乙乙", "user_long_b")
-    assert sheet_a == sheet_b == shared_prefix, "构造前提：截断后同名"
+    # fake 规则真实注册（注册表指纹校验要求可解析+指纹一致）
+    real_a = _register_fake_rule(cfg, "user_long_a", "字" * 31 + "甲甲")
+    real_b = _register_fake_rule(cfg, "user_long_b", "字" * 31 + "乙乙")
+    sheet_a = ir._sanitize_sheet_name("字" * 31 + "甲甲", real_a)
+    sheet_b = ir._sanitize_sheet_name("字" * 31 + "乙乙", real_b)
+    assert sheet_a == sheet_b, "构造前提：截断后同名"
+    specs = ir._resolve_rules_for_fingerprint(
+        cfg, [(real_a, sheet_a), (real_b, sheet_b)]
+    )
+    assert specs is not None
     payload = {
         "asof": 20240115,
         "generated_at": "2024-01-15 19:00:00",
@@ -2883,18 +2977,22 @@ def test_export_duplicate_rule_sheet_names_not_overwritten(monkeypatch, tmp_path
         "error_count": 0,
         "rules": [
             {
-                "rule_id": "user_long_a",
+                "rule_id": real_a,
                 "sheet": sheet_a,
                 "count": 1,
                 "matched": [{"code": "SSE.STK.600000", "close": 5.9}],
             },
             {
-                "rule_id": "user_long_b",
+                "rule_id": real_b,
                 "sheet": sheet_b,
                 "count": 1,
                 "matched": [{"code": "SSE.STK.000001", "close": 5.9}],
             },
         ],
+        ir._FP_RULE: {rid: ir._spec_fingerprint(sp) for rid, _s, sp in specs},
+        ir._FP_UNIVERSE: "u",
+        ir._FP_NAME: "n",
+        ir._FP_SURFACE: "s",
     }
     _write_review(tmp_path, 20240115, payload)
     path = bq.export_bagua_multi_period_xlsx(
@@ -2903,28 +3001,102 @@ def test_export_duplicate_rule_sheet_names_not_overwritten(monkeypatch, tmp_path
         periods=["WEEK", "MONTH"],
         adjust="tushare_qfq",
         all_stocks=True,
-        review_rules=["user_long_a", "user_long_a", "user_long_b"],
+        review_rules=[real_a, real_a, real_b],
     )
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    signal_sheets = [n for n in wb.sheetnames if n not in ("meta", "stock-all")]
+    signal_sheets = [
+        n for n in wb.sheetnames if n not in ("meta", "stock-all", "index-all")
+    ]
     assert len(signal_sheets) == 2, wb.sheetnames
     assert len(set(signal_sheets)) == 2
-    assert shared_prefix in signal_sheets
+    assert sheet_a in signal_sheets
     assert all(len(n) <= 31 for n in signal_sheets)
     rows_by_sheet = {
-        n: [r[0] for r in wb[n].iter_rows(min_row=2, values_only=True)]
-        for n in signal_sheets
+        n: [r[0] for r in data_rows(wb[n])] for n in signal_sheets
     }
-    other = [n for n in signal_sheets if n != shared_prefix][0]
-    assert rows_by_sheet[shared_prefix] == ["600000"]
+    other = [n for n in signal_sheets if n != sheet_a][0]
+    assert rows_by_sheet[sheet_a] == ["600000"]
     assert rows_by_sheet[other] == ["000001"]
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert str(meta["indicator_review_sheets"]).split(",") == signal_sheets
     sources = str(meta["indicator_review_rule_sources"])
-    assert "user_long_a=precomputed:20240115" in sources
-    assert "user_long_b=precomputed:20240115" in sources
+    assert f"{real_a}=precomputed:20240115" in sources
+    assert f"{real_b}=precomputed:20240115" in sources
+
+
+def test_export_case_variant_rule_sheet_names_no_corruption(monkeypatch, tmp_path):
+    """两条规则显示名仅大小写不同（"TestX"/"testx"）：Excel sheet 名大小写
+    不敏感，_unique_sheet_name 必须按小写镜像集把第二条消解成不同 sheet，
+    否则 openpyxl 写出大小写重复名，Excel 打开判文件损坏。"""
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
+    from wtpy.apps.astock.service import indicator_review as ir
+
+    real_a = _register_fake_rule(cfg, "user_case_a", "TestX")
+    real_b = _register_fake_rule(cfg, "user_case_b", "testx")
+    sheet_a = ir._sanitize_sheet_name("TestX", real_a)
+    sheet_b = ir._sanitize_sheet_name("testx", real_b)
+    assert sheet_a.lower() == sheet_b.lower(), "构造前提：sanitize 后仅大小写不同"
+    specs = ir._resolve_rules_for_fingerprint(
+        cfg, [(real_a, sheet_a), (real_b, sheet_b)]
+    )
+    assert specs is not None
+    payload = {
+        "asof": 20240115,
+        "generated_at": "2024-01-15 19:00:00",
+        "status": "ok",
+        "no_go_reason": "",
+        "universe_size": 2,
+        "scanned": 2,
+        "error_count": 0,
+        "rules": [
+            {
+                "rule_id": real_a,
+                "sheet": sheet_a,
+                "count": 1,
+                "matched": [{"code": "SSE.STK.600000", "close": 5.9}],
+            },
+            {
+                "rule_id": real_b,
+                "sheet": sheet_b,
+                "count": 1,
+                "matched": [{"code": "SSE.STK.000001", "close": 5.9}],
+            },
+        ],
+        ir._FP_RULE: {rid: ir._spec_fingerprint(sp) for rid, _s, sp in specs},
+        ir._FP_UNIVERSE: "u",
+        ir._FP_NAME: "n",
+        ir._FP_SURFACE: "s",
+    }
+    _write_review(tmp_path, 20240115, payload)
+    path = bq.export_bagua_multi_period_xlsx(
+        cfg,
+        date="2024-01-15",
+        periods=["WEEK", "MONTH"],
+        adjust="tushare_qfq",
+        all_stocks=True,
+        review_rules=[real_a, real_b],
+    )
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    # 整个工作簿 sheet 名按小写比较必须唯一（Excel 的大小写不敏感口径）
+    lowered = [str(n).lower() for n in wb.sheetnames]
+    assert len(lowered) == len(set(lowered)), wb.sheetnames
+    signal_sheets = [
+        n for n in wb.sheetnames if n not in ("meta", "stock-all", "index-all")
+    ]
+    assert len(signal_sheets) == 2, wb.sheetnames
+    # 首条规则保留原名；第二条被消解成带后缀的不同名
+    assert sheet_a in signal_sheets
+    other = [n for n in signal_sheets if n != sheet_a][0]
+    assert other != sheet_b and other.lower() != sheet_a.lower()
+    rows_by_sheet = {n: [r[0] for r in data_rows(wb[n])] for n in signal_sheets}
+    assert rows_by_sheet[sheet_a] == ["600000"]
+    assert rows_by_sheet[other] == ["000001"]
 
 
 # ---------------------------------------------------------------------------
@@ -2940,21 +3112,34 @@ def test_export_unsafe_sheet_names_sanitized_and_cells_not_formula(
     if not JSON_PATH.exists():
         pytest.skip("bagua_384.json missing")
     cfg = _export_review_monkeypatch(monkeypatch, tmp_path)
-    payload = _review_payload(["SSE.STK.600000"], [])
+    # fake 规则真实注册（注册表指纹校验要求可解析+指纹一致）
+    real_danger = _register_fake_rule(cfg, "user_danger", "=1+1")
+    real_ctrl = _register_fake_rule(cfg, "user_ctrl", "A\x01B")
+    payload = _review_payload(["SSE.STK.600000"], [], with_fp=False)
     payload["rules"] = [
         {
-            "rule_id": "user_danger",
+            "rule_id": real_danger,
             "sheet": "=1+1",
             "count": 1,
             "matched": [{"code": "SSE.STK.600000", "close": 5.9}],
         },
         {
-            "rule_id": "user_ctrl",
+            "rule_id": real_ctrl,
             "sheet": "A\x01B",
             "count": 0,
             "matched": [],
         },
     ]
+    from wtpy.apps.astock.service import indicator_review as ir
+
+    specs = ir._resolve_rules_for_fingerprint(
+        cfg, [(real_danger, ""), (real_ctrl, "")]
+    )
+    assert specs is not None
+    payload[ir._FP_RULE] = {rid: ir._spec_fingerprint(sp) for rid, _s, sp in specs}
+    payload[ir._FP_UNIVERSE] = "u"
+    payload[ir._FP_NAME] = "n"
+    payload[ir._FP_SURFACE] = "s"
     _write_review(tmp_path, 20240115, payload)
     path = bq.export_bagua_multi_period_xlsx(
         cfg,
@@ -2962,7 +3147,7 @@ def test_export_unsafe_sheet_names_sanitized_and_cells_not_formula(
         periods=["WEEK", "MONTH"],
         adjust="tushare_qfq",
         all_stocks=True,
-        review_rules=["user_danger", "user_ctrl"],
+        review_rules=[real_danger, real_ctrl],
     )
     import openpyxl
 
@@ -2974,7 +3159,7 @@ def test_export_unsafe_sheet_names_sanitized_and_cells_not_formula(
             for cell in row:
                 assert cell.data_type != "f", (name, cell.coordinate, cell.value)
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
-    assert "user_danger=precomputed:20240115" in str(
+    assert f"{real_danger}=precomputed:20240115" in str(
         meta["indicator_review_rule_sources"]
     )
 
@@ -3063,7 +3248,7 @@ def test_export_computed_ok_but_no_sheet_gets_placeholder(monkeypatch, tmp_path)
 
     wb = openpyxl.load_workbook(path)
     assert "user_no_sheet" in wb.sheetnames, wb.sheetnames
-    assert wb["user_no_sheet"].max_row == 1
+    assert data_rows(wb["user_no_sheet"]) == []
     meta = {r[0]: r[1] for r in wb["meta"].iter_rows(min_row=2, values_only=True)}
     assert meta["indicator_review_sheets"] == "user_no_sheet"
     assert "user_no_sheet=placeholder:" in str(

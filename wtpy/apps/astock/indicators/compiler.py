@@ -89,7 +89,9 @@ class Compiler:
         if node is None:
             return
         if isinstance(node, A.Call):
-            self.used_functions.add(node.func.upper())
+            fname = node.func.upper()
+            self.used_functions.add(fname)
+            self._check_context_fn_args(node, fname)
             for a in node.args:
                 self._walk(a)
         elif isinstance(node, A.BinOp):
@@ -105,6 +107,51 @@ class Compiler:
             return
         else:
             return
+
+    def _check_context_fn_args(self, node: A.Call, fname: str) -> None:
+        """NAMELIKE/DYNAINFO/SMA 的轻量参数检查：保存时报错，避免运行期才发现。
+
+        NAMELIKE 与 DYNAINFO 实际由 runtime 拦截执行（builtins 注册的是占位），
+        参数形态在编译期即可锁定。
+        """
+        err = None
+        if fname == "NAMELIKE":
+            if len(node.args) != 1 or not isinstance(node.args[0], A.StringLiteral):
+                err = "NAMELIKE requires exactly one quoted string argument, e.g. NAMELIKE('ST')"
+        elif fname == "DYNAINFO":
+            a = node.args[0] if len(node.args) == 1 else None
+            if not isinstance(a, A.Number) or float(a.value) != int(a.value):
+                err = (
+                    "DYNAINFO requires exactly one integer literal argument "
+                    "(supported fields: 4/5/6/7 = open/high/low/close)"
+                )
+            elif not (4 <= int(a.value) <= 7):
+                err = (
+                    f"unsupported DYNAINFO field {int(a.value)} "
+                    "(supported fields: 4/5/6/7 = open/high/low/close)"
+                )
+        elif fname == "SMA":
+            if len(node.args) != 3:
+                err = "SMA requires exactly 3 arguments: SMA(X,N,M)"
+            else:
+                n_arg, m_arg = node.args[1], node.args[2]
+                if (
+                    not isinstance(n_arg, A.Number)
+                    or float(n_arg.value) != int(n_arg.value)
+                    or not isinstance(m_arg, A.Number)
+                    or float(m_arg.value) != int(m_arg.value)
+                ):
+                    err = "SMA requires integer literal N and M (variable periods not supported)"
+                else:
+                    n_val, m_val = int(n_arg.value), int(m_arg.value)
+                    if n_val < 1:
+                        err = f"SMA N must be >= 1 (got {n_val})"
+                    elif m_val < 0 or m_val > n_val:
+                        err = f"SMA M must satisfy 0 <= M <= N (got N={n_val}, M={m_val})"
+        if err:
+            raise FormulaError(
+                err, line=node.line, col=node.col, indicator=self.indicator_id
+            )
 
     def _find_call_loc(self, program: A.Program, func: str) -> Tuple[int, int]:
         found = (0, 0)

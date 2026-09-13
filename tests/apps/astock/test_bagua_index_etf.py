@@ -443,6 +443,86 @@ def test_query_bagua_index_etf_warehouse_with_formal_pair(tmp_path, monkeypatch)
     assert smeta2["bootstrap_fallback"] is False
 
 
+def test_query_bagua_index_never_resolves_to_same_code_stock(tmp_path, monkeypatch):
+    """回归：面内没有指数记录、只有同码个股时，指数查询不得回退到裸码个股。
+
+    历史缺陷（本机真实数据实测）：正式 L2 面不含任何指数符号时，
+    SSE.IDX.000001（上证指数）在限定名匹配失败后回退到裸码 000001，命中
+    SZSE.STK.000001（平安银行），把个股行情当上证指数返回——导出 index-all
+    里"上证指数"显示 11.74（平安银行价）。修复后必须显式 FileNotFoundError，
+    由上层走 legacy（通达信 day）/错误行语义，绝不返回个股行情。
+    """
+    if not JSON_PATH.exists():
+        pytest.skip("bagua_384.json missing")
+
+    from types import SimpleNamespace as _NS
+
+    from wtpy.apps.astock.data import tushare_product as tp
+    from wtpy.apps.astock.data.dataset_store import (
+        DatasetManifest,
+        DatasetStore,
+        SymbolRecord,
+    )
+    from wtpy.apps.astock.data.providers.base import MarketBar
+
+    store = DatasetStore(tmp_path / "market_data")
+    dates = list(range(20240102, 20240102 + 130))
+    bars = [
+        MarketBar(
+            symbol="SZSE.STK.000001",
+            trade_date=date,
+            period="1d",
+            open=10.0,
+            high=11.0,
+            low=9.0,
+            close=11.74,
+            volume=1000.0,
+            amount=10000.0,
+        )
+        for date in dates
+    ]
+    sha = store.store_bars("SZSE.STK.000001", bars)
+    formal_l2 = "internal_composite_none_1d_formal_t1"
+    store.publish(DatasetManifest(
+        dataset_id=formal_l2,
+        source="internal",
+        adjustment="composite_none",
+        period="1d",
+        status="building",
+        data_cutoff_date=max(dates),
+        symbols=[
+            SymbolRecord(
+                symbol="SZSE.STK.000001",
+                blob_sha256=sha,
+                row_count=len(bars),
+                quality="ok",
+                first_date=min(dates),
+                last_date=max(dates),
+            )
+        ],
+        symbol_count=1,
+        row_count=len(bars),
+        provenance={"data_policy": "tushare_only_v1"},
+    ))
+    monkeypatch.setattr(
+        tp,
+        "resolve_active_tushare_product_pair",
+        lambda store, **k: _NS(l1_dataset_id="internal_composite_tushare_factor_qfq_1d_formal_t1",
+                               l2_dataset_id=formal_l2),
+    )
+    cfg = make_cfg(market_data_root=tmp_path / "market_data", tdx_root=tmp_path / "nope")
+
+    # 指数请求：面内查无此符号 → 报错，而不是返回同码个股（平安银行）行情
+    with pytest.raises(FileNotFoundError):
+        bq.query_bagua(cfg, code="sh000001", date="2024-01-05", period="DAY")
+
+    # 对照：同码个股本身仍正常解析（修复不得波及个股路径）
+    out = bq.query_bagua(cfg, code="sz000001", date="2024-01-05", period="DAY")
+    assert out["ok"] is True
+    assert out["adjust_meta"]["dataset_id"] == formal_l2
+    assert out["bar"]["close"] == 11.74
+
+
 def test_watchlist_warehouse_availability(tmp_path):
     """watchlist availability must reflect warehouse data (tushare/none)."""
     md = tmp_path / "market_data"

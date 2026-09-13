@@ -341,6 +341,13 @@ def collect_indicator_signals_with_bagua(
     errors: List[dict] = []
     n_codes = len(code_list)
 
+    # NAMELIKE 名称快照：批量一次解析（任一规则用到才解析，全部不用时零
+    # 开销），避免缺名称时逐票重复触发全量刷新请求。
+    from ..forecast.name_norm import normalize_stock_code
+    from .stock_names import ensure_stock_names_for
+
+    stock_name_map, _name_snapshot_id = ensure_stock_names_for(cfg, code_list, trade_specs)
+
     for idx, code in enumerate(code_list):
         _progress(
             {"phase": "signals", "current": idx + 1, "total": n_codes, "code": code}
@@ -409,7 +416,9 @@ def collect_indicator_signals_with_bagua(
             continue
 
         for spec in trade_specs:
-            sig, err = compute_indicator_signal(spec, bars)
+            sig, err = compute_indicator_signal(
+                spec, bars, stock_name=stock_name_map.get(normalize_stock_code(code), "")
+            )
             if err:
                 errors.append({"code": code, "indicator": spec.id, "error": err})
                 continue

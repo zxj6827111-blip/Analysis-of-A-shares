@@ -49,6 +49,13 @@ class ApiContext:
     bq_export_lock: threading.Lock = field(default_factory=threading.Lock)
     bq_export_jobs: Dict[str, Any] = field(default_factory=dict)
 
+    # 卦象工作台「按规则筛选」：独立内存任务容器（不与导出/同卦任务混用），
+    # 配套单个后台工作线程 + 有界等待队列（service/screening.ensure_worker）。
+    bq_screen_lock: threading.Lock = field(default_factory=threading.Lock)
+    bq_screen_jobs: Dict[str, Any] = field(default_factory=dict)
+    bq_screen_queue: Optional[Any] = None  # queue.Queue，懒创建
+    bq_screen_worker_started: bool = False
+
     wl_cache: Dict[str, Any] = field(
         default_factory=lambda: {"key": None, "ts": 0.0, "payload": None}
     )

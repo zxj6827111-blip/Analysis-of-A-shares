@@ -3,11 +3,15 @@
 Design:
 - Submit always returns immediately with status ``queued``.
 - Up to ``max_workers`` dedicated worker threads pull jobs in order and run
-  them concurrently (default 6, hard cap 8; runtime-adjustable via
+  them concurrently (default 1 = serial, hard cap 8; runtime-adjustable via
   :meth:`JobStore.set_max_workers` with the persisted app setting winning
   over the ASTOCK_BT_MAX_WORKERS env fallback).
 - Additional submits beyond capacity stay queued until a worker is free.
 - Queue order is FIFO by submit sequence; parallel slots fill from the head.
+- Default is serial (1): the 指标/卦象 backtest path is memory- and
+  dataset-read heavy, so shipping parallelism on by default thrashed the
+  machine (页签交互卡顿) for users who never asked for it. Raising it is a
+  deliberate one-click choice in the tasks header.
 """
 
 from __future__ import annotations
@@ -24,8 +28,8 @@ from typing import Any, Dict, List, Optional
 from ..config import AStockConfig, get_default_config
 from .backtest import BacktestRequest, BacktestService
 
-# Product defaults: parallel backtests (6 mid-point on 8-core+ machines; hard cap 8).
-DEFAULT_BT_MAX_WORKERS = 6
+# Product defaults: serial backtests by default; hard cap 8 for opt-in parallelism.
+DEFAULT_BT_MAX_WORKERS = 1
 HARD_MAX_BT_WORKERS = 8
 
 

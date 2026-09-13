@@ -24,6 +24,7 @@ from urllib.parse import quote
 import pytest
 
 import tests.apps.astock.conftest  # noqa: F401
+from tests.apps.astock.export_layout import data_rows
 
 from wtpy.apps.astock.config import AStockConfig, get_default_config
 from wtpy.apps.astock.data.tdx_reader import DayBar
@@ -468,13 +469,19 @@ def test_round4_excel_unsafe_names_and_no_formula_cells(tmp_path, monkeypatch):
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    signal = [n for n in wb.sheetnames if n not in ("meta", "stock-all", "etf-all")]
+    signal = [
+        n
+        for n in wb.sheetnames
+        if n not in ("meta", "stock-all", "index-all", "etf-all")
+    ]
     assert len(signal) == 3, wb.sheetnames
     for name in signal:
         assert 0 < len(name) <= 31, name
         assert not (set(name) & set("[]:*?/\\")), name
         assert name[:1] not in "=+-@", name
-        assert name.lower() not in {"meta", "stock-all", "etf-all", "history"}
+        assert name.lower() not in {
+            "meta", "stock-all", "index-all", "etf-all", "history"
+        }
     assert "_1+1" in signal, signal
     assert "_ctl_" in signal, signal
     assert any(n.startswith("user_History") for n in signal), signal
@@ -483,6 +490,53 @@ def test_round4_excel_unsafe_names_and_no_formula_cells(tmp_path, monkeypatch):
         for row in wb[sheet].iter_rows():
             for cell in row:
                 assert cell.data_type != "f", (sheet, cell.coordinate, cell.value)
+
+
+def test_round4_rule_named_index_all_case_variant_never_collides(tmp_path, monkeypatch):
+    """回归：规则显示名为内置 index-all 的大小写变体时必须回退改名。
+
+    Excel sheet 名大小写不敏感——修复前 _SHEET_RESERVED_NAMES 漏收
+    "index-all"，名为 "Index-All" 的规则会生成与工作簿自带 index-all
+    仅大小写不同的 sheet，文件被 Excel 判为损坏；精确小写 "index-all"
+    则被导出侧局部保留字检查静默丢弃（规则无 sheet）。修复后两种输入
+    都回退到 rule_id 派生名，规则仍有自己的 sheet。
+
+    注意两条规则的回退名本身仅大小写不同（user_index_all_X /
+    user_Index_All_X）：_unique_sheet_name 按小写镜像集再消解，第二条
+    变为「截断前缀+~seed」形式——两个 sheet 按小写口径互不相同，
+    且各自仍可从 rule_id 派生前缀/种子辨认。"""
+    if not BAGUA_JSON.exists():
+        pytest.skip("bagua_384.json missing")
+    cfg = _cfg(tmp_path)
+    bars = _rising_bars()
+    _mock_export_data(monkeypatch, cfg, bars)
+    _mock_review_data(monkeypatch, cfg, bars)
+
+    svc = RuleService(cfg)
+    r_exact = svc.create_rule(name="index-all", formula_text="XG:C>0;")
+    r_mixed = svc.create_rule(name="Index-All", formula_text="XG:C>0;")
+
+    path, _info = _export(cfg, [r_exact["id"], r_mixed["id"]])
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    # 内置指数表仍是唯一的 index-all（大小写不敏感计数）
+    assert sum(1 for n in wb.sheetnames if n.lower() == "index-all") == 1
+    signal = [
+        n
+        for n in wb.sheetnames
+        if n not in ("meta", "stock-all", "index-all", "etf-all")
+    ]
+    # 两条规则都出了 sheet，且名字都不是 index-all 的大小写变体
+    assert len(signal) == 2, wb.sheetnames
+    assert all(n.lower() != "index-all" for n in signal)
+    # 两个 sheet 按小写口径互不相同（回退名彼此也仅大小写不同，必须再消解）
+    assert signal[0].lower() != signal[1].lower(), signal
+    # 首条规则保留完整回退名（=rule_id）；第二条被消解，仍由 rule_id 派生
+    assert r_exact["id"] in signal, signal
+    other = [n for n in signal if n != r_exact["id"]][0]
+    assert other != r_mixed["id"] and r_mixed["id"][:12] in other, signal
 
 
 def test_round4_excel_formula_lead_meta_cell_neutralized(tmp_path, monkeypatch):
@@ -652,7 +706,7 @@ def test_round4_placeholder_note_truncated_single_line(tmp_path, monkeypatch):
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    assert "user_trunc_a" in wb.sheetnames and wb["user_trunc_a"].max_row == 1
+    assert "user_trunc_a" in wb.sheetnames and data_rows(wb["user_trunc_a"]) == []
 
 
 def test_round4_computed_ok_no_sheet_gets_placeholder(tmp_path, monkeypatch):
@@ -679,7 +733,7 @@ def test_round4_computed_ok_no_sheet_gets_placeholder(tmp_path, monkeypatch):
     wb = openpyxl.load_workbook(path)
     for rid in ("user_nosheet1", "user_nosheet2"):
         assert rid in wb.sheetnames, wb.sheetnames
-        assert wb[rid].max_row == 1
+        assert data_rows(wb[rid]) == []
     meta = _meta(path)
     assert "computed_ok_no_sheet" in str(meta["indicator_review_placeholders"])
     note = str(meta["indicator_review_note"])
@@ -727,7 +781,7 @@ def test_round4_no_go_short_names_service_and_export(tmp_path, monkeypatch):
 
     wb = openpyxl.load_workbook(path)
     assert "735" in wb.sheetnames and "5日外" in wb.sheetnames, wb.sheetnames
-    assert wb["735"].max_row == 1 and wb["5日外"].max_row == 1
+    assert data_rows(wb["735"]) == [] and data_rows(wb["5日外"]) == []
     note = str(_meta(path)["indicator_review_note"])
     assert "placeholder:txt_735金叉及趋势(no_formal_l1_product)" in note
 
@@ -970,7 +1024,9 @@ def test_round4_export_bad_review_rule_id_does_not_500(tmp_path, monkeypatch):
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    signal = [n for n in wb.sheetnames if n not in ("meta", "stock-all")]
+    signal = [
+        n for n in wb.sheetnames if n not in ("meta", "stock-all", "index-all")
+    ]
 
     def _has_illegal(s: str) -> bool:
         return any(
@@ -1091,10 +1147,15 @@ def test_round4_excel_formula_protection_no_regression(tmp_path, monkeypatch):
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    signal = [n for n in wb.sheetnames if n not in ("meta", "stock-all")]
+    signal = [
+        n for n in wb.sheetnames if n not in ("meta", "stock-all", "index-all")
+    ]
     assert "_1+1" in signal, wb.sheetnames
     assert len(signal) == len(set(signal)), signal
-    assert not any(n.lower() in {"meta", "stock-all", "etf-all", "history"} for n in signal)
+    assert not any(
+        n.lower() in {"meta", "stock-all", "index-all", "etf-all", "history"}
+        for n in signal
+    )
     # 保留名即使来自伪造复核也被丢弃；rule_<hash> 兜底在单元层可用
     from wtpy.apps.astock.service.indicator_review import _sanitize_sheet_name
 

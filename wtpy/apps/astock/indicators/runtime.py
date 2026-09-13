@@ -45,10 +45,14 @@ class FormulaRuntime:
         *,
         cross_period_data: Optional[Dict[str, np.ndarray]] = None,
         allow_missing_cross: bool = False,
+        stock_name: str = "",
     ):
         self.compiled = compiled
         self.cross_period_data = cross_period_data or {}
         self.allow_missing_cross = allow_missing_cross
+        # NAMELIKE 需要股票名称上下文（per-stock）；空串=调用方未提供，
+        # 一旦公式用到 NAMELIKE 会显式报错（缺名称策略：报错可见，不静默放行）。
+        self.stock_name = stock_name or ""
         self.env: Dict[str, np.ndarray] = {}
         self.n = 0
 
@@ -206,6 +210,12 @@ class FormulaRuntime:
             raise FormulaError(f"unknown operator {op}", node.line, node.col)
         if isinstance(node, A.Call):
             fname = node.func.upper()
+            # 上下文函数：编译期已校验参数形态（compiler._check_context_fn_args），
+            # 在 get_builtin 之前拦截，避免走通用序列求值路径。
+            if fname == "NAMELIKE":
+                return self._eval_namelike(node)
+            if fname == "DYNAINFO":
+                return self._eval_dynainfo(node)
             try:
                 fn = get_builtin(fname)
             except KeyError:
@@ -232,6 +242,42 @@ class FormulaRuntime:
             getattr(node, "col", 0),
         )
 
+    def _eval_namelike(self, node: A.Call) -> np.ndarray:
+        """NAMELIKE(字符串)：品种名称是否以参数开头（通达信官方语义=前缀匹配）。
+
+        编译期已保证恰一个引号字符串参数；缺名称上下文时显式报错（策略：
+        报错可见，不静默放行），调用方须按三级来源解析股票名称并传入。
+        """
+        pat = node.args[0].value
+        if not self.stock_name:
+            raise FormulaError(
+                f"NAMELIKE('{pat}') requires stock name context; "
+                "name unavailable for this code (三级名称来源均未命中)",
+                node.line,
+                node.col,
+                self.compiled.indicator_id,
+            )
+        hit = 1.0 if self.stock_name.startswith(pat) else 0.0
+        return np.full(self.n, hit, dtype=np.float64)
+
+    def _eval_dynainfo(self, node: A.Call) -> np.ndarray:
+        """DYNAINFO(k)：即时行情字段的盘后日线映射（本系统历史计算约定）。
+
+        4=开盘价→OPEN、5=最高价→HIGH、6=最低价→LOW、7=收盘价→CLOSE；
+        编译期已锁死 k 为 4..7 的整数字面量，返回对应价格序列（=0 等
+        比较由后续 BinOp 完成，此处不做布尔化）。
+        """
+        k = int(node.args[0].value)
+        key = {4: "OPEN", 5: "HIGH", 6: "LOW", 7: "CLOSE"}.get(k)
+        if key is None or key not in self.env:
+            raise FormulaError(
+                f"DYNAINFO({k}) requires {key} series, but bars lack it",
+                node.line,
+                node.col,
+                self.compiled.indicator_id,
+            )
+        return self.env[key]
+
     @staticmethod
     def _to_bool(x: np.ndarray) -> np.ndarray:
         arr = np.asarray(x)
@@ -247,6 +293,7 @@ def run_formula(
     indicator_id: str = "",
     cross_period_data: Optional[Dict[str, np.ndarray]] = None,
     allow_missing_cross: bool = False,
+    stock_name: str = "",
 ) -> RuntimeResult:
     cr = compile_formula(source, indicator_id=indicator_id)
     if not cr.ok or cr.compiled is None:
@@ -256,5 +303,6 @@ def run_formula(
         cr.compiled,
         cross_period_data=cross_period_data,
         allow_missing_cross=allow_missing_cross,
+        stock_name=stock_name,
     )
     return rt.run(bars)

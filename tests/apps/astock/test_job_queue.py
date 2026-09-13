@@ -253,7 +253,7 @@ def test_ui_always_async_and_queue_bar():
 
 def test_resolve_bt_max_workers_persisted_and_env(monkeypatch):
     monkeypatch.delenv("ASTOCK_BT_MAX_WORKERS", raising=False)
-    assert resolve_bt_max_workers() == DEFAULT_BT_MAX_WORKERS == 6
+    assert resolve_bt_max_workers() == DEFAULT_BT_MAX_WORKERS == 1
     assert resolve_bt_max_workers(None, persisted="3") == 3
     assert resolve_bt_max_workers(2, persisted="3") == 2
     monkeypatch.setenv("ASTOCK_BT_MAX_WORKERS", "5")
@@ -268,9 +268,9 @@ def test_resolve_bt_max_workers_persisted_and_env(monkeypatch):
 def test_bt_max_workers_info_sources(monkeypatch):
     monkeypatch.delenv("ASTOCK_BT_MAX_WORKERS", raising=False)
     assert bt_max_workers_info() == {
-        "max_workers": 6,
+        "max_workers": 1,
         "hard_max_workers": 8,
-        "default_workers": 6,
+        "default_workers": 1,
         "env_override": None,
         "source": "default",
     }
@@ -380,9 +380,9 @@ def test_queue_config_api_get_put_clamp_and_400(api_cfg: AStockConfig, monkeypat
         assert r.status_code == 200
         d = r.json()
         assert d == {
-            "max_workers": 6,
+            "max_workers": 1,
             "hard_max_workers": 8,
-            "default_workers": 6,
+            "default_workers": 1,
             "env_override": None,
             "source": "default",
         }
@@ -434,7 +434,7 @@ def test_experiment_presets_expose_concurrency(api_cfg: AStockConfig, monkeypatc
         r = client.get("/api/v1/experiments/presets")
         assert r.status_code == 200
         d = r.json()
-        assert d["default_concurrency"] == 6
+        assert d["default_concurrency"] == 1
         assert d["hard_max_concurrency"] == 8
 
         client.put("/api/v1/backtests/queue/config", json={"max_workers": 4})

@@ -29,6 +29,7 @@ from .api_routes import (
     ApiContext,
     backtests,
     bagua,
+    bagua_workbench,
     experiments,
     forecast,
     research,
@@ -52,6 +53,7 @@ _ALL_ROUTERS = (
     research.router,
     forecast.router,
     bagua.router,
+    bagua_workbench.router,
     system.router,
 )
 

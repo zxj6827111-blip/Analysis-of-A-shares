@@ -12,15 +12,21 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence, Tuple
 
 from ..config import AStockConfig
 from ..forecast.name_norm import normalize_stock_code
+from ..research.fingerprint import short_fingerprint
 
 _lock = threading.Lock()
 _cache: Dict[str, str] = {}
 _loaded_for: Optional[str] = None  # cache key of sources used
+
+# NAMELIKE 名称快照的时效窗口（天）：只使用仍满足时效的来源；
+# 超出窗口且刷新失败的名称不参与计算（缺名称策略：报错可见）。
+NAME_FRESH_DAYS = 7
 
 
 def _clean_name(name: str) -> str:
@@ -34,7 +40,11 @@ def _clean_name(name: str) -> str:
     return s
 
 
-def _load_from_forecast_weekly(cfg: AStockConfig) -> Dict[str, str]:
+def _load_from_forecast_weekly(
+    cfg: AStockConfig, *, max_age_seconds: Optional[float] = None
+) -> Dict[str, str]:
+    """周报快照名称。``max_age_seconds`` 传入时逐文件判 mtime 时效，过期
+    快照文件不参与合并（默认 None = 不过滤，通用名称解析路径行为不变）。"""
     out: Dict[str, str] = {}
     weekly = getattr(cfg, "forecast_weekly_dir", None)
     froot = getattr(cfg, "forecast_root", None)
@@ -76,6 +86,11 @@ def _load_from_forecast_weekly(cfg: AStockConfig) -> Dict[str, str]:
         if path in seen or not path.exists():
             continue
         seen.add(path)
+        # 逐文件时效：候选序列与通用路径一致（active week 优先、再按目录名
+        # 从新到旧），过期文件跳过——新鲜的靠后候选仍能补上，不会整源被
+        # 单个过期文件拖死，也不会把过期快照里的旧名混入 NAMELIKE 快照
+        if max_age_seconds is not None and _path_fresh_seconds(path) > max_age_seconds:
+            continue
         try:
             with path.open(encoding="utf-8") as f:
                 for line in f:
@@ -95,19 +110,20 @@ def _load_from_forecast_weekly(cfg: AStockConfig) -> Dict[str, str]:
     return out
 
 
-def _load_from_tdx_infoharbor(cfg: AStockConfig) -> Dict[str, str]:
+def _load_from_tdx_infoharbor(
+    cfg: AStockConfig, *, max_age_seconds: Optional[float] = None
+) -> Dict[str, str]:
+    """TDX infoharbor 名称。``max_age_seconds`` 传入时逐文件判 mtime 时效，
+    过期文件直接跳过（默认 None = 不过滤，通用名称解析路径行为不变）。"""
     out: Dict[str, str] = {}
     tdx_root = getattr(cfg, "tdx_root", None)
     tdx = Path(tdx_root) if tdx_root else None
     if not tdx:
         return out
-    candidates = [
-        tdx / "T0002" / "hq_cache" / "infoharbor_ex.code",
-        tdx / "hq_cache" / "infoharbor_ex.code",
-        tdx / "T0002" / "hq_cache" / "infoharbor_ex.name",
-    ]
-    for path in candidates:
-        if not path.exists():
+    for path in _tdx_infoharbor_candidates(tdx):
+        # 逐文件时效：原逻辑即「首个产出名称的文件生效」，叠加过滤后等价于
+        # 「首个新鲜且产出的文件生效」；过期文件里的名称不得参与 NAMELIKE 快照
+        if max_age_seconds is not None and _path_fresh_seconds(path) > max_age_seconds:
             continue
         try:
             text = path.read_text(encoding="gbk", errors="replace")
@@ -134,13 +150,27 @@ def _load_from_tdx_infoharbor(cfg: AStockConfig) -> Dict[str, str]:
     return out
 
 
-def _load_from_universe(cfg: AStockConfig) -> Dict[str, str]:
+def _tdx_infoharbor_candidates(tdx: Path) -> list:
+    return [
+        tdx / "T0002" / "hq_cache" / "infoharbor_ex.code",
+        tdx / "hq_cache" / "infoharbor_ex.code",
+        tdx / "T0002" / "hq_cache" / "infoharbor_ex.name",
+    ]
+
+
+def _load_from_universe(
+    cfg: AStockConfig, *, max_age_seconds: Optional[float] = None
+) -> Dict[str, str]:
+    """universe.json 名称。``max_age_seconds`` 传入时过期文件整体不参与
+    （默认 None = 不过滤，通用名称解析路径行为不变）。"""
     out: Dict[str, str] = {}
     path = getattr(cfg, "universe_path", None)
     if path is None:
         path = Path(cfg.storage_root) / "universe.json"
     path = Path(path)
     if not path.exists():
+        return out
+    if max_age_seconds is not None and _path_fresh_seconds(path) > max_age_seconds:
         return out
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -220,3 +250,66 @@ def display_code_with_name(code: str, name: str) -> str:
     if code and name:
         return f"{code} {name}"
     return code or name or ""
+
+
+def _formula_uses_namelike(spec) -> bool:
+    text = getattr(spec, "formula_text", "") or ""
+    return bool(re.search(r"NAMELIKE", text, flags=re.IGNORECASE))
+
+
+def _path_fresh_seconds(path) -> float:
+    """返回文件距现在的秒数；不存在返回 inf（视为过期）。"""
+    try:
+        return time.time() - Path(path).stat().st_mtime
+    except OSError:
+        return float("inf")
+
+
+def ensure_stock_names_for(
+    cfg: AStockConfig,
+    codes: Sequence[str],
+    specs: Sequence,
+) -> Tuple[Dict[str, str], str]:
+    """为含 NAMELIKE 的规则解析 code6 -> 名称快照。返回 (name_map, snapshot_id)。
+
+    - **任一** spec 的公式含 NAMELIKE 才解析（`any`，不是 all——混合规则
+      不得跳过名称加载）；全部不含时返回 ({}, "")，非 NAMELIKE 回测零开销、
+      信号缓存键不变。
+    - 来源优先级（后者覆盖前者）：universe.json < 周报快照 < TDX infoharbor
+      < Tushare 元数据缓存（per-code 时效）。本地来源在加载器内部**逐文件**
+      判 mtime 时效（候选序列与通用名称解析路径完全一致，门与加载零口径差），
+      过期文件不参与合并；Tushare 缓存过期时触发强制刷新，刷新失败则过期
+      名称不参与返回——调用方按缺名称策略报错可见，绝不静默用旧名。
+    - snapshot_id = 名称**内容**指纹（本股票池 code->name 排序哈希），不含
+      mtime/fetched_at：仅刷新时间变化而名称未变时，昂贵信号缓存不失效。
+    """
+    if not specs or not any(_formula_uses_namelike(s) for s in specs):
+        return {}, ""
+
+    needed = sorted({normalize_stock_code(c) for c in codes if normalize_stock_code(c)})
+
+    merged: Dict[str, str] = {}
+    max_age = NAME_FRESH_DAYS * 86400.0
+
+    # 1)-3) universe.json → 周报快照 → TDX infoharbor：逐文件 mtime 时效过滤
+    # 由加载器内部完成（候选序列与通用路径同一套代码），过期来源的 code 留给
+    # Tushare per-code 层兜底，兜不住则缺名称报错可见
+    for k, v in _load_from_universe(cfg, max_age_seconds=max_age).items():
+        merged[k] = v
+    for k, v in _load_from_forecast_weekly(cfg, max_age_seconds=max_age).items():
+        merged[k] = v
+    for k, v in _load_from_tdx_infoharbor(cfg, max_age_seconds=max_age).items():
+        merged[k] = v
+
+    # 4) Tushare 元数据缓存（per-code 时效；延迟导入避免与 bagua_query 循环依赖）
+    from .bagua_query import ensure_fresh_symbol_names
+
+    fresh_names, _ages = ensure_fresh_symbol_names(
+        cfg, needed, max_age_days=NAME_FRESH_DAYS
+    )
+    for k, v in fresh_names.items():
+        merged[k] = v
+
+    pool_map = {c: merged[c] for c in needed if c in merged}
+    snapshot_id = short_fingerprint({"names": sorted(pool_map.items())}, n=16)
+    return pool_map, snapshot_id

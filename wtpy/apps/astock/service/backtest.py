@@ -546,6 +546,14 @@ def run_backtest(
                 f"blocked MIN60 without day proxy: {s.id}: {s.failure_reason}"
             )
 
+    # NAMELIKE 名称快照：任一规则用到即解析（混合规则不得跳过）；全部不用
+    # 时返回 ({}, "")，零开销且缓存键不变。缺名称的票在运行时按缺名称
+    # 策略报错可见（不静默放行）。
+    from .stock_names import ensure_stock_names_for
+    from ..forecast.name_norm import normalize_stock_code
+
+    stock_name_map, name_snapshot_id = ensure_stock_names_for(cfg, codes, trade_specs)
+
     events: List[SignalEvent] = []
     raw_map: Dict[str, Any] = {}  # execution + valuation
     adj_map: Dict[str, Any] = {}  # point_in_time_adjusted research refs (legacy name)
@@ -1047,6 +1055,7 @@ def run_backtest(
     def _events_for_code(code, day_raw, day_for_ind, asof, fs=None) -> List[SignalEvent]:
         """Indicator signals for one code from already-built bar lanes."""
         local_events: List[SignalEvent] = []
+        stock_name = stock_name_map.get(normalize_stock_code(code), "")
         if period == "DWM":
             base = trade_specs[0]
             w_bars = build_period_bars(day_for_ind, "WEEK", asof=asof, weekly_bar_mode=_weekly_bar_mode)
@@ -1054,9 +1063,9 @@ def run_backtest(
             d_dict = bars_dict_from_day(day_for_ind)
             w_dict = bars_dict_from_period(w_bars)
             m_dict = bars_dict_from_period(m_bars)
-            ds, e1 = compute_indicator_signal(base, d_dict)
-            ws, e2 = compute_indicator_signal(base, w_dict)
-            ms, e3 = compute_indicator_signal(base, m_dict)
+            ds, e1 = compute_indicator_signal(base, d_dict, stock_name=stock_name)
+            ws, e2 = compute_indicator_signal(base, w_dict, stock_name=stock_name)
+            ms, e3 = compute_indicator_signal(base, m_dict, stock_name=stock_name)
             if ds is None or ws is None or ms is None:
                 errors.append({"code": code, "dwm_errors": [e1, e2, e3]})
                 return local_events
@@ -1108,13 +1117,18 @@ def run_backtest(
             bars = bars_dict_from_day(p_bars_ind) if period == "DAY" else bars_dict_from_period(p_bars_ind)
             trade_dates = None
         sigs = []
+        # combine 模式下任一参与规则失败 → 该票不产生组合信号（AND/OR 均如此：
+        # 失败≠False，缺一个分量组合语义不可靠）。单规则失败错误照常记录。
+        failed_spec_ids = []
         for spec in trade_specs:
             sig, err = compute_indicator_signal(
                 spec, bars,
                 minute_mode=(period == "MIN60"),
+                stock_name=stock_name,
             )
             if err:
                 errors.append({"code": code, "indicator": spec.id, "error": err})
+                failed_spec_ids.append(spec.id)
                 continue
             sigs.append(sig)
             if not combine:
@@ -1137,25 +1151,35 @@ def run_backtest(
                     if end and d_out > end:
                         continue
                     local_events.append(SignalEvent(code, d_out, period, spec.id))
-        if combine and sigs:
-            combined = sigs[0] if len(sigs) == 1 else combine_signals(sigs, mode=combine)
-            date_arr = bars["date"]
-            for i, d in enumerate(date_arr):
-                try:
-                    on = int(combined[i]) != 0
-                except Exception:
-                    on = bool(combined[i])
-                if not on:
-                    continue
-                if trade_dates is not None and i < len(trade_dates):
-                    d_out = int(trade_dates[i])
-                else:
-                    d_out = int(d)
-                if start and d_out < start:
-                    continue
-                if end and d_out > end:
-                    continue
-                local_events.append(SignalEvent(code, d_out, period, f"combine_{combine}"))
+        if combine:
+            if failed_spec_ids:
+                errors.append({
+                    "code": code,
+                    "indicator": f"combine_{combine}",
+                    "error": (
+                        f"组合信号未产生：参与规则 {failed_spec_ids} 计算失败"
+                        "（失败≠False，该票组合语义不可靠）"
+                    ),
+                })
+            elif sigs:
+                combined = sigs[0] if len(sigs) == 1 else combine_signals(sigs, mode=combine)
+                date_arr = bars["date"]
+                for i, d in enumerate(date_arr):
+                    try:
+                        on = int(combined[i]) != 0
+                    except Exception:
+                        on = bool(combined[i])
+                    if not on:
+                        continue
+                    if trade_dates is not None and i < len(trade_dates):
+                        d_out = int(trade_dates[i])
+                    else:
+                        d_out = int(d)
+                    if start and d_out < start:
+                        continue
+                    if end and d_out > end:
+                        continue
+                    local_events.append(SignalEvent(code, d_out, period, f"combine_{combine}"))
         return local_events
 
     def _compute_events_from_loaded_maps() -> List[SignalEvent]:
@@ -1220,6 +1244,9 @@ def run_backtest(
                 if getattr(req, "universe_dataset_id", None)
                 else None
             ),
+            # NAMELIKE 名称内容指纹（内容变→键变→缓存失效）；非 NAMELIKE 回测
+            # 为空串，键与历史完全一致，存量缓存不失效。
+            extra={"name_snapshot": name_snapshot_id} if name_snapshot_id else None,
         )
 
     if use_signal_cache:
@@ -1244,6 +1271,7 @@ def run_backtest(
                     "rule_ids": [s.id for s in trade_specs],
                     "factor_manifest_sha": _factor_manifest,
                 },
+                errors_ref=errors,
             )
             if signal_cache_hit:
                 _progress({
@@ -1912,14 +1940,41 @@ def run_backtest(
                     "calendar_path": str(cfg.tdx_root),
                 }
             except Exception:
-                # 无 TDX 部署且无 calendar.json:回退数据集推导日历,
-                # 与 repo 模式同一来源;仍失败则置空(不崩溃)。
+                # 无 TDX 部署且无 calendar.json：回退到最新 ready 数据集推导
+                # 日历（与仓储模式、数据健康页同一来源），服务器无通达信
+                # 目录时靠这条路径拿日历。三处都不可用才置空。
                 cal = None
                 calendar_meta = {"calendar_source": "unavailable"}
+                try:
+                    from ..data.calendar import build_calendar_from_dataset
+                    from ..data.dataset_store import DatasetStore
+                    from ..data.tushare_product import select_tushare_base
+
+                    _cal_store = DatasetStore(cfg.market_data_root)
+                    _cal_base = select_tushare_base(_cal_store)
+                    if _cal_base is not None:
+                        cal, calendar_meta = build_calendar_from_dataset(
+                            _cal_store,
+                            _cal_base.dataset_id,
+                            cache_dir=Path(cfg.storage_root) / "calendars",
+                        )
+                except Exception:
+                    cal = None
+                    calendar_meta = {"calendar_source": "unavailable"}
         if cal is not None and cal.dates:
             calendar_meta["calendar_first"] = int(cal.dates[0])
             calendar_meta["calendar_last"] = int(cal.dates[-1])
             calendar_meta["calendar_count"] = len(cal.dates)
+
+    # 日历是引擎的硬前置（周/月调仓、entry_lag 都在日历上求解）：三处来源
+    # 都没有时给出可读错误（API 侧映射为 400），而不是让引擎在
+    # self.calendar.dates 上抛 AttributeError（曾表现为无 TDX 服务器的
+    # 回测 500）。
+    if cal is None or not cal.dates:
+        raise ValueError(
+            "交易日历不可用：calendar.json 缺失、无通达信目录、"
+            "且无可用数据集可推导日历；请先完成行情数据同步后再回测。"
+        )
 
     # Gate C D6 §5: signals earlier than the calendar's first day must be
     # EXCLUDED explicitly — never squeezed onto the first trading day.

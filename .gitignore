@@ -94,3 +94,11 @@ reasonix.toml
 # 测试/审查产生的临时报告
 /*_test_report.txt
 
+
+# 本机验证用 py3.12 venv（CI 对齐）
+.venv*/
+
+# 浏览器自动化回放产物 / 编辑器目录 / 本机运行输出
+.playwright-mcp/
+.trae/
+output/
