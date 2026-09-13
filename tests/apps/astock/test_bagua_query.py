@@ -2285,8 +2285,14 @@ def _review_payload(matched_735, matched_5w, *, with_fp=True):
         # 显式断言 stale 行为时传 with_fp=False）
         try:
             from wtpy.apps.astock.config import get_default_config as _gdc
+            from tests.apps.astock.conftest import formula_indicator_dir
 
             _cfg = _gdc()
+            _src = formula_indicator_dir()
+            if _src is not None:
+                # CI 无真实 指标/（.gitignore）：公式目录落到仓库 fixture，
+                # 内容与真实一致（fixture 即从真实拷贝），指纹算出来相同
+                _cfg.indicator_dir = _src
             specs = _ir._resolve_rules_for_fingerprint(
                 _cfg, list(_ir.DEFAULT_REVIEW_RULES)
             )

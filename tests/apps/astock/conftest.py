@@ -82,8 +82,14 @@ def formula_indicator_dir() -> Path | None:
 
     try:
         cfg = get_default_config()
+        real = Path(cfg.indicator_dir)
+        # bootstrap 对不存在的目录不抛错（静默得到空注册表），必须先显式
+        # 校验：否则干净检出（CI 无 指标/）会"成功"返回一个空路径，
+        # 跳过下面的 fixture 兜底，导出/复核用例拿不到公式 sheet
+        if not (real.is_dir() and any(real.glob("*.txt"))):
+            raise FileNotFoundError(real)
         IndicatorRegistry.bootstrap(cfg.indicator_dir, cfg.mapping_path)
-        out = Path(cfg.indicator_dir)
+        out = real
     except Exception:  # noqa: BLE001 目录/映射缺失或损坏 → 走 fixture
         out = None
     if out is None and FORMULA_FIXTURE_DIR.exists():
