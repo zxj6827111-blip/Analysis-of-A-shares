@@ -18,6 +18,7 @@ import logging
 import re
 import threading
 import time as _bq_time
+import uuid as _bq_uuid
 from dataclasses import dataclass
 from datetime import date as _ymd_date, timedelta as _ymd_delta
 from pathlib import Path
@@ -27,6 +28,8 @@ import numpy as np
 
 from ..bagua.calculator import BaguaCalculator
 from ..bagua.consensus import consensus as gua_consensus
+from ..bagua.consensus import gaodao_side as _gaodao_side
+from ..bagua.consensus import gua_side as _gua_side
 from ..bagua.gaodao import gaodao_index
 from ..config import AStockConfig
 from ..data.adjustments import build_factor_series
@@ -41,6 +44,7 @@ from ..study import (
 )
 from ..data.affine_adjust import build_affine_series
 from .index_etf import (
+    INDEX_WATCHLIST,
     classify_symbol,
     display_code as display_index_etf_code,
     list_etf_std_codes,
@@ -645,6 +649,14 @@ class BaguaPlaneSession:
                     if asof is not None
                     else f"{std_code} 在 {self.source_key} 全部数据集中均无可用K线"
                 )
+            if qualified and classify_symbol(std_code) in ("index", "etf"):
+                # 指数/ETF 带品种限定形式（SSE.IDX.*/SSE.ETF.*/sh000xxx）却在
+                # 本面一条记录都没有：禁止回退到 6 位裸码——SSE.IDX.000001
+                # （上证指数）会命中同码的 SZSE.STK.000001（平安银行），把个股
+                # 行情当指数行情返回。交给上层走 legacy（通达信 day）/错误行。
+                raise FileNotFoundError(
+                    f"{std_code} 在 {self.source_key} 全部数据集中均无可用K线"
+                )
             hits, _ = _scan(bare)
 
         if not hits:
@@ -1066,22 +1078,7 @@ def _assemble_index_etf_bagua_result(
         },
         "adjust_meta": adj_meta,
         "notes": notes,
-        "summary": {
-            "full_name": bagua.get("full_name") or bagua.get("gua_name") or "",
-            "yao_name": bagua.get("yao_name") or bagua.get("line_name") or "",
-            "state_id": bagua.get("state_id") or "",
-            "action_signal": bagua.get("action_signal") or "",
-            "market_judgement": bagua.get("market_judgement")
-            or bagua.get("market_summary")
-            or "",
-            "upper": f"{bagua.get('upper_alias') or bagua.get('upper_name') or ''}"
-            f"({bagua.get('upper_id')})",
-            "lower": f"{bagua.get('lower_alias') or bagua.get('lower_name') or ''}"
-            f"({bagua.get('lower_id')})",
-            "yao_order": bagua.get("yao_order"),
-            # 高岛易断·营商解读（旁挂 sidecar，仅展示，不参与选股/回测）
-            **_gaodao_summary_fields(cfg, bagua),
-        },
+        "summary": _build_query_summary(cfg, bagua),
     }
 
 
@@ -1305,22 +1302,7 @@ def _assemble_stock_bagua_result(
         },
         "adjust_meta": adj_meta,
         "notes": notes,
-        "summary": {
-            "full_name": bagua.get("full_name") or bagua.get("gua_name") or "",
-            "yao_name": bagua.get("yao_name") or bagua.get("line_name") or "",
-            "state_id": bagua.get("state_id") or "",
-            "action_signal": bagua.get("action_signal") or "",
-            "market_judgement": bagua.get("market_judgement")
-            or bagua.get("market_summary")
-            or "",
-            "upper": f"{bagua.get('upper_alias') or bagua.get('upper_name') or ''}"
-            f"({bagua.get('upper_id')})",
-            "lower": f"{bagua.get('lower_alias') or bagua.get('lower_name') or ''}"
-            f"({bagua.get('lower_id')})",
-            "yao_order": bagua.get("yao_order"),
-            # 高岛易断·营商解读（旁挂 sidecar，仅展示，不参与选股/回测）
-            **_gaodao_summary_fields(cfg, bagua),
-        },
+        "summary": _build_query_summary(cfg, bagua),
     }
 
 
@@ -2089,6 +2071,51 @@ def _bagua_consensus_label(row: Optional[Dict[str, Any]]) -> str:
     return gua_consensus(signal, text)
 
 
+def _consensus_summary_fields(
+    bagua: Dict[str, Any], gaodao_fields: Dict[str, Any]
+) -> Dict[str, Any]:
+    """查询响应的共识倾向（与导出 Excel「倾向」列同源同词表，前端着色标注）。
+
+    ▲双好=卦象操作信号与高岛断语都看好（前端红色）、▼双差=都看差（绿色）、
+    分歧=方向对立（琥珀色）、空=一方中性或高岛语气不明（前端显示中性「一般」
+    徽章并给出两方立场明细，不再留空——用户需要每行都有颜色反馈）。
+    仅作阅读辅助，不参与选股与回测。
+    """
+    signal = str(bagua.get("action_signal") or "")
+    text = str(gaodao_fields.get("gaodao_commerce") or "")
+    return {
+        "consensus": gua_consensus(signal, text),
+        # 两方立场明细：让「分歧/一般」的成因透明（好=红、差=绿、中/不明=灰）
+        "gua_side": _gua_side(signal),
+        "gaodao_side": _gaodao_side(text),
+    }
+
+
+def _build_query_summary(cfg: AStockConfig, bagua: Dict[str, Any]) -> Dict[str, Any]:
+    """查询响应的 summary（股票与指数/ETF 路径共用）。
+
+    高岛断语字段只解析一次，展示与共识倾向判定复用同一份，避免批量查询
+    路径重复构建索引；consensus 与导出「倾向」列同源同词表（仅展示）。
+    """
+    gaodao = _gaodao_summary_fields(cfg, bagua)
+    return {
+        "full_name": bagua.get("full_name") or bagua.get("gua_name") or "",
+        "yao_name": bagua.get("yao_name") or bagua.get("line_name") or "",
+        "state_id": bagua.get("state_id") or "",
+        "action_signal": bagua.get("action_signal") or "",
+        "market_judgement": bagua.get("market_judgement")
+        or bagua.get("market_summary")
+        or "",
+        "upper": f"{bagua.get('upper_alias') or bagua.get('upper_name') or ''}"
+        f"({bagua.get('upper_id')})",
+        "lower": f"{bagua.get('lower_alias') or bagua.get('lower_name') or ''}"
+        f"({bagua.get('lower_id')})",
+        "yao_order": bagua.get("yao_order"),
+        **gaodao,
+        **_consensus_summary_fields(bagua, gaodao),
+    }
+
+
 def _fmt_ymd_dash(ymd: Any) -> str:
     try:
         n = int(ymd)
@@ -2333,9 +2360,30 @@ def _load_symbol_meta_cache() -> Tuple[Dict[str, int], Dict[str, int], Dict[str,
         stock_names = {str(k): str(v) for k, v in j.get("stock_names", {}).items()}
         etf_names = {str(k): str(v) for k, v in j.get("etf_names", {}).items()}
         _SYMBOL_META_CACHE["data"] = (stocks, etfs, stock_names, etf_names)
+        # per-code 时效：schema v3 显式记录；v2 只有整体 fetched_at，视为全部同一天；
+        # v1 无 fetched_at，全部视为未知（空）。
+        ages = _SYMBOL_META_CACHE.get("ages")
+        if ages is None:
+            pcf = {str(k): str(v) for k, v in (j.get("per_code_fetched") or {}).items()}
+            if pcf:
+                ages = pcf
+            else:
+                overall = str(j.get("fetched_at") or "")
+                names = set(stock_names) | set(etf_names)
+                ages = {c: overall for c in names} if overall else {}
+            _SYMBOL_META_CACHE["ages"] = ages
         return stocks, etfs, stock_names, etf_names
     except Exception:
         return _empty_meta()
+
+
+def _load_symbol_meta_ages() -> Dict[str, str]:
+    """code -> 最近一次由 Tushare 全量拉取确认的日期（YYYY-MM-DD，可空）。
+
+    schema v3 显式 per-code；v2 退化整体 fetched_at；v1 全空（视为过期）。
+    """
+    _load_symbol_meta_cache()
+    return dict(_SYMBOL_META_CACHE.get("ages") or {})
 
 
 def _save_symbol_meta_cache(
@@ -2343,27 +2391,36 @@ def _save_symbol_meta_cache(
     etfs: Dict[str, int],
     stock_names: Dict[str, str],
     etf_names: Dict[str, str],
+    per_code_fetched: Optional[Dict[str, str]] = None,
 ) -> None:
     import json as _json
 
+    # per_code_fetched：code -> 最近一次由 Tushare 全量拉取确认的日期。
+    # 刷新合并 {**old, **fresh} 时，仅 fresh 覆盖的代码续期，未覆盖的旧记录
+    # 沿用原日期——整体 fetched_at 更新不代表所有旧记录变新（GPT6 复核约束）。
+    if per_code_fetched is None:
+        all_codes = set(stocks) | set(etfs) | set(stock_names) | set(etf_names)
+        per_code_fetched = {c: _bq_time.strftime("%Y-%m-%d") for c in all_codes}
     try:
         p = _rizhu_list_dates_cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(
             _json.dumps(
                 {
-                    "schema_version": 2,
+                    "schema_version": 3,
                     "fetched_at": _bq_time.strftime("%Y-%m-%d"),
                     "stocks": stocks,
                     "etfs": etfs,
                     "stock_names": stock_names,
                     "etf_names": etf_names,
+                    "per_code_fetched": per_code_fetched,
                 },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
         )
         _SYMBOL_META_CACHE["data"] = (stocks, etfs, stock_names, etf_names)
+        _SYMBOL_META_CACHE["ages"] = dict(per_code_fetched)
     except Exception:
         pass
 
@@ -2456,7 +2513,17 @@ def _ensure_symbol_meta(
     merged_etfs = {**etfs, **f_etfs}
     merged_snames = {**stock_names, **f_snames}
     merged_enames = {**etf_names, **f_enames}
-    _save_symbol_meta_cache(merged_stocks, merged_etfs, merged_snames, merged_enames)
+    # per-code 时效续期：仅本次 fresh 覆盖的代码续到今天，未覆盖的旧记录沿用原日期
+    # （整体 fetched_at 不代表旧记录变新，避免过期名称被统一续期后参与计算）。
+    ages = _load_symbol_meta_ages()
+    today = _bq_time.strftime("%Y-%m-%d")
+    fresh_codes = set(f_stocks) | set(f_etfs) | set(f_snames) | set(f_enames)
+    for c in fresh_codes:
+        ages[c] = today
+    _save_symbol_meta_cache(
+        merged_stocks, merged_etfs, merged_snames, merged_enames,
+        per_code_fetched=ages,
+    )
     return merged_stocks, merged_etfs, merged_snames, merged_enames
 
 
@@ -2508,6 +2575,85 @@ def ensure_name_coverage(
         if nm:
             out[c6] = nm
     return out
+
+
+# NAMELIKE 名称快照的强制刷新节流：同一进程内最小间隔（秒）。
+_LAST_FORCE_NAME_REFRESH_TS = 0.0
+_NAME_REFRESH_MIN_INTERVAL_SEC = 3600.0
+
+
+def ensure_fresh_symbol_names(
+    cfg: AStockConfig,
+    needed_codes: Sequence[str],
+    *,
+    max_age_days: int = 7,
+    force_refresh: bool = False,
+) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """NAMELIKE 计算用名称快照：返回 (新鲜名称, 全部年龄)，且仅含时效内名称。
+
+    与 ensure_name_coverage 的区别：后者只在「代码缺失」时拉取、已有旧名
+    永不刷新；本函数按 per-code fetched 日期判定时效，存在缺失或过期时
+    **强制**全量刷新一次（进程级节流），刷新失败时过期名称**不参与返回**
+    ——调用方对缺失代码按缺名称策略报错可见，不静默使用过期名（GPT6 约束）。
+
+    返回的 ages 供快照描述/展示用（复核 note 标名称快照日期）。
+    """
+    global _LAST_FORCE_NAME_REFRESH_TS
+
+    stocks, etfs, stock_names, etf_names = _load_symbol_meta_cache()
+    names = {**stock_names, **etf_names}
+    ages = _load_symbol_meta_ages()
+    needed = {_code6_from_any(c) for c in needed_codes}
+    needed = {c6 for c6 in needed if c6}
+
+    def _fresh(c6: str) -> bool:
+        d = (ages or {}).get(c6) or ""
+        if not d:
+            return False
+        try:
+            from datetime import datetime as _dt
+
+            age_days = (
+                _dt.strptime(_bq_time.strftime("%Y-%m-%d"), "%Y-%m-%d").date()
+                - _dt.strptime(d, "%Y-%m-%d").date()
+            ).days
+        except ValueError:
+            return False
+        return age_days <= max_age_days
+
+    stale = {c6 for c6 in needed if (c6 not in names) or not _fresh(c6)}
+    if stale:
+        import time as _time
+
+        now_ts = _time.time()
+        if force_refresh or (now_ts - _LAST_FORCE_NAME_REFRESH_TS) >= _NAME_REFRESH_MIN_INTERVAL_SEC:
+            _LAST_FORCE_NAME_REFRESH_TS = now_ts
+            try:
+                f_stocks, f_etfs, f_snames, f_enames = _fetch_symbol_meta_from_tushare(cfg)
+                merged_stocks = {**stocks, **f_stocks}
+                merged_etfs = {**etfs, **f_etfs}
+                merged_snames = {**stock_names, **f_snames}
+                merged_enames = {**etf_names, **f_enames}
+                today = _bq_time.strftime("%Y-%m-%d")
+                fresh_codes = set(f_stocks) | set(f_etfs) | set(f_snames) | set(f_enames)
+                new_ages = dict(ages)
+                for c in fresh_codes:
+                    new_ages[c] = today
+                _save_symbol_meta_cache(
+                    merged_stocks, merged_etfs, merged_snames, merged_enames,
+                    per_code_fetched=new_ages,
+                )
+                names = {**merged_snames, **merged_enames}
+                ages = new_ages
+            except Exception:
+                # 刷新失败：仍使用旧缓存，但过期名称不会通过下方时效过滤
+                pass
+
+    fresh_names: Dict[str, str] = {}
+    for c6 in needed:
+        if c6 in names and _fresh(c6):
+            fresh_names[c6] = names[c6]
+    return fresh_names, dict(ages)
 
 
 def _weekly_style_row(
@@ -2980,15 +3126,23 @@ def _display_width(value: Any) -> float:
     return w
 
 
-def _autofit_columns(ws: Any, *, max_width: float = 90.0, min_width: float = 8.0) -> None:
-    """Set column widths to fit content (combo columns get generous room)."""
+def _autofit_columns(
+    ws: Any, *, max_width: float = 90.0, min_width: float = 8.0, min_row: int = 1
+) -> None:
+    """Set column widths to fit content (combo columns get generous room).
+
+    ``min_row`` 让规则 sheet 跳过表头上方的规则说明区：说明文本很长，
+    算进列宽会把 name 列撑到上限，而它在右侧空单元格上自然溢出即可。
+    """
     from openpyxl.utils import get_column_letter
 
     max_col = ws.max_column
     for col_idx in range(1, max_col + 1):
         letter = get_column_letter(col_idx)
         best = min_width
-        for row in ws.iter_rows(min_col=col_idx, max_col=col_idx, values_only=True):
+        for row in ws.iter_rows(
+            min_row=min_row, min_col=col_idx, max_col=col_idx, values_only=True
+        ):
             val = row[0] if row else None
             w = _display_width(val) + 2
             if w > best:
@@ -3053,12 +3207,15 @@ def _export_sheet_rows(
             ):
                 first_month_rows[gi] = month_row
         month_any = next((m for m in month_rows if m), None)
+        # 指数行不查 code6 日柱/名称表：000001（上证指数）等与个股撞码，会把
+        # 个股日柱/名称写到指数行上；指数名称由指数查询路径自带（白名单）。
+        is_index = classify_symbol(str(raw_code)) == "index"
         c6 = _code6_from_any(
             (week_row or {}).get("code")
             or (month_any or {}).get("code")
             or raw_code
         )
-        rizhu = rizhu_map.get(c6, "") if c6 else ""
+        rizhu = "" if is_index else (rizhu_map.get(c6, "") if c6 else "")
         if rizhu:
             totals["rizhu_hit"] += 1
         ok_w = bool(week_row and week_row.get("ok") and not week_row.get("error"))
@@ -3092,7 +3249,7 @@ def _export_sheet_rows(
                 row[1] = resolve_stock_name(cfg, c6) or ""
             except Exception:
                 pass
-        if name_map and c6 and not row[1]:
+        if name_map and c6 and not row[1] and not is_index:
             row[1] = name_map.get(c6) or ""
         sheet_rows.append(row)
         if on_progress is not None and (idx == total or idx % 25 == 0 or idx == 1):
@@ -3171,6 +3328,124 @@ def _compute_rules_for_export(
         }
 
 
+_RULE_SOURCE_CN = {
+    "user": "用户规则",
+    "builtin": "内置规则",
+    "system": "系统规则",
+}
+_RULE_ASOF_LABEL = {
+    "precomputed": "周五链预计算复核日",
+    "computed": "导出时即时计算日",
+    "placeholder": "占位空表（无命中数据）",
+}
+
+
+def _preset_index_pool() -> List[str]:
+    """大盘指数基线池（INDEX_WATCHLIST → 标准代码，去重）。
+
+    指数单独成表：没有复权概念、也没有上市日期，不参与 ``limit`` 裁剪
+    （主表被裁时指数仍在），也不并入 ``ensure_rizhu_coverage``——指数
+    code6（000001/399001 等）与股票撞码，按股票元数据推算会把个股日柱
+    写到指数行上。
+    """
+    out: List[str] = []
+    seen: set = set()
+    for item in INDEX_WATCHLIST:
+        std = to_index_etf_std_code(str(item.get("code") or ""))
+        if std and std not in seen:
+            seen.add(std)
+            out.append(std)
+    return out
+
+
+def _brief_text(value: Any, limit: int) -> str:
+    """说明区文本：压成单行再截断（单元格内换行会打乱 key/value 区块的读法）。"""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) > limit:
+        text = text[: max(0, limit - 1)] + "…"
+    return text
+
+
+def _version_label(version: Any) -> str:
+    """规则版本显示：TN6 导入规则的 version 是内容哈希（``source:xxxx`` /
+    ``content:xxxx``），按「来源文件哈希 xxxx」呈现，避免出现读不通的
+    ``vsource:xxxx``；普通版本号才加 ``v`` 前缀。"""
+    v = str(version or "").strip()
+    if not v:
+        return ""
+    if ":" in v:
+        kind, _, digest = v.partition(":")
+        kind_cn = {"source": "来源文件哈希", "content": "内容哈希"}.get(kind, kind)
+        return f"{kind_cn} {digest}".strip()
+    return f"v{v}"
+
+
+def _rule_brief_meta(cfg: AStockConfig, rule_id: str) -> Dict[str, Any]:
+    """规则说明区的规则元数据；规则被删除/解析失败时返回空 dict（不阻断导出）。
+
+    内置 TN6 规则的 description 常为空，此时回退到公式原文开头——否则说明区
+    只剩 ID 与日期，达不到「看懂为什么选中」的目的。``include_formula=True``
+    只为取公式原文，写入前截断，不整段附公式。
+    """
+    rid = str(rule_id or "").strip()
+    if not rid:
+        return {}
+    try:
+        from .rules import RuleService
+
+        pub = RuleService(cfg).get_rule(rid, include_formula=True)
+    except Exception:  # noqa: BLE001
+        return {}
+    description = _brief_text(pub.get("description"), 300)
+    return {
+        "name": _brief_text(pub.get("name"), 60),
+        "source": str(pub.get("source") or ""),
+        "category": _brief_text(pub.get("category"), 20),
+        "version": _brief_text(pub.get("version"), 20),
+        "description": description,
+        "formula_note": "" if description else _brief_text(pub.get("formula_text"), 400),
+    }
+
+
+def _rule_brief_rows(cfg: AStockConfig, brief: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """规则 sheet 顶部说明区：解释该表股票按哪条规则、哪个基准日选出来。"""
+    rid = str(brief.get("rule_id") or "").strip()
+    meta = _rule_brief_meta(cfg, rid)
+    source_kind = str(brief.get("source_kind") or "")
+    rows: List[Tuple[str, str]] = [
+        ("规则名称", meta.get("name") or rid or "（未命名规则）"),
+    ]
+    ident = " · ".join(
+        part
+        for part in (
+            rid,
+            _RULE_SOURCE_CN.get(meta.get("source", ""), meta.get("source", "")),
+            meta.get("category", ""),
+            _version_label(meta.get("version")),
+        )
+        if part
+    )
+    rows.append(("规则ID / 来源", ident or rid or "—"))
+    asof = brief.get("asof")
+    label = _RULE_ASOF_LABEL.get(source_kind, source_kind)
+    rows.append(("信号基准日", f"{asof}（{label}）" if asof else (label or "—")))
+    count = int(brief.get("count") or 0)
+    raw_count = int(brief.get("raw_count") or 0)
+    count_text = f"{count} 只"
+    if raw_count and raw_count != count:
+        count_text += f"（规则当日全市场命中 {raw_count} 只，本表按导出票池取 {count} 只）"
+    rows.append(("命中只数", count_text))
+    if brief.get("placeholder"):
+        rows.append(("占位原因", str(brief["placeholder"])))
+    if meta.get("description"):
+        rows.append(("规则说明", meta["description"]))
+    elif meta.get("formula_note"):
+        rows.append(("规则说明", f"规则中心未填描述，附公式开头：{meta['formula_note']}"))
+    else:
+        rows.append(("规则说明", "规则中心未填写描述（可在「规则」栏补充）"))
+    return rows
+
+
 def export_bagua_multi_period_xlsx(
     cfg: AStockConfig,
     *,
@@ -3188,10 +3463,16 @@ def export_bagua_multi_period_xlsx(
 ) -> Path:
     """Export bagua in weekly_analysis stock-all layout, one sheet per pool.
 
-    Full-market export (``all_stocks=True``) writes two sheets into the same
+    Full-market export (``all_stocks=True``) writes three sheets into the same
     workbook:
       - ``stock-all``: A-share universe rows
+      - ``index-all``: the built-in major index watchlist (上证指数/深证成指/
+        沪深300/上证50/中证500/中证1000/创业板指/科创50 等 9 个)
       - ``etf-all``   : every ETF enumerated from the TDX local day files
+    ``index-all`` is attached to EVERY export (full-market or manual codes) and
+    is exempt from ``limit``; manual index codes are merged into it instead of
+    being mixed into ``etf-all``. Index rows keep 日柱 empty (indices have no
+    listing date and their 6-digit codes collide with stocks, e.g. 000001).
     When the Friday EOD chain's indicator review
     (``storage/astock/indicator_review/review_{asof}.json``) is available,
     extra same-layout sheets are appended — default ``735`` / ``5日外`` —
@@ -3210,11 +3491,18 @@ def export_bagua_multi_period_xlsx(
     updated in place) receives ``query_date`` / ``review_asof_used`` /
     ``review_fallback`` / ``review_note``.
     Manual ``codes`` are split by symbol type — stocks stay in ``stock-all``,
-    index/ETF codes go to ``etf-all``.
+    index codes join ``index-all``, ETF codes go to ``etf-all``.
+
+    Each signal sheet carries a rule brief above its header row (rule name, id,
+    source, category, version, the asof that sheet was computed on, hit count
+    and the rule description; the description falls back to a formula excerpt
+    for built-in TN6 formula rules that have none) so the workbook explains why
+    those stocks were selected.
 
     ``limit`` is a total row cap applied as stock-first: stocks fill the cap
-    before ETFs are included (a cap ≤ stock count yields no etf-all sheet).
-    Manual codes that cannot be recognized are silently dropped.
+    before ETFs are included (a cap ≤ stock count yields no etf-all sheet);
+    ``index-all`` never counts against it. Manual codes that cannot be
+    recognized are silently dropped.
 
     Columns:
       code, name, week_end, open, high, low, close, 日柱,
@@ -3276,17 +3564,23 @@ def export_bagua_multi_period_xlsx(
     use_all = bool(all_stocks)
     stock_pool: List[str] = []
     etf_pool: List[str] = []
+    # 大盘指数基线池：每次导出都单独成表；手动输入的指数去重后并入
+    index_pool: List[str] = _preset_index_pool()
     if use_all:
         stock_pool = _resolve_batch_codes(cfg, None, all_stocks=True)
         etf_pool = _enumerate_export_etf_pool(cfg)
     else:
         stock_raw: List[str] = []
         etf_raw: List[str] = []
+        index_raw: List[str] = []
         for c in (codes or []):
             c = str(c).strip()
             if not c:
                 continue
-            if classify_symbol(c) in ("index", "etf"):
+            st = classify_symbol(c)
+            if st == "index":
+                index_raw.append(c)
+            elif st == "etf":
                 etf_raw.append(c)
             else:
                 try:
@@ -3302,13 +3596,20 @@ def export_bagua_multi_period_xlsx(
             if std and std not in seen_etf:
                 seen_etf.add(std)
                 etf_pool.append(std)
-        if not stock_pool and not etf_pool:
+        # 手动指数并入基线池（内置指数在前，重复代码只保留一次）
+        seen_index = set(index_pool)
+        for c in index_raw:
+            std = to_index_etf_std_code(c)
+            if std and std not in seen_index:
+                seen_index.add(std)
+                index_pool.append(std)
+        if not stock_pool and not etf_pool and not index_raw:
             raise ValueError("codes or all_stocks required")
     if limit is not None:
         lim = int(limit)
         stock_pool = stock_pool[:lim]
         etf_pool = etf_pool[: max(0, lim - len(stock_pool))]
-    if not stock_pool and not etf_pool:
+    if not stock_pool and not etf_pool and not index_pool:
         raise ValueError("codes or all_stocks required")
 
     if not cfg.bagua_json:
@@ -3340,7 +3641,8 @@ def export_bagua_multi_period_xlsx(
 
     export_root = Path(cfg.storage_root) / "bagua_exports"
     export_root.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d_%H%M%S")
+    # 时间戳 + 短 uuid：同条件并发导出（同 asof/口径落在同一秒）不覆盖彼此的文件
+    stamp = time.strftime("%Y%m%d_%H%M%S") + "_" + _bq_uuid.uuid4().hex[:6]
     scope = "all" if use_all else "batch"
     out = Path(
         path
@@ -3351,6 +3653,9 @@ def export_bagua_multi_period_xlsx(
     pools: List[Tuple[str, List[str], bool, int]] = []
     if stock_pool:
         pools.append(("stock-all", stock_pool, False, asof))
+    if index_pool:
+        # 指数表固定附在股票表之后、ETF 表之前；limit 不裁剪指数
+        pools.append(("index-all", index_pool, True, asof))
     if etf_pool:
         pools.append(("etf-all", etf_pool, True, asof))
 
@@ -3372,33 +3677,41 @@ def export_bagua_multi_period_xlsx(
     review_rules_selected: Optional[List[str]] = None
     review_rule_sources: Dict[str, str] = {}  # rule_id -> precomputed:{asof} / computed:{asof}
     review_placeholders: Dict[str, str] = {}  # sheet -> 占位原因（error/no_go 兜底）
+    review_rule_briefs: Dict[str, Dict[str, Any]] = {}  # sheet -> 说明区内容
     review_sheets_done: set = set()  # 已产出真实/占位 sheet 的 rule_id（防重复补表）
-    _reserved_sheets = {"meta", "stock-all", "etf-all"}
+    _reserved_sheets = {"meta", "stock-all", "index-all", "etf-all"}
     _used_sheets = set(_reserved_sheets) | {name for name, _p, _rn, _a in pools}
+    # Excel sheet 名大小写不敏感：冲突判定必须按小写镜像集，否则两条仅大小写
+    # 不同的规则名（如 "TestX"/"testx"）会各产一张表，Excel 打开判文件损坏
+    _used_sheets_ci = {str(n).lower() for n in _used_sheets}
     _ILLEGAL_SHEET_CHARS = set('[]:*?/\\')
 
     def _unique_sheet_name(name: str, rule_id: str) -> str:
         """规则 sheet 名冲突消解：显示名 sanitize/31 字符截断后可能撞车，
         冲突时追加可读后缀（~规则ID，再退化 ~2、~3...），总长 ≤31 且合法；
-        保留名（meta/stock-all/etf-all）不参与生成。"""
-        if name not in _used_sheets:
-            _used_sheets.add(name)
-            return name
+        保留名（meta/stock-all/index-all/etf-all）不参与生成；
+        所有冲突判定按小写镜像集（Excel 大小写不敏感）。"""
+
+        def _take(cand: str) -> str:
+            _used_sheets.add(cand)
+            _used_sheets_ci.add(cand.lower())
+            return cand
+
+        if name.lower() not in _used_sheets_ci:
+            return _take(name)
         seed = "".join(
             ch for ch in str(rule_id or "") if ch not in _ILLEGAL_SHEET_CHARS
         ).strip()[:12]
         if seed:
             cand = name[: max(0, 31 - len(seed) - 1)] + "~" + seed
-            if cand not in _used_sheets:
-                _used_sheets.add(cand)
-                return cand
+            if cand.lower() not in _used_sheets_ci:
+                return _take(cand)
         i = 2
         while True:
             suffix = "~%d" % i
             cand = name[: max(0, 31 - len(suffix))] + suffix
-            if cand not in _used_sheets:
-                _used_sheets.add(cand)
-                return cand
+            if cand.lower() not in _used_sheets_ci:
+                return _take(cand)
             i += 1
 
     def _append_rule_sheet(rule: Dict[str, Any], source: str, src_asof: Any) -> None:
@@ -3424,6 +3737,15 @@ def export_bagua_multi_period_xlsx(
         pools.append((sheet, rv_pool, False, sheet_asof))
         review_sheets.append(sheet)
         review_rule_sources[rid or sheet] = f"{source}:{src_asof}"
+        # 说明区内容（写完 sheet 后由 _rule_brief_rows 渲染到表头上方）
+        review_rule_briefs[sheet] = {
+            "rule_id": rid,
+            "source_kind": source,
+            "asof": sheet_asof,
+            "count": len(rv_pool),
+            "raw_count": len(hit),
+            "placeholder": "",
+        }
         if rid:
             review_sheets_done.add(rid)
 
@@ -3466,6 +3788,14 @@ def export_bagua_multi_period_xlsx(
             review_sheets.append(sheet)
             review_rule_sources[rid] = f"placeholder:{base_asof}"
             review_placeholders[sheet] = safe_reason
+            review_rule_briefs[sheet] = {
+                "rule_id": rid,
+                "source_kind": "placeholder",
+                "asof": base_asof,
+                "count": 0,
+                "raw_count": 0,
+                "placeholder": safe_reason,
+            }
             review_sheets_done.add(rid)
             part = f"placeholder:{rid}({safe_reason})"
             if part not in seen_parts:
@@ -3584,7 +3914,7 @@ def export_bagua_multi_period_xlsx(
         review_note = f"error:{_re}"
 
     totals = {
-        "requested": len(stock_pool) + len(etf_pool),
+        "requested": len(stock_pool) + len(index_pool) + len(etf_pool),
         "ok": 0,
         "error": 0,
         "rizhu_hit": 0,
@@ -3689,9 +4019,24 @@ def export_bagua_multi_period_xlsx(
             title += ")"
             headers += [title, "爻辞解释", "月·高岛易断", "月·倾向"]
         headers.append("数据状态")
-        ws.append([_excel_safe_cell(h) for h in headers])
-        for cell in ws[1]:
-            cell.font = Font(bold=True)
+        # 规则 sheet：表头之上先写规则说明区（名称/ID/来源/基准日/命中数/描述），
+        # 使用者不必回规则中心也能看懂这批股票为什么被选中。
+        brief_rows = (
+            _rule_brief_rows(cfg, review_rule_briefs[sheet_name])
+            if sheet_name in review_rule_briefs
+            else []
+        )
+        row_idx = 1
+        for key, val in brief_rows:
+            ws.cell(row_idx, 1, _excel_safe_cell(key)).font = Font(bold=True)
+            ws.cell(row_idx, 2, _excel_safe_cell(val))
+            row_idx += 1
+        if brief_rows:
+            row_idx += 1  # 说明区与数据表头之间留一空行
+        header_row = row_idx
+        for ci, h in enumerate(headers, 1):
+            ws.cell(header_row, ci, _excel_safe_cell(h)).font = Font(bold=True)
+        row_idx += 1
         # 倾向列与其对应的卦象组合列：双好标红、双差标绿（A股习惯），其余不标。
         # (倾向列索引, 组合列索引) —— 1-based，供 openpyxl 使用；周组固定，
         # 月组按组数动态（每组 4 列：组合/爻辞/高岛/倾向）
@@ -3700,21 +4045,24 @@ def export_bagua_multi_period_xlsx(
             combo_idx = 13 + 4 * gi
             CONSENSUS_COLS.append((combo_idx + 3, combo_idx))
         for row in rows:
-            ws.append([_excel_safe_cell(v) for v in row])
-            r = ws.max_row
+            for ci, v in enumerate(row, 1):
+                ws.cell(row_idx, ci, _excel_safe_cell(v))
             for ci_label, ci_combo in CONSENSUS_COLS:
                 label = row[ci_label - 1] if len(row) >= ci_label else ""
                 font_color, fill_color = consensus_style(str(label or ""))
                 if not font_color:
                     continue
-                c_label = ws.cell(r, ci_label)
+                c_label = ws.cell(row_idx, ci_label)
                 c_label.font = Font(color=font_color, bold=True)
                 c_label.fill = PatternFill(
                     fill_type="solid", start_color=fill_color, end_color=fill_color
                 )
                 # 组合列同色（不加底色），便于横向扫读时定位是哪个卦
-                ws.cell(r, ci_combo).font = Font(color=font_color)
-        _autofit_columns(ws)
+                ws.cell(row_idx, ci_combo).font = Font(color=font_color)
+            row_idx += 1
+        # 说明区不参与列宽计算：长描述会把 name 列撑到上限；说明文本靠右侧
+        # 空单元格自然溢出显示即可
+        _autofit_columns(ws, min_row=header_row)
         # combo columns (周卦周线-组合 / 月卦月线-组合) need extra room；
         # 高岛易断为整句古文断语，比组合列更长，单独放宽
         for i, hdr in enumerate(headers, 1):
@@ -3768,6 +4116,7 @@ def export_bagua_multi_period_xlsx(
         ("all_stocks", use_all),
         ("requested", totals["requested"]),
         ("stock_count", len(stock_pool)),
+        ("index_count", len(index_pool)),
         ("etf_count", len(etf_pool)),
         ("sheets", ",".join(name for name, _p, _r, _a in pools)),
         (
@@ -3792,6 +4141,16 @@ def export_bagua_multi_period_xlsx(
             "indicator_review_note",
             review_note
             or "missing:未读取到复核结果",
+        ),
+        (
+            "rule_brief_note",
+            "信号规则工作表的表头之上含规则说明区（名称/ID/来源/基准日/命中只数/规则描述），"
+            "用于核对命中股票为何被选中",
+        ),
+        (
+            "index_note",
+            "index-all 为沪深主要大盘指数（内置清单，每次导出都附带）；指数无复权概念，"
+            "按未复权计算，日柱留空（指数无上市日期，且 6 位代码与个股可能撞码）",
         ),
         ("ok_total", totals["ok"]),
         ("error_total", totals["error"]),

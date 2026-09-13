@@ -280,6 +280,7 @@ def compute_indicator_signal(
     *,
     cross_period_data: Optional[Dict[str, np.ndarray]] = None,
     minute_mode: bool = False,
+    stock_name: str = "",
 ) -> Tuple[Optional[np.ndarray], Optional[str]]:
     if spec.compile_status != "ready":
         return None, f"indicator not ready: {spec.compile_status} ({spec.failure_reason})"
@@ -317,6 +318,7 @@ def compute_indicator_signal(
         indicator_id=spec.id,
         cross_period_data=cross if cross else None,
         allow_missing_cross=False,
+        stock_name=stock_name,
     )
     if result.error:
         return None, result.error

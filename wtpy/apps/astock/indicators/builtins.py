@@ -64,6 +64,32 @@ def fn_ema(series, n) -> np.ndarray:
     return out
 
 
+def fn_sma(series, n, m) -> np.ndarray:
+    """通达信 SMA(X,N,M)：递推 Y'=(M*X+(N-M)*Y')/N，首值 Y1=X1，NaN 透传前值。
+
+    与 fn_ema 同构（SMA(X,N,1) ≡ EMA(X,2N-1)，权重 α=M/N）；N/M 由编译期
+    锁死为整数字面量（1<=M<=N），运行期仍做防御性校验。
+    """
+    s = _as_float(series)
+    n = int(np.asarray(n).reshape(-1)[0] if np.size(n) else n)
+    m = int(np.asarray(m).reshape(-1)[0] if np.size(m) else m)
+    out = np.full_like(s, np.nan, dtype=np.float64)
+    if n <= 0 or m < 0 or m > n or len(s) == 0:
+        return out
+    prev = np.nan
+    for i, v in enumerate(s):
+        if np.isnan(v):
+            out[i] = prev
+            continue
+        if np.isnan(prev):
+            prev = v
+            out[i] = prev
+        else:
+            prev = (m * v + (n - m) * prev) / n
+            out[i] = prev
+    return out
+
+
 def fn_ref(series, n) -> np.ndarray:
     s = _as_float(series)
     n = int(np.asarray(n).reshape(-1)[0] if np.size(n) else n)
@@ -182,6 +208,13 @@ def fn_not(x) -> np.ndarray:
     return (~_as_bool(x)).astype(np.float64)
 
 
+def _context_stub(*args, **kwargs) -> np.ndarray:
+    """NAMELIKE/DYNAINFO 的注册占位：编译期仅检查函数名（compiler.py 检查
+    BUILTINS 键），实际执行由 runtime.py 的 Call 分支在 get_builtin 之前拦截。
+    若意外直达此处，明确抛错而不是返回默认值。"""
+    raise RuntimeError("context-aware function must be intercepted by runtime")
+
+
 BUILTINS: Dict[str, Callable] = {
     "MA": fn_ma,
     "EMA": fn_ema,
@@ -196,6 +229,9 @@ BUILTINS: Dict[str, Callable] = {
     "LLV": fn_llv,
     "IF": fn_if,
     "NOT": fn_not,
+    "SMA": fn_sma,
+    "NAMELIKE": _context_stub,
+    "DYNAINFO": _context_stub,
 }
 
 

@@ -20,7 +20,16 @@ def build_signal_key_from_request(
     universe_hash: Optional[str] = None,
     indicator_source_hash: Optional[str] = None,
     factor_manifest_sha: Optional[str] = None,
+    name_snapshot_id: str = "",
 ) -> str:
+    """研究执行路径的信号缓存键。
+
+    ``name_snapshot_id``：规则含 NAMELIKE 时**必须**传（股票名称内容指纹，
+    来自 ``service.stock_names.ensure_stock_names_for``）——名称变化（如戴帽）
+    必须使缓存失效，否则会复用旧名称算出的信号。不含 NAMELIKE 的规则传空串，
+    键与历史一致（存量缓存不失效）。与 ``service/backtest._make_signal_cache_key``
+    同口径。
+    """
     period = (getattr(req, "period", None) or "DAY").upper()
     # Align with service/backtest adjust_mode labels (standard_qfq vs research_unadjusted).
     adjust = (
@@ -38,6 +47,7 @@ def build_signal_key_from_request(
         adjust_mode=adjust,
         factor_manifest_sha=factor_manifest_sha or "",
         combine=getattr(req, "combine", None),
+        extra={"name_snapshot": name_snapshot_id} if name_snapshot_id else None,
     )
 
 

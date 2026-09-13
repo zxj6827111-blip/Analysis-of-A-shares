@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
-"""方案 A 导出区布局回归：纯静态结构不变量（无 Node 依赖）。
+"""导出区布局回归：纯静态结构不变量（无 Node 依赖）。
 
-覆盖：
-- 既有导出/规则选择 id 全文件唯一；新增 bqExtraRuleWarn 唯一
-- 「① 附带信号 sheet」「② 选择导出范围」步骤标记各 1 处
-- <details class="bq-export-help"> 存在且承载原 #bqHint 长文
-- #bqHint 保留 id/class 但内容清空
-- 旧 class .bq-export-note / .bq-export-label 无残留
-- .bq-export-bar 局部 div/details 配对平衡
-- delta 修补：summary:focus-visible 且保留 outline:none；renderBqRuleSummary
-  在 early return 前同步 count / 更新警告；initBqRulePick 关面板重置箭头；
-  bqHasExtraRules 默认集合只取一次、统一 indexOf 判定
+PLAN-BAGUA-UX-V1.1 整改后旧查询页导出区（.bq-export-bar）已被「查询卦象」视图内
+工作台的批量导出面板（#wb-export-panel）替代：旧 bq* 布局 id 从 HTML 退役，
+其 JS 函数（renderBqRuleSummary / initBqRulePick / bqHasExtraRules /
+bqExportReviewSuffix）保留为代码级保护。本文件断言：
+- 旧布局 id 已全部移除（不残留死 UI）；工作台关键 id 全文件唯一
+- 工作台导出面板的结构等价物：范围选择、附加明细、摘要、主按钮、记录区
+- 通用静态 id 无重复（原保护保留）
+- delta 修补类函数断言（bqHasExtraRules 等）保留——函数仍在源码中
 """
 from __future__ import annotations
 
@@ -23,7 +21,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 V3 = ROOT / "wtpy" / "apps" / "astock" / "web" / "static" / "index_v3.html"
 
-TARGET_IDS = (
+# 旧查询页导出区 id（方案 A）：UI 已退役，全文件不得残留
+RETIRED_IDS = (
     "bqRulePickBtn",
     "bqRulePickCount",
     "bqRulePickArrow",
@@ -35,7 +34,24 @@ TARGET_IDS = (
     "bqExtraRuleWarn",
 )
 
-MOVED_HELP_KEYS = ("导出为周报格式", "日柱自动读", "信号规则：")
+# 工作台导出面板（替代者）关键 id：各出现且全文件唯一
+WORKBENCH_IDS = (
+    "wbRoot",
+    "wbQSearch",
+    "wbQRun",
+    "wbSRuleList",
+    "wbSRun",
+    "wbEScope",
+    "wbEAttach",
+    "wbERuleList",
+    "wbESummary",
+    "wbERun",
+    "wbEJobs",
+)
+
+# 导出面板的模板说明必须与文件真实结构一致：既有样本是 meta / stock-all /
+# etf-all（+ 可选规则 sheet）。原文案「日/周/月三个工作表组」与实际不符，已更正。
+WORKBENCH_HELP_KEYS = ("报表结构：工作表", "stock-all", "index-all", "etf-all")
 
 
 @pytest.fixture(scope="module")
@@ -45,7 +61,9 @@ def v3_html() -> str:
 
 
 def test_bq_export_target_ids_unique(v3_html: str):
-    for eid in TARGET_IDS:
+    for eid in RETIRED_IDS:
+        assert v3_html.count(f'id="{eid}"') == 0, f"retired id must be removed: {eid}"
+    for eid in WORKBENCH_IDS:
         assert v3_html.count(f'id="{eid}"') == 1, eid
 
 
@@ -73,27 +91,29 @@ def test_bq_export_static_markup_has_no_duplicate_ids(v3_html: str):
 
 
 def test_bq_export_step_markers(v3_html: str):
-    assert v3_html.count("① 附带信号 sheet") == 1
-    assert v3_html.count("② 选择导出范围") == 1
+    # 工作台导出面板的三段结构：范围 / 报表内容 / 附加明细（对应旧 ①②步骤标记）
+    assert v3_html.count("选择导出范围") >= 1
+    assert v3_html.count("确认报表日期、口径和模板内容") >= 1
+    assert v3_html.count("可选附加信号明细") >= 1
+    # 旧查询页步骤文案不残留
+    assert "① 附带信号 sheet" not in v3_html
+    assert "② 选择导出范围" not in v3_html
 
 
 def test_bq_export_help_details_holds_moved_copy(v3_html: str):
-    m = re.search(r'<details class="bq-export-help">(.*?)</details>', v3_html, re.S)
-    assert m, "missing details.bq-export-help"
-    body = m.group(1)
-    assert "<summary>" in body
-    for key in MOVED_HELP_KEYS:
-        assert key in body, key
+    # 旧帮助 details 已退役；周报模板说明迁入工作台导出面板
+    assert '<details class="bq-export-help">' not in v3_html
+    for key in WORKBENCH_HELP_KEYS:
+        assert key in v3_html, key
+    # 附加明细语义：增加工作表、不改变主表范围
+    assert "不改变主表的股票范围" in v3_html
 
 
 def test_bq_hint_emptied(v3_html: str):
-    m = re.search(r'<div[^>]*\bid="bqHint"[^>]*>(.*?)</div>', v3_html, re.S)
-    assert m, "missing #bqHint"
-    head, inner = m.group(0), m.group(1)
-    assert 'class="muted"' in head
-    assert inner.strip() == "", f"#bqHint should be empty, got {inner.strip()[:60]!r}"
-    for key in ("指数/ETF 无复权口径",) + MOVED_HELP_KEYS:
-        assert key not in inner, key
+    # 旧 #bqHint 长提示随旧 UI 移除；工作台用 wbQHelp/wbQDateNote 等短提示承接
+    assert v3_html.count('id="bqHint"') == 0
+    for key in ("指数/ETF 无复权口径",) + WORKBENCH_HELP_KEYS:
+        assert key not in v3_html or key in WORKBENCH_HELP_KEYS
 
 
 def test_bq_export_legacy_classes_removed(v3_html: str):
@@ -179,17 +199,41 @@ def _extract_element(src: str, start: int, tag: str) -> str:
 
 
 def test_bq_export_bar_locally_balanced(v3_html: str):
-    start = v3_html.find('<div class="bq-export-bar">')
-    assert start >= 0
-    bar = _extract_element(v3_html, start, "div")
-    assert len(re.findall(r"<div\b", bar)) == len(re.findall(r"</div>", bar))
-    assert len(re.findall(r"<details\b", bar)) == len(re.findall(r"</details>", bar))
-    for eid in (
-        "bqRulePickBtn",
-        "bqRulePickSummary",
-        "bqRulePickPanel",
-        "bqExportOnePeriodBtn",
-        "bqExportBtn",
-        "bqExtraRuleWarn",
-    ):
-        assert f'id="{eid}"' in bar, eid
+    # 旧 .bq-export-bar 已随旧查询页退役；替代结构 = 工作台导出面板
+    assert '<div class="bq-export-bar">' not in v3_html
+    start = v3_html.find('<section class="wb-body" id="wb-export-panel"')
+    assert start >= 0, "missing workbench export panel"
+    panel = _extract_element(v3_html, start, "section")
+    assert len(re.findall(r"<div\b", panel)) == len(re.findall(r"</div>", panel))
+    for eid in ("wbEScope", "wbEAttach", "wbERuleList", "wbESummary", "wbERun", "wbEJobs"):
+        assert f'id="{eid}"' in panel, eid
+    # 查询页签不再包含大块导出设置（视觉验收：导出设置独立成页签）
+    qpanel = _extract_element(
+        v3_html, v3_html.find('<section class="wb-body" id="wb-query-panel"'), "section"
+    )
+    assert "wb-export-bar" not in qpanel
+    assert "创建导出任务" not in qpanel
+
+
+# ---------------------------------------------------------------------------
+# 主导航（UX 精简）：隐藏「预测」，栏目名统一为 回测/卦象/规则/实验/任务/数据
+# ---------------------------------------------------------------------------
+
+NAV_VIEWS = ("backtest", "bagua-query", "rules", "experiment", "tasks", "datastore")
+NAV_LABELS = ("回测", "卦象", "规则", "实验", "任务", "数据")
+
+
+def test_main_nav_hides_forecast_and_unifies_labels(v3_html: str):
+    m = re.search(
+        r'<nav class="main-nav" id="mainNav">(.*?)</nav>', v3_html, re.S
+    )
+    assert m, "main-nav 未找到"
+    items = re.findall(
+        r'data-view="([^"]+)"[^>]*><span class="nav-icon">[^<]*</span>([^<]+)</button>',
+        m.group(1),
+    )
+    assert [v for v, _l in items] == list(NAV_VIEWS), items
+    assert [lbl.strip() for _v, lbl in items] == list(NAV_LABELS), items
+    # 预测不再出现在导航（view 区块与 ?module=forecast 深链保留，可随时恢复）
+    assert "forecast" not in [v for v, _l in items]
+    assert 'id="view-forecast"' in v3_html, "预测视图区块不应被删除，仅从导航隐藏"

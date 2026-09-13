@@ -343,6 +343,16 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
     day_adj_map = {}
     factor_series = []
 
+    # NAMELIKE 名称快照：批量一次解析（任一规则用到才解析）
+    from .forecast.name_norm import normalize_stock_code as _nsc
+    from .service.stock_names import ensure_stock_names_for
+
+    trade_specs_cli = [
+        s for s in specs
+        if s.id != "bagua_ohlc" and s.output_type == "signal"
+    ]
+    stock_name_map, _name_snapshot_id = ensure_stock_names_for(cfg, codes, trade_specs_cli)
+
     for code in codes:
         try:
             day_raw = store.load_symbol(code)
@@ -404,12 +414,16 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
         dates_arr = bars["date"]
 
         per_ind_signals = []
+        failed_in_loop = []
         for spec in specs:
             if spec.id == "bagua_ohlc" or spec.output_type == "classification":
                 continue
-            sig, err = compute_indicator_signal(spec, bars)
+            sig, err = compute_indicator_signal(
+                spec, bars, stock_name=stock_name_map.get(_nsc(code), "")
+            )
             if err:
                 errors.append({"code": code, "indicator": spec.id, "error": err})
+                failed_in_loop.append(spec.id)
                 continue
             per_ind_signals.append((spec, sig))
             for d in signal_dates(dates_arr, sig):
@@ -419,12 +433,20 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
                     continue
                 all_events.append(SignalEvent(std_code=code, date=d, period=trade_period, indicator_id=spec.id))
 
-        if args.combine and len(per_ind_signals) >= 2:
+        # 组合兜底（与 backtest._events_for_code 同口径）：任一参与规则失败
+        # → 该票不产生组合信号（失败≠False，组合语义不可靠），记录错误。
+        if args.combine and not failed_in_loop and len(per_ind_signals) >= 2:
             combined = combine_signals([s for _, s in per_ind_signals], mode=args.combine)
             for d in signal_dates(dates_arr, combined):
                 if start and d < start: continue
                 if end and d > end: continue
                 all_events.append(SignalEvent(std_code=code, date=d, period=trade_period, indicator_id=f"combine_{args.combine}"))
+        elif args.combine and failed_in_loop:
+            errors.append({
+                "code": code,
+                "indicator": f"combine_{args.combine}",
+                "error": f"组合信号未产生：参与规则 {failed_in_loop} 计算失败（失败≠False，该票组合语义不可靠）",
+            })
 
         if args.dwm or period == "DWM":
             base = None
@@ -438,9 +460,9 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
                 d_dict = bars_dict_from_day(day_for_ind)
                 w_dict = bars_dict_from_period(w_bars)
                 m_dict = bars_dict_from_period(m_bars)
-                ds, e1 = compute_indicator_signal(base, d_dict)
-                ws, e2 = compute_indicator_signal(base, w_dict)
-                ms, e3 = compute_indicator_signal(base, m_dict)
+                ds, e1 = compute_indicator_signal(base, d_dict, stock_name=stock_name_map.get(_nsc(code), ""))
+                ws, e2 = compute_indicator_signal(base, w_dict, stock_name=stock_name_map.get(_nsc(code), ""))
+                ms, e3 = compute_indicator_signal(base, m_dict, stock_name=stock_name_map.get(_nsc(code), ""))
                 if ds is not None and ws is not None and ms is not None:
                     res = compute_v5_dwm_resonance(day_for_ind, ds, w_bars, ws, m_bars, ms)
                     for d in signal_dates(d_dict["date"], res):

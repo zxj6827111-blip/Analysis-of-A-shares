@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 import tests.apps.astock.conftest  # noqa: F401
+from tests.apps.astock.export_layout import data_rows
 
 from wtpy.apps.astock.config import AStockConfig, get_default_config
 from wtpy.apps.astock.data.tdx_reader import DayBar
@@ -75,14 +76,14 @@ def _rising_bars() -> list:
 
 
 def _cfg(tmp_path: Path) -> AStockConfig:
-    cfg = get_default_config(
-        storage_root=tmp_path / "st",
-        indicator_dir=tmp_path / "ind",
-        output_root=tmp_path / "out",
-    )
-    Path(cfg.storage_root).mkdir(parents=True, exist_ok=True)
-    Path(cfg.indicator_dir).mkdir(parents=True, exist_ok=True)
-    return cfg
+    """隔离 cfg：indicator_dir 为 tmp 下公式源副本。
+
+    - 能解析默认复核公式（735/先跌后涨）→ 导出复用指纹校验走真实路径
+    - 导入/建规则写入只落 tmp，不污染真实 指标/（此前直连真实目录造成污染）
+    """
+    from tests.apps.astock.conftest import isolated_formula_cfg
+
+    return isolated_formula_cfg(tmp_path)
 
 
 def _mock_export_data(monkeypatch, cfg: AStockConfig, bars: list) -> None:
@@ -162,6 +163,21 @@ def _write_review(cfg: AStockConfig, asof: int, rules: list) -> None:
         "error_count": 0,
         "rules": rules,
     }
+    # 规则指纹（导出复用前置校验）：真实注册表解析规则内容指纹。
+    # 解析不到的 rule_id（fake 规则）不进指纹表——导出侧按「JSON 有但
+    # 指纹集未覆盖」处理时走即时计算，与本文件测试意图一致。
+    from wtpy.apps.astock.service import indicator_review as ir
+
+    try:
+        pairs = [(str(r["rule_id"]), str(r.get("sheet") or "")) for r in rules]
+        specs = ir._resolve_rules_for_fingerprint(cfg, pairs)
+    except Exception:  # noqa: BLE001
+        specs = None
+    if specs:
+        payload[ir._FP_RULE] = {rid: ir._spec_fingerprint(sp) for rid, _s, sp in specs}
+        payload[ir._FP_UNIVERSE] = "u"
+        payload[ir._FP_NAME] = "n"
+        payload[ir._FP_SURFACE] = "s"
     (d / f"review_{asof}.json").write_text(
         json.dumps(payload, ensure_ascii=False), encoding="utf-8"
     )
@@ -220,9 +236,9 @@ def test_round3_user_rule_hit_and_zero_hit_sheets_real_registry(
     wb = openpyxl.load_workbook(path)
     assert hit["name"] in wb.sheetnames, wb.sheetnames
     assert zero["name"] in wb.sheetnames, wb.sheetnames
-    hit_rows = [r[0] for r in wb[hit["name"]].iter_rows(min_row=2, values_only=True)]
+    hit_rows = [r[0] for r in data_rows(wb[hit["name"]])]
     assert hit_rows == ["600000"], "命中成员必须落表"
-    assert wb[zero["name"]].max_row == 1, "0 命中仍是表头空 sheet"
+    assert data_rows(wb[zero["name"]]) == [], "0 命中仍是说明区+表头空 sheet"
 
     meta = _meta(path)
     sources = str(meta["indicator_review_rule_sources"])
@@ -254,11 +270,11 @@ def test_round3_multiple_user_rules_all_sheets_present(
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    signal = [n for n in wb.sheetnames if n not in ("meta", "stock-all")]
+    signal = [n for n in wb.sheetnames if n not in ("meta", "stock-all", "index-all")]
     assert signal == ["独立甲命中", "独立乙命中", "独立丙空"], wb.sheetnames
-    assert [r[0] for r in wb["独立甲命中"].iter_rows(min_row=2, values_only=True)] == ["600000"]
-    assert [r[0] for r in wb["独立乙命中"].iter_rows(min_row=2, values_only=True)] == ["600000"]
-    assert wb["独立丙空"].max_row == 1
+    assert [r[0] for r in data_rows(wb["独立甲命中"])] == ["600000"]
+    assert [r[0] for r in data_rows(wb["独立乙命中"])] == ["600000"]
+    assert data_rows(wb["独立丙空"]) == []
 
     meta = _meta(path)
     assert meta["indicator_review_sheets"] == "独立甲命中,独立乙命中,独立丙空"
@@ -307,9 +323,9 @@ def test_round3_compute_error_placeholder_coexists_with_precomputed(
     import openpyxl
 
     wb = openpyxl.load_workbook(path)
-    assert [r[0] for r in wb["735"].iter_rows(min_row=2, values_only=True)] == ["600000"]
+    assert [r[0] for r in data_rows(wb["735"])] == ["600000"]
     assert "user_broken_x" in wb.sheetnames, wb.sheetnames
-    assert wb["user_broken_x"].max_row == 1, "error 占位必须是仅表头空表"
+    assert data_rows(wb["user_broken_x"]) == [], "error 占位必须是说明区+表头空表"
     # 只把缺失的规则送给即时计算
     assert got_ids == [["user_broken_x"]]
 
@@ -354,7 +370,7 @@ def test_round3_compute_no_go_placeholder_for_all_missing(
     wb = openpyxl.load_workbook(path)
     for rid in ("user_alpha_ph", "user_beta_ph"):
         assert rid in wb.sheetnames, wb.sheetnames
-        assert wb[rid].max_row == 1
+        assert data_rows(wb[rid]) == []
     meta = _meta(path)
     note = str(meta["indicator_review_note"])
     assert "no_go:no_formal_l1_product" in note
@@ -400,7 +416,7 @@ def test_round3_error_placeholder_uses_user_display_name(
 
     wb = openpyxl.load_workbook(path)
     assert "占位显示名规则" in wb.sheetnames, wb.sheetnames
-    assert wb["占位显示名规则"].max_row == 1
+    assert data_rows(wb["占位显示名规则"]) == []
     meta = _meta(path)
     assert f"placeholder:{rule['id']}(" in str(meta["indicator_review_note"])
     assert rule["id"] not in wb.sheetnames

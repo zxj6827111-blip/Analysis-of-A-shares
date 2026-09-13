@@ -1,0 +1,145 @@
+<style>
+#bq-ux-demo{--bq-bg:light-dark(#f5f7fc,#101827);--bq-panel:light-dark(#ffffff,#172135);--bq-input:light-dark(#ffffff,#0d1523);--bq-line:light-dark(#c9d2e3,#435371);--bq-text:light-dark(#17243b,#edf2ff);--bq-muted:light-dark(#516079,#b7c5df);--bq-blue:light-dark(#335cda,#5478ff);--bq-soft:light-dark(#eaf0ff,#253962);--bq-error:light-dark(#a12c2c,#ffb8b0);--bq-gap:22px;color:var(--bq-text);font-family:"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bq-bg);border:1px solid var(--bq-line);border-radius:16px;overflow-wrap:anywhere}
+#bq-ux-demo *{box-sizing:border-box}
+#bq-ux-demo [hidden]{display:none!important}
+#bq-ux-demo .bq-header{padding:22px 22px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+#bq-ux-demo h2,#bq-ux-demo h3,#bq-ux-demo h4,#bq-ux-demo p{margin:0;font-size:inherit;font-weight:400}
+#bq-ux-demo h2,#bq-ux-demo h3,#bq-ux-demo h4,#bq-ux-demo strong{font-weight:500}
+#bq-ux-demo .bq-muted{color:var(--bq-muted)}
+#bq-ux-demo .bq-stamp{border:1px solid var(--bq-line);border-radius:6px;padding:4px 8px;color:var(--bq-muted)}
+#bq-ux-demo .bq-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:0 22px 20px}
+#bq-ux-demo button,#bq-ux-demo input,#bq-ux-demo select{font:inherit;color:inherit}
+#bq-ux-demo button{cursor:pointer;min-height:44px;border:1px solid var(--bq-line);border-radius:8px;background:var(--bq-panel);padding:9px 13px;font-weight:400}
+#bq-ux-demo button:disabled{cursor:default;opacity:.55}
+#bq-ux-demo button:hover:not(:disabled){background:var(--bq-soft)}
+#bq-ux-demo .bq-mode{text-align:left;display:flex;flex-direction:column;gap:5px}
+#bq-ux-demo .bq-mode[aria-pressed="true"]{background:var(--bq-soft);border-color:var(--bq-blue);box-shadow:inset 0 3px var(--bq-blue)}
+#bq-ux-demo .bq-body{background:var(--bq-panel);border-top:1px solid var(--bq-line);border-radius:0 0 16px 16px;padding:var(--bq-gap);display:grid;gap:var(--bq-gap)}
+#bq-ux-demo .bq-block{display:grid;gap:12px}
+#bq-ux-demo .bq-title{display:flex;gap:8px;align-items:center}
+#bq-ux-demo .bq-num{display:inline-grid;place-items:center;min-width:25px;min-height:25px;border-radius:50%;background:var(--bq-soft)}
+#bq-ux-demo .bq-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#bq-ux-demo .bq-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+#bq-ux-demo input:not([type="checkbox"]),#bq-ux-demo select{min-height:44px;padding:10px 12px;border:1px solid var(--bq-line);border-radius:8px;background:var(--bq-input);width:100%;min-width:0}
+#bq-ux-demo input::placeholder{color:var(--bq-muted);opacity:1}
+#bq-ux-demo .bq-candidates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+#bq-ux-demo .bq-candidate{text-align:left;display:flex;gap:7px;flex-direction:column}
+#bq-ux-demo .bq-chips{display:flex;gap:8px;flex-wrap:wrap}
+#bq-ux-demo .bq-chip{background:var(--bq-soft);display:flex;gap:12px;align-items:center}
+#bq-ux-demo .bq-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+#bq-ux-demo .bq-field{display:grid;align-content:start;gap:8px;min-width:0}
+#bq-ux-demo .bq-segments{display:flex;gap:5px;flex-wrap:wrap}
+#bq-ux-demo .bq-segments button{flex:1}
+#bq-ux-demo .bq-segments button[aria-pressed="true"]{background:var(--bq-soft);border-color:var(--bq-blue)}
+#bq-ux-demo .bq-summary{background:var(--bq-input);padding:14px;border-radius:8px;display:grid;gap:7px}
+#bq-ux-demo .bq-submit{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#bq-ux-demo .bq-primary{background:var(--bq-blue);color:#fff;border-color:var(--bq-blue);font-weight:500}
+#bq-ux-demo .bq-primary:hover:not(:disabled){background:var(--bq-blue);filter:brightness(1.06)}
+#bq-ux-demo .bq-check{display:flex;align-items:center;gap:9px;min-height:44px}
+#bq-ux-demo input[type="checkbox"]{width:18px;height:18px;accent-color:var(--bq-blue);flex:none}
+#bq-ux-demo details{border-top:1px solid var(--bq-line);padding-top:12px}
+#bq-ux-demo details>summary{cursor:pointer;padding:8px 0}
+#bq-ux-demo .bq-result{display:grid;gap:14px;border-top:1px solid var(--bq-line);padding-top:18px}
+#bq-ux-demo .bq-result-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--bq-line)}
+#bq-ux-demo .bq-result-row>div{display:grid;gap:7px}
+#bq-ux-demo .bq-error{color:var(--bq-error)}
+#bq-ux-demo .bq-help{color:var(--bq-muted)}
+#bq-ux-demo.bq-less-help .bq-help{display:none}
+#bq-ux-demo .bq-status{padding:12px;background:var(--bq-soft);border-radius:8px;display:grid;gap:8px}
+@media(max-width:510px){#bq-ux-demo .bq-header{padding:16px}#bq-ux-demo .bq-modes{padding:0 12px 14px;gap:5px}#bq-ux-demo .bq-mode{padding:9px 7px;text-align:center;align-items:center}#bq-ux-demo .bq-mode .bq-muted{display:none}#bq-ux-demo .bq-fields,#bq-ux-demo .bq-candidates{grid-template-columns:1fr}#bq-ux-demo .bq-result-row{grid-template-columns:1fr}}
+</style>
+<div id="bq-ux-demo" aria-label="卦象工作台交互方案">
+  <div class="bq-header"><h2>卦象工作台</h2><span class="bq-stamp">交互示意 · 全部为示例数据</span></div>
+  <nav class="bq-modes" aria-label="选择要完成的任务">
+    <button type="button" class="bq-mode" data-mode="query" aria-pressed="true" aria-controls="bq-query-panel"><strong>查卦象</strong><span class="bq-muted">看指定标的的结果</span></button>
+    <button type="button" class="bq-mode" data-mode="screen" aria-pressed="false" aria-controls="bq-screen-panel"><strong>按规则筛选</strong><span class="bq-muted">找符合条件的股票</span></button>
+    <button type="button" class="bq-mode" data-mode="export" aria-pressed="false" aria-controls="bq-export-panel"><strong>批量导出</strong><span class="bq-muted">生成 Excel 报表</span></button>
+  </nav>
+  <section class="bq-body" id="bq-query-panel" aria-label="查卦象">
+    <div class="bq-block">
+      <label class="bq-title" for="bq-demo-search"><span class="bq-num">1</span><strong>选择股票、指数或 ETF</strong></label>
+      <div class="bq-search"><input id="bq-demo-search" placeholder="输入名称或代码，如平安银行、000001" autocomplete="off" aria-describedby="bq-input-help bq-input-error"><button type="button" id="bq-add">添加</button></div>
+      <p class="bq-help" id="bq-input-help">也可粘贴多个代码，用逗号分隔。重名或同码时，先确认具体标的。</p>
+      <div class="bq-candidates" id="bq-candidates" aria-label="可选择的示例标的"></div>
+      <p id="bq-input-error" class="bq-error" role="alert" hidden></p>
+      <div class="bq-chips" id="bq-selected" aria-label="已选标的" aria-live="polite"></div>
+    </div>
+    <div class="bq-block">
+      <h3 class="bq-title"><span class="bq-num">2</span>选择周期和时间</h3>
+      <div class="bq-fields">
+        <div class="bq-field"><span>卦象周期</span><div class="bq-segments" aria-label="卦象周期"><button type="button" data-period="day" aria-pressed="true">日线</button><button type="button" data-period="week" aria-pressed="false">周线</button><button type="button" data-period="month" aria-pressed="false">月线</button></div></div>
+        <label class="bq-field">查询时间<select id="bq-time"><option value="latest">最新可用交易日</option><option value="custom">指定日期</option></select><input id="bq-custom" type="date" value="2026-09-10" aria-label="指定查询日期" hidden></label>
+      </div>
+      <p class="bq-muted" id="bq-date-note">日线示例数据截至 2026/09/10；以实际可用数据为准。</p>
+      <div class="bq-fields"><label class="bq-field">价格口径<select id="bq-price"><option value="raw">未复权</option><option value="qfq">Tushare 前复权</option></select></label><details><summary>价格口径如何影响结果？</summary><p class="bq-muted">不同口径会使用不同价格，卦象可能随之变化。当前选择会显示在结果和导出摘要中。</p></details></div>
+      <p class="bq-muted" id="bq-type-note" hidden>按当前系统规则，已选指数或 ETF 使用未复权价格。</p>
+    </div>
+    <div class="bq-summary" aria-live="polite"><span id="bq-query-summary">尚未选择标的</span></div>
+    <div class="bq-submit"><button type="button" class="bq-primary" id="bq-run-query" disabled>请先选择标的</button><span class="bq-help">结果将在下方显示。</span></div>
+    <p id="bq-query-error" role="alert" class="bq-error" hidden></p>
+    <div id="bq-query-result" class="bq-result" aria-live="polite" hidden></div>
+  </section>
+  <section class="bq-body" id="bq-screen-panel" aria-label="按规则筛选" hidden>
+    <div class="bq-block"><h3 class="bq-title"><span class="bq-num">1</span>选择筛选规则</h3><label class="bq-check"><input type="checkbox" name="bq-rule" value="735 金叉及趋势">735 金叉及趋势</label><label class="bq-check"><input type="checkbox" name="bq-rule" value="5日外">5日外</label><label class="bq-field">多条规则如何组合<select id="bq-combine"><option value="any">满足任意一条</option><option value="all">同时满足全部</option></select></label></div>
+    <div class="bq-block"><h3 class="bq-title"><span class="bq-num">2</span>选择筛选范围和时间</h3><div class="bq-fields"><label class="bq-field">筛选范围<select id="bq-screen-scope"><option value="all">全部 A 股</option><option value="picked">查询页已选股票</option></select></label><label class="bq-field">筛选日期<input type="date" id="bq-screen-date" value="2026-09-10"></label></div><p class="bq-muted">周期与价格口径沿用规则定义；结果逐项标注实际计算日期。</p></div>
+    <div class="bq-summary" id="bq-screen-summary" aria-live="polite">尚未选择筛选规则</div>
+    <div class="bq-submit"><button type="button" class="bq-primary" id="bq-run-screen" disabled>请先选择规则</button></div>
+    <div id="bq-screen-result" class="bq-result" aria-live="polite" hidden></div>
+  </section>
+  <section class="bq-body" id="bq-export-panel" aria-label="批量导出" hidden>
+    <div class="bq-block"><h3 class="bq-title"><span class="bq-num">1</span>选择导出范围</h3><label class="bq-field">导出哪些标的<select id="bq-export-scope"><option value="all">全市场 A 股 + ETF（分别放入工作表）</option><option value="picked">指定标的</option><option value="screened">本次筛选结果</option></select></label><p class="bq-muted" id="bq-export-source">全市场导出无需先填写股票代码。</p></div>
+    <div class="bq-block"><h3 class="bq-title"><span class="bq-num">2</span>确认报表内容</h3><div class="bq-fields"><label class="bq-field">报表基准日期<input id="bq-export-date" type="date" value="2026-09-10"></label><label class="bq-field">股票价格口径<select id="bq-export-price"><option value="raw">未复权</option><option value="qfq">Tushare 前复权</option></select></label></div><p>周报模板：日柱、周卦、月卦及解读</p><p class="bq-help">每组周期标注实际日期；跨月或未完成周期单独标注。ETF 按当前系统规则使用未复权价格。</p><label class="bq-check"><input type="checkbox" id="bq-attach">另附信号规则命中明细（可选）</label><div id="bq-attach-options" hidden><label class="bq-check"><input type="checkbox" name="bq-export-rule" value="735 金叉及趋势">735 金叉及趋势</label><label class="bq-check"><input type="checkbox" name="bq-export-rule" value="5日外">5日外</label><p class="bq-muted">每条规则一个工作表；仅附加明细，不缩小主表的导出范围。</p></div></div>
+    <div class="bq-summary" id="bq-export-summary" aria-live="polite"></div>
+    <div class="bq-submit"><button type="button" class="bq-primary" id="bq-run-export">创建导出任务</button><span class="bq-help">提交后在这里查看任务状态。</span></div>
+    <div id="bq-export-result" class="bq-result" aria-live="polite" hidden></div>
+  </section>
+</div>
+<script>
+(() => {
+  const root = document.getElementById('bq-ux-demo');
+  const el = id => root.querySelector('#' + id);
+  const catalog = [
+    {id:'SZSE.STK.000001',code:'000001',name:'平安银行',type:'股票',aliases:['sz000001','000001.sz']},
+    {id:'SSE.IDX.000001',code:'000001',name:'上证指数',type:'指数',aliases:['sh000001','000001.sh']},
+    {id:'SSE.STK.600000',code:'600000',name:'浦发银行',type:'股票',aliases:['sh600000','600000.sh']},
+    {id:'SSE.ETF.510300',code:'510300',name:'沪深300ETF',type:'ETF',aliases:['sh510300','510300.sh']}
+  ];
+  let picked = [], resultSnapshot = null, screened = null, exportPicked = [];
+  let mode = 'query', period = 'day';
+  const periods = {day:{label:'日线',time:'最新可用交易日',date:'2026/09/10'},week:{label:'周线',time:'最近一个完整周',date:'2026/08/31—2026/09/04'},month:{label:'月线',time:'最近一个完整月',date:'2026年8月'}};
+  const checked = name => [...root.querySelectorAll('input[name="'+name+'"]:checked')].map(x => x.value);
+  const priceLabel = id => el(id).value === 'raw' ? '未复权' : 'Tushare 前复权';
+  const make = (tag,text,cls) => {const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;};
+  function button(text,handler,cls){const node=make('button',text,cls);node.type='button';node.addEventListener('click',handler);return node;}
+  function setMode(next){
+    if(next==='export'&&mode==='query'&&el('bq-export-scope').value==='picked'&&resultSnapshot&&exportPicked.length){
+      el('bq-export-date').value={day:'2026-09-10',week:'2026-09-04',month:'2026-08-31'}[period];
+      el('bq-export-price').value=el('bq-price').disabled?'raw':el('bq-price').value;
+    }
+    if(next==='export'&&mode==='screen'&&el('bq-export-scope').value==='screened'&&screened)el('bq-export-date').value=screened.date;
+    mode=next;root.querySelectorAll('[data-mode]').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.mode===mode)));['query','screen','export'].forEach(x=>el('bq-'+x+'-panel').hidden=x!==mode);renderSummaries();
+  }
+  root.querySelectorAll('[data-mode]').forEach(x=>x.addEventListener('click',()=>setMode(x.dataset.mode)));
+  function message(id,text){el(id).textContent=text;el(id).hidden=!text;}
+  function addStock(stock){if(!picked.some(x=>x.id===stock.id))picked.push(stock);el('bq-demo-search').value='';message('bq-input-error','');queryChanged();renderCandidates();}
+  function renderCandidates(){const term=el('bq-demo-search').value.trim().toLowerCase();const found=catalog.filter(s=>!picked.some(p=>p.id===s.id)&&(!term||[s.name,s.code,s.id,...s.aliases].some(x=>x.toLowerCase().includes(term))));el('bq-candidates').replaceChildren();found.forEach(s=>{const b=button('',()=>addStock(s),'bq-candidate');b.append(make('strong',s.name),make('span',s.code+' · '+s.type+' · '+(s.id.startsWith('SZ')?'深市':'沪市'),'bq-muted'));el('bq-candidates').append(b);});}
+  function addInput(){const tokens=el('bq-demo-search').value.trim().split(/[,，;；\s]+/).filter(Boolean);const errors=[];tokens.forEach(token=>{const t=token.toLowerCase();const matches=catalog.filter(s=>[s.code,s.name,s.id,...s.aliases].some(x=>x.toLowerCase()===t));if(matches.length===1){if(!picked.some(s=>s.id===matches[0].id))picked.push(matches[0]);}else errors.push(matches.length>1?token+' 对应多个标的，请在候选项中选择。':token+' 未在示例目录中找到。');});if(!tokens.length)errors.push('输入名称或代码，或直接选择下方标的。');if(!errors.length)el('bq-demo-search').value='';message('bq-input-error',errors.join(' '));queryChanged();renderCandidates();}
+  el('bq-demo-search').addEventListener('input',renderCandidates);el('bq-demo-search').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();addInput();}});el('bq-add').addEventListener('click',addInput);
+  function queryDate(){return el('bq-time').value==='custom'?el('bq-custom').value:periods[period].date;}
+  function querySummary(){const price=picked.length&&picked.every(s=>s.type!=='股票')?'未复权':priceLabel('bq-price');return picked.length+' 个标的 · '+periods[period].label+' · '+queryDate()+' · '+price;}
+  function queryChanged(){if(resultSnapshot){el('bq-query-result').hidden=true;message('bq-query-error','条件已变更，请重新查询。');}el('bq-selected').replaceChildren();picked.forEach(s=>{const b=button(s.name+' · '+s.type+' ×',()=>{picked=picked.filter(x=>x.id!==s.id);queryChanged();renderCandidates();},'bq-chip');b.setAttribute('aria-label','移除 '+s.name+' '+s.type);el('bq-selected').append(b);});el('bq-price').disabled=!!picked.length&&picked.every(s=>s.type!=='股票');el('bq-type-note').hidden=!picked.some(s=>s.type!=='股票');renderSummaries();}
+  root.querySelectorAll('[data-period]').forEach(x=>x.addEventListener('click',()=>{period=x.dataset.period;root.querySelectorAll('[data-period]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.period===period)));el('bq-time').value='latest';el('bq-time').options[0].textContent=periods[period].time;el('bq-time').options[1].textContent=period==='day'?'指定日期':period==='week'?'指定周':'指定月';el('bq-custom').type=period==='day'?'date':period==='week'?'week':'month';el('bq-custom').value=period==='day'?'2026-09-10':period==='week'?'2026-W36':'2026-08';el('bq-custom').hidden=true;el('bq-date-note').textContent=periods[period].label+'示例数据：'+periods[period].date+'。';queryChanged();}));
+  el('bq-time').addEventListener('change',()=>{el('bq-custom').hidden=el('bq-time').value!=='custom';queryChanged();});['bq-custom','bq-price'].forEach(id=>el(id).addEventListener('change',queryChanged));
+  el('bq-run-query').addEventListener('click',()=>{if(!picked.length)return;const expected={day:'2026-09-10',week:'2026-W36',month:'2026-08'}[period];if(el('bq-time').value==='custom'&&el('bq-custom').value!==expected){message('bq-query-error','所选时间没有示例数据，请切回“'+periods[period].time+'”。');return;}message('bq-query-error','');resultSnapshot={items:[...picked],summary:querySummary()};const out=el('bq-query-result');out.replaceChildren(make('h3','卦象结果 · 示例'),make('p','本次计算：'+resultSnapshot.summary,'bq-muted'));picked.forEach(s=>{const row=make('div',undefined,'bq-result-row');const info=make('div');info.append(make('strong',s.name+' · '+s.code+' · '+s.type),make('span','主卦：示例卦　动爻：第二爻（示例）'));row.append(info);out.append(row);});const d=make('details');d.append(make('summary','查看卦辞、解读和计算依据'),make('p','正式结果在这里分层显示卦辞、解读、价格区间和数据来源。','bq-muted'));out.append(d,button('导出这 '+picked.length+' 个标的',()=>{exportPicked=[...resultSnapshot.items];el('bq-export-scope').value='picked';setMode('export');}));out.hidden=false;});
+  function screenItems(){return el('bq-screen-scope').value==='all'?catalog.filter(s=>s.type==='股票'):picked.filter(s=>s.type==='股票');}
+  function screenChanged(){screened=null;el('bq-screen-result').hidden=true;renderSummaries();}
+  root.querySelectorAll('input[name="bq-rule"]').forEach(x=>x.addEventListener('change',screenChanged));['bq-combine','bq-screen-scope','bq-screen-date'].forEach(id=>el(id).addEventListener('change',screenChanged));
+  el('bq-run-screen').addEventListener('click',()=>{const rows=screenItems();if(!checked('bq-rule').length||!rows.length)return;const out=el('bq-screen-result');out.replaceChildren();if(el('bq-screen-date').value!=='2026-09-10'){out.append(make('p','所选日期暂无示例数据；可改回 2026/09/10。'));out.hidden=false;return;}screened={items:rows.slice(0,el('bq-combine').value==='all'?1:2),rules:checked('bq-rule'),date:el('bq-screen-date').value};out.append(make('h3','筛选完成 · '+screened.items.length+' 只股票（示例）'),make('p','实际信号日期：'+screened.date+' · '+screened.rules.join('、'),'bq-muted'));screened.items.forEach(s=>{const row=make('div',undefined,'bq-result-row');row.append(make('span',s.name+' '+s.code),button('查卦象',()=>{picked=[s];queryChanged();renderCandidates();setMode('query');}));out.append(row);});out.append(button('导出本次筛选结果',()=>{el('bq-export-scope').value='screened';setMode('export');}));out.hidden=false;renderSummaries();});
+  function exportSelection(){const scope=el('bq-export-scope').value;if(scope==='all')return {valid:true,label:'全市场 A 股 + ETF'};const list=scope==='picked'?(exportPicked.length?exportPicked:picked):(screened?screened.items:[]);return {valid:!!list.length,label:list.length?list.map(s=>s.name).join('、'):(scope==='picked'?'尚未指定标的':'尚未生成筛选结果')};}
+  ['bq-export-scope','bq-export-date','bq-export-price','bq-attach'].forEach(id=>el(id).addEventListener('change',renderSummaries));root.querySelectorAll('input[name="bq-export-rule"]').forEach(x=>x.addEventListener('change',renderSummaries));
+  function renderSummaries(){el('bq-query-summary').textContent=picked.length?querySummary():'先选择上方的股票、指数或 ETF。';el('bq-run-query').disabled=!picked.length;el('bq-run-query').textContent=picked.length?'查询 '+picked.length+' 个标的':'请先选择标的';const rules=checked('bq-rule');const inScope=screenItems();el('bq-screen-summary').textContent=rules.length?rules.join('、')+' · '+(el('bq-combine').value==='any'?'满足任意一条':'同时满足全部')+' · '+el('bq-screen-date').value+(inScope.length?'':' · 请先在查询页选择股票'):'尚未选择筛选规则';el('bq-run-screen').disabled=!rules.length||!inScope.length;el('bq-run-screen').textContent=!rules.length?'请先选择规则':!inScope.length?'请先选择筛选范围内的股票':'开始筛选';const selection=exportSelection();const attach=el('bq-attach').checked;const erules=checked('bq-export-rule');el('bq-attach-options').hidden=!attach;el('bq-export-source').textContent=el('bq-export-scope').value==='all'?'全市场导出无需先填写股票代码。':'范围：'+selection.label;el('bq-export-summary').replaceChildren(make('strong','将生成的文件'),make('span','范围：'+selection.label),make('span','周报模板 · 基准日期 '+el('bq-export-date').value+' · 股票 '+priceLabel('bq-export-price')),make('span','附加明细：'+(attach?(erules.length?erules.join('、'):'请至少选择一条规则'):'不附带')));el('bq-run-export').disabled=!selection.valid||(attach&&!erules.length)||!el('bq-export-date').value;}
+  el('bq-run-export').addEventListener('click',()=>{const out=el('bq-export-result');out.replaceChildren(make('h3','导出任务（示例）'));const status=make('div',undefined,'bq-status');status.append(make('strong','已排队 · 等待生成文件'),make('span',exportSelection().label+' · '+el('bq-export-date').value));const stage=make('p','任务状态会保留在导出记录中。','bq-muted');status.append(stage);out.append(status);out.hidden=false;el('bq-run-export').disabled=true;setTimeout(()=>{status.firstChild.textContent='已完成 · 可下载（示例状态）';stage.textContent='文件生成完成。再次下载无需重新计算。';status.append(button('下载 Excel（示意）',()=>{stage.textContent='这里对应下载已生成文件；本示意未执行真实导出。';}));renderSummaries();},1200);});
+  renderCandidates();renderSummaries();
+  if(globalThis.Tweak){const options={spacing:22,hints:true};const tweak=new Tweak({container:root,onChange:()=>{root.style.setProperty('--bq-gap',options.spacing+'px');root.classList.toggle('bq-less-help',!options.hints);}});tweak.addSlider(options,'spacing',{label:'分组间距',min:14,max:30,step:2,unit:'px'});tweak.addToggle(options,'hints',{label:'显示辅助提示'});}
+})();
+</script>

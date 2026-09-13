@@ -47,6 +47,112 @@ def review_output_path(cfg: AStockConfig, asof: int) -> Path:
     return Path(cfg.storage_root) / "indicator_review" / f"review_{int(asof)}.json"
 
 
+# 复核结果指纹键（GPT6 复核约束：规则/股票池/名称快照/行情面任一变化
+# 即视为不同结果，不得互相复用）。
+_FP_RULE = "rule_fingerprints"
+_FP_UNIVERSE = "universe_fingerprint"
+_FP_NAME = "name_snapshot_id"
+_FP_SURFACE = "review_surface"
+
+
+def _spec_fingerprint(spec) -> str:
+    """规则内容指纹：优先 source_sha256，缺失时退化 formula_text 哈希。"""
+    sha = getattr(spec, "source_sha256", None) or ""
+    if sha:
+        return str(sha)[:16]
+    text = getattr(spec, "formula_text", "") or ""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _review_fingerprint(
+    specs: Sequence[Tuple[str, str, Any]],
+    universe: Sequence[str],
+    name_snapshot_id: str,
+    surface: Dict[str, Any],
+    eff_asof: int,
+) -> Dict[str, Any]:
+    rule_fps = {rid: _spec_fingerprint(spec) for rid, _sheet, spec in specs}
+    universe_fp = hashlib.sha256(
+        ",".join(sorted(set(universe))).encode("utf-8")
+    ).hexdigest()[:16]
+    return {
+        _FP_RULE: rule_fps,
+        _FP_UNIVERSE: universe_fp,
+        _FP_NAME: name_snapshot_id or "",
+        _FP_SURFACE: f"{surface.get('formal_l1_id') or ''}:{eff_asof}:{surface.get('max_date') or ''}",
+    }
+
+
+def _fingerprints_match(existing: Dict[str, Any], current: Dict[str, Any]) -> bool:
+    """旧文件缺任一指纹键 → 无法验证 → 不匹配（不默认复用）。"""
+    for key in (_FP_RULE, _FP_UNIVERSE, _FP_NAME, _FP_SURFACE):
+        if key not in existing or existing.get(key) != current.get(key):
+            return False
+    return True
+
+
+def _resolve_rules_for_fingerprint(
+    cfg: AStockConfig, rules: Sequence[Tuple[str, str]]
+) -> Optional[List[Tuple[str, str, Any]]]:
+    """解析规则 spec 供指纹计算；任何失败返回 None（视为不可验证）。"""
+    try:
+        from ..indicators.registry import IndicatorRegistry
+
+        reg = IndicatorRegistry.bootstrap(
+            cfg.indicator_dir,
+            cfg.mapping_path,
+            user_registry_path=user_registry_file(cfg),
+        )
+        out: List[Tuple[str, str, Any]] = []
+        for rid, sheet in rules:
+            spec = reg.get(rid)
+            if spec.compile_status != "ready":
+                return None
+            out.append((rid, sheet, spec))
+        return out
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _no_go_reuse_fingerprints_ok(
+    cfg: AStockConfig,
+    rules: Sequence[Tuple[str, str]],
+    codes: Optional[Sequence[str]],
+    existing: Dict[str, Any],
+) -> bool:
+    """数据面不可用时旧 ok 结果的复用校验：规则/股票池/名称快照都一致才可复用。
+
+    任何一项不可验证（解析失败/旧文件缺字段）都返回 False——不把旧结果
+    冒充当前规则/池的结果。
+    """
+    specs = _resolve_rules_for_fingerprint(cfg, rules)
+    if specs is None:
+        return False
+    cur_rules = {rid: _spec_fingerprint(spec) for rid, _s, spec in specs}
+    if existing.get(_FP_RULE) != cur_rules:
+        return False
+    try:
+        universe = _resolve_codes(cfg, codes)
+    except Exception:  # noqa: BLE001
+        return False
+    universe_fp = hashlib.sha256(
+        ",".join(sorted(set(universe))).encode("utf-8")
+    ).hexdigest()[:16]
+    if existing.get(_FP_UNIVERSE) != universe_fp:
+        return False
+    try:
+        from .stock_names import ensure_stock_names_for
+
+        _map, name_snapshot_id = ensure_stock_names_for(
+            cfg, universe, [sp for _r, _s, sp in specs]
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    if existing.get(_FP_NAME) != (name_snapshot_id or ""):
+        return False
+    return True
+
+
 def _resolve_formal_surface(cfg: AStockConfig) -> Tuple[Optional[Dict[str, Any]], str]:
     """解析正式 L1 产品面。返回 (surface_info|None, no_go_reason)。
 
@@ -181,7 +287,9 @@ def _resolve_codes(cfg: AStockConfig, codes: Optional[Sequence[str]]) -> List[st
 
 _SHEET_ILLEGAL_CHARS = set('[]:*?/\\')
 # Excel 保留 sheet 名（历史追踪用 History）与工作簿自有 sheet，冲突时回退
-_SHEET_RESERVED_NAMES = {"meta", "stock-all", "etf-all", "history"}
+# index-all 是导出侧内置的大盘指数表：Excel sheet 名大小写不敏感，漏收会让
+# 名为 "Index-All" 的规则与工作簿自带 index-all 撞名，文件被 Excel 判为损坏
+_SHEET_RESERVED_NAMES = {"meta", "stock-all", "index-all", "etf-all", "history"}
 # Excel 会把以这些字符开头的单元格当公式；sheet 名同样禁用其起始
 _SHEET_FORMULA_LEAD = ("=", "+", "-", "@")
 
@@ -333,37 +441,44 @@ def run_weekly_review(
         }
         # no_go 也落盘（asof 未知时用 0 占位无意义——仅在 asof 可确定时写文件）
         # 但不得覆盖已有 ok 结果：产品面指针短暂不可用时，无 force 的重跑
-        # 若把 ok 冲成 no_go，导出侧会白白丢掉两个 sheet
+        # 若把 ok 冲成 no_go，导出侧会白白丢掉两个 sheet。
+        # 复用旧 ok 前必须指纹校验（规则/股票池/名称快照一致才可信）；
+        # 不匹配时不再返回旧 ok matched，写 no_go 覆盖（GPT6 复核约束）。
+        # persist=False（导出/筛选的临时即时计算）下缓存读/写全部跳过：
+        # 数据面不可用必须原样返回 no_go，不得把已有周报缓存冒充本次结果。
         if summary["asof"]:
             path = review_output_path(cfg, summary["asof"])
-            if path.exists() and not force:
+            if persist and path.exists() and not force:
                 try:
                     existing = json.loads(path.read_text(encoding="utf-8"))
                 except Exception:  # noqa: BLE001
                     existing = None
-                if existing is not None and existing.get("status") == "ok":
+                if (
+                    existing is not None
+                    and existing.get("status") == "ok"
+                    and _no_go_reuse_fingerprints_ok(cfg, rules, codes, existing)
+                ):
                     existing["reused"] = True
                     logger.info(
-                        "indicator_review 表面不可用但已有 ok 结果，保留不覆盖: %s",
+                        "indicator_review 表面不可用但已有 ok 结果（指纹一致），保留不覆盖: %s",
                         path,
                     )
                     return existing
+                if existing is not None and existing.get("status") == "ok":
+                    logger.warning(
+                        "indicator_review 表面不可用且旧 ok 指纹不匹配（规则/池/名称快照已变），"
+                        "不返回旧 matched，写 no_go: %s",
+                        path,
+                    )
             if persist:
                 _atomic_write_json(path, summary)
         return summary
 
     eff_asof = _normalize_asof(cfg, asof, int(surface["max_date"]))
     out_path = review_output_path(cfg, eff_asof)
-    if persist and out_path.exists() and not force:
-        try:
-            cached = json.loads(out_path.read_text(encoding="utf-8"))
-            cached["reused"] = True
-            logger.info("indicator_review 幂等命中: %s", out_path)
-            return cached
-        except Exception as e:  # noqa: BLE001
-            logger.warning("indicator_review 缓存损坏（重算）: %s", e)
 
-    # 规则 spec：编译不可用直接抛错（CLI 非零退出），不产出半截结果
+    # 规则 spec：编译不可用直接抛错（CLI 非零退出），不产出半截结果。
+    # 解析提前到幂等判断之前——复用校验需要规则指纹。
     from ..indicators.registry import IndicatorRegistry
 
     reg = IndicatorRegistry.bootstrap(
@@ -382,13 +497,46 @@ def run_weekly_review(
         specs.append((rid, eff_sheet, spec))
 
     universe = _resolve_codes(cfg, codes)
+
+    # NAMELIKE 名称快照：任一规则用到即解析（缺名称的票运行时报错可见）。
+    from .stock_names import ensure_stock_names_for
+
+    stock_name_map, name_snapshot_id = ensure_stock_names_for(
+        cfg, universe, [sp for _r, _s, sp in specs]
+    )
+
+    current_fp = _review_fingerprint(specs, universe, name_snapshot_id, surface, eff_asof)
+
+    # 幂等复用必须指纹一致（规则/股票池/名称快照/行情面）；旧文件缺指纹
+    # 或任一项不匹配 → 无法验证/规则已变 → 重算，不把旧结果冒充本次结果。
+    if persist and out_path.exists() and not force:
+        try:
+            cached = json.loads(out_path.read_text(encoding="utf-8"))
+            if cached.get("status") == "ok" and _fingerprints_match(cached, current_fp):
+                cached["reused"] = True
+                logger.info("indicator_review 幂等命中（指纹一致）: %s", out_path)
+                return cached
+            logger.warning(
+                "indicator_review 旧结果指纹不匹配（规则/池/名称快照已变或无法验证），重算: %s",
+                out_path,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("indicator_review 缓存损坏（重算）: %s", e)
+
     load = bar_loader or _default_bar_loader_factory(cfg)
 
     matched_by_rule: Dict[str, List[Dict[str, Any]]] = {rid: [] for rid, _s, _sp in specs}
     errors: List[Dict[str, str]] = []
     error_count = 0
     scanned = 0
+    # 质量统计（PLAN-BAGUA-UX-V1.1 筛选侧「未完成评估」依据）：
+    # missing_count = asof 当日无 K 线（停牌/退市/未上市）；failed_codes =
+    # 加载或计算失败的去重票集合（不受 errors 截断影响，供命中完整性过滤）
+    missing_count = 0
+    failed_codes: set = set()
     n = len(universe)
+
+    from ..forecast.name_norm import normalize_stock_code
 
     for i, code in enumerate(universe):
         try:
@@ -396,14 +544,17 @@ def run_weekly_review(
             if not bars or int(bars[-1].date) != eff_asof:
                 # asof 当日无 K 线（停牌/退市/未上市）：无信号可言，跳过不计错
                 scanned += 1
+                missing_count += 1
             else:
                 bars_dict = bars_dict_from_day(bars)
                 dates_arr = bars_dict["date"]
                 close = float(bars[-1].close)
+                stock_name = stock_name_map.get(normalize_stock_code(code), "")
                 for rid, _sheet, spec in specs:
-                    sig, err = compute_indicator_signal(spec, bars_dict)
+                    sig, err = compute_indicator_signal(spec, bars_dict, stock_name=stock_name)
                     if err:
                         error_count += 1
+                        failed_codes.add(code)
                         if len(errors) < _MAX_ERROR_RECORDS:
                             errors.append({"code": code, "rule": rid, "error": err})
                         continue
@@ -413,6 +564,7 @@ def run_weekly_review(
                 scanned += 1
         except Exception as e:  # noqa: BLE001
             error_count += 1
+            failed_codes.add(code)
             if len(errors) < _MAX_ERROR_RECORDS:
                 errors.append({"code": code, "rule": "*", "error": str(e)})
         done = i + 1
@@ -431,10 +583,15 @@ def run_weekly_review(
         "status": "ok",
         "no_go_reason": "",
         "formal_l1_id": surface.get("formal_l1_id"),
+        # 复核结果指纹：导出/复用侧校验规则版本/股票池/名称快照/行情面，
+        # 任一变化不得互相复用（旧文件缺这些键 = 无法验证 = 不复用）。
+        **current_fp,
         "universe_size": n,
         "scanned": scanned,
+        "missing_count": missing_count,
         "error_count": error_count,
         "errors": errors,
+        "failed_codes": sorted(failed_codes)[:2000],
         "rules": [
             {"rule_id": rid, "sheet": sheet, "count": len(matched_by_rule[rid]),
              "matched": matched_by_rule[rid]}
@@ -453,6 +610,38 @@ def run_weekly_review(
     return summary
 
 
+def _export_rules_stale(
+    cfg: AStockConfig, review: Dict[str, Any]
+) -> Optional[str]:
+    """导出侧规则指纹校验：文件内规则集与当前注册表逐条比对。
+
+    - 旧文件缺 rule_fingerprints → 无法验证 → stale（不默认匹配）
+    - 规则缺失（规则被删）或指纹变化（公式更新）→ stale
+    - 返回 None = 一致可用；返回 str = stale 原因
+    """
+    fps = review.get(_FP_RULE)
+    if not isinstance(fps, dict) or not fps:
+        return "stale_rules:复核文件缺规则指纹（旧版结果，无法验证当前规则版本）"
+    try:
+        from ..indicators.registry import IndicatorRegistry
+
+        reg = IndicatorRegistry.bootstrap(
+            cfg.indicator_dir,
+            cfg.mapping_path,
+            user_registry_path=user_registry_file(cfg),
+        )
+    except Exception:  # noqa: BLE001
+        return "stale_rules:规则注册表解析失败，无法验证复核结果版本"
+    for rid, fp in fps.items():
+        try:
+            spec = reg.get(str(rid))
+        except KeyError:
+            return f"stale_rules:规则 {rid} 已不存在（复核时的规则被删除）"
+        if _spec_fingerprint(spec) != fp:
+            return f"stale_rules:规则 {rid} 公式已更新（复核时版本与当前不一致）"
+    return None
+
+
 def load_review_for_export(
     cfg: AStockConfig,
     asof: int,
@@ -463,7 +652,9 @@ def load_review_for_export(
 
     优先精确匹配 ``review_{asof}.json``；缺失时回看 ``max_age_days`` 天内
     最近一次复核（周五链产出、周末/下周初导出仍带 sheet）。
-    note 为空串表示正常；否则为 missing / no_go:<原因> / stale:<asof'> 等。
+    note 为空串表示正常；否则为 missing / no_go:<原因> / stale:<asof'> /
+    stale_rules:<原因> 等。规则指纹不匹配返回 (None, stale_rules:...)，
+    导出侧按 missing 语义走即时计算，不端出旧 sheet。
     """
     asof = int(asof)
     review_dir = Path(cfg.storage_root) / "indicator_review"
@@ -480,6 +671,9 @@ def load_review_for_export(
             return None, f"corrupt:文件内 asof={exact.get('asof')} 与文件名不符"
         if exact.get("status") != "ok":
             return exact, f"no_go:{exact.get('no_go_reason') or 'unknown'}"
+        stale_reason = _export_rules_stale(cfg, exact)
+        if stale_reason:
+            return None, stale_reason
         return exact, ""
 
     # 回看：目录内 asof' <= asof 的最新复核，龄期不超过 max_age_days
@@ -511,6 +705,9 @@ def load_review_for_export(
         return None, f"corrupt:文件内 asof={review.get('asof')} 与文件名不符"
     if review.get("status") != "ok":
         return review, f"no_go:{review.get('no_go_reason') or 'unknown'}"
+    stale_reason = _export_rules_stale(cfg, review)
+    if stale_reason:
+        return None, f"{stale_reason}（复核 {latest}）"
     return review, f"fallback:使用 {latest} 复核（导出日 {asof} 无当日复核）"
 
 

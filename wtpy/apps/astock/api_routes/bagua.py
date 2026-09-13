@@ -157,6 +157,45 @@ def _bq_run_export_job(ctx: ApiContext, job_id: str, params: Dict[str, Any]) -> 
                 job["finished_at"] = _bq_time.time()
                 job["error"] = str(e)
                 job["message"] = f"导出失败: {e}"
+def _bq_scope_summary(all_stocks: bool, codes: Optional[List[str]]) -> str:
+    """任务记录的条件摘要（工作台导出记录/刷新恢复展示用，不暴露路径）。"""
+    if all_stocks:
+        return "全市场 A 股 + ETF"
+    n = len(codes or [])
+    return f"指定 {n} 个标的" if n else "指定标的（空）"
+
+
+# 导出/同卦共用的任务容器保留策略：超过 KEEP 时裁到 TRIM_TO，且只裁终态记录。
+_BQ_JOBS_KEEP = 20
+_BQ_JOBS_TRIM_TO = 15
+
+
+def _bq_trim_export_jobs_locked(ctx: "ApiContext") -> int:
+    """容器超限时清理最旧的**终态**（done/error）记录；调用方须已持 bq_export_lock。
+
+    同卦扫描与导出共用 ``ctx.bq_export_jobs``。旧实现在同卦入口按 created_at
+    直接裁剪，会把正在 queued/running 的导出或扫描任务一起删掉（R2-08），
+    因此统一到本函数：只清终态，运行中任务一律保留（返回本次清理条数）。
+    """
+    jobs = ctx.bq_export_jobs
+    if len(jobs) <= _BQ_JOBS_KEEP:
+        return 0
+    terminal = sorted(
+        (
+            (k, v)
+            for k, v in jobs.items()
+            if isinstance(v, dict) and v.get("status") in ("done", "error")
+        ),
+        key=lambda kv: float(kv[1].get("created_at") or 0),
+    )
+    need = len(jobs) - _BQ_JOBS_TRIM_TO
+    removed = 0
+    for k, _v in terminal[: max(0, need)]:
+        jobs.pop(k, None)
+        removed += 1
+    return removed
+
+
 def _bq_start_export_job(
     ctx: ApiContext,
     *,
@@ -172,10 +211,17 @@ def _bq_start_export_job(
     _bq_export_jobs = ctx.bq_export_jobs
     _bq_export_lock = ctx.bq_export_lock
     job_id = "bqexp_" + _bq_uuid.uuid4().hex[:12]
+    # codes 快照仅用于工作台「计算失败重试」；超大列表不落记录（记录响应膨胀），
+    # 此时前端禁用重试、提示用原条件重新提交
+    codes_snapshot = list(codes or []) if codes else None
+    codes_omitted = bool(codes_snapshot and len(codes_snapshot) > 300)
+    if codes_omitted:
+        codes_snapshot = None
     rec = {
         "job_id": job_id,
         "status": "queued",
         "created_at": _bq_time.time(),
+        "created_hm": _bq_time.strftime("%H:%M:%S", _bq_time.localtime()),
         "started_at": None,
         "finished_at": None,
         "message": "已排队",
@@ -183,9 +229,15 @@ def _bq_start_export_job(
         "periods": periods,
         "adjust": adjust,
         "all_stocks": all_stocks,
+        "scope_summary": _bq_scope_summary(all_stocks, codes),
         "codes_count": len(codes or []) if codes else None,
+        "codes": codes_snapshot,
+        "codes_omitted": codes_omitted,
         "limit": limit,
         "review_rules": review_rules,
+        "review_rules_mode": (
+            "default" if review_rules is None else ("none" if review_rules == [] else "picked")
+        ),
         "query_date": None,
         "review_asof_used": None,
         "review_fallback": False,
@@ -195,14 +247,8 @@ def _bq_start_export_job(
         "error": None,
     }
     with _bq_export_lock:
-        # keep last 20 jobs
-        if len(_bq_export_jobs) > 20:
-            old = sorted(
-                _bq_export_jobs.items(),
-                key=lambda kv: float(kv[1].get("created_at") or 0),
-            )[: max(0, len(_bq_export_jobs) - 15)]
-            for k, _ in old:
-                _bq_export_jobs.pop(k, None)
+        # keep last 20 jobs（只清理已完成/失败记录；排队与执行中任务绝不清理）
+        _bq_trim_export_jobs_locked(ctx)
         _bq_export_jobs[job_id] = rec
     params = {
         "date": date,
@@ -366,13 +412,8 @@ def _bq_start_same_gua_job(
         "error": None,
     }
     with _bq_export_lock:
-        if len(_bq_export_jobs) > 20:
-            old = sorted(
-                _bq_export_jobs.items(),
-                key=lambda kv: float(kv[1].get("created_at") or 0),
-            )[: max(0, len(_bq_export_jobs) - 15)]
-            for k, _ in old:
-                _bq_export_jobs.pop(k, None)
+        # 与导出入口共用同一清理策略：只裁终态记录，运行中任务保留（R2-08）
+        _bq_trim_export_jobs_locked(ctx)
         _bq_export_jobs[job_id] = rec
     params = {
         "code": code,
@@ -783,6 +824,10 @@ def api_bagua_export(
         True,
         description="full-market defaults to background job; false forces sync",
     ),
+    force_async: bool = Query(
+        False,
+        description="工作台入口：无视 limit<=50 同步判定，强制走后台任务（默认关闭，旧调用不受影响）",
+    ),
 
     ctx: ApiContext = Depends(get_ctx),
 ):
@@ -797,8 +842,8 @@ def api_bagua_export(
         raise HTTPException(400, "codes or all_stocks required")
     _bq_validate_review_rules(payload.review_rules)
     periods = _bq_normalize_periods(payload.period, payload.periods)
-    use_async = async_mode and _bq_should_async(
-        payload.all_stocks, payload.codes, payload.limit
+    use_async = async_mode and (
+        force_async or _bq_should_async(payload.all_stocks, payload.codes, payload.limit)
     )
     if use_async:
         return _bq_start_export_job(ctx,
@@ -843,6 +888,10 @@ def api_bagua_export_get(
     codes: Optional[str] = Query(None, description="comma-separated codes if not all_stocks"),
     limit: Optional[int] = Query(None, ge=1),
     async_mode: bool = Query(True, description="full-market -> background job"),
+    force_async: bool = Query(
+        False,
+        description="工作台入口：无视 limit<=50 同步判定，强制走后台任务（默认关闭）",
+    ),
     review_rules: Optional[str] = Query(
         None,
         description="comma-separated signal rule ids; empty string = no signal sheets",
@@ -868,7 +917,7 @@ def api_bagua_export_get(
         rule_list = [r.strip() for r in review_rules.replace(";", ",").split(",") if r.strip()]
     _bq_validate_review_rules(rule_list)
     periods = _bq_normalize_periods(period, None)
-    use_async = async_mode and _bq_should_async(all_stocks, code_list, limit)
+    use_async = async_mode and (force_async or _bq_should_async(all_stocks, code_list, limit))
     if use_async:
         return _bq_start_export_job(ctx,
             date=date,

@@ -56,26 +56,116 @@ bootstrap()
 
 
 # ---------------------------------------------------------------------------
-# 真实指标公式依赖（指标/ 目录被 .gitignore，CI 检出没有）
+# 真实指标公式依赖（指标/ 目录被 .gitignore）
+#
+# 两条默认复核公式（735金叉及趋势 / 先跌后涨新版5日外）已作为测试 fixture
+# 收进仓库（tests/fixtures/formulas/，用户确认可入库），CI 检出即可解析。
+# 本机存在真实 指标/ 时仍优先用真实目录，fixture 只做兜底。
 # ---------------------------------------------------------------------------
 
+# tests/apps/astock/conftest.py → parents[2] = tests/；公式 fixture 在 tests/fixtures/formulas/
+FORMULA_FIXTURE_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "formulas"
 
-def real_formulas_available(*rule_ids: str) -> bool:
-    """每个 rule_id 都能在磁盘公式注册表里解析出来才返回 True。
+_FORMULA_RESOLUTION: dict = {}
 
-    ``指标/*.txt`` 与 ``storage/astock/indicators/tn6_source_map.json`` 都是
-    机器本地文件（前者在 .gitignore 里），所以全新检出（含 CI）根本构不出
-   这些 spec。依赖真实公式的用例据此跳过，而不是把「环境缺文件」报成失败——
-   否则 CI 会长期恒红，真回归反而淹没在噪声里。
+
+def formula_indicator_dir() -> Path | None:
+    """返回可解析默认复核公式的公式目录：真实 指标/ 优先，fixture 兜底。
+
+    两次调用间做 memo（注册表 bootstrap 会扫描目录+编译，没必要重复）。
     """
+    if "dir" in _FORMULA_RESOLUTION:
+        return _FORMULA_RESOLUTION["dir"]
+    out: Path | None = None
     from wtpy.apps.astock.config import get_default_config
     from wtpy.apps.astock.indicators.registry import IndicatorRegistry
 
     try:
         cfg = get_default_config()
-        reg = IndicatorRegistry.bootstrap(cfg.indicator_dir, cfg.mapping_path)
-    except Exception:  # noqa: BLE001 目录/映射缺失或损坏一律视为不可用
+        IndicatorRegistry.bootstrap(cfg.indicator_dir, cfg.mapping_path)
+        out = Path(cfg.indicator_dir)
+    except Exception:  # noqa: BLE001 目录/映射缺失或损坏 → 走 fixture
+        out = None
+    if out is None and FORMULA_FIXTURE_DIR.exists():
+        # mapping 传不存在的路径：load_source_map 对缺失文件返回 {}（txt 规则不依赖 tn6 映射）
+        try:
+            IndicatorRegistry.bootstrap(FORMULA_FIXTURE_DIR, FORMULA_FIXTURE_DIR / "_no_tn6_map.json")
+            out = FORMULA_FIXTURE_DIR
+        except Exception:  # noqa: BLE001 fixture 也损坏才算彻底不可用
+            out = None
+    _FORMULA_RESOLUTION["dir"] = out
+    return out
+
+
+def formula_cfg(tmp_path):
+    """构造 indicator_dir 指向可用公式源的隔离 cfg（storage 全在 tmp_path）。
+
+    供依赖真实公式编译的用例使用；本机/CI 都能拿到相同公式内容。
+
+    注意：indicator_dir 指向**真实** 指标/（或 fixture）——只适合只读用例。
+    需要建规则/导入（会往 indicator_dir 写文件）的用例请用
+    ``isolated_formula_cfg``，否则测试产物会落进真实 指标/ 目录。
+    """
+    from wtpy.apps.astock.config import get_default_config
+
+    cfg = get_default_config(storage_root=tmp_path)
+    d = formula_indicator_dir()
+    if d is not None:
+        cfg.indicator_dir = d
+    return cfg
+
+
+def isolated_indicator_dir(tmp_path, *, name: str = "ind") -> Path:
+    """tmp 下的公式源**副本**目录：既可解析默认复核公式，又不写真实 指标/。
+
+    背景（2026-09-13 踩坑）：导入/建规则类用例会往 cfg.indicator_dir 写文件；
+    此前把这类用例的 indicator_dir 直接指向真实 指标/，导致测试产物
+    （独立导入规则.txt / pkg_batch.tn6 / escape.txt 等）落进用户目录，
+    并让后续用例读到脏状态（"同名文件已存在"、tn6 计数不符）。
+    """
+    import shutil
+
+    d = Path(tmp_path) / name
+    d.mkdir(parents=True, exist_ok=True)
+    src = formula_indicator_dir()
+    if src is not None:
+        for p in sorted(Path(src).glob("*")):
+            if p.is_file() and p.suffix.lower() in (".txt", ".tn6"):
+                shutil.copy2(p, d / p.name)
+    return d
+
+
+def isolated_formula_cfg(
+    tmp_path, *, storage_sub: str = "st", ind_sub: str = "ind", output_sub: str = "out"
+):
+    """隔离 cfg：storage / indicator / output 全在 tmp_path，公式目录为副本。
+
+    适合既需要「能解析默认复核公式」又「写入不得污染真实目录」的用例。
+    """
+    from wtpy.apps.astock.config import get_default_config
+
+    cfg = get_default_config(
+        storage_root=Path(tmp_path) / storage_sub,
+        indicator_dir=Path(tmp_path) / ind_sub,
+        output_root=Path(tmp_path) / output_sub,
+    )
+    Path(cfg.storage_root).mkdir(parents=True, exist_ok=True)
+    isolated_indicator_dir(tmp_path, name=ind_sub)
+    return cfg
+
+
+def real_formulas_available(*rule_ids: str) -> bool:
+    """每个 rule_id 都能在可用公式源（真实 指标/ 或仓库 fixture）里解析。
+
+    以前 CI 全新检出没有 指标/（.gitignore），依赖公式的用例只能整体
+    skip；公式 fixture 入库后 CI 也能跑，仅在公式源与 fixture 都缺失时跳过。
+    """
+    from wtpy.apps.astock.indicators.registry import IndicatorRegistry
+
+    d = formula_indicator_dir()
+    if d is None:
         return False
+    reg = IndicatorRegistry.bootstrap(d, d / "_no_tn6_map.json")
     for rid in rule_ids:
         try:
             reg.get(rid)
@@ -87,8 +177,8 @@ def real_formulas_available(*rule_ids: str) -> bool:
 requires_real_formulas = pytest.mark.skipif(
     not real_formulas_available("txt_735金叉及趋势", "txt_先跌后涨新版5日外"),
     reason=(
-        "本机指标公式不可用：指标/ 与 tn6_source_map.json 被 .gitignore，"
-        "全新检出（CI）没有这些文件"
+        "指标公式不可用：本机 指标/ 缺失且 tests/fixtures/formulas/  "
+        "无法解析默认两条公式"
     ),
 )
 

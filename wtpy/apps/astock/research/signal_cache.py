@@ -14,7 +14,7 @@ from ..study import SignalEvent
 from .fingerprint import short_fingerprint
 
 
-CACHE_SCHEMA = "signal_cache_v1"
+CACHE_SCHEMA = "signal_cache_v2"  # v2: 增存 signal_errors（信号计算错误）
 
 
 def default_signal_cache_dir(cfg: Optional[AStockConfig] = None) -> Path:
@@ -142,16 +142,31 @@ def load_signal_cache(
     *,
     cfg: Optional[AStockConfig] = None,
 ) -> Optional[List[SignalEvent]]:
+    """公开契约不变：返回事件列表；None = 无缓存 / 损坏 / 旧 schema。
+
+    内部完整记录（含 signal_errors）经 _load_blob 读取，供错误回放使用。
+    """
+    blob = _load_blob(key, cfg=cfg)
+    return records_to_events(blob.get("events") or []) if blob else None
+
+
+def _load_blob(
+    key: str,
+    *,
+    cfg: Optional[AStockConfig] = None,
+) -> Optional[Dict[str, Any]]:
     path = _path_for(key, cfg)
     if not path.is_file():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("schema") != CACHE_SCHEMA:
-            return None
-        return records_to_events(data.get("events") or [])
     except Exception:
         return None
+    # 旧 schema（v1 无 signal_errors）：按无法验证处理（返回 None → 重算），
+    # 不把「未记录错误」当作「确定没有错误」。
+    if data.get("schema") != CACHE_SCHEMA:
+        return None
+    return data
 
 
 def save_signal_cache(
@@ -160,6 +175,7 @@ def save_signal_cache(
     *,
     cfg: Optional[AStockConfig] = None,
     meta: Optional[Dict[str, Any]] = None,
+    signal_errors: Optional[List[dict]] = None,
 ) -> Path:
     path = _path_for(key, cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -170,6 +186,7 @@ def save_signal_cache(
         "n_events": len(list(events)),
         "meta": meta or {},
         "events": events_to_records(events),
+        "signal_errors": list(signal_errors or []),
     }
     path.write_text(json.dumps(blob, ensure_ascii=False), encoding="utf-8")
     return path
@@ -182,16 +199,26 @@ def get_or_compute_signals(
     cfg: Optional[AStockConfig] = None,
     meta: Optional[Dict[str, Any]] = None,
     use_cache: bool = True,
+    errors_ref: Optional[List[dict]] = None,
 ) -> tuple[List[SignalEvent], bool]:
-    """Return (events, cache_hit). compute_fn() -> List[SignalEvent]."""
+    """Return (events, cache_hit). compute_fn() -> List[SignalEvent].
+
+    errors_ref 可选（旧调用兼容）：传入时，缓存**只保存并回放本次信号计算
+    新增的错误**（调用前后切片），不吞入行情加载/覆盖率等既有错误；命中时
+    把缓存的 signal_errors 追加回 errors_ref 末尾（错误每次运行都可见）。
+    """
     if use_cache:
-        hit = load_signal_cache(key, cfg=cfg)
-        if hit is not None:
-            return hit, True
+        blob = _load_blob(key, cfg=cfg)
+        if blob is not None:
+            if errors_ref is not None:
+                errors_ref.extend(list(blob.get("signal_errors") or []))
+            return records_to_events(blob.get("events") or []), True
+    before = len(errors_ref) if errors_ref is not None else 0
     events = list(compute_fn() or [])
+    signal_errors = list(errors_ref[before:]) if errors_ref is not None else []
     if use_cache:
         try:
-            save_signal_cache(key, events, cfg=cfg, meta=meta)
+            save_signal_cache(key, events, cfg=cfg, meta=meta, signal_errors=signal_errors)
         except Exception:
             pass
     return events, False

@@ -690,13 +690,25 @@ th.task-col-payoff{
       .metric-grid,.task-kpis{grid-template-columns:repeat(3,1fr)}
     }
     @media(max-width:980px){
-      .app-header{height:auto;flex-wrap:wrap}.brand,.header-right{width:auto}.main-nav{order:3;width:100%;overflow:auto}
+      /* flex:1 会把 flex-basis 设为 0，从而吃掉 width:100%；必须显式给 100% basis，
+         否则窄屏下主导航被品牌/状态区挤成一条几乎不可点的窄条（R2-11）。 */
+      .app-header{height:auto;flex-wrap:wrap}.brand,.header-right{width:auto}
+      .main-nav{order:3;width:100%;flex:1 0 100%;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch}
       .nav-btn{min-width:100px;height:48px}
       .layout-summary,.rules-layout,.task-layout,.forecast-layout{grid-template-columns:1fr}
       .summary-card,.drawer-panel{position:static}
       .wizard{grid-template-columns:1fr;gap:8px}.wizard-step:after{display:none}
       .stock-body,.field-grid,.field-grid.cols-3{grid-template-columns:1fr}
       .option-grid.cols-6{grid-template-columns:repeat(2,1fr)}
+    }
+    @media(max-width:640px){
+      /* 手机端：导航独占整行且可横向滚动；缩短品牌区，避免与导航抢宽度 */
+      .brand{padding:0 10px;gap:8px}
+      .brand-title{font-size:15px}
+      .header-right{padding:0 10px;gap:8px}
+      .quick-search{display:none}
+      .main-nav{justify-content:flex-start;gap:2px;padding:0 4px}
+      .nav-btn{min-width:76px;padding:0 8px}
     }
   
 .rule-perf-box{margin-top:12px;border:1px solid var(--line);border-radius:12px;background:#0c1725;padding:12px}
@@ -1277,6 +1289,111 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
 }
 .task-page-btn:disabled{opacity:.45;cursor:not-allowed}
 
+/* =========================================================================
+   卦象工作台（PLAN-BAGUA-UX-V1.1）——视觉规格取自交互原型 bagua-workbench.html，
+   颜色/字体映射到本页既有变量，不修改全局样式。wb- 前缀避免与旧 bq- 类冲突。
+   ========================================================================= */
+#wbRoot{
+  --wb-panel:var(--panel);
+  --wb-input:#0d1523;
+  --wb-line:var(--line);
+  --wb-text:var(--text);
+  --wb-muted:var(--muted);
+  --wb-blue:var(--blue);
+  --wb-soft:rgba(47,128,255,.14);
+  --wb-error:#ff9d8f;
+  --wb-ok:#7dd3a8;
+  --wb-gap:22px;
+  color:var(--wb-text);
+  background:var(--panel2);
+  border:1px solid var(--wb-line);
+  border-radius:16px;
+  overflow-wrap:anywhere;
+  font-size:13px;
+}
+#wbRoot *{box-sizing:border-box}
+#wbRoot [hidden]{display:none!important}
+#wbRoot .wb-header{padding:22px 22px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+#wbRoot h2,#wbRoot h3,#wbRoot h4,#wbRoot p{margin:0;font-size:inherit;font-weight:400}
+#wbRoot h2,#wbRoot h3,#wbRoot h4,#wbRoot strong,#wbRoot button strong{font-weight:500}
+#wbRoot .wb-muted{color:var(--wb-muted)}
+#wbRoot .wb-modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:0 22px 20px}
+#wbRoot button,#wbRoot input,#wbRoot select{font:inherit;color:inherit}
+#wbRoot button{cursor:pointer;min-height:44px;border:1px solid var(--wb-line);border-radius:8px;background:var(--wb-panel);padding:9px 13px;font-weight:400}
+#wbRoot button:disabled{cursor:not-allowed;opacity:.55}
+#wbRoot button:hover:not(:disabled){background:var(--wb-soft)}
+#wbRoot button:focus-visible,#wbRoot input:focus-visible,#wbRoot select:focus-visible{outline:2px solid var(--wb-blue);outline-offset:1px}
+#wbRoot .wb-mode{text-align:left;display:flex;flex-direction:column;gap:5px}
+#wbRoot .wb-mode[aria-pressed="true"]{background:var(--wb-soft);border-color:var(--wb-blue);box-shadow:inset 0 3px var(--wb-blue)}
+#wbRoot .wb-body{background:var(--wb-panel);border-top:1px solid var(--wb-line);border-radius:0 0 16px 16px;padding:var(--wb-gap);display:grid;gap:var(--wb-gap)}
+#wbRoot .wb-block{display:grid;gap:12px}
+#wbRoot .wb-title{display:flex;gap:8px;align-items:center}
+#wbRoot .wb-num{display:inline-grid;place-items:center;min-width:25px;min-height:25px;border-radius:50%;background:var(--wb-soft);color:#9fc7ff;font-weight:600;font-size:12px}
+#wbRoot .wb-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#wbRoot .wb-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+#wbRoot input:not([type="checkbox"]),#wbRoot select{min-height:44px;padding:10px 12px;border:1px solid var(--wb-line);border-radius:8px;background:var(--wb-input);width:100%;min-width:0}
+#wbRoot input::placeholder{color:var(--wb-muted);opacity:1}
+#wbRoot .wb-candidates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+#wbRoot .wb-candidate{text-align:left;display:flex;gap:7px;flex-direction:column;min-height:44px}
+#wbRoot .wb-chips{display:flex;gap:8px;flex-wrap:wrap}
+#wbRoot .wb-chip{background:var(--wb-soft);display:flex;gap:12px;align-items:center;min-height:36px;border-radius:8px;border:1px solid var(--wb-line);padding:4px 10px}
+#wbRoot .wb-chip:hover{border-color:var(--wb-blue)}
+#wbRoot .wb-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+#wbRoot .wb-field{display:grid;align-content:start;gap:8px;min-width:0}
+#wbRoot .wb-field>span,#wbRoot .wb-field>label>span{font-size:13px;color:var(--wb-text)}
+#wbRoot .wb-field-inline{display:grid;gap:8px;min-width:0}
+#wbRoot .wb-segments{display:flex;gap:5px;flex-wrap:wrap}
+#wbRoot .wb-segments button{flex:1}
+#wbRoot .wb-segments button[aria-pressed="true"]{background:var(--wb-soft);border-color:var(--wb-blue)}
+#wbRoot .wb-summary{background:var(--wb-input);padding:14px;border-radius:8px;display:grid;gap:7px}
+#wbRoot .wb-summary strong{font-weight:500}
+#wbRoot .wb-submit{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#wbRoot .wb-primary{background:var(--wb-blue);color:#fff;border-color:var(--wb-blue);font-weight:500;min-height:44px;padding:9px 20px}
+#wbRoot .wb-primary:hover:not(:disabled){background:var(--wb-blue);filter:brightness(1.12)}
+#wbRoot .wb-secondary{background:var(--wb-panel)}
+#wbRoot .wb-check{display:flex;align-items:center;gap:9px;min-height:44px}
+#wbRoot input[type="checkbox"]{width:18px;height:18px;accent-color:var(--wb-blue);flex:none}
+#wbRoot details{border-top:1px solid var(--wb-line);padding-top:12px}
+#wbRoot details>summary{cursor:pointer;padding:8px 0}
+#wbRoot .wb-result{display:grid;gap:14px;border-top:1px solid var(--wb-line);padding-top:18px}
+#wbRoot .wb-result-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--wb-line)}
+#wbRoot .wb-result-row>div{display:grid;gap:7px}
+#wbRoot .wb-error{color:var(--wb-error)}
+#wbRoot .wb-okline{color:var(--wb-ok)}
+#wbRoot .wb-help{color:var(--wb-muted)}
+#wbRoot .wb-status{padding:12px;background:var(--wb-soft);border-radius:8px;display:grid;gap:8px}
+#wbRoot .wb-stats{display:flex;gap:14px;flex-wrap:wrap;background:var(--wb-input);border-radius:8px;padding:10px 14px}
+#wbRoot .wb-stats b{font-weight:600}
+#wbRoot .wb-rulebox{display:grid;gap:2px;max-height:240px;overflow-y:auto;border:1px solid var(--wb-line);border-radius:8px;padding:6px}
+#wbRoot .wb-rulebox .wb-check{min-height:38px}
+#wbRoot .wb-rulebox .wb-check.dis{opacity:.5}
+#wbRoot .wb-jobs{display:grid;gap:0}
+#wbRoot .wb-job{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--wb-line)}
+#wbRoot .wb-job>div{display:grid;gap:5px;min-width:0}
+#wbRoot .wb-tag{display:inline-block;border:1px solid var(--wb-line);border-radius:6px;padding:1px 8px;font-size:12px;color:var(--wb-muted)}
+#wbRoot .wb-tag.running{color:#9fc7ff;border-color:#3d5a85}
+#wbRoot .wb-tag.done{color:var(--wb-ok)}
+#wbRoot .wb-tag.error{color:var(--wb-error)}
+#wbRoot .wb-mono{font-variant-numeric:tabular-nums}
+/* 共识倾向徽章：与导出 Excel「倾向」列同语义（A股习惯红涨绿跌）。
+   颜色 + 符号双通道传递（▲▼ + 文案），色弱/黑白打印不丢信息。 */
+#wbRoot .wb-cons{display:inline-block;border-radius:6px;padding:1px 8px;font-size:12px;font-weight:600;border:1px solid transparent;white-space:nowrap}
+#wbRoot .wb-cons-good{color:#c00000;background:#ffe3e3;border-color:#f0b6b6}
+#wbRoot .wb-cons-bad{color:#0f7b0f;background:#e2f3e2;border-color:#aedcb0}
+#wbRoot .wb-cons-conflict{color:#8a5300;background:#ffedc7;border-color:#e3cf9a}
+#wbRoot .wb-cons-neutral{color:#8fa3bd;background:#1a2740;border-color:#33486b}
+#wbRoot .wb-side{font-size:12px;font-weight:600;padding:0 2px}
+#wbRoot .wb-side-good{color:#ff8a8a}
+#wbRoot .wb-side-bad{color:#7ddf9a}
+#wbRoot .wb-side-neutral{color:var(--muted)}
+@media(max-width:510px){
+  #wbRoot .wb-header{padding:16px}
+  #wbRoot .wb-modes{padding:0 12px 14px;gap:5px}
+  #wbRoot .wb-mode{padding:9px 7px;text-align:center;align-items:center}
+  #wbRoot .wb-mode .wb-mode-sub{display:none}
+  #wbRoot .wb-fields,#wbRoot .wb-candidates{grid-template-columns:1fr}
+  #wbRoot .wb-result-row,#wbRoot .wb-job{grid-template-columns:1fr}
+}
 </style>
 
 </head>
@@ -1288,12 +1405,12 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
   </div>
   <nav class="main-nav" id="mainNav">
     <button type="button" class="nav-btn" data-view="backtest"><span class="nav-icon">⌂</span>回测</button>
-    <button type="button" class="nav-btn" data-view="forecast"><span class="nav-icon">⌁</span>预测</button>
-    <button type="button" class="nav-btn" data-view="bagua-query"><span class="nav-icon">☰</span>查询卦象</button>
-    <button type="button" class="nav-btn" data-view="rules"><span class="nav-icon">▣</span>规则中心</button>
-    <button type="button" class="nav-btn" data-view="experiment"><span class="nav-icon">⚗</span>实验中心</button>
-    <button type="button" class="nav-btn" data-view="tasks"><span class="nav-icon">▤</span>任务中心</button>
-    <button type="button" class="nav-btn" data-view="datastore"><span class="nav-icon">◈</span>数据仓库</button>
+    <!-- 预测栏目已按需求从导航隐藏（view-forecast 区块与 ?module=forecast 深链保留，可随时恢复） -->
+    <button type="button" class="nav-btn" data-view="bagua-query"><span class="nav-icon">☰</span>卦象</button>
+    <button type="button" class="nav-btn" data-view="rules"><span class="nav-icon">▣</span>规则</button>
+    <button type="button" class="nav-btn" data-view="experiment"><span class="nav-icon">⚗</span>实验</button>
+    <button type="button" class="nav-btn" data-view="tasks"><span class="nav-icon">▤</span>任务</button>
+    <button type="button" class="nav-btn" data-view="datastore"><span class="nav-icon">◈</span>数据</button>
   </nav>
   <div class="header-right">
     <a class="find-link" href="/dashboard" title="关键发现 · 数据健康与实验 Top 结论"><span class="nav-icon">◆</span>关键发现</a>
@@ -1669,111 +1786,183 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
 
 
 
-<!-- 查询卦象 -->
+<!-- 查询卦象（PLAN-BAGUA-UX-V1.1 升级版：主导航唯一卦象入口，内部三页签
+     查卦象/按规则筛选/批量导出；module=workbench 兼容跳转到本视图） -->
 <section class="view" id="view-bagua-query">
   <div class="page-title-row">
     <div>
       <h1 class="page-title">查询卦象</h1>
-      <p class="page-sub">支持单股 / 多股查询；可一键导出全市场日线、周线、月线卦象（通达信前复权 / Tushare前复权 / 未复权）。</p>
+      <p class="page-sub">三个页签各自都能独立完成：查单选标的的卦象、按公式规则筛选当日命中的股票、把结果批量导出成 Excel。</p>
     </div>
   </div>
-  <div class="forecast-layout">
-    <aside class="side-stack">
-      <div class="card side-card">
-        <div class="side-title">操作说明</div>
-        <div class="muted" style="font-size:12px;line-height:1.75">
-          <p style="margin:0 0 6px"><b>① 输入代码</b></p>
-          <p style="margin:0 0 8px">股票：<b>600000</b> / sh600000 / 600000.SH<br>指数：<b>sh000001</b> / 000001 / 沪深300<br>ETF：<b>sh510300</b> / sz159915 / 159915<br>多股：用逗号 / 分号 / 空格分隔（如 600000,000001,300750）</p>
-          <p style="margin:0 0 6px"><b>② 选周期与日期</b></p>
-          <p style="margin:0 0 8px">先选「按日 / 按周 / 按月」，再选对应日期：按日选具体日期，按周选周，按月选月。默认按日、今天。也可用「指数」「ETF」预设下拉快速填入。</p>
-          <p style="margin:0 0 6px"><b>③ 选复权口径</b></p>
-          <p style="margin:0 0 8px">股票可选：未复权 / 通达信前复权 / Tushare前复权。<br>指数与 ETF 无复权概念，系统自动按未复权(raw)计算。</p>
-          <p style="margin:0 0 6px"><b>④ 查询与导出</b></p>
-          <p style="margin:0 0 8px">点「查询卦象」查看结果。查询指数 / ETF 后结果下方会出现「查看成分股卦象」按钮，可一键批量计算成分股卦象。查询股票后结果下方会出现「查看同卦股票」（全市场主卦+动爻相同，384态）与「查看同日柱」（静态日柱表）按钮。「导出输入的股票」导出输入框内代码的日 / 周 / 月卦象 Excel；「导出全市场」为后台任务，导出全部股票（耗时较长，请耐心等待）。</p>
+<div id="wbRoot" aria-label="卦象查询与导出">
+    <div class="wb-header">
+      <span class="wb-tag" id="wbDataStamp">数据日期加载中…</span>
+      <button type="button" class="wb-secondary" id="wbGuideBtn" aria-haspopup="dialog">使用指引</button>
+    </div>
+    <nav class="wb-modes" aria-label="选择要完成的任务">
+      <button type="button" class="wb-mode" data-wb-mode="query" aria-pressed="true" aria-controls="wb-query-panel"><strong>查卦象</strong><span class="wb-muted wb-mode-sub">看指定标的的结果</span></button>
+      <button type="button" class="wb-mode" data-wb-mode="screen" aria-pressed="false" aria-controls="wb-screen-panel"><strong>按规则筛选</strong><span class="wb-muted wb-mode-sub">找符合条件的股票</span></button>
+      <button type="button" class="wb-mode" data-wb-mode="export" aria-pressed="false" aria-controls="wb-export-panel"><strong>批量导出</strong><span class="wb-muted wb-mode-sub">生成 Excel 报表</span></button>
+    </nav>
+
+    <!-- ============ 入口一：查卦象 ============ -->
+    <section class="wb-body" id="wb-query-panel" aria-label="查卦象">
+      <div class="wb-block">
+        <label class="wb-title" for="wbQSearch"><span class="wb-num">1</span><strong>选择股票、指数或 ETF</strong></label>
+        <div class="wb-search">
+          <input id="wbQSearch" placeholder="输入名称或代码，如平安银行、000001" autocomplete="off" aria-describedby="wbQHelp">
+          <button type="button" id="wbQAdd">添加</button>
         </div>
+        <p class="wb-help" id="wbQHelp">也可粘贴多个代码，用逗号分隔。重名或同码时，先确认具体标的。</p>
+        <div class="wb-candidates" id="wbQCandidates" aria-label="可选择的标的"></div>
+        <p id="wbQInputError" class="wb-error" role="alert" hidden></p>
+        <div class="wb-chips" id="wbQSelected" aria-label="已选标的" aria-live="polite"></div>
       </div>
-    </aside>
-    <main>
-      <div class="card query-card">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
-          <h3 class="section-title" style="margin:0">卦象查询</h3>
-          <button type="button" class="btn" id="bqGuideBtn" style="font-size:12px;padding:4px 10px">❓ 首次使用？看 4 步引导</button>
+      <div class="wb-block">
+        <h3 class="wb-title"><span class="wb-num">2</span>选择周期和时间</h3>
+        <div class="wb-fields">
+          <div class="wb-field"><span>卦象周期</span>
+            <div class="wb-segments" aria-label="卦象周期" id="wbQPeriodSeg">
+              <button type="button" data-wb-period="DAY" aria-pressed="true">日线</button>
+              <button type="button" data-wb-period="WEEK" aria-pressed="false">周线</button>
+              <button type="button" data-wb-period="MONTH" aria-pressed="false">月线</button>
+            </div>
+          </div>
+          <div class="wb-field"><span>查询时间</span>
+            <select id="wbQTime"><option value="latest">最新可用交易日</option><option value="custom">指定日期</option></select>
+            <input id="wbQCustom" type="date" aria-label="指定查询日期" hidden>
+          </div>
         </div>
-        <p class="section-desc">代码支持 600000、sh600000、000001、指数 sh000001/沪深300、ETF sh510300/159915；多股：600000,000001,300750。先选周期，再选日期 / 周 / 月。</p>
-        <div class="query-row" style="flex-wrap:wrap;gap:10px;align-items:center">
-          <input class="input" id="bqCode" placeholder="代码：600000 / sh000001 / sh510300 / 多股 600000,000001" style="min-width:220px;flex:1" />
-          <select class="select" id="bqIndexPreset" style="min-width:150px" title="指数预设（沪深主要指数）"><option value="">指数：上证指数/沪深300…</option></select>
-          <select class="select" id="bqEtfPreset" style="min-width:150px" title="ETF预设"><option value="">ETF：沪深300ETF…</option></select>
-          <select class="select" id="bqPeriod" style="min-width:120px" title="周期">
-            <option value="DAY" selected>按日</option>
-            <option value="WEEK">按周</option>
-            <option value="MONTH">按月</option>
-          </select>
-          <input class="input" id="bqDate" type="date" style="min-width:160px" title="查询日期" />
-          <select class="select" id="bqWeek" style="min-width:160px;display:none" title="查询周"></select>
-          <select class="select" id="bqMonth" style="min-width:160px;display:none" title="查询月"></select>
-          <select class="select" id="bqAdjust" style="min-width:180px" title="前复权数据源">
-            <option value="raw" selected>未复权</option>
-            <option value="tushare_qfq">Tushare前复权</option>
-          </select>
-          <button type="button" class="btn btn-primary" id="bqSearchBtn">查询卦象</button>
-        </div>
-        <div class="bq-export-bar">
-          <div class="bq-export-title">导出 Excel</div>
-          <div class="bq-export-step">① 附带信号 sheet（可选）</div>
-          <div class="bq-export-row">
-            <button type="button" class="btn btn-export-secondary" id="bqRulePickBtn" title="第 1 步：勾选导出附带的信号规则 sheet（默认 735 / 5日外，可增删任意规则）">⚙ 信号规则（已选 <span id="bqRulePickCount">2</span>）<span id="bqRulePickArrow">▾</span></button>
-            <span id="bqRulePickSummary" class="bq-rule-summary" title="当前勾选的信号规则，导出时各成一个 sheet"></span>
+        <p class="wb-muted" id="wbQDateNote">日线数据日期以实际可用数据为准。</p>
+        <div class="wb-fields">
+          <div class="wb-field"><span>价格口径</span>
+            <select id="wbQPrice">
+              <option value="raw" selected>未复权</option>
+              <option value="tushare_qfq">Tushare 前复权</option>
+            </select>
           </div>
-          <div id="bqRulePickPanel" style="display:none;margin-top:8px;border:1px solid var(--line2);border-radius:9px;padding:10px 12px;background:rgba(8,18,31,.5)">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-              <span style="font-weight:800;font-size:13px;color:#9fc7ff">信号规则勾选（导出附带 sheet）</span>
-              <input class="input" id="bqRulePickSearch" placeholder="搜索规则…" style="max-width:180px;height:30px;font-size:12px" />
-              <button type="button" class="btn" id="bqRulePickAll" style="font-size:12px;padding:4px 10px">全选</button>
-              <button type="button" class="btn" id="bqRulePickNone" style="font-size:12px;padding:4px 10px">清空</button>
-              <button type="button" class="btn" id="bqRulePickReset" style="font-size:12px;padding:4px 10px">恢复默认</button>
-            </div>
-            <div id="bqRulePickList" style="display:flex;flex-wrap:wrap;gap:8px;max-height:240px;overflow-y:auto"></div>
-            <div class="muted" style="font-size:11px;margin-top:6px">勾选的规则在导出 Excel 中各成一个 sheet（票池=规则当日命中∩导出票池）；周五链已预计算的规则直接用预计算结果（7 天回看口径），未预计算的规则导出时即时计算（按导出日）。ⓘ=指标公式目录导入的隐藏规则（735 / 5日外 即此类）。规则列表每次打开本面板实时拉取，规则中心新导入的指标立即可见。勾好后点下方导出按钮。</div>
-          </div>
-          <div class="bq-export-step" style="margin-top:12px">② 选择导出范围</div>
-          <div class="bq-export-row" style="margin-top:8px">
-            <div class="bq-export-action">
-              <button type="button" class="btn btn-export-primary" id="bqExportOnePeriodBtn" title="第 2 步：导出输入框内股票的日/周/月线卦象 Excel">⇩ 导出输入的股票</button>
-              <span class="bq-export-action-sub">快速下载输入框内代码</span>
-            </div>
-            <div class="bq-export-action">
-              <button type="button" class="btn btn-export-secondary" id="bqExportBtn" title="第 2 步：导出全市场日/周/月线卦象 Excel（后台任务）">⇩ 导出全市场（后台）</button>
-              <span class="bq-export-action-sub">后台任务，耗时较长，完成后自动下载</span>
-            </div>
-            <div id="bqExtraRuleWarn" class="bq-export-warn" style="display:none">⚠ 已勾选未预计算规则：全市场导出将即时计算，预计多耗数分钟</div>
-          </div>
-          <details class="bq-export-help">
-            <summary>导出格式与口径说明</summary>
-            <div class="bq-export-help-body">指数/ETF 无复权口径，卦象按未复权(raw)计算；下拉预设可快速填入（也可手动输入 sh000001、sh510300、sz159915 等）。<br><br>导出为周报格式：code/name/week_end/OHLC/日柱/周卦组合(标注周)/爻辞/周·高岛易断/周·倾向/月卦组合(标注月)/爻辞/月·高岛易断/月·倾向/数据状态；高岛易断列为《高岛易断》问营商断语（覆盖 379/384 爻，仅供解读、不参与选股，个别爻原书无断语时留空）；倾向列为卦象操作信号与高岛断语的共识——都看好标▲双好(红)、都看差标▼双差(绿)、方向对立标分歧、其余留空，周月各自独立判定，同样仅供解读；月卦按周报目标周归属上一已完成月份（周一~周四导出看当周，周五晚~周日导出看下周）：目标周只按交易日（周一~周五）切段，周末不计；非跨月周整周一组（等价于查询月份的上一个月，如8月查询导出7月月卦），跨月周输出两组月卦列并在列头标注适用日期段（如8/31用7月卦、9/1-9/4用8月卦，共21列；周末导出时次月卦为按最新可得日线计算的临时值），周卦取查询周；导出全市场=同一 Excel 内 A股(stock-all)与全量ETF(etf-all) 两个 sheet，手动代码含 ETF 时也按类型分 sheet；导出卦象不含卦符。<br><br>信号规则：点「⚙ 信号规则」勾选导出附带的信号 sheet（默认 735 / 5日外，可增删任意规则；勾选周五链未预计算的规则会即时计算、全市场导出耗时增加数分钟；全不勾=纯卦象导出）。<br><br>日柱自动读桌面「股票+卦象/日柱(1).xlsx」。<br><br>Ctrl+F5 强刷后生效。</div>
+          <details class="wb-field-inline"><summary>价格口径如何影响结果？</summary>
+            <p class="wb-muted">不同口径会使用不同价格，卦象可能随之变化。当前选择会显示在结果和导出摘要中；指数与 ETF 无复权概念，系统按未复权计算。</p>
           </details>
         </div>
-        <div class="muted" style="font-size:11px;margin-top:8px" id="bqHint"></div>
-        <div id="bqGuidePanel" style="display:none;border:1px solid var(--line,#2a3a55);border-radius:8px;padding:12px 14px;margin-top:10px;font-size:12px;line-height:1.9;color:#c3d0e0;background:rgba(24,38,60,.35)">
-          <div style="font-weight:600;color:#9fc7ff;margin-bottom:6px">四步使用指南</div>
-          <ol style="margin:0;padding-left:20px">
-            <li><b>选标的</b>：输入股票代码（600000）、指数（sh000001 / 000001 / 沪深300）或 ETF（sh510300 / 159915）；也可用「指数」「ETF」预设下拉一键填入。</li>
-            <li><b>选周期与日期</b>：先选「按日 / 按周 / 按月」，再选对应日期；按日选日期，按周选周，按月选月。</li>
-            <li><b>选复权口径</b>：股票可选未复权 / 通达信前复权 / Tushare前复权；指数与 ETF 无复权概念，自动按未复权计算。</li>
-            <li><b>查询与成分股</b>：点「查询卦象」查看结果；查询指数 / ETF 后结果下方会出现「查看成分股卦象」按钮，可一键批量计算成分股卦象。查询股票后会出现「查看同卦股票」（全市场 384 态主卦+动爻相同）与「查看同日柱」按钮。</li>
-          </ol>
-          <div class="muted" style="margin-top:6px">批量查询：用逗号 / 分号分隔多只股票代码。导出：先点「⚙ 信号规则」勾选附带的信号 sheet（默认 735 / 5日外，已选规则显示在按钮旁），再点导出按钮——「导出全市场」为后台任务，「导出输入的股票」按输入框内代码导出。</div>
+      </div>
+      <div class="wb-summary" aria-live="polite"><span id="wbQSummary">尚未选择标的</span></div>
+      <div class="wb-submit">
+        <button type="button" class="wb-primary" id="wbQRun" disabled>请先选择标的</button>
+        <span class="wb-help">结果将在下方显示。</span>
+      </div>
+      <p id="wbQError" role="alert" class="wb-error" hidden></p>
+      <div id="wbQResult" class="wb-result" aria-live="polite" hidden></div>
+    </section>
+
+    <!-- ============ 入口二：按规则筛选 ============ -->
+    <section class="wb-body" id="wb-screen-panel" aria-label="按规则筛选" hidden>
+      <div class="wb-block">
+        <h3 class="wb-title"><span class="wb-num">1</span>选择筛选规则</h3>
+        <input id="wbSRuleSearch" placeholder="检索规则…" autocomplete="off" aria-label="检索规则">
+        <div class="wb-rulebox" id="wbSRuleList" aria-label="可筛选规则"></div>
+        <p class="wb-error" id="wbSRuleError" role="alert" hidden></p>
+        <div class="wb-fields">
+          <div class="wb-field"><span>多条规则如何组合</span>
+            <select id="wbSCombine"><option value="any">满足任意一条</option><option value="all">同时满足全部</option></select>
+          </div>
+          <div class="wb-field"><span>已选规则</span>
+            <div class="wb-chips" id="wbSChips" aria-live="polite"><span class="wb-muted">尚未选择</span></div>
+          </div>
         </div>
       </div>
-      <div class="card section-pad" id="bqResultCard" style="display:none">
-        <div class="result-head">
-          <h3 class="section-title" id="bqResultTitle">卦象结果</h3>
+      <div class="wb-block">
+        <h3 class="wb-title"><span class="wb-num">2</span>选择筛选范围和时间</h3>
+        <div class="wb-fields">
+          <div class="wb-field"><span>筛选范围</span>
+            <select id="wbSScope"><option value="all">全部 A 股</option><option value="picked">指定股票（来自查询页/手动）</option></select>
+          </div>
+          <div class="wb-field"><span>筛选日期</span><input type="date" id="wbSDate"></div>
         </div>
-        <div id="bqResult"></div>
+        <p class="wb-muted" id="wbSScopeNote">筛选范围：全部 A 股 · 周期与价格口径沿用规则定义（正式 L1 日线 + Tushare 前复权），结果逐项标注实际计算日期。</p>
+        <div id="wbSPickedBox" hidden>
+          <div class="wb-row">
+            <input id="wbSManual" placeholder="直接输入或粘贴股票代码/名称，多个用逗号分隔" autocomplete="off" aria-label="输入筛选范围的股票">
+            <button type="button" class="wb-secondary" id="wbSAddBtn">添加</button>
+            <button type="button" class="wb-secondary" id="wbSImportBtn">从查询结果导入范围</button>
+          </div>
+          <p class="wb-help">「按规则筛选」页签可独立完成：不必先去查卦象，直接输入代码即可指定范围。</p>
+          <div class="wb-candidates" id="wbSPickedCand" aria-label="可选择的标的"></div>
+          <p class="wb-error" id="wbSPickedInputError" role="alert" hidden></p>
+          <div class="wb-chips" id="wbSPickedChips" aria-label="已选筛选标的" aria-live="polite"></div>
+        </div>
+        <p class="wb-okline" id="wbSPickedNote" hidden></p>
       </div>
-    </main>
+      <div class="wb-summary" id="wbSSummary" aria-live="polite">尚未选择筛选规则</div>
+      <div class="wb-submit"><button type="button" class="wb-primary" id="wbSRun" disabled>请先选择规则</button></div>
+      <p id="wbSError" role="alert" class="wb-error" hidden></p>
+      <div id="wbSResult" class="wb-result" aria-live="polite" hidden></div>
+    </section>
+
+    <!-- ============ 入口三：批量导出 ============ -->
+    <section class="wb-body" id="wb-export-panel" aria-label="批量导出" hidden>
+      <div class="wb-block">
+        <h3 class="wb-title"><span class="wb-num">1</span>选择导出范围</h3>
+        <div class="wb-field"><span>导出哪些标的</span>
+          <select id="wbEScope">
+            <option value="all">全市场 A 股 + ETF（分别放入工作表）</option>
+            <option value="picked">指定标的</option>
+            <option value="screened">本次筛选结果</option>
+          </select>
+        </div>
+        <p class="wb-muted" id="wbESource">全市场导出无需先填写股票代码。</p>
+        <div id="wbEPickedBox" hidden>
+          <div class="wb-row">
+            <input id="wbEManual" placeholder="直接输入或粘贴代码/名称，多个用逗号分隔" autocomplete="off" aria-label="输入导出标的">
+            <button type="button" class="wb-secondary" id="wbEAddBtn">添加</button>
+          </div>
+          <p class="wb-help">「批量导出」页签可独立完成：不必先去查卦象，直接输入代码即可指定标的。</p>
+          <div class="wb-candidates" id="wbEPickedCand" aria-label="可选择的标的"></div>
+          <p class="wb-error" id="wbEPickedInputError" role="alert" hidden></p>
+          <div class="wb-chips" id="wbEPickedChips" aria-label="已选导出标的" aria-live="polite"></div>
+        </div>
+        <p class="wb-error" id="wbEScopeError" role="alert" hidden></p>
+      </div>
+      <div class="wb-block">
+        <h3 class="wb-title"><span class="wb-num">2</span>确认报表日期、口径和模板内容</h3>
+        <div class="wb-fields">
+          <div class="wb-field"><span>报表基准日期</span><input id="wbEDate" type="date"></div>
+          <div class="wb-field"><span>股票价格口径</span>
+            <select id="wbEPrice">
+              <option value="raw" selected>未复权</option>
+              <option value="tushare_qfq">Tushare 前复权</option>
+            </select>
+          </div>
+        </div>
+        <p>报表结构：工作表 <span class="wb-mono">meta</span>（口径与说明）+ 按所选标的分组生成的工作表——股票进 <span class="wb-mono">stock-all</span>、大盘指数进 <span class="wb-mono">index-all</span>（上证指数、深证成指等内置清单，每次导出都附带）、ETF 进 <span class="wb-mono">etf-all</span>（某类标的为空时不生成对应空表）；每行含日柱、周卦、月卦及解读。</p>
+        <p class="wb-help">勾选「附加信号明细」后，每条规则再生成一个以规则名命名的工作表，表头之上先给出该规则的说明（名称 / ID / 来源 / 基准日 / 命中只数 / 规则描述），便于核对「为什么这些股票被选中」。每组周期标注实际日期；跨月或未完成周期单独标注。ETF 按当前系统规则使用未复权价格，指数无复权概念按未复权计算。</p>
+      </div>
+      <div class="wb-block">
+        <h3 class="wb-title"><span class="wb-num">3</span>可选附加信号明细</h3>
+        <label class="wb-check"><input type="checkbox" id="wbEAttach">另附信号规则命中明细（可选）</label>
+        <div id="wbEAttachBox" hidden>
+          <div class="wb-rulebox" id="wbERuleList"></div>
+          <p class="wb-muted">每条规则一个工作表；仅附加明细，不改变主表的股票范围。</p>
+        </div>
+      </div>
+      <div class="wb-summary" id="wbESummary" aria-live="polite"></div>
+      <div class="wb-submit">
+        <button type="button" class="wb-primary" id="wbERun">创建导出任务</button>
+        <span class="wb-help">提交后在下方导出记录中查看任务状态；刷新页面后记录自动恢复。</span>
+      </div>
+      <p id="wbEError" role="alert" class="wb-error" hidden></p>
+      <div id="wbEResult" class="wb-result" aria-live="polite" hidden></div>
+      <div class="wb-block" id="wbEJobsBlock">
+        <h3 class="wb-title"><strong>导出记录</strong><span class="wb-muted" style="font-size:12px" id="wbEJobsNote"></span></h3>
+        <div class="wb-jobs" id="wbEJobs" aria-live="polite"></div>
+      </div>
+    </section>
   </div>
 </section>
+
+<!-- 卦象工作台（PLAN-BAGUA-UX-V1.1：查卦象 / 按规则筛选 / 批量导出） -->
+
 
 <!-- 规则中心（完整原型结构 + 动态数据） -->
 <section class="view" id="view-rules">
@@ -2099,10 +2288,10 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
             </div>
             <div class="field"><label>并行数（线程）</label>
               <select class="select" id="expConcurrency">
-                <option value="1">1（串行）</option>
+                <option value="1" selected>1（串行）</option>
                 <option value="2">2</option>
                 <option value="4">4</option>
-                <option value="6" selected>6</option>
+                <option value="6">6</option>
                 <option value="8">8</option>
               </select>
             </div>
@@ -2670,8 +2859,11 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     const module = new URLSearchParams(location.search).get("module");
     // G3 fix: "datastore" was missing, so navigating from /v3/task-detail to
     // 数据仓库 bounced to the default module. Keep in sync with nav-btn views.
-    const allowed = ["backtest", "forecast", "bagua-query", "rules", "experiment", "tasks", "datastore"];
-    return allowed.includes(module) ? module : "backtest";
+    const allowed = ["backtest", "forecast", "bagua-query", "workbench", "rules", "experiment", "tasks", "datastore"];
+    if (!allowed.includes(module)) return "backtest";
+    // 旧 `?module=workbench` 兼容：独立工作台视图已合并进「查询卦象」，
+    // 这里统一规范化后再做视图切换（否则 view-workbench 不存在 → 空白页）
+    return module === "workbench" ? "bagua-query" : module;
   }
 
 
@@ -2724,7 +2916,11 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
         ...opts,
       });
     } catch (netErr) {
-      throw new Error("网络请求失败: " + (netErr && netErr.message));
+      // 网络层失败（断连/超时/被取消）：与 HTTP 错误分开标记，
+      // 轮询逻辑据此区分「暂时断连」与「记录确已失效(404)」
+      const ne = new Error("网络请求失败: " + (netErr && netErr.message));
+      ne.network = true;
+      throw ne;
     }
     const text = await r.text();
     let data = null;
@@ -2745,7 +2941,9 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       } else {
         msg = (typeof d === "string" && d) || text || r.statusText;
       }
-      throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+      const he = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+      he.status = r.status;
+      throw he;
     }
     return data;
   }
@@ -2894,7 +3092,12 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       renderForecastPage();
     }
     if (name === "bagua-query") {
-      initBaguaQueryPage();
+      // PLAN-BAGUA-UX-V1.1 整改：查询卦象视图 = 卦象工作台（内部三页签），
+      // 主导航只保留这一个卦象入口（旧 workbench 链接由 getCurrentModule 兼容跳转）
+      try { initWorkbenchPage(); } catch (eWb) {
+        window._wbInitError = String(eWb && eWb.stack || eWb);
+        console.error("workbench init", eWb);
+      }
     }
     if (name === "datastore") {
       loadDataStoreStatus();
@@ -3959,7 +4162,7 @@ function collectPeriods() {
       end: range.end,
       account_mode: ($("expAccount") && $("expAccount").value) || "portfolio",
       max_variants: Number($("expMaxVariants").value) || 50,
-      concurrency: Math.max(1, parseInt(($("expConcurrency") && $("expConcurrency").value) || "6", 10) || 6),
+      concurrency: Math.max(1, parseInt(($("expConcurrency") && $("expConcurrency").value) || "1", 10) || 1),
       force: !!force,
       note: (($("expNote") && $("expNote").value) || "") + " | type=" + AppState.expType,
       engine: ($("expEngine") && $("expEngine").value) || "full",
@@ -5988,12 +6191,14 @@ async function expCreateAndStart() {
   })();
 
   /* ---------- 查询卦象 ---------- */
+  // 使用指引（PLAN-BAGUA-UX-V1.1-R2）：只在用户点「使用指引」时打开，
+  // 步骤目标全部指向当前工作台真实存在的控件；旧版 bq* 控件已退役。
   const BQ_TOUR_KEY = "astock_bq_tour_v1";
   const BQ_TOUR_STEPS = [
-    { id: "bqCode", title: "① 选标的", text: "输入股票代码（如 600000）、指数（sh000001 上证指数 / 沪深300 / 000300）或 ETF（sh510300 沪深300ETF / sz159915 创业板ETF）。也可以用右边的「指数」「ETF」预设下拉快速填入。" },
-    { id: "bqPeriod", title: "② 周期与日期", text: "先选「按日 / 按周 / 按月」，再选日期：按日选具体日期，按周选周，按月选月。默认按日、今天。" },
-    { id: "bqAdjust", title: "③ 复权口径", text: "股票可选未复权 / 通达信前复权 / Tushare前复权。指数与 ETF 无复权概念，系统自动按未复权(raw)计算。" },
-    { id: "bqSearchBtn", title: "④ 查询与成分股", text: "点「查询卦象」查看结果。查询指数或 ETF 后，结果下方会出现「查看成分股卦象」按钮；查询股票后会出现「查看同卦股票」（全市场 384 态主卦+动爻相同，后台任务）与「查看同日柱」（静态日柱表）按钮。" }
+    { id: "wbQSearch", title: "① 选标的", text: "输入名称、代码或直接粘贴多个代码（如 600000、平安银行、sh510300），点「添加」加入上方已选标的；同名或同代码会给出候选项由你确认。" },
+    { id: "wbQPeriodSeg", title: "② 周期与日期", text: "先选「按日 / 按周 / 按月」，再选「最新可用交易日」或指定日期/周/月。日期以该标的实际行情为准，不会用电脑当前日期冒充。" },
+    { id: "wbQPrice", title: "③ 复权口径", text: "股票可选未复权或 Tushare 前复权；指数与 ETF 无复权概念，系统固定按未复权计算，结果里会分别标注。" },
+    { id: "wbQRun", title: "④ 查询与关联操作", text: "点「查询 N 个标的」查看结果。展开「查看详情」后可查同卦股票、同日柱；指数/ETF 还能查成分股卦象。筛选和导出可在上方页签直接进行，不必先查询。" },
   ];
 
   function startBqTour() {
@@ -6049,27 +6254,36 @@ async function expCreateAndStart() {
     }
     function endTour() {
       try { localStorage.setItem(BQ_TOUR_KEY, "1"); } catch (e) {}
+      document.removeEventListener("keydown", onKey, true);
       overlay.remove();
       hl.remove();
       card.remove();
       const guide = $("bqGuidePanel");
       if (guide) guide.style.display = "none";
+      const btn = $("wbGuideBtn");
+      if (btn) btn.focus();
     }
+    // 键盘可退出（Esc），取焦后 Tab 可到「跳过/下一步」
+    function onKey(e) {
+      if (e.key === "Escape") {
+        try { sessionStorage.setItem(BQ_TOUR_KEY + "_dismissed", "1"); } catch (e2) {}
+        endTour();
+      }
+    }
+    document.addEventListener("keydown", onKey, true);
     showStep(0);
+    const firstBtn = card.querySelector("#bqTourNext") || card.querySelector("#bqTourSkip");
+    if (firstBtn) firstBtn.focus();
   }
 
-  function maybeShowBqTour() {
-    try {
-      if (localStorage.getItem(BQ_TOUR_KEY)) return;
-      if (sessionStorage.getItem(BQ_TOUR_KEY + "_dismissed")) return;
-    } catch (e) {}
-    if (document.getElementById("bqTourOverlay")) return;
-    setTimeout(function () {
-      if (document.getElementById("bqTourOverlay")) return;
-      const view = $("view-bagua-query");
-      if (!view || !view.classList.contains("active")) return;
-      startBqTour();
-    }, 600);
+  /** 用户主动开启的使用指引（不再自动弹出：旧版控件已退役，自动引导会挡住操作）。 */
+  function startBqGuide() {
+    if (document.getElementById("bqTourOverlay")) return; // 已在引导中，避免叠层/重复监听
+    const view = $("view-bagua-query");
+    if (!view || !view.classList.contains("active")) {
+      try { switchModule("bagua-query"); } catch (e) {}
+    }
+    startBqTour();
   }
 
   function initBaguaQueryPage() {
@@ -6153,7 +6367,6 @@ async function expCreateAndStart() {
     const guide = $("bqGuidePanel");
     if (guide) guide.style.display = "none";
     bindBqResultDelegate();
-    maybeShowBqTour();
   }
 
   const BQ_STATIC_INDEX = [
@@ -13295,7 +13508,8 @@ async function boot() {
     }
     await loadRuleCategories();
     try { initGuaUIForV3(); } catch (e) {}
-    try { initBaguaQueryPage(); } catch (e) {}
+    // 旧版查询页控件（bq*）已退役：不再初始化旧表单，也不再自动弹出旧引导；
+    // 「使用指引」由工作台里的按钮主动开启（initWorkbenchPage → wbBind）
     if (isTaskDetailRoute) {
       AppState.activeModule = "tasks";
       document.querySelectorAll(".nav-btn").forEach(function (b) {
@@ -13323,7 +13537,9 @@ async function boot() {
     try {
       const sp = new URLSearchParams(location.search);
       const m = (sp.get("module") || "").trim();
-      if (["rules", "experiment", "forecast", "backtest", "tasks", "bagua-query", "datastore"].includes(m)) mod = m;
+      // 旧 workbench 与 bagua-query 是同一个视图（R2-04）
+      if (m === "workbench") mod = "bagua-query";
+      else if (["rules", "experiment", "forecast", "backtest", "tasks", "bagua-query", "datastore"].includes(m)) mod = m;
       // restore filters when back to list
       if (m === "tasks") {
         try {
@@ -13348,6 +13564,1898 @@ async function boot() {
       AppState.expRuleIds = DEMO_RULES.filter((r) => r.backtestable).slice(0, 3).map((r) => r.id);
     }
   }
+
+  /* =======================================================================
+     卦象工作台（PLAN-BAGUA-UX-V1.1）：查卦象 / 按规则筛选 / 批量导出。
+     交互结构对照原型 docs/plans/bagua-ux-v1/bagua-workbench.source.html；
+     原型中的示例数据/模拟延时不进入本实现，全部走真实接口。
+     ======================================================================= */
+  let wbInited = false;
+  const wbq = {
+    picked: [], period: "DAY", timeMode: "latest", price: "raw",
+    snapshot: null, seq: 0, searchTimer: null, reqToken: 0,
+    optionsCache: {}, surfaceMax: 0, weekEnd: 0, monthEnd: 0, dateNote: "",
+  };
+  const wbs = {
+    rules: [], rulesLoaded: false, scope: "all", pickedCodes: [], pickedMeta: {},
+    date: "", snapshot: null, job: null, pollTimer: null, jobRunning: false,
+    checkedIds: new Set(), // 已选规则独立保存：搜索过滤只影响显示，不改选择
+    manualCandidates: [], // 手动输入命中多个候选时暂存，供确认
+    // R3-01：条件版本 + 提交快照。任何条件变更 condVersion+1；提交时记录当时的版本，
+    // 版本不等即说明「当前显示的结果/导出入口」已不代表现在的条件，必须按过期处理。
+    condVersion: 0,
+    submitted: null, // { version, summary }
+    // R3-02：提交在途（必须在第一个 await 之前置位），摘要重绘/切页签都不得解除
+    submitting: false,
+  };
+  const wbe = {
+    scope: "all", pickedCodes: [], pickedMeta: {}, screenedSnapshot: null, from: "",
+    attach: false, rulesLoaded: false, pollTimer: null, checkedRuleIds: new Set(),
+    sourceSnapshot: null, manualCandidates: [], submitting: false,
+  };
+  const WB_TYPE_LABEL = { STK: "股票", IDX: "指数", ETF: "ETF" };
+  const WB_EXCH_LABEL = { SSE: "沪市", SZSE: "深市", BSE: "北交所" };
+  const WB_LS_EXPORT = "wb_active_export_jobs";
+  const WB_LS_SCREEN = "wb_active_screen_jobs";
+
+  /**
+   * 资产类型归一化：单标的结果端点返回 stock/index/etf（小写），列表端点
+   * 返回 STK/IDX/ETF。两种命名都要归一，否则股票会被当成非股票，同卦查询
+   * 从「Tushare 前复权」静默退化成「未复权」（R2-02）。
+   */
+  function wbSymType(v) {
+    const s = String(v == null ? "" : v).trim().toUpperCase();
+    if (s === "STK" || s === "STOCK") return "STK";
+    if (s === "IDX" || s === "INDEX") return "IDX";
+    if (s === "ETF") return "ETF";
+    return s;
+  }
+  function wbIsIdxEtf(v) { const t = wbSymType(v); return t === "IDX" || t === "ETF"; }
+
+  function wbPriceLabel(v) { return v === "tushare_qfq" ? "Tushare 前复权" : "未复权"; }
+  function wbFmtDate(d) {
+    const s = String(d == null ? "" : d).replace(/-/g, "");
+    return s.length === 8 ? s.slice(0, 4) + "-" + s.slice(4, 6) + "-" + s.slice(6, 8) : s;
+  }
+  function wbYyyymmdd(d) { return String(d == null ? "" : d).replace(/-/g, ""); }
+  function wbIsStk(it) { return it && it.type === "STK"; }
+  function wbAllStk() { return wbq.picked.length && wbq.picked.every(wbIsStk); }
+  function wbPeriodLabel() { return wbq.period === "WEEK" ? "周线" : wbq.period === "MONTH" ? "月线" : "日线"; }
+
+  /* ---------- 数据日期戳 ---------- */
+  async function wbLoadDataStamp() {
+    const el = $("wbDataStamp");
+    try {
+      const j = await api("/api/v1/calendar/range");
+      const dmax = j.data_max_date || j.max_date;
+      if (el && dmax) el.textContent = "行情数据截至 " + wbFmtDate(dmax);
+      if (!wbs.date) { wbs.date = wbFmtDate(dmax); const d = $("wbSDate"); if (d) d.value = wbs.date; }
+      const ed = $("wbEDate"); if (ed && !ed.value) ed.value = wbFmtDate(dmax);
+    } catch (e) {
+      if (el) el.textContent = "数据日期未知";
+    }
+  }
+
+  /* ---------- 模式切换（三入口状态保留） ---------- */
+  function wbSetMode(next) {
+    const root = $("wbRoot");
+    if (!root) return;
+    root.querySelectorAll("[data-wb-mode]").forEach((b) =>
+      b.setAttribute("aria-pressed", String(b.dataset.wbMode === next)));
+    ["query", "screen", "export"].forEach((m) => {
+      const p = $("wb-" + m + "-panel");
+      if (p) p.hidden = m !== next;
+    });
+    if (next === "screen") { wbEnsureScreenRules(); wbRenderScreenPicked(); }
+    if (next === "export") {
+      wbEnsureExportRules();
+      wbRefreshExportJobs();
+      const pbox = $("wbEPickedBox");
+      if (pbox) pbox.hidden = wbe.scope !== "picked";
+      wbRenderPickedChips("export");
+      wbRenderSummaries();
+    }
+    wbRenderSummaries();
+  }
+
+  /* ============================ 入口一：查卦象 ============================ */
+  function wbQueryChanged(invalidSnapshot) {
+    if (invalidSnapshot) {
+      // 任一查询条件变更即递增 token：in-flight 的旧响应回来后直接丢弃
+      wbq.reqToken += 1;
+    }
+    if (invalidSnapshot && wbq.snapshot) {
+      wbq.snapshot = null;
+      const res = $("wbQResult"), err = $("wbQError");
+      if (res) res.hidden = true;
+      if (err) { err.textContent = "条件已变更，请重新查询。"; err.hidden = false; }
+    }
+    wbRenderSelected();
+    wbRenderCandidates(wbSearchTerm());
+    wbRenderSummaries();
+  }
+
+  function wbSearchTerm() { return (($("wbQSearch") || {}).value || "").trim(); }
+
+  async function wbDoSearch(term, seq) {
+    const box = $("wbQCandidates");
+    if (!box) return;
+    if (!term) { wbRenderCandidates(""); return; }
+    try {
+      const j = await api("/api/v1/bagua/instruments?q=" + encodeURIComponent(term) + "&limit=8");
+      if (seq !== wbq.seq) return; // 旧响应不覆盖新输入
+      wbRenderCandidates(term, j.items || []);
+    } catch (e) {
+      if (seq !== wbq.seq) return;
+      wbRenderCandidates(term, []);
+    }
+  }
+
+  function wbRenderCandidates(term, items) {
+    const box = $("wbQCandidates");
+    if (!box) return;
+    // items 省略时沿用上一次候选（已选移除后仍可补选）；保留歧义候选供逐项确认
+    if (items === undefined) items = wbq.lastCandItems || [];
+    else wbq.lastCandItems = items;
+    const fresh = items.filter((it) => !wbq.picked.some((p) => p.id === it.id));
+    box.innerHTML = fresh.map((it) =>
+      '<button type="button" class="wb-candidate" data-wb-cand-id="' + esc(it.id) + '">' +
+      "<strong>" + esc(it.name) + "</strong>" +
+      '<span class="wb-muted">' + esc(it.code) + " · " + esc(it.type_label || WB_TYPE_LABEL[it.type] || it.type) +
+      " · " + esc(it.exchange_label || "") + "</span></button>"
+    ).join("");
+    box.querySelectorAll("[data-wb-cand-id]").forEach((b) => {
+      b.onclick = () => {
+        const it = fresh.find((x) => x.id === b.dataset.wbCandId);
+        if (it) wbAddPicked(it, false);
+      };
+    });
+  }
+
+  function wbRenderSelected() {
+    const box = $("wbQSelected");
+    if (!box) return;
+    box.innerHTML = wbq.picked.map((s) =>
+      '<button type="button" class="wb-chip" data-wb-chip-id="' + esc(s.id) + '" aria-label="移除 ' + esc(s.name) + '">' +
+      esc(s.name) + " · " + esc(WB_TYPE_LABEL[s.type] || s.type) + " ×</button>"
+    ).join("");
+    box.querySelectorAll("[data-wb-chip-id]").forEach((b) => {
+      b.onclick = () => wbRemovePicked(b.dataset.wbChipId);
+    });
+  }
+
+  async function wbRefreshOptions() {
+    if (!wbq.picked.length) { wbq.surfaceMax = 0; wbq.dateNote = ""; wbUpdateDateNote(); return; }
+    const first = wbq.picked[0];
+    const key = first.id + "|" + (wbIsStk(first) ? wbq.price : "raw");
+    if (wbq.optionsCache[key]) { wbApplyOptions(wbq.optionsCache[key]); return; }
+    try {
+      const j = await api("/api/v1/bagua/options?code=" + encodeURIComponent(first.id) +
+        "&adjust=" + encodeURIComponent(wbIsStk(first) ? wbq.price : "raw"));
+      wbq.optionsCache[key] = j;
+      // 乱序保护（R2-07 同类）：请求在途时用户可能已换首个标的或口径，
+      // 旧响应必须按当时请求的 key 再校验一次，不匹配就只缓存、不应用
+      const curFirst = wbq.picked[0];
+      const curKey = curFirst ? (curFirst.id + "|" + (wbIsStk(curFirst) ? wbq.price : "raw")) : null;
+      if (curKey !== key) return;
+      wbApplyOptions(j);
+    } catch (e) {
+      const curFirst = wbq.picked[0];
+      const curKey = curFirst ? (curFirst.id + "|" + (wbIsStk(curFirst) ? wbq.price : "raw")) : null;
+      if (curKey !== key) return; // 条件已变，错误提示也不落
+      wbq.dateNote = "标的行情选项加载失败：" + e.message;
+      wbUpdateDateNote();
+    }
+  }
+
+  function wbApplyOptions(opt) {
+    wbq.surfaceMax = opt.surface_max_date || opt.last_date || 0;
+    const sug = opt.suggested || {};
+    wbq.weekEnd = (sug.week && sug.week.latest_closed && sug.week.latest_closed.date) || 0;
+    wbq.monthEnd = (sug.month && sug.month.latest_closed && sug.month.latest_closed.date) || 0;
+    const span = opt.first_date ? (wbFmtDate(opt.first_date) + " ~ " + wbFmtDate(opt.last_date)) : "—";
+    wbq.dateNote = "实际行情覆盖 " + span + "；数据面最新交易日 " + wbFmtDate(wbq.surfaceMax) +
+      (opt.up_to_date ? "" : "（该标的最新数据早于数据面，可能停牌/退市）");
+    wbUpdateDateNote();
+    wbRenderSummaries();
+  }
+
+  function wbUpdateDateNote() {
+    const el = $("wbQDateNote");
+    if (!el) return;
+    const base = wbq.dateNote || "日线数据日期以实际可用数据为准。";
+    let note = base;
+    if (wbq.period === "WEEK") {
+      note = base + " · 最近完整周截止 " + (wbq.weekEnd ? wbFmtDate(wbq.weekEnd) : "—");
+    } else if (wbq.period === "MONTH") {
+      note = base + " · 最近完整月截止 " + (wbq.monthEnd ? wbFmtDate(wbq.monthEnd) : "—");
+    }
+    // 指定周/月可能横跨未收官周期：结果行会标注「未收官」
+    if (wbq.timeMode === "custom" && wbq.period !== "DAY") {
+      note += " · 指定" + (wbq.period === "WEEK" ? "周" : "月") + "若尚未结束，结果将标注未收官";
+    }
+    el.textContent = note;
+  }
+
+  function wbAddPicked(it, fromBatch) {
+    if (!it) return;
+    if (wbq.picked.some((p) => p.id === it.id)) {
+      if (!fromBatch) wbShowInputError(it.name + "（" + it.code + "）已在已选列表中");
+      return false;
+    }
+    wbq.picked.push(it);
+    wbRefreshOptions();
+    wbQueryChanged(true);
+    return true;
+  }
+
+  function wbRemovePicked(id) {
+    wbq.picked = wbq.picked.filter((p) => p.id !== id);
+    wbRefreshOptions();
+    wbQueryChanged(true);
+  }
+
+  function wbShowInputError(msg) {
+    const el = $("wbQInputError");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.hidden = !msg;
+  }
+
+  async function wbAddFromInput() {
+    const inp = $("wbQSearch");
+    const raw = ((inp && inp.value) || "").trim();
+    if (!raw) { wbShowInputError("输入名称或代码，或直接选择下方标的。"); return; }
+    const tokens = raw.split(/[,，;；、\s]+/).filter(Boolean).slice(0, 50);
+    const okList = [], problems = [];
+    for (const tk of tokens) {
+      try {
+        const j = await api("/api/v1/bagua/instruments?q=" + encodeURIComponent(tk) + "&limit=6");
+        const items = j.items || [];
+        if (items.length === 1) {
+          if (wbq.picked.some((p) => p.id === items[0].id)) problems.push(tk + "：已添加过（" + items[0].name + "）");
+          else { wbq.picked.push(items[0]); okList.push(items[0].name); }
+        } else if (items.length > 1) {
+          problems.push(tk + " 对应 " + items.length + " 个标的（" +
+            items.slice(0, 3).map((x) => x.name + "·" + (WB_TYPE_LABEL[x.type] || x.type)).join("、") + "…），请在候选项中选择");
+          wbRenderCandidates("", items.filter((x) => !wbq.picked.some((p) => p.id === x.id)));
+        } else {
+          problems.push(tk + " 无法识别");
+        }
+      } catch (e) {
+        problems.push(tk + " 检索失败：" + e.message);
+      }
+    }
+    if (inp) inp.value = "";
+    wbShowInputError(problems.join("；"));
+    if (okList.length || problems.length) { wbRefreshOptions(); wbQueryChanged(true); }
+    else wbRenderSummaries();
+  }
+
+  /** ISO 8601 年中周数（52 或 53）：有 53 周的年份 = 1 月 1 日是周四，
+   *  或（闰年且 1 月 1 日是周三）。用于拒绝 "2021-W53" 这类非法周。 */
+  function wbIsoWeeksInYear(y) {
+    const jan1 = new Date(Date.UTC(y, 0, 1));
+    const dow = jan1.getUTCDay(); // 0=周日
+    if (dow === 4) return 53;
+    const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+    return (leap && dow === 3) ? 53 : 52;
+  }
+
+  function wbIsoWeekToSunday(iso) {
+    // "2026-W36" → 该 ISO 周周日的 YYYYMMDD。传周期末而非周期初：
+    // 后端 bars 截到 asof（含）后按所在周聚合，周初若是非交易日会落到上一周。
+    // ISO 第 1 周固定为「包含 1 月 4 日」的那一周（周一至周日），不能按
+    // 「1 月 1 日所在周」推算——后者在 1 月 1 日为周五/六/日时会整体错一周
+    // （如 2021-W01 被算成 2020-12-28 那一周）。
+    const m = /^(\d{4})-W(\d{1,2})$/.exec(String(iso || "").trim());
+    if (!m) return "";
+    const y = +m[1], w = +m[2];
+    if (!y || !w || w < 1) return "";
+    if (w > wbIsoWeeksInYear(y)) return ""; // 非法周（如 2021-W53）不猜
+    const jan4 = new Date(Date.UTC(y, 0, 4));
+    const jan4Dow = jan4.getUTCDay() || 7; // 周一=1 … 周日=7
+    const week1Monday = new Date(jan4);
+    week1Monday.setUTCDate(jan4.getUTCDate() - jan4Dow + 1);
+    const sunday = new Date(week1Monday);
+    sunday.setUTCDate(week1Monday.getUTCDate() + (w - 1) * 7 + 6);
+    return sunday.toISOString().slice(0, 10).replace(/-/g, "");
+  }
+
+  function wbMonthToLastDay(v) {
+    // "2026-08" → "20260831"（月末历日；非交易日时后端截到该月最后交易日，
+    // 月聚合键正确落在用户指定月份，不会回退到上个月）
+    const m = /^(\d{4})-(\d{1,2})$/.exec(String(v || "").trim());
+    if (!m) return "";
+    const last = new Date(Date.UTC(+m[1], +m[2], 0)).getUTCDate();
+    return m[1] + String(m[2]).padStart(2, "0") + String(last).padStart(2, "0");
+  }
+
+  function wbQueryDate() {
+    if (wbq.timeMode === "custom") {
+      const v = ($("wbQCustom") || {}).value || "";
+      if (wbq.period === "WEEK") return wbIsoWeekToSunday(v);
+      if (wbq.period === "MONTH") return wbMonthToLastDay(v);
+      return wbYyyymmdd(v);
+    }
+    if (wbq.period === "WEEK") return wbq.weekEnd ? String(wbq.weekEnd) : String(wbq.surfaceMax || "");
+    if (wbq.period === "MONTH") return wbq.monthEnd ? String(wbq.monthEnd) : String(wbq.surfaceMax || "");
+    return String(wbq.surfaceMax || "");
+  }
+
+  function wbQuerySummaryText() {
+    if (!wbq.picked.length) return "先选择上方的股票、指数或 ETF。";
+    const date = wbFmtDate(wbQueryDate());
+    const price = wbAllStk() ? wbPriceLabel(wbq.price) : ("股票 " + wbPriceLabel(wbq.price) + " / 指数·ETF 未复权");
+    return wbq.picked.length + " 个标的 · " + wbPeriodLabel() + " · " + (date || "日期待定") + " · " + price;
+  }
+
+  async function wbRunQuery() {
+    if (!wbq.picked.length) return;
+    const err = $("wbQError"), box = $("wbQResult"), btn = $("wbQRun");
+    // 指定周期格式校验：非法周（该年没有第 53 周）或空值给出明确原因，
+    // 不能只落到「日期待定」这种含糊提示
+    if (wbq.timeMode === "custom") {
+      const raw = (($("wbQCustom") || {}).value || "").trim();
+      if (wbq.period === "WEEK" && raw && !wbIsoWeekToSunday(raw)) {
+        if (err) {
+          const ym = /^(\d{4})/.exec(raw);
+          err.textContent = "周格式无效：" + raw + "（示例 2026-W36）" +
+            (ym ? "；" + ym[1] + " 年只有 " + wbIsoWeeksInYear(+ym[1]) + " 个 ISO 周" : "");
+          err.hidden = false;
+        }
+        return;
+      }
+      if (wbq.period === "MONTH" && raw && !wbMonthToLastDay(raw)) {
+        if (err) { err.textContent = "月格式无效：" + raw + "（示例 2026-08）"; err.hidden = false; }
+        return;
+      }
+    }
+    let date = wbQueryDate();
+    // 首次选择标的后 options 还在加载时，可用日期未知：自动补拉一次再继续，
+    // 不要求用户手动重试（否则会先看到「请先确认查询日期」这种含糊报错）
+    if (!date && wbq.timeMode === "latest" && wbq.picked.length) {
+      await wbRefreshOptions();
+      date = wbQueryDate();
+    }
+    if (!date) { if (err) { err.textContent = "请先确认查询日期（数据日期加载中或不可用）。"; err.hidden = false; } return; }
+    if (err) err.hidden = true;
+    // 提交时固定全部条件并打 token：返回时不匹配当前状态一律丢弃（旧响应不覆盖新条件）
+    const reqToken = ++wbq.reqToken;
+    const conditions = {
+      codes: wbq.picked.map((p) => p.id),
+      period: wbq.period,
+      date: date,
+      // 股票保留用户选定口径；指数/ETF 无复权概念，各自按未复权（逐项拆分请求）
+      stkAdjust: wbq.price,
+    };
+    if (btn) { btn.disabled = true; btn.textContent = "查询中…"; }
+    try {
+      const stkCodes = conditions.codes.filter((id) => id.includes(".STK."));
+      const idxEtfCodes = conditions.codes.filter((id) => !id.includes(".STK."));
+      const reqs = [];
+      if (stkCodes.length) {
+        reqs.push(api("/api/v1/bagua/batch/query", {
+          method: "POST",
+          body: JSON.stringify({ codes: stkCodes, date: date, period: wbq.period, adjust: conditions.stkAdjust }),
+        }));
+      }
+      if (idxEtfCodes.length) {
+        reqs.push(api("/api/v1/bagua/batch/query", {
+          method: "POST",
+          body: JSON.stringify({ codes: idxEtfCodes, date: date, period: wbq.period, adjust: "raw" }),
+        }));
+      }
+      const responses = await Promise.all(reqs);
+      if (reqToken !== wbq.reqToken) return; // 条件已变，丢弃旧响应
+      const rows = [];
+      responses.forEach((j) => {
+        (j.results || []).forEach((r) => {
+          rows.push((r && r.ok !== false && !r.error)
+            ? { ok: true, data: r }
+            : { ok: false, code: (r && r.code) || "", message: (r && r.error) || "查询失败" });
+        });
+      });
+      const snap = {
+        codes: conditions.codes, period: conditions.period, adjust: conditions.stkAdjust,
+        date: date, okCount: rows.filter((r) => r.ok).length,
+      };
+      // 成功结果的规范标识 + 名称：导出必须只带成功标的（部分失败时按钮文案与
+      // 实际提交范围一致，R2-09），名称用于导出页展示已选范围
+      const okRows = rows.filter((r) => r.ok);
+      snap.okCodes = okRows.map((r) => r.data.std_code || r.data.code).filter(Boolean);
+      snap.failCount = rows.length - okRows.length;
+      snap.codeMeta = {};
+      snap.okCodes.forEach((id, i) => {
+        const d = okRows[i].data;
+        snap.codeMeta[id] = d.name || d.display || id;
+      });
+      snap.summary = snap.okCount + "/" + rows.length + " 个标的查询成功 · " + wbPeriodLabel() + " · " +
+        wbFmtDate(date) + " · " +
+        (wbAllStk() ? wbPriceLabel(conditions.stkAdjust) : "股票 " + wbPriceLabel(conditions.stkAdjust) + " / 指数·ETF 未复权") +
+        (snap.failCount ? "（" + snap.failCount + " 个失败，不进入导出）" : "");
+      wbq.snapshot = snap;
+      wbRenderQueryResult(rows);
+      if (err) err.hidden = true;
+    } catch (e) {
+      if (reqToken !== wbq.reqToken) return;
+      if (err) { err.textContent = "查询失败：" + e.message; err.hidden = false; }
+    } finally {
+      if (btn) { btn.disabled = !wbq.picked.length; }
+      if (reqToken === wbq.reqToken) wbRenderSummaries();
+    }
+  }
+
+  function wbBarSpan(data) {
+    const b = data.bar || {};
+    const s = b.start_date || b.date, e2 = b.end_date || b.date;
+    return wbFmtDate(s) + " → " + wbFmtDate(e2) + (b.n_days != null ? "（" + b.n_days + " 根" + (b.closed === false ? "，未收官" : "") + "）" : "");
+  }
+
+  function wbConsBadge(cons) {
+    // 共识倾向徽章：与导出 Excel「倾向」列同源。每行都有颜色反馈——
+    // ▲双好红 / ▼双差绿 / 分歧琥珀 / 其余（一方中性或语气不明）中性「一般」
+    const c = String(cons || "").trim();
+    const cls = c.indexOf("双好") >= 0 ? "wb-cons-good"
+      : c.indexOf("双差") >= 0 ? "wb-cons-bad"
+      : c.indexOf("分歧") >= 0 ? "wb-cons-conflict"
+      : "wb-cons-neutral";
+    const label = c || "一般";
+    const tip = c.indexOf("双好") >= 0 ? "卦象操作信号与高岛断语都看好"
+      : c.indexOf("双差") >= 0 ? "卦象操作信号与高岛断语都看差"
+      : c.indexOf("分歧") >= 0 ? "卦象与高岛方向对立，交回人工判断"
+      : "卦象与高岛未形成一致结论（一方中性或语气不明）";
+    return '<span class="wb-cons ' + cls + '" title="' + esc(tip) + '（仅供解读，不参与选股）">' + esc(label) + "</span>";
+  }
+
+  function wbSideChip(side) {
+    // 两方立场小标签：好=红、差=绿、中/不明=灰
+    const s = String(side || "不明");
+    const cls = s === "好" ? "wb-side-good" : s === "差" ? "wb-side-bad" : "wb-side-neutral";
+    return '<span class="' + cls + '">' + esc(s) + "</span>";
+  }
+
+  function wbRenderQueryResult(rows) {
+    const box = $("wbQResult");
+    if (!box) return;
+    const snap = wbq.snapshot;
+    let html = "<h3>卦象结果</h3>" +
+      '<p class="wb-muted">' + esc(snap ? snap.summary : "") +
+      " · 结果按查询时的条件固定；改条件后请重新查询。</p>" +
+      '<p class="wb-muted" style="font-size:12px">共识徽章：' +
+      '<span class="wb-cons wb-cons-good">双好</span> 双方都看好 · ' +
+      '<span class="wb-cons wb-cons-bad">双差</span> 双方都看差 · ' +
+      '<span class="wb-cons wb-cons-conflict">分歧</span> 两方方向对立 · ' +
+      '<span class="wb-cons wb-cons-neutral">一般</span> 未形成一致结论（一方中性或语气不明）。' +
+      "徽章仅供解读，不参与选股。</p>";
+    rows.forEach((r) => {
+      if (!r.ok) {
+        html += '<div class="wb-result-row"><div><strong>' + esc(r.code || "未知标的") + "</strong>" +
+          '<span class="wb-error">' + esc(r.message) + "</span></div></div>";
+        return;
+      }
+      const d = r.data, s2 = d.summary || {}, b = d.bagua || {}, bar = d.bar || {};
+      const label = (d.display || ((d.code || "") + (d.name ? " " + d.name : ""))).trim();
+      // 紧凑行：主卦 / 高岛 两个分类名加粗区分内容；高岛摘要截断 60 字，
+      // 全文在「查看详情」；共识徽章单独一行（结论属于两方共识，不挂在单方下）
+      const gaodaoFull = String(s2.gaodao_commerce || "");
+      const gaodaoShort = gaodaoFull.length > 60 ? gaodaoFull.slice(0, 60) + "…" : gaodaoFull;
+      const badgeHtml = wbConsBadge(s2.consensus);
+      html += '<div class="wb-result-row" data-wb-row-code="' + esc(d.std_code || d.code || "") + '"><div>' +
+        "<strong>" + esc(label) + "</strong>" +
+        '<span class="wb-muted">' + esc(wbPeriodLabel()) + " · 请求 " + esc(wbFmtDate(snap.date)) +
+        " · 行情 " + esc(wbBarSpan(d)) + " · " + esc(wbPriceLabel(d.adjust)) + "</span>" +
+        "<span><b>主卦</b>：<b>" + esc(s2.full_name || b.full_name || "—") + "</b>" +
+        (b.gua_symbol ? " " + esc(b.gua_symbol) : "") +
+        "　动爻：" + esc(s2.yao_name || b.yao_name || "—") +
+        "（第 " + esc(String(s2.yao_order != null ? s2.yao_order : (b.yao_order != null ? b.yao_order : "—"))) + " 爻）</span>" +
+        (gaodaoShort ? "<span><b>高岛</b>：<span class=\"wb-muted\">" + esc(gaodaoShort) + "</span></span>" : "") +
+        (badgeHtml ? "<span>" + badgeHtml + "</span>" : "") +
+        "</div>" +
+        '<div style="display:grid;gap:6px;justify-items:end">';
+      html += '<button type="button" class="wb-secondary" data-wb-detail="' + esc(d.std_code || d.code || "") + '">查看详情</button>';
+      html += "</div></div>";
+    });
+    // 导出范围 = 本次查询「成功」的标的（不再复制全部请求代码，R2-09）
+    const okCodes = (snap && snap.okCodes) ? snap.okCodes : rows.filter((r) => r.ok).map((r) => r.data.std_code || r.data.code);
+    if (okCodes.length) {
+      html += '<div class="wb-row">' +
+        '<button type="button" class="wb-primary" id="wbQExportBtn">导出这 ' + okCodes.length + " 个标的</button>" +
+        '<span class="wb-help">携带本次查询的条件快照进入「批量导出」。' +
+        (snap && snap.failCount ? "查询失败的 " + snap.failCount + " 个标的不在导出范围内。" : "") + "</span></div>";
+    }
+    box.innerHTML = html;
+    box.hidden = false;
+    box.querySelectorAll("[data-wb-detail]").forEach((btnEl) => {
+      btnEl.onclick = () => {
+        const r = rows.find((x) => x.ok && (x.data.std_code || x.data.code) === btnEl.dataset.wbDetail);
+        if (r) wbShowDetail(r.data);
+      };
+    });
+    const expBtn = box.querySelector("#wbQExportBtn");
+    if (expBtn) expBtn.onclick = () => {
+      const snap2 = wbq.snapshot;
+      if (!snap2 || !okCodes.length) return;
+      try { wbe.pickedMeta = Object.assign({}, wbe.pickedMeta, snap2.codeMeta || {}); } catch (eMeta) {}
+      wbe.pickedCodes = okCodes.slice();
+      wbe.from = "来自查询结果";
+      wbe.sourceSnapshot = { date: wbFmtDate(snap2.date), adjust: snap2.adjust, count: okCodes.length };
+      const scope = $("wbEScope"); if (scope) { scope.value = "picked"; wbe.scope = "picked"; }
+      const ed = $("wbEDate");
+      if (ed) ed.value = wbFmtDate(wbq.snapshot.date);
+      const ep = $("wbEPrice");
+      if (ep && wbq.snapshot.adjust) ep.value = wbq.snapshot.adjust === "tushare_qfq" ? "tushare_qfq" : "raw";
+      wbSetMode("export");
+    };
+  }
+
+  function wbShowDetail(d) {
+    const box = $("wbQResult");
+    if (!box) return;
+    const s2 = d.summary || {}, b = d.bagua || {}, bar = d.bar || {};
+    const label = (d.display || d.code || "").trim();
+    const code = d.std_code || d.code || "";
+    let det = box.querySelector("[data-wb-detail-panel]");
+    if (det && det.dataset.wbFor === code) { det.remove(); return; }
+    if (det) det.remove();
+    // 移除上一次关联结果（同卦/同日柱/成分股）
+    const oldRel = box.querySelector("[data-wb-rel-panel]");
+    if (oldRel) oldRel.remove();
+    det = document.createElement("div");
+    det.className = "wb-status";
+    det.dataset.wbFor = code;
+    det.dataset.wbDetailPanel = "1";
+    det.style.display = "grid";
+    det.style.gap = "10px";
+    const notes = (d.notes || []).map((n) => "<li>" + esc(n) + "</li>").join("");
+    const periodLabel = d.period === "WEEK" ? "周线" : d.period === "MONTH" ? "月线" : "日线";
+    const symType = wbSymType(d.symbol_type);
+    // —— 主卦与动爻（与旧查询页同字段） ——
+    // —— 结论与解读优先呈现；state_id / OHLC / 数字和 / 起卦算法收进折叠的「计算依据」 ——
+    det.innerHTML =
+      "<strong>" + esc(label) + " · 结论与解读</strong>" +
+      '<div class="wb-muted" style="font-size:12px">' + esc(WB_TYPE_LABEL[symType] || symType || "标的") +
+      " · " + esc(periodLabel) + " · " + esc(wbPriceLabel(d.adjust)) +
+      " · 行情 " + esc(wbBarSpan(d)) + "</div>" +
+      // —— 结论 ——
+      '<div style="display:grid;gap:6px">' +
+      "<div><b>主卦与动爻</b>：<b>" + esc(s2.full_name || b.full_name || "—") + "</b> " +
+      esc(b.gua_symbol || "") + " · 爻：<b>" + esc(s2.yao_name || b.yao_name || "—") +
+      "</b>（第 " + esc(String(s2.yao_order != null ? s2.yao_order : (b.yao_order != null ? b.yao_order : "—"))) + " 爻）</div>" +
+      "<div>操作信号：<b>" + esc(s2.action_signal || b.action_signal || "—") + "</b> " +
+      wbConsBadge(s2.consensus) + "</div>" +
+      '<div class="wb-muted">共识依据：卦象立场 ' + wbSideChip(s2.gua_side) +
+      " × 高岛立场 " + wbSideChip(s2.gaodao_side) +
+      "（好=红、差=绿、中/不明=灰；两方一致才给红/绿结论）</div>" +
+      "</div>" +
+      // —— 解读 ——
+      '<div style="display:grid;gap:6px">' +
+      "<div>行情简判：" + esc(s2.market_judgement || b.market_judgement || b.market_summary || "—") + "</div>" +
+      "<div><b>卦辞</b>：" + esc(b.gua_ci || "—") + "</div>" +
+      "<div><b>核心总纲</b>：" + esc(b.core_gang || "—") + "</div>" +
+      "<div><b>爻辞</b>：" + esc(b.yao_ci || b.line_text || "—") + "</div>" +
+      (b.biangua || b.changed_hexagram_name
+        ? "<div><b>变卦</b>：" + esc(b.biangua || b.changed_hexagram_name) + "</div>" : "") +
+      "</div>" +
+      // —— 高岛易断·营商（无值不渲染） ——
+      (s2.gaodao_commerce
+        ? '<div style="display:grid;gap:6px">' +
+          "<div><b>高岛易断·营商</b>：" + esc(s2.gaodao_commerce) + "</div>" +
+          (s2.gaodao_is_fallback
+            ? '<div class="wb-muted">原书该爻无营商类占断，已改用括注所示类别断语（仅供解读，不参与选股）</div>'
+            : '<div class="wb-muted">来源：《高岛易断》问' + esc(s2.gaodao_category || "营商") + "（仅供解读，不参与选股）</div>") +
+          "</div>"
+        : "") +
+      // —— 计算依据（默认折叠：state_id / 上下卦 / OHLC / 数字和 / 起卦算法） ——
+      '<details data-wb-basis><summary>计算依据（上下卦、state_id、OHLC、数字和、起卦算法）</summary>' +
+      '<div style="display:grid;gap:6px;margin-top:6px">' +
+      "<div>上卦：" + esc(s2.upper || "—") + " · 下卦：" + esc(s2.lower || "—") +
+      " · state_id：" + esc(s2.state_id || b.state_id || "—") + "</div>" +
+      "<div><b>OHLC（" + esc(wbPriceLabel(d.adjust)) + "）</b>：" + esc(wbBarSpan(d)) + "</div>" +
+      "<div>开 " + esc(String(b.open_price != null ? b.open_price : bar.open)) +
+      " · 高 " + esc(String(b.high_price != null ? b.high_price : bar.high)) +
+      " · 低 " + esc(String(b.low_price != null ? b.low_price : bar.low)) +
+      " · 收 " + esc(String(b.close_price != null ? b.close_price : bar.close)) + "</div>" +
+      "<div class='wb-muted wb-mono'>数字和：开 " + esc(String(b.open_digit_sum != null ? b.open_digit_sum : "—")) +
+      " · 高 " + esc(String(b.high_digit_sum != null ? b.high_digit_sum : "—")) +
+      " · 低 " + esc(String(b.low_digit_sum != null ? b.low_digit_sum : "—")) +
+      " · 收 " + esc(String(b.close_digit_sum != null ? b.close_digit_sum : "—")) + "</div>" +
+      (b.note ? "<div class='wb-muted'>" + esc(b.note) + "</div>" : "") +
+      (notes ? '<div><b>起卦算法与数据来源</b></div><ul style="margin:0;padding-left:18px" class="wb-muted">' + notes + "</ul>" : "") +
+      "</div></details>" +
+      '<div class="wb-row" style="margin-top:4px">' +
+        '<button type="button" class="wb-secondary" data-wb-rel="same-gua">查看同卦股票</button>' +
+        '<button type="button" class="wb-secondary" data-wb-rel="same-rizhu">查看同日柱</button>' +
+        (wbIsIdxEtf(d.symbol_type)
+          ? '<button type="button" class="wb-secondary" data-wb-rel="constituents">查看成分股卦象</button>' : "") +
+      "</div>";
+    const row = box.querySelector('[data-wb-row-code="' + code + '"]');
+    if (row && row.parentNode) row.parentNode.insertBefore(det, row.nextSibling);
+    else box.appendChild(det);
+    det.querySelectorAll("[data-wb-rel]").forEach((btnEl) => {
+      btnEl.onclick = () => wbOpenRelated(btnEl.dataset.wbRel, d, det);
+    });
+  }
+
+  /* ---------- 关联查询：同卦 / 同日柱 / 成分股（就地展开，不离开查询页签） ---------- */
+  function wbRelPanel(afterEl) {
+    const box = $("wbQResult");
+    if (!box) return null;
+    const old = box.querySelector("[data-wb-rel-panel]");
+    if (old) old.remove();
+    const panel = document.createElement("div");
+    panel.className = "wb-status";
+    panel.dataset.wbRelPanel = "1";
+    panel.style.display = "grid";
+    panel.style.gap = "8px";
+    if (afterEl && afterEl.parentNode) afterEl.parentNode.insertBefore(panel, afterEl.nextSibling);
+    else box.appendChild(panel);
+    return panel;
+  }
+
+  function wbRelTable(rows, cols) {
+    if (!rows.length) return '<span class="wb-muted">未找到匹配的股票。</span>';
+    return '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">' +
+      "<thead><tr>" + cols.map((c) => '<th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--line)">' + esc(c.title) + "</th>").join("") + "</tr></thead><tbody>" +
+      rows.map((r) => "<tr>" + cols.map((c) => {
+        const v = c.get ? c.get(r) : r[c.key];
+        return '<td style="padding:4px 8px;border-bottom:1px solid var(--line2)">' + esc(v == null ? "—" : String(v)) + "</td>";
+      }).join("") + "</tr>").join("") + "</tbody></table></div>";
+  }
+
+  async function wbOpenRelated(rel, d, afterEl) {
+    const code = d.std_code || d.code || "";
+    const snap = wbq.snapshot || {};
+    const date = snap.date || wbQueryDate();
+    const period = snap.period || wbq.period;
+    // 指数/ETF 无复权：关联查询按 raw；股票沿用该结果的实际口径（stock/STK 都已归一，
+    // 不能再用大写比较，否则前复权详情会以未复权口径做同卦查询）
+    const adjust = wbSymType(d.symbol_type) === "STK" ? (d.adjust || "raw") : "raw";
+    const panel = wbRelPanel(afterEl);
+    if (!panel) return;
+    try {
+      if (rel === "same-gua") {
+        panel.innerHTML = "<strong>同卦股票（主卦+动爻相同，384态）</strong>" +
+          '<span class="wb-muted">全市场扫描约需数分钟（后台任务），进度在下方更新。</span>';
+        const j = await api("/api/v1/bagua/same-gua?async_mode=true", {
+          method: "POST",
+          body: JSON.stringify({ code: code, date: date, period: period, adjust: adjust }),
+        });
+        if (j && j.mode === "async" && j.job_id) {
+          await wbPollSameGua(j.job_id, panel, { date, period, adjust, display: d.display || code });
+          return;
+        }
+        wbRenderSameGua(panel, j, { date, period, adjust, display: d.display || code });
+      } else if (rel === "same-rizhu") {
+        panel.innerHTML = "<strong>同日柱股票</strong><span class='wb-muted'>正在查找…</span>";
+        const j = await api("/api/v1/bagua/same-rizhu?code=" + encodeURIComponent(code));
+        wbRenderSameRizhu(panel, j);
+      } else if (rel === "constituents") {
+        panel.innerHTML = "<strong>成分股</strong><span class='wb-muted'>正在加载成分股清单…</span>";
+        const j = await api("/api/v1/bagua/constituents?code=" + encodeURIComponent(code));
+        wbRenderConstituents(panel, j, code, date, period, adjust);
+      }
+    } catch (e) {
+      panel.innerHTML = '<strong class="wb-error">关联查询失败</strong><span class="wb-error">' + esc(e.message) + "</span>";
+    }
+  }
+
+  async function wbPollSameGua(jobId, panel, meta) {
+    for (let i = 0; i < 400; i++) {
+      await new Promise((res) => setTimeout(res, 3000));
+      const j = await api("/api/v1/bagua/same-gua/jobs/" + encodeURIComponent(jobId));
+      if (j.status === "running" || j.status === "queued") {
+        const p = j.progress || {};
+        panel.innerHTML = "<strong>同卦股票（主卦+动爻相同，384态）</strong>" +
+          '<span class="wb-muted wb-mono">扫描中 ' + esc(String(p.done || 0)) + " / " + esc(String(p.total || 0)) + " · 请稍候</span>";
+        continue;
+      }
+      if (j.status === "done") {
+        const rj = await api("/api/v1/bagua/same-gua/jobs/" + encodeURIComponent(jobId) + "/result");
+        wbRenderSameGua(panel, rj, meta);
+        return;
+      }
+      panel.innerHTML = '<strong class="wb-error">同卦扫描失败</strong><span class="wb-error">' + esc(j.error || j.message || "") + "</span>";
+      return;
+    }
+    panel.innerHTML = '<strong class="wb-error">同卦扫描超时</strong><span class="wb-muted">请稍后在旧任务中心重试。</span>';
+  }
+
+  function wbRenderSameGua(panel, data, meta) {
+    const t = data.target || {};
+    const rows = data.results || [];
+    panel.innerHTML = "<strong>同卦股票 · " + esc(t.display || meta.display || "") +
+      " · " + esc(data.match_key || t.state_id || "") + " · 命中 " + esc(String(data.count != null ? data.count : rows.length)) + " 只</strong>" +
+      (data.ok === false
+        ? '<span class="wb-error">' + esc(data.error || "查询失败") + "</span>"
+        : (meta ? '<span class="wb-muted">查询日期 ' + esc(wbFmtDate(meta.date)) + " · " +
+            (meta.period === "WEEK" ? "周线" : meta.period === "MONTH" ? "月线" : "日线") +
+            " · " + esc(wbPriceLabel(meta.adjust)) + "</span>" : "") +
+          wbRelTable(rows, [
+            { title: "代码", key: "code" },
+            { title: "名称", key: "name" },
+            { title: "卦名·爻", get: (r) => (r.full_name || "") + (r.yao_name ? " · " + r.yao_name : "") },
+            { title: "state_id", key: "state_id" },
+            { title: "操作信号", key: "action_signal" },
+            { title: "开/收", get: (r) => { const b = r.bar || {}; return (b.open != null ? b.open : "—") + " / " + (b.close != null ? b.close : "—"); } },
+          ])) +
+      '<div class="wb-row"><button type="button" class="wb-secondary" data-wb-rel-close>收起关联结果</button></div>';
+    const c = panel.querySelector("[data-wb-rel-close]");
+    if (c) c.onclick = () => panel.remove();
+  }
+
+  function wbRenderSameRizhu(panel, data) {
+    const t = data.target || {};
+    const rows = data.results || [];
+    panel.innerHTML = "<strong>同日柱股票 · " + esc(t.display || "") +
+      " · " + esc(data.match_key || "") + " · 命中 " + esc(String(data.count != null ? data.count : rows.length)) + " 只</strong>" +
+      (data.ok === false
+        ? '<span class="wb-error">' + esc(data.error || "查询失败") + "</span>"
+        : wbRelTable(rows, [
+            { title: "代码", key: "code" },
+            { title: "名称", key: "name" },
+            { title: "日柱", get: (r) => r.day_ganzhi || r.rizhu || data.match_key || "—" },
+            { title: "操作信号", key: "action_signal" },
+          ])) +
+      '<div class="wb-row"><button type="button" class="wb-secondary" data-wb-rel-close>收起关联结果</button></div>';
+    const c = panel.querySelector("[data-wb-rel-close]");
+    if (c) c.onclick = () => panel.remove();
+  }
+
+  function wbRenderConstituents(panel, j, code, date, period, adjust) {
+    const cons = j.constituents || [];
+    const kindLabel = String(code).includes(".ETF.") ? "ETF" : "指数";
+    panel.innerHTML = "<strong>成分股 · " + esc(j.name || code) + "（共 " + esc(String(j.count != null ? j.count : cons.length)) + " 只）</strong>" +
+      (j.note ? '<span class="wb-muted">' + esc(j.note) + "</span>" : "") +
+      (cons.length
+        ? '<div class="wb-row"><label class="wb-muted" style="font-size:12px">数量</label>' +
+          '<select id="wbConstLimit" style="min-width:130px">' +
+          '<option value="50">前 50 只</option><option value="100" selected>前 100 只</option>' +
+          '<option value="200">前 200 只</option><option value="' + cons.length + '">全部 ' + cons.length + " 只</option></select>" +
+          '<button type="button" class="wb-primary" id="wbConstGo">批量计算成分股卦象</button></div>' +
+          '<div data-wb-const-out><span class="wb-muted">选择数量后点击「批量计算」。</span></div>'
+        : '<span class="wb-muted">未找到成分股。</span>') +
+      '<div class="wb-row"><button type="button" class="wb-secondary" data-wb-rel-close>收起关联结果</button></div>';
+    const c = panel.querySelector("[data-wb-rel-close]");
+    if (c) c.onclick = () => panel.remove();
+    const go = panel.querySelector("#wbConstGo");
+    if (go) go.onclick = async () => {
+      const limSel = panel.querySelector("#wbConstLimit");
+      let n = parseInt((limSel && limSel.value) || "100", 10);
+      if (!isFinite(n) || n <= 0) n = 100;
+      const codes = cons.slice(0, n).map((x) => x.code);
+      const out = panel.querySelector("[data-wb-const-out]");
+      if (out) out.innerHTML = '<span class="wb-muted">正在批量计算 ' + codes.length + " 只成分股卦象…</span>";
+      try {
+        const jj = await api("/api/v1/bagua/batch/query", {
+          method: "POST",
+          body: JSON.stringify({ codes: codes, date: date, period: period, adjust: adjust }),
+        });
+        const rows = (jj.results || []).filter((r) => r && r.ok !== false && !r.error);
+        if (out) out.innerHTML = "<span class='wb-muted'>完成 " + rows.length + "/" + codes.length + "。</span>" +
+          wbRelTable(rows.map((r) => ({
+            code: r.code, name: r.name,
+            gua: ((r.summary || {}).full_name || (r.bagua || {}).full_name || "—"),
+            yao: (r.summary || {}).yao_name || (r.bagua || {}).yao_name || "",
+            signal: (r.summary || {}).action_signal || (r.bagua || {}).action_signal || "—",
+          })), [
+            { title: "代码", key: "code" },
+            { title: "名称", key: "name" },
+            { title: "主卦·爻", get: (r) => r.gua + (r.yao ? " · " + r.yao : "") },
+            { title: "操作信号", key: "signal" },
+          ]);
+      } catch (e) {
+        if (out) out.innerHTML = '<span class="wb-error">批量计算失败：' + esc(e.message) + "</span>";
+      }
+    };
+  }
+
+  /* ============================ 入口二：按规则筛选 ============================ */
+  async function wbEnsureScreenRules() {
+    // 每次进入筛选页签都重新拉取：规则中心删除/新增后保持同步（勾选状态独立保存）
+    const box = $("wbSRuleList"), errEl = $("wbSRuleError");
+    try {
+      const j = await api("/api/v1/bagua/screen/rules");
+      wbs.rules = j.rules || [];
+      wbs.rulesLoaded = true;
+      // 剔除已在规则中心删除的勾选项，避免提交时 400
+      const live = new Set(wbs.rules.filter((r) => r.executable).map((r) => r.id));
+      let pruned = false;
+      Array.from(wbs.checkedIds).forEach((id) => {
+        if (!live.has(id)) { wbs.checkedIds.delete(id); pruned = true; }
+      });
+      if (errEl) errEl.hidden = true;
+      wbRenderScreenRules();
+      if (pruned) wbScreenChanged();
+      wbRerenderExportJobs(); // 目录到位：导出记录里的规则名此时才能解析
+    } catch (e) {
+      if (!wbs.rulesLoaded && errEl) {
+        errEl.textContent = "规则列表加载失败：" + e.message; errEl.hidden = false;
+      }
+      // 已有列表时静默保留旧数据（网络抖动不破坏当前页面）
+    }
+  }
+
+  function wbCheckedRuleIds() {
+    // 已选规则以独立状态为准（DOM 里被过滤掉的选中项不丢失）
+    return Array.from(wbs.checkedIds);
+  }
+
+  function wbRenderScreenRules() {
+    const box = $("wbSRuleList");
+    if (!box) return;
+    const term = (($("wbSRuleSearch") || {}).value || "").trim().toLowerCase();
+    const rows = wbs.rules.filter((r) =>
+      !term || String(r.name).toLowerCase().includes(term) || String(r.id).toLowerCase().includes(term));
+    box.innerHTML = rows.map((r) => {
+      const idAttr = esc(r.id);
+      const checkedAttr = (wbs.checkedIds.has(r.id)) ? " checked" : "";
+      const dis = r.executable ? "" : " dis";
+      const title = r.executable ? "" : ' title="' + esc(r.reason) + '"';
+      return '<label class="wb-check' + dis + '"' + title + '>' +
+        '<input type="checkbox" data-wb-rule-id="' + idAttr + '"' + checkedAttr + (r.executable ? "" : " disabled") + ">" +
+        "<span>" + esc(r.name) + (r.hidden ? ' <span class="wb-tag">ⓘ</span>' : "") +
+        (r.executable ? "" : ' <span class="wb-muted">（' + esc(r.reason) + "）</span>") +
+        (r.executable ? '<span class="wb-muted" style="display:block;font-size:11px">' + esc(wbRuleSourceText(r)) + "</span>" : "") +
+        "</span></label>";
+    }).join("") || '<span class="wb-muted">没有匹配的规则（已选 ' + wbs.checkedIds.size + " 条仍在生效）</span>";
+    box.querySelectorAll('input[data-wb-rule-id]').forEach((x) => {
+      x.onchange = () => {
+        if (x.checked) wbs.checkedIds.add(x.dataset.wbRuleId);
+        else wbs.checkedIds.delete(x.dataset.wbRuleId);
+        wbScreenChanged();
+      };
+    });
+    wbRenderScreenChips();
+    wbRenderSummaries();
+  }
+
+  function wbRenderScreenChips() {
+    const box = $("wbSChips");
+    if (!box) return;
+    const checked = wbCheckedRuleIds();
+    const names = checked.map((id) => {
+      const r = wbs.rules.find((x) => x.id === id);
+      return r ? r.name : id;
+    });
+    box.innerHTML = names.length
+      ? names.map((n) => '<span class="wb-chip">' + esc(n) + "</span>").join("")
+      : '<span class="wb-muted">尚未选择</span>';
+  }
+
+  function wbScreenChanged() {
+    // 任一筛选条件变更（规则/范围/日期/组合方式/导入）：结果与可导出快照立即失效，
+    // 并让结果区明确标注为「过期」，绝不继续冒充本次结果（R3-01）
+    wbs.condVersion += 1;
+    wbs.snapshot = null;
+    const res = $("wbSResult");
+    const hadResult = !!(res && !res.hidden);
+    if (hadResult || wbs.jobRunning) {
+      wbRenderScreenOutdated(
+        wbs.jobRunning ? "旧任务可能仍在后台执行；它到达的进度和结果只代表旧条件。" : ""
+      );
+    }
+    wbRenderScreenChips();
+    wbRenderSummaries();
+  }
+
+  /** 当前展示的筛选结果是否已与表单条件不一致（提交版本 ≠ 当前条件版本）。 */
+  function wbScreenResultIsStale() {
+    return !!(wbs.submitted && wbs.submitted.version !== wbs.condVersion);
+  }
+
+  /** 结果过期面板：明确标注旧条件与失效原因，且不提供任何导出入口（R3-01）。 */
+  function wbRenderScreenOutdated(reason) {
+    const box = $("wbSResult");
+    if (!box) return;
+    const old = (wbs.submitted && wbs.submitted.summary) || "（未记录提交时的条件）";
+    box.innerHTML = '<div class="wb-status"><strong class="wb-error">结果已过期</strong>' +
+      '<span class="wb-muted">筛选条件已变更，右边的结果与导出入口已失效，请按当前条件重新筛选后再导出。</span>' +
+      '<span class="wb-muted">产生该结果的旧条件：' + esc(old) + "</span>" +
+      (reason ? '<span class="wb-muted">' + esc(reason) + "</span>" : "") +
+      '<div class="wb-row"><button type="button" class="wb-secondary" data-wb-screen-rerun>按当前条件重新筛选</button></div></div>';
+    box.hidden = false;
+    const btn = box.querySelector("[data-wb-screen-rerun]");
+    if (btn) btn.onclick = () => wbRunScreen();
+  }
+
+  /** 筛选条件摘要（提交快照与摘要区共用同一文案，避免两处不一致）。 */
+  function wbScreenSummaryText() {
+    const checked = wbCheckedRuleIds();
+    if (!checked.length) return "尚未选择筛选规则";
+    const names = checked.map((id) => { const r = wbs.rules.find((x) => x.id === id); return r ? r.name : id; });
+    const scopeTxt = wbs.scope === "all" ? "全部 A 股"
+      : (wbs.pickedCodes.length ? "指定 " + wbs.pickedCodes.length + " 只（" + (wbs.pickedFrom || "手动输入") + "）" : "指定股票（空）：请在下框输入代码，或从查询结果导入");
+    return names.join("、") + " · " +
+      ((($("wbSCombine") || {}).value || "any") === "all" ? "同时满足全部" : "满足任意一条") +
+      " · " + ((($("wbSDate") || {}).value || "日期未选")) + " · " + scopeTxt;
+  }
+
+  function wbImportPickedFromQuery() {
+    const snap = wbq.snapshot;
+    // 导入的是「成功查询结果」，失败的标的不进入筛选范围
+    const codes = snap ? (snap.okCodes || []).slice() : [];
+    if (!codes.length) {
+      const el = $("wbSPickedNote");
+      if (el) { el.textContent = "查询页还没有成功的查询结果；请先在「查卦象」完成一次查询，或在下方直接输入股票代码。"; el.hidden = false; el.className = "wb-error"; }
+      return;
+    }
+    wbs.pickedCodes = codes;
+    wbs.pickedMeta = Object.assign({}, wbs.pickedMeta, snap.codeMeta || {});
+    wbs.pickedFrom = "查询结果";
+    const el = $("wbSPickedNote");
+    if (el) { el.textContent = "已从查询结果导入 " + codes.length + " 个标的。"; el.hidden = false; el.className = "wb-okline"; }
+    wbRenderScreenPicked();
+    wbScreenChanged(); // 范围已替换：旧结果与旧导出入口必须失效（R3-01 反例 A）
+  }
+
+  /* ---------- 指定范围的直接输入（筛选/导出各自独立完成，不必先查询） ---------- */
+
+  /** 把一段输入（名称/代码，逗号或空白分隔）解析成候选标的。 */
+  async function wbResolveInputTokens(raw) {
+    const tokens = String(raw || "").split(/[,，;；、\s]+/).filter(Boolean).slice(0, 50);
+    const ok = [], problems = [];
+    for (const tk of tokens) {
+      try {
+        const j = await api("/api/v1/bagua/instruments?q=" + encodeURIComponent(tk) + "&limit=6");
+        const items = j.items || [];
+        if (items.length === 1) ok.push(items[0]);
+        else if (items.length > 1) problems.push({ token: tk, items: items });
+        else problems.push({ token: tk, items: [], text: tk + " 无法识别" });
+      } catch (e) {
+        problems.push({ token: tk, items: [], text: tk + " 检索失败：" + e.message });
+      }
+    }
+    return { ok: ok, problems: problems };
+  }
+
+  function wbRenderPickedChips(kind) {
+    const isScreen = kind === "screen";
+    const box = isScreen ? $("wbSPickedChips") : $("wbEPickedChips");
+    if (!box) return;
+    const codes = isScreen ? wbs.pickedCodes : wbe.pickedCodes;
+    const meta = isScreen ? wbs.pickedMeta : wbe.pickedMeta;
+    if (!codes.length) { box.innerHTML = '<span class="wb-muted">尚未指定标的。</span>'; return; }
+    box.innerHTML = codes.map((id) => {
+      const nm = meta[id];
+      const text = (nm && nm !== id) ? nm + " · " + id.split(".").pop() : id;
+      return '<button type="button" class="wb-chip" data-wb-pick-rm="' + esc(id) + '" aria-label="移除 ' + esc(nm || id) + '">' + esc(text) + " ×</button>";
+    }).join("");
+    box.querySelectorAll("[data-wb-pick-rm]").forEach((b) => {
+      b.onclick = () => {
+        const id = b.dataset.wbPickRm;
+        if (isScreen) wbs.pickedCodes = wbs.pickedCodes.filter((x) => x !== id);
+        else wbe.pickedCodes = wbe.pickedCodes.filter((x) => x !== id);
+        wbRenderPickedChips(kind);
+        if (isScreen) wbScreenChanged(); else wbRenderSummaries();
+      };
+    });
+  }
+
+  async function wbManualAdd(kind) {
+    const isScreen = kind === "screen";
+    const inp = isScreen ? $("wbSManual") : $("wbEManual");
+    const noteEl = isScreen ? $("wbSPickedInputError") : $("wbEPickedInputError");
+    const candBox = isScreen ? $("wbSPickedCand") : $("wbEPickedCand");
+    const raw = ((inp && inp.value) || "").trim();
+    const show = (msg, isErr) => {
+      if (!noteEl) return;
+      noteEl.textContent = msg || "";
+      noteEl.hidden = !msg;
+      noteEl.className = isErr ? "wb-error" : "wb-okline";
+    };
+    if (!raw) { show("请输入股票代码或名称，可用逗号分隔多个。", true); return; }
+    const codes = isScreen ? wbs.pickedCodes : wbe.pickedCodes;
+    const meta = isScreen ? wbs.pickedMeta : wbe.pickedMeta;
+    show("");
+    let res;
+    try {
+      res = await wbResolveInputTokens(raw);
+    } catch (e) {
+      show("检索失败：" + e.message, true);
+      return;
+    }
+    const ok = res.ok, problems = res.problems;
+    const added = [], skipped = [];
+    ok.forEach((it) => {
+      // 筛选语义只针对 A 股；导出可包含指数/ETF
+      if (isScreen && wbSymType(it.type) !== "STK") {
+        skipped.push(it.name + "（" + (WB_TYPE_LABEL[it.type] || it.type) + "）不参与规则筛选");
+        return;
+      }
+      if (codes.includes(it.id)) { skipped.push(it.name + " 已在范围内"); return; }
+      codes.push(it.id);
+      meta[it.id] = it.name;
+      added.push(it);
+    });
+    if (inp) inp.value = "";
+    // 记录范围来源：摘要要如实区分「手动输入」与「从查询结果导入」（混合来源也要如实）
+    if (added.length) {
+      if (isScreen) {
+        wbs.pickedFrom = (wbs.pickedCodes.length === added.length)
+          ? "手动输入"
+          : (wbs.pickedFrom === "查询结果" ? "查询结果+手动输入" : "手动输入");
+      } else if (!wbe.from) {
+        wbe.from = "手动输入";
+      }
+    }
+    // 多候选的输入在下方列表里点选（保留歧义由用户确认，不替用户猜）
+    let nonStkCand = [];
+    if (candBox) {
+      let list = [];
+      problems.forEach((p) => { if (p.items && p.items.length > 1) p.items.forEach((it) => list.push(it)); });
+      if (isScreen) {
+        // R3-03：筛选只收 A 股，候选阶段就过滤（与单候选分支同一校验），
+        // 避免点进去才被后端拒绝；导出页仍允许指数/ETF
+        nonStkCand = list.filter((it) => wbSymType(it.type) !== "STK");
+        list = list.filter((it) => wbSymType(it.type) === "STK");
+      }
+      const fresh = list.filter((it) => !codes.includes(it.id));
+      candBox.innerHTML = fresh.map((it) =>
+        '<button type="button" class="wb-candidate" data-wb-manual-id="' + esc(it.id) + '">' +
+        "<strong>" + esc(it.name) + "</strong>" +
+        '<span class="wb-muted">' + esc(it.code) + " · " + esc(it.type_label || WB_TYPE_LABEL[it.type] || it.type) +
+        " · " + esc(it.exchange_label || "") + "</span></button>").join("");
+      candBox.querySelectorAll("[data-wb-manual-id]").forEach((b) => {
+        b.onclick = () => {
+          const it = fresh.find((x) => x.id === b.dataset.wbManualId);
+          if (!it) return;
+          // 与单候选分支同一道校验（防候选数据来源变化时漏判）
+          if (isScreen && wbSymType(it.type) !== "STK") {
+            show(it.name + "（" + (WB_TYPE_LABEL[it.type] || it.type) + "）不参与规则筛选，请选择股票。", true);
+            return;
+          }
+          if (!codes.includes(it.id)) {
+            codes.push(it.id);
+            meta[it.id] = it.name;
+            wbRenderPickedChips(kind);
+            if (isScreen) wbScreenChanged(); else wbRenderSummaries();
+          }
+          b.remove();
+        };
+      });
+    }
+    const msgs = [];
+    if (added.length) msgs.push("已添加 " + added.map((x) => x.name).join("、"));
+    problems.forEach((p) => {
+      if (p.items && p.items.length > 1) msgs.push(p.token + " 有 " + p.items.length + " 个候选，请在下方列表中点选");
+      else msgs.push(p.text);
+    });
+    skipped.forEach((s) => msgs.push(s));
+    nonStkCand.forEach((it) => msgs.push(it.name + "（" + (WB_TYPE_LABEL[it.type] || it.type) + "）不参与规则筛选，已从候选剔除"));
+    // 「已在范围内」是中性提示不算失败；只有真正跳过（非股票/无法识别/检索失败）才用错误色
+    const hasFail = skipped.some((s) => s.indexOf("不参与") >= 0) || nonStkCand.length > 0 ||
+      problems.some((p) => !p.items || !p.items.length);
+    show(msgs.join("；"), hasFail);
+    wbRenderPickedChips(kind);
+    if (isScreen) wbScreenChanged(); else wbRenderSummaries();
+  }
+
+  function wbRenderScreenPicked() {
+    wbRenderPickedChips("screen");
+    const box = $("wbSPickedBox");
+    if (box) box.hidden = wbs.scope !== "picked";
+  }
+
+  async function wbRunScreen() {
+    // R3-02：提交在途直接返回，防重入必须在第一个 await 之前生效
+    if (wbs.submitting) return;
+    const ruleIds = wbCheckedRuleIds();
+    const err = $("wbSError"), btn = $("wbSRun");
+    if (!ruleIds.length) { if (err) { err.textContent = "请先选择至少一条可执行规则。"; err.hidden = false; } return; }
+    const scope = wbs.scope;
+    if (scope === "picked" && !wbs.pickedCodes.length) {
+      if (err) { err.textContent = "指定股票范围为空：请在下方直接输入股票代码，或从查询结果导入、改用全部 A 股。"; err.hidden = false; }
+      return;
+    }
+    const date = wbYyyymmdd(($("wbSDate") || {}).value || "");
+    if (!date) { if (err) { err.textContent = "请选择筛选日期。"; err.hidden = false; } return; }
+    if (err) err.hidden = true;
+    // R3-01：提交时固定条件版本与条件摘要；结果回来时用版本判定是否仍属"本次结果"
+    const condVer = wbs.condVersion;
+    const condSummary = wbScreenSummaryText();
+    wbs.submitting = true;
+    if (btn) btn.textContent = "提交中…";
+    wbRenderSummaries();
+    try {
+      const j = await api("/api/v1/bagua/screen", {
+        method: "POST",
+        body: JSON.stringify({
+          rule_ids: ruleIds,
+          match_mode: ($("wbSCombine") || {}).value || "any",
+          asof: date,
+          scope: scope,
+          codes: scope === "picked" ? wbs.pickedCodes : undefined,
+        }),
+      });
+      wbs.job = j;
+      wbs.submitted = { version: condVer, summary: condSummary };
+      wbSaveActiveScreen(j.job_id);
+      wbs.submitting = false;
+      wbs.jobRunning = true;
+      wbRenderSummaries();
+      wbPollScreenJob(j.job_id);
+    } catch (e) {
+      wbs.submitting = false;
+      wbs.jobRunning = false;
+      if (err) { err.textContent = "提交失败：" + e.message; err.hidden = false; }
+      wbRenderSummaries();
+    }
+  }
+
+  function wbSaveActiveScreen(jobId) {
+    try {
+      const arr = JSON.parse(localStorage.getItem(WB_LS_SCREEN) || "[]").filter((x) => x !== jobId);
+      arr.push(jobId);
+      localStorage.setItem(WB_LS_SCREEN, JSON.stringify(arr.slice(-10)));
+    } catch (e) { /* localStorage 不可用时跳过持久化 */ }
+  }
+
+  // 筛选轮询的重试策略：暂时性失败（网络/5xx/超时）保留上次状态并继续重试，
+  // 只有 404（服务重启后记录消失）才判定任务失效（R2-07）。
+  const WB_SCREEN_RETRY_MAX = 20;
+  const WB_SCREEN_RETRY_DELAY = 4000;
+
+  /** 轮询失败归类：404=记录确已失效（终态）；其余（网络/5xx/超时）=暂时断连，需保状态重试。 */
+  function wbScreenPollFailureKind(err) {
+    return (err && err.status === 404) ? "stale" : "transient";
+  }
+
+  async function wbPollScreenJob(jobId, attempt) {
+    const err = $("wbSError");
+    const att = attempt || 0;
+    if (wbs.pollTimer) { clearTimeout(wbs.pollTimer); wbs.pollTimer = null; }
+    wbs.jobId = jobId;
+    let j;
+    try {
+      j = await api("/api/v1/bagua/screen/jobs/" + encodeURIComponent(jobId));
+    } catch (e) {
+      if (wbScreenPollFailureKind(e) === "stale") {
+        // 记录确已失效（服务重启/超期清理）：这是终态，停止轮询
+        wbs.job = { job_id: jobId, status: "stale", message: "任务记录已失效（服务可能已重启）" };
+        wbs.jobRunning = false;
+        wbRenderScreenJob(wbs.job);
+        if (err) { err.textContent = "任务记录已失效（服务可能已重启），请重新提交筛选。"; err.hidden = false; }
+        wbRenderSummaries();
+        return;
+      }
+      // 暂时断连：保留上次状态，不标失效、不丢任务，稍后自动重试
+      if (err) {
+        err.textContent = "暂时无法获取筛选进度（" + e.message + "），保留上次状态并在 " +
+          (WB_SCREEN_RETRY_DELAY / 1000) + " 秒后自动重试。";
+        err.hidden = false;
+      }
+      wbRenderScreenTransient(jobId, att, "筛选结果获取暂时中断");
+      if (att < WB_SCREEN_RETRY_MAX) {
+        wbs.pollTimer = setTimeout(() => wbPollScreenJob(jobId, att + 1), WB_SCREEN_RETRY_DELAY);
+      } else if (err) {
+        err.textContent += "已重试 " + WB_SCREEN_RETRY_MAX + " 次仍失败，点下方「立即重试」继续。";
+      }
+      return;
+    }
+    wbs.job = j;
+    if (j.status === "done" || j.status === "error") {
+      if (j.status === "done") {
+        // 完成后取完整结果（列表/状态端点不携带 result 避免轮询膨胀）
+        try {
+          const rj = await api("/api/v1/bagua/screen/jobs/" + encodeURIComponent(jobId) + "/result");
+          j.result = rj.result;
+        } catch (eRes) {
+          // 结果端点失败只重取结果，绝不重建计算任务
+          if (err) {
+            err.textContent = "筛选已计算完成，但结果获取失败（" + eRes.message + "），正在重新获取结果（不会重算）。";
+            err.hidden = false;
+          }
+          wbRenderScreenTransient(jobId, att, "结果获取失败（计算已完成）");
+          if (att < WB_SCREEN_RETRY_MAX) {
+            wbs.pollTimer = setTimeout(() => wbPollScreenJob(jobId, att + 1), WB_SCREEN_RETRY_DELAY);
+          }
+          return;
+        }
+      }
+      wbs.jobRunning = false;
+      if (err) err.hidden = true;
+      wbRenderScreenJob(j);
+      wbRenderSummaries();
+      return;
+    }
+    // 运行中：正常节奏轮询
+    wbs.jobRunning = true;
+    wbs.pollTimer = setTimeout(() => wbPollScreenJob(jobId, 0), 2000);
+    wbRenderScreenJob(j);
+    wbRenderSummaries();
+  }
+
+  /** 暂时性失败时的面板：保留上次已知状态，并给出「立即重试」（不重建任务）。 */
+  function wbRenderScreenTransient(jobId, att, title) {
+    const box = $("wbSResult");
+    if (!box) return;
+    // 条件已变更时，旧任务的进度也不能当作"本次筛选"的进度（R3-01）
+    if (wbScreenResultIsStale()) {
+      wbRenderScreenOutdated("该任务仍用旧条件在后台执行，其进度不再作为本次筛选的进度。");
+      return;
+    }
+    const last = wbs.job || {};
+    const st = last.status === "running" ? "筛选中" : last.status === "queued" ? "已排队" : last.status;
+    const prog = last.progress
+      ? " · 上次进度 " + (last.progress.done || 0) + "/" + (last.progress.total || 0)
+      : "";
+    box.innerHTML = '<div class="wb-status"><strong>' + esc(title || "暂时断连") + "</strong>" +
+      '<span class="wb-muted">任务本身没有失效，进度暂时读不到。可等待自动重试，或点「立即重试」。</span>' +
+      (st ? '<span class="wb-muted wb-mono">上次状态：' + esc(String(st)) + esc(prog) + "</span>" : "") +
+      (att ? '<span class="wb-muted">已自动重试 ' + esc(String(att)) + " 次</span>" : "") +
+      '<div class="wb-row"><button type="button" class="wb-secondary" data-wb-screen-retry>立即重试</button></div></div>';
+    box.hidden = false;
+    const c = box.querySelector("[data-wb-screen-retry]");
+    if (c) c.onclick = () => wbPollScreenJob(jobId, 0);
+  }
+
+  /** 筛选命中行：显示名称 + 规范代码（可搜索），并把「查卦象」做成就地跳转。 */
+  function wbScreenHitsHtml(hits) {
+    if (!hits || !hits.length) return '<span class="wb-muted">没有匹配的命中结果。</span>';
+    return hits.map((h) =>
+      '<div class="wb-result-row" data-wb-hit="' + esc(h.code) + '" data-wb-hit-text="' + esc((h.name || "") + " " + h.code) + '"><div>' +
+      "<strong>" + esc(h.name || h.code) + "</strong>" +
+      '<span class="wb-muted wb-mono">' + esc(h.code) + "</span>" +
+      '<span class="wb-muted">收盘 ' + esc(String(h.close != null ? h.close : "—")) + " · 命中规则：" +
+      esc((h.hit_rules || []).join("、")) + " · 信号日 " + esc(wbFmtDate(h.signal_date)) + "</span></div>" +
+      '<div><button type="button" class="wb-secondary" data-wb-hit-q="' + esc(h.code) + '">查卦象</button></div>' +
+      "</div>").join("");
+  }
+
+  function wbRenderScreenHits(r) {
+    const list = $("wbSHitList"), cnt = $("wbSHitCount"), q = (($("wbSHitSearch") || {}).value || "").trim().toLowerCase();
+    if (!list) return;
+    const all = r.hits || [];
+    const rows = q ? all.filter((h) => ((h.name || "") + " " + h.code).toLowerCase().includes(q)) : all;
+    list.innerHTML = wbScreenHitsHtml(rows);
+    if (cnt) cnt.textContent = q ? "匹配 " + rows.length + " / 共 " + all.length + " 只" : "共 " + all.length + " 只";
+    wbBindScreenHitButtons(r);
+  }
+
+  function wbBindScreenHitButtons(r) {
+    const box = $("wbSResult");
+    if (!box) return;
+    box.querySelectorAll("[data-wb-hit-q]").forEach((btnEl) => {
+      btnEl.onclick = () => {
+        const hit = (r.hits || []).find((h) => h.code === btnEl.dataset.wbHitQ);
+        if (!hit) return;
+        // 跨页签传递：标的 + 筛选日期 + 筛选口径（正式 L1= Tushare 前复权）+ 来源
+        const code = hit.code;
+        const screenDate = String(r.asof);
+        wbq.picked = [{ id: code, code: code.split(".").pop(), name: hit.name || code, type: "STK" }];
+        wbq.period = "DAY";
+        wbq.price = "tushare_qfq";
+        wbq.timeMode = "custom";
+        const perBtn = document.querySelector('[data-wb-period="DAY"]');
+        if (perBtn) perBtn.click();
+        const timeSel = $("wbQTime");
+        if (timeSel) { timeSel.value = "custom"; timeSel.dispatchEvent(new Event("change")); }
+        const custom = $("wbQCustom");
+        if (custom) custom.value = wbFmtDate(screenDate);
+        const priceSel = $("wbQPrice");
+        if (priceSel) priceSel.value = "tushare_qfq";
+        wbq.optionsCache = {};
+        wbq.snapshot = null;
+        wbRefreshOptions();
+        wbQueryChanged(false);
+        wbSetMode("query");
+        toast("已带入筛选条件（" + wbFmtDate(screenDate) + " · Tushare 前复权），请重新查询。");
+      };
+    });
+  }
+
+  function wbRenderScreenJob(job) {
+    const box = $("wbSResult");
+    if (!box) return;
+    // R3-01 反例 B：条件已变更后在途结果回来，绝不能静默恢复成"本次结果"，
+    // 也不能提供导出入口——一律按过期呈现（版本不等即过期）
+    if (wbScreenResultIsStale()) {
+      wbRenderScreenOutdated(
+        (job && (job.status === "running" || job.status === "queued"))
+          ? "该任务仍用旧条件在后台执行。" : ""
+      );
+      return;
+    }
+    // 失败状态优先判定：error 不是「运行中」，必须原样呈现失败与建议
+    if (job.status === "error") {
+      box.innerHTML = '<div class="wb-status"><strong class="wb-error">筛选失败</strong>' +
+        '<span class="wb-error">' + esc(job.error || job.message || "未知错误") + "</span>" +
+        (job.suggested_asof ? '<span class="wb-muted">建议改用日期 ' + esc(wbFmtDate(job.suggested_asof)) + " 重新筛选。</span>" : "") +
+        "</div>";
+      box.hidden = false;
+      return;
+    }
+    if (job.status !== "done") {
+      box.innerHTML = '<div class="wb-status"><strong>' +
+        (job.status === "stale" ? "任务记录已失效" : job.status === "queued" ? "已排队" : "筛选中…") + "</strong>" +
+        '<span class="wb-muted">' + esc(job.message || "") + "</span>" +
+        (job.progress ? '<span class="wb-muted wb-mono">' + esc(String(job.progress.done || 0)) + " / " + esc(String(job.progress.total || 0)) + "</span>" : "") +
+        "</div>";
+      box.hidden = false;
+      return;
+    }
+    const r = job.result;
+    if (!r) { box.hidden = true; return; }
+    if (r.status !== "ok") {
+      box.innerHTML = '<div class="wb-status"><strong class="wb-error">数据面不可用，本次未产出信号</strong>' +
+        '<span class="wb-muted">' + esc(r.no_go_reason || "") + "</span>" +
+        '<span class="wb-muted">筛选使用正式 L1 日线 + Tushare 前复权；数据面就绪后可重新筛选。</span></div>';
+      box.hidden = false;
+      return;
+    }
+    wbs.snapshot = {
+      codes: r.hits.map((h) => h.code),
+      date: String(r.asof),
+      rules: r.rules.map((x) => x.sheet),
+      match_mode: r.match_mode,
+    };
+    let html = "<h3>筛选完成 · 命中 " + r.matched_count + " 只</h3>" +
+      '<div class="wb-stats">' +
+      "<span>范围 <b>" + r.scope_size + "</b></span>" +
+      "<span>完成评估 <b>" + r.evaluated + "</b></span>" +
+      "<span>缺数据 <b>" + r.missing_count + "</b></span>" +
+      "<span>错误 <b>" + r.error_count + "</b></span>" +
+      "<span>命中 <b>" + r.matched_count + "</b></span>" +
+      "</div>" +
+      (r.excluded_note ? '<p class="wb-muted">' + esc(r.excluded_note) + "</p>" : "") +
+      '<p class="wb-muted">实际信号日期 ' + esc(wbFmtDate(r.asof)) + " · 规则：" +
+      esc(r.rules.map((x) => x.sheet).join("、")) + " · " +
+      (r.match_mode === "all" ? "同时满足全部" : "满足任意一条") +
+      "（正式 L1 日线 + Tushare 前复权，当日命中）</p>";
+    if (r.matched_count) {
+      html += '<div class="wb-row"><input id="wbSHitSearch" placeholder="按代码或名称筛选命中结果…" autocomplete="off" aria-label="筛选命中结果">' +
+        '<span class="wb-muted" id="wbSHitCount">共 ' + r.matched_count + " 只</span></div>" +
+        '<div id="wbSHitList">' + wbScreenHitsHtml(r.hits) + "</div>" +
+        '<div class="wb-row"><button type="button" class="wb-primary" id="wbSExportBtn">导出本次筛选结果（' + r.matched_count + " 只）</button>" +
+        '<span class="wb-help">以本次筛选的命中列表为准（导出默认按 Tushare 前复权口径）。</span></div>';
+    } else {
+      html += '<div class="wb-status"><strong>零命中</strong>' +
+        '<span class="wb-muted">所选规则在该日期没有当日命中的股票；不能从零命中导出。</span></div>';
+    }
+    box.innerHTML = html;
+    box.hidden = false;
+    // 命中行按钮 + 命中搜索（名称/代码本地过滤，不发请求）
+    wbBindScreenHitButtons(r);
+    const hitSearch = $("wbSHitSearch");
+    if (hitSearch) hitSearch.addEventListener("input", () => wbRenderScreenHits(r));
+    const exp = box.querySelector("#wbSExportBtn");
+    if (exp) exp.onclick = () => {
+      if (!wbs.snapshot || !wbs.snapshot.codes.length) return;
+      wbe.screenedSnapshot = wbs.snapshot;
+      wbe.from = "来自筛选结果";
+      // 记录交接时的条件版本：之后筛选条件再变，这里要标注成「旧条件」而不是当成本次结果
+      wbe.screenedVersion = wbs.condVersion;
+      const scope = $("wbEScope"); if (scope) { scope.value = "screened"; wbe.scope = "screened"; }
+      const ed = $("wbEDate"); if (ed) ed.value = wbFmtDate(wbs.snapshot.date);
+      // 筛选口径 = 正式 L1 日线 + Tushare 前复权：必须一并带入，否则会沿用
+      // 导出页残留口径或默认 raw，导致导出价格与筛选口径不一致（R2-10）
+      const ep = $("wbEPrice"); if (ep) ep.value = "tushare_qfq";
+      wbe.sourceSnapshot = {
+        date: wbFmtDate(wbs.snapshot.date),
+        adjust: "tushare_qfq",
+        count: wbs.snapshot.codes.length,
+      };
+      // 筛选结果也带出高岛/口径说明，便于确认来源（规则名来自筛选快照）
+      wbe.screenedRules = (wbs.snapshot.rules || []).slice();
+      wbSetMode("export");
+      wbRenderSummaries();
+    };
+    try {
+      const done = JSON.parse(localStorage.getItem(WB_LS_SCREEN) || "[]").filter((x) => x !== job.job_id);
+      localStorage.setItem(WB_LS_SCREEN, JSON.stringify(done));
+    } catch (e) { /* ignore */ }
+  }
+
+  /* ============================ 入口三：批量导出 ============================ */
+  async function wbEnsureExportRules() {
+    // 每次进入导出页签都重新拉取（与规则中心同步）；失败保留旧列表。
+    // 勾选状态存在 wbe.checkedRuleIds（独立 Set），切页签/重建列表都不丢（R2-06）。
+    const box = $("wbERuleList");
+    if (!box) return;
+    try {
+      const j = await api("/api/v1/bagua/screen/rules");
+      wbs.rules = j.rules || [];
+      wbe.rulesLoaded = true;
+      // 只剔除已失效（规则中心删除/归档/不可执行）的勾选项，其余保留
+      const live = new Set(wbs.rules.filter((r) => r.executable).map((r) => r.id));
+      let pruned = [];
+      Array.from(wbe.checkedRuleIds).forEach((id) => {
+        if (!live.has(id)) { wbe.checkedRuleIds.delete(id); pruned.push(id); }
+      });
+      wbRenderExportRules();
+      if (pruned.length) {
+        const err = $("wbEError");
+        if (err) {
+          err.textContent = "以下附加规则已不可用，已从选择中移除：" +
+            pruned.map((id) => { const r = wbs.rules.find((x) => x.id === id); return r ? r.name : id; }).join("、");
+          err.hidden = false;
+        }
+      }
+      wbRenderSummaries();
+      wbRerenderExportJobs(); // 目录到位：导出记录里的规则名此时才能解析
+    } catch (e) {
+      if (!wbe.rulesLoaded) {
+        box.innerHTML = '<span class="wb-error">规则列表加载失败：' + esc(e.message) + "</span>";
+      }
+      // 已有列表时静默保留（网络抖动不破坏当前选择）
+    }
+  }
+
+  /** 规则来源/版本说明：同名规则（如两条「735金叉及趋势」）靠这行区分，不按名字去重。 */
+  function wbRuleSourceText(r) {
+    const srcMap = { builtin: "内置公式", system: "系统规则", user: "用户规则" };
+    const src = srcMap[r.source] || r.source || "未知来源";
+    const bits = [src];
+    if (r.category) bits.push(r.category);
+    bits.push("ID " + r.id);
+    if (r.version) bits.push("v" + r.version);
+    if (r.hidden) bits.push("隐藏项（周五链/导出依赖）");
+    return bits.join(" · ");
+  }
+
+  function wbRenderExportRules() {
+    const box = $("wbERuleList");
+    if (!box) return;
+    const exec = wbs.rules.filter((r) => r.executable);
+    box.innerHTML = exec.map((r) => {
+      // 同名规则不做去重：一律显示来源/分类/ID，普通用户据此区分（如两条「735金叉及趋势」）
+      return '<label class="wb-check"><input type="checkbox" data-wb-export-rule="' + esc(r.id) + '"' +
+        (wbe.checkedRuleIds.has(r.id) ? " checked" : "") + ">" +
+        "<span>" + esc(r.name) + (r.hidden ? ' <span class="wb-tag">ⓘ</span>' : "") +
+        '<span class="wb-muted" style="display:block;font-size:11px">' + esc(wbRuleSourceText(r)) + "</span>" +
+        "</span></label>";
+    }).join("") || '<span class="wb-muted">没有可附加的规则</span>';
+    box.querySelectorAll("input[data-wb-export-rule]").forEach((x) => {
+      // 只更新独立 Set 与摘要/按钮，不重建列表（避免点击后丢焦点）
+      x.onchange = () => {
+        if (x.checked) wbe.checkedRuleIds.add(x.dataset.wbExportRule);
+        else wbe.checkedRuleIds.delete(x.dataset.wbExportRule);
+        wbRenderSummaries();
+      };
+    });
+  }
+
+  function wbExportRuleIds() {
+    // 以独立 Set 为准，并过滤掉当前目录里已消失的 ID（提交/摘要/按钮一致）
+    const live = new Set(wbs.rules.filter((r) => r.executable).map((r) => r.id));
+    return Array.from(wbe.checkedRuleIds).filter((id) => live.has(id));
+  }
+
+  function wbExportRuleNames(ids) {
+    return ids.map((id) => { const r = wbs.rules.find((x) => x.id === id); return r ? r.name : id; });
+  }
+
+  /** 导出记录里的「附加规则」名称串（含规则 ID 回退与数量封顶）。
+   *
+   * 规则目录 /api/v1/bagua/screen/rules 是异步加载的：目录没到位时返回空串，
+   * 调用方只显示数量，绝不能在此时把规则误标成「已删除」。
+   */
+  function wbExportRuleNamesText(ids) {
+    if (!Array.isArray(ids) || !ids.length || !wbs.rules.length) return "";
+    const picked = ids.map((id) => {
+      const r = wbs.rules.find((x) => x.id === id);
+      // 规则中心归档/删除后名字已不可解析：按 ID 如实标注，不借用同名规则顶替
+      return { id: id, name: r ? r.name : id + "（已删除）" };
+    });
+    // 同名规则（如两条「735金叉及趋势」）不做去重，重名时补 ID 区分（同 wbRuleSourceText 口径）
+    const seen = {};
+    picked.forEach((p) => { seen[p.name] = (seen[p.name] || 0) + 1; });
+    const head = picked.slice(0, 6).map((p) => (seen[p.name] > 1 ? p.name + "[ID " + p.id + "]" : p.name));
+    return head.join("、") + (picked.length > 6 ? " 等 " + picked.length + " 条" : "");
+  }
+
+  function wbExportSelection() {
+    const scope = wbe.scope;
+    if (scope === "all") return { valid: true, label: "全市场 A 股 + ETF", codes: null, all: true };
+    let codes = scope === "picked" ? wbe.pickedCodes : (wbe.screenedSnapshot ? wbe.screenedSnapshot.codes : []);
+    const emptyHint = scope === "picked"
+      ? "尚未指定标的（可在下方直接输入股票代码，或从查询结果进入）"
+      : "尚未生成筛选结果（先在「按规则筛选」页签完成一次筛选）";
+    if (!codes || !codes.length) return { valid: false, label: emptyHint, codes: [], all: false };
+    // 交接后筛选条件又变了：如实标注为旧条件结果，不静默当成本次筛选（R3-01 同类）
+    const staleScreened = scope === "screened" &&
+      typeof wbe.screenedVersion === "number" && wbe.screenedVersion !== wbs.condVersion;
+    const fromTxt = staleScreened ? "来自筛选结果（旧条件）" : wbe.from;
+    return { valid: true, label: (fromTxt ? fromTxt + " · " : "") + codes.length + " 个标的", codes: codes, all: false };
+  }
+
+  /** 来源快照与当前表单是否已经不一致（用于提示「已手动修改」）。 */
+  function wbExportDiverged(sel) {
+    const src = wbe.sourceSnapshot;
+    if (!src) return false;
+    const date = (($("wbEDate") || {}).value || "");
+    const price = (($("wbEPrice") || {}).value || "raw");
+    if (src.date && date && date !== src.date) return true;
+    if (src.adjust && price !== src.adjust) return true;
+    if (typeof src.count === "number" && sel && Array.isArray(sel.codes) && sel.codes.length !== src.count) return true;
+    return false;
+  }
+
+  async function wbRunExport() {
+    // R3-02：提交在途直接返回。防重入靠独立状态而非按钮 disabled——
+    // disabled 会被摘要重绘/切页签恢复，导致同一请求发出两次
+    if (wbe.submitting) return;
+    const sel = wbExportSelection();
+    const err = $("wbEError");
+    if (!sel.valid) { if (err) { err.textContent = "导出范围为空：" + sel.label + "；空范围不能导出，更不会退化为全市场。"; err.hidden = false; } return; }
+    const attach = ($("wbEAttach") || {}).checked;
+    const eruleIds = wbExportRuleIds();
+    if (attach && !eruleIds.length) { if (err) { err.textContent = "已开启附加信号明细，请至少选择一条规则。"; err.hidden = false; } return; }
+    if (err) err.hidden = true;
+    const date = wbYyyymmdd(($("wbEDate") || {}).value || "");
+    if (!date) { if (err) { err.textContent = "请选择报表基准日期。"; err.hidden = false; } return; }
+    wbe.submitting = true;
+    wbRenderSummaries(); // 提交中：摘要重绘/切页签往返都不会放开按钮
+    try {
+      const j = await api("/api/v1/bagua/export?async_mode=true&force_async=true", {
+        method: "POST",
+        body: JSON.stringify({
+          codes: sel.all ? undefined : sel.codes,
+          all_stocks: sel.all,
+          date: date,
+          periods: ["DAY", "WEEK", "MONTH"],
+          adjust: ($("wbEPrice") || {}).value || "raw",
+          review_rules: attach ? eruleIds : [],
+        }),
+      });
+      if (!j || !j.job_id) throw new Error("响应缺少 job_id");
+      wbRememberExportJob(j.job_id);
+    } catch (e) {
+      if (err) { err.textContent = "创建导出任务失败：" + e.message; err.hidden = false; }
+    } finally {
+      // 收到任务 ID（或失败）即结束提交阶段：允许按产品规则主动再建新任务/重试
+      wbe.submitting = false;
+      wbRefreshExportJobs();
+      wbRenderSummaries();
+    }
+  }
+
+  function wbRememberExportJob(jobId) {
+    try {
+      const arr = JSON.parse(localStorage.getItem(WB_LS_EXPORT) || "[]").filter((x) => x !== jobId);
+      arr.push(jobId);
+      localStorage.setItem(WB_LS_EXPORT, JSON.stringify(arr.slice(-20)));
+    } catch (e) { /* ignore */ }
+  }
+
+  let wbExportJobsRefreshing = false;
+  let wbExportJobsCache = []; // 最近一次成功列表：断连时保留展示而非清空
+  let wbExportJobsStale = []; // 最近一次成功刷新判定为失效的本地记录 ID（重绘要一并保留）
+  let wbExportJobsDisconnected = false; // 最近一次请求失败：重绘时保留「暂时断连」提示
+
+  /** 给记录里的下载/重试/重投按钮挂事件（列表刷新与规则名到位后的重绘共用）。 */
+  function wbBindExportJobActions(box) {
+    box.querySelectorAll("[data-wb-dl]").forEach((b) => { b.onclick = () => wbDownloadExport(b.dataset.wbDl); });
+    box.querySelectorAll("[data-wb-retry]").forEach((b) => { b.onclick = () => wbRetryExport(b.dataset.wbRetry); });
+    box.querySelectorAll("[data-wb-requeue]").forEach((b) => { b.onclick = () => wbRequeueExport(b.dataset.wbRequeue); });
+  }
+
+  /** 记录列表 HTML = 服务端任务 + 已失效的本地记录（失效判定只在成功刷新后做）。 */
+  function wbExportJobsHtml(jobs, staleIds) {
+    return jobs.map((x) => wbExportJobRow(x, false))
+      .concat((staleIds || []).map((id) => wbExportJobRow({ job_id: id, status: "stale" }, true)))
+      .join("");
+  }
+
+  /** 规则目录（异步）到位后重绘记录：记录里的规则名依赖 wbs.rules，不重绘则只剩条数。 */
+  function wbRerenderExportJobs() {
+    const box = $("wbEJobs");
+    // 断连态下 box 里还有「暂时断连」横幅，重绘会把它抹掉
+    if (!box || wbExportJobsDisconnected || !wbExportJobsCache.length) return;
+    box.innerHTML = wbExportJobsHtml(wbExportJobsCache, wbExportJobsStale);
+    wbBindExportJobActions(box);
+  }
+
+  async function wbRefreshExportJobs() {
+    if (wbExportJobsRefreshing) return;
+    wbExportJobsRefreshing = true;
+    const box = $("wbEJobs");
+    if (!box) { wbExportJobsRefreshing = false; return; }
+    let jobs = null; // null=本次请求失败（断连），≠ 空列表
+    try {
+      const j = await api("/api/v1/bagua/export/jobs");
+      jobs = (j.jobs || []).filter((x) => x.kind !== "same_gua");
+    } catch (e) { jobs = null; }
+    if (jobs === null) {
+      // 网络失败 ≠ 记录失效：保留已知列表并继续轮询
+      wbExportJobsDisconnected = true;
+      box.innerHTML = '<div class="wb-status"><strong>暂时断连</strong>' +
+        '<span class="wb-muted">导出记录暂时无法刷新（服务可能重启或网络波动）；' +
+        "保留上次状态，稍后自动重试。若任务记录确已失效会明确标注。</span></div>" +
+        wbExportJobsHtml(wbExportJobsCache, wbExportJobsStale);
+      // 断连态的既有记录同样要能下载/重试（此前只渲染不绑事件 = 死按钮）
+      wbBindExportJobActions(box);
+      if (wbe.pollTimer) clearTimeout(wbe.pollTimer);
+      wbe.pollTimer = setTimeout(wbRefreshExportJobs, 5000);
+      wbExportJobsRefreshing = false;
+      return;
+    }
+    wbExportJobsDisconnected = false;
+    wbExportJobsCache = jobs;
+    // 失效判定只在成功拿到服务端列表后进行
+    let localIds = [];
+    try { localIds = JSON.parse(localStorage.getItem(WB_LS_EXPORT) || "[]"); } catch (e) { localIds = []; }
+    const serverIds = new Set(jobs.map((x) => x.job_id));
+    const stale = localIds.filter((id) => !serverIds.has(id));
+    wbExportJobsStale = stale;
+    const activePending = jobs.filter((x) => x.status === "queued" || x.status === "running");
+    if (activePending.length) {
+      activePending.forEach((x) => wbRememberExportJob(x.job_id));
+      if (wbe.pollTimer) clearTimeout(wbe.pollTimer);
+      wbe.pollTimer = setTimeout(wbRefreshExportJobs, 2500);
+    } else if (wbe.pollTimer) { clearTimeout(wbe.pollTimer); wbe.pollTimer = null; }
+    box.innerHTML = wbExportJobsHtml(jobs, stale) ||
+      '<span class="wb-muted">暂无导出记录。创建任务后会在这里显示；刷新页面可恢复状态。</span>';
+    wbBindExportJobActions(box);
+    wbExportJobsRefreshing = false;
+  }
+
+  function wbExportJobRow(x, isStale) {
+    const st = x.status || "unknown";
+    const tagCls = isStale ? "error" : st === "done" ? "done" : st === "error" ? "error" : st === "running" ? "running" : "";
+    const stText = isStale ? "任务记录已失效" : st === "queued" ? "排队中" : st === "running" ? "生成中" : st === "done" ? "已完成" : st === "error" ? "失败" : st;
+    const scope = x.scope_summary || (x.all_stocks ? "全市场 A 股 + ETF" : (x.codes_count ? "指定 " + x.codes_count + " 个标的" : "指定标的"));
+    // 去重：导出侧用 dict.fromkeys 合并同一规则，条数必须与实际生成的信号 sheet 数一致
+    const pickedRuleIds = Array.isArray(x.review_rules) ? Array.from(new Set(x.review_rules)) : [];
+    const pickedRuleNames = wbExportRuleNamesText(pickedRuleIds);
+    // 附加规则的名称直接跟在条数后面，记录本身就是「导出了哪几条规则」的凭据
+    const rulesTxt = x.review_rules_mode === "default" ? "信号 sheet=默认（周五链复核）"
+      : x.review_rules_mode === "none" ? "不带信号 sheet"
+      : (pickedRuleIds.length
+        ? "附加规则 " + pickedRuleIds.length + " 条" + (pickedRuleNames ? "（" + pickedRuleNames + "）" : "")
+        : "不带信号 sheet");
+    let actions = "";
+    if (!isStale && st === "done") actions = '<button type="button" class="wb-secondary" data-wb-dl="' + esc(x.job_id) + '">下载 Excel</button>';
+    if (!isStale && st === "error") actions = '<button type="button" class="wb-secondary" data-wb-retry="' + esc(x.job_id) + '">重试</button>';
+    if (isStale) actions = "";
+    const prog = x.progress && x.progress.total
+      ? '<span class="wb-muted wb-mono">周期 ' + esc(String(x.progress.period_index || 0)) + "/" + esc(String(x.progress.period_count || 0)) + " · " + esc(String(x.progress.done || 0)) + "/" + esc(String(x.progress.total || 0)) + "</span>"
+      : "";
+    return '<div class="wb-job"><div>' +
+      "<div><strong>" + esc(scope) + "</strong> <span class=\"wb-muted wb-mono\">" + esc(wbFmtDate(x.date)) + " · " + esc((x.periods || []).join("/")) + " · " + esc(wbPriceLabel(x.adjust)) + "</span> <span class=\"wb-tag " + tagCls + "\">" + esc(stText) + "</span></div>" +
+      '<div class="wb-muted wb-mono">创建 ' + esc(x.created_hm || "") + " · " + esc(rulesTxt) +
+      (x.query_date ? " · 实际数据日 " + esc(wbFmtDate(x.query_date)) : "") +
+      (x.review_asof_used ? " · 信号基准 " + esc(wbFmtDate(x.review_asof_used)) : "") +
+      (x.review_fallback ? "（回退）" : "") + "</div>" +
+      "<div>" + prog + (x.error ? '<span class="wb-error">' + esc(x.error) + "</span>" : "") + (x.message && st === "running" ? '<span class="wb-muted">' + esc(x.message) + "</span>" : "") + "</div>" +
+      "</div><div>" + actions + "</div></div>";
+  }
+
+  async function wbDownloadExport(jobId) {
+    try {
+      const r = await fetch("/api/v1/bagua/export/jobs/" + encodeURIComponent(jobId) + "/download");
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(t || ("HTTP " + r.status));
+      }
+      const blob = await r.blob();
+      const cd = r.headers.get("content-disposition") || "";
+      const m = /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(cd);
+      bqTriggerDownload(blob, m ? decodeURIComponent(m[1]) : "bagua_export.xlsx");
+      toast("已开始下载");
+      wbRefreshExportJobs();
+    } catch (e) {
+      toast("下载失败：" + e.message + "（可用「重试」用原条件重新生成）");
+      wbRefreshExportJobs();
+    }
+  }
+
+  async function wbRetryExport(jobId) {
+    // 找到服务端记录里的原条件快照重新提交
+    try {
+      const j = await api("/api/v1/bagua/export/jobs/" + encodeURIComponent(jobId));
+      if (j.codes_omitted) {
+        toast("该任务的标的清单过大未存快照，请用原条件重新配置导出。");
+        return;
+      }
+      const body = {
+        codes: j.all_stocks ? undefined : (j.codes || undefined),
+        all_stocks: !!j.all_stocks,
+        date: j.date,
+        periods: j.periods || ["DAY", "WEEK", "MONTH"],
+        adjust: j.adjust || "raw",
+        review_rules: j.review_rules === undefined ? undefined : j.review_rules,
+      };
+      const r = await api("/api/v1/bagua/export?async_mode=true&force_async=true", {
+        method: "POST", body: JSON.stringify(body),
+      });
+      if (r && r.job_id) { wbRememberExportJob(r.job_id); toast("已用原条件重新提交导出任务"); wbRefreshExportJobs(); }
+    } catch (e) {
+      toast("重试失败：" + e.message);
+    }
+  }
+
+  function wbRequeueExport(jobId) { /* 预留：与重试一致 */ wbRetryExport(jobId); }
+
+  /* ---------- 摘要渲染（三面板） ---------- */
+  function wbRenderSummaries() {
+    // 查询面板
+    const qSum = $("wbQSummary"), qBtn = $("wbQRun");
+    if (qSum) qSum.textContent = wbQuerySummaryText();
+    if (qBtn) {
+      // 自定义周期未填日期时按钮禁用必须给出原因，否则用户只看到灰按钮不知为何
+      const customMissing = wbq.timeMode === "custom" && !($("wbQCustom") || {}).value;
+      qBtn.disabled = !wbq.picked.length || customMissing;
+      qBtn.textContent = !wbq.picked.length ? "请先选择标的"
+        : customMissing ? ("请先选择查询" + (wbq.period === "WEEK" ? "周" : wbq.period === "MONTH" ? "月" : "日期"))
+        : "查询 " + wbq.picked.length + " 个标的";
+    }
+    // 筛选面板
+    const sSum = $("wbSSummary"), sBtn = $("wbSRun");
+    if (sSum) sSum.textContent = wbScreenSummaryText();
+    if (sBtn) {
+      const inScope = wbs.scope === "all" || wbs.pickedCodes.length;
+      const checkedN = wbCheckedRuleIds().length;
+      // submitting（提交在途）与 jobRunning（任务执行中）都必须禁用，且摘要重绘不得放开
+      sBtn.disabled = !checkedN || !inScope || wbs.submitting || wbs.jobRunning;
+      sBtn.textContent = !checkedN ? "请先选择规则"
+        : !inScope ? "请先选择或输入股票"
+        : wbs.submitting ? "提交中…"
+        : wbs.jobRunning ? "筛选中…" : "开始筛选";
+    }
+    // 导出面板
+    const eSum = $("wbESummary"), eBtn = $("wbERun");
+    const sel = wbExportSelection();
+    const attach = ($("wbEAttach") || {}).checked;
+    const eruleIds = wbExportRuleIds();
+    const attachTxt = attach ? (eruleIds.length ? "附加规则：" + wbExportRuleNames(eruleIds).join("、") : "请至少选择一条规则") : "不附带";
+    const srcEl = $("wbESource");
+    if (srcEl) {
+      srcEl.textContent = wbe.scope === "all" ? "全市场导出无需先填写股票代码。"
+        : "范围：" + sel.label + (wbe.sourceSnapshot ? "（来源快照；修改下方条件后按修改后的值导出）" : "");
+    }
+    const scopeErr = $("wbEScopeError");
+    if (scopeErr) {
+      const invalid = !sel.valid && wbe.scope !== "all";
+      scopeErr.textContent = invalid ? sel.label + "；空范围不能创建任务。" : "";
+      scopeErr.hidden = !invalid;
+    }
+    if (eSum) {
+      eSum.innerHTML = "<strong>将生成的文件</strong>" +
+        "<span>范围：" + esc(sel.label) + "</span>" +
+        "<span>工作表：meta + 按标的分组（股票 stock-all / ETF etf-all） · 基准日期 " + esc((($("wbEDate") || {}).value || "—")) + " · 股票 " + esc(wbPriceLabel((($("wbEPrice") || {}).value))) + "</span>" +
+        "<span>" + esc(attachTxt) + "</span>" +
+        (wbe.sourceSnapshot && wbExportDiverged(sel) ? "<span class=\"wb-error\">当前条件已与来源（" + esc(wbe.from + " · " + wbe.sourceSnapshot.date + " · " + wbPriceLabel(wbe.sourceSnapshot.adjust) + " · " + wbe.sourceSnapshot.count + " 个标的") + "）不同，将按当前条件导出。</span>" : "");
+    }
+    if (eBtn) {
+      eBtn.disabled = !sel.valid || (attach && !eruleIds.length) || !(($("wbEDate") || {}).value) || wbe.submitting;
+      eBtn.textContent = wbe.submitting ? "提交中…" : "创建导出任务";
+    }
+  }
+
+  /* ---------- 初始化 ---------- */
+  function wbBind() {
+    const root = $("wbRoot");
+    if (!root) return;
+    root.querySelectorAll("[data-wb-mode]").forEach((b) => { b.onclick = () => wbSetMode(b.dataset.wbMode); });
+    const search = $("wbQSearch");
+    if (search) {
+      search.addEventListener("input", () => {
+        wbShowInputError("");
+        wbq.seq += 1;
+        const term = wbSearchTerm(), seq = wbq.seq;
+        if (wbq.searchTimer) clearTimeout(wbq.searchTimer);
+        if (!term) { wbRenderCandidates("", []); return; }
+        wbq.searchTimer = setTimeout(() => wbDoSearch(term, seq), 250);
+      });
+      search.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") { ev.preventDefault(); wbAddFromInput(); }
+      });
+    }
+    const addBtn = $("wbQAdd"); if (addBtn) addBtn.onclick = wbAddFromInput;
+    root.querySelectorAll("[data-wb-period]").forEach((b) => {
+      b.onclick = () => {
+        wbq.period = b.dataset.wbPeriod;
+        root.querySelectorAll("[data-wb-period]").forEach((x) =>
+          x.setAttribute("aria-pressed", String(x.dataset.wbPeriod === wbq.period)));
+        const custom = $("wbQCustom");
+        if (custom) {
+          custom.type = wbq.period === "DAY" ? "date" : wbq.period === "WEEK" ? "week" : "month";
+          custom.value = "";
+        }
+        wbUpdateDateNote();
+        wbQueryChanged(true);
+      };
+    });
+    const timeSel = $("wbQTime");
+    if (timeSel) timeSel.onchange = () => {
+      wbq.timeMode = timeSel.value;
+      const custom = $("wbQCustom");
+      if (custom) custom.hidden = wbq.timeMode !== "custom";
+      wbQueryChanged(true);
+    };
+    const custom = $("wbQCustom"); if (custom) custom.onchange = () => wbQueryChanged(true);
+    const priceSel = $("wbQPrice");
+    if (priceSel) priceSel.onchange = () => {
+      wbq.price = priceSel.value;
+      wbq.optionsCache = {}; // 口径变了，重新取 options
+      wbRefreshOptions();
+      wbQueryChanged(true);
+    };
+    const qRun = $("wbQRun"); if (qRun) qRun.onclick = wbRunQuery;
+
+    const ruleSearch = $("wbSRuleSearch");
+    if (ruleSearch) ruleSearch.addEventListener("input", wbRenderScreenRules);
+    const combine = $("wbSCombine"); if (combine) combine.onchange = wbScreenChanged;
+    const scopeSel = $("wbSScope");
+    if (scopeSel) scopeSel.onchange = () => {
+      wbs.scope = scopeSel.value;
+      const note = $("wbSScopeNote");
+      if (note) note.textContent = wbs.scope === "all"
+        ? "筛选范围：全部 A 股 · 周期与价格口径沿用规则定义（正式 L1 日线 + Tushare 前复权），结果逐项标注实际计算日期。"
+        : "筛选范围：指定股票 · 周期与价格口径沿用规则定义（正式 L1 日线 + Tushare 前复权），结果逐项标注实际计算日期。可直接在下方输入或粘贴股票代码。";
+      wbRenderScreenPicked();
+      wbScreenChanged();
+    };
+    const importBtn = $("wbSImportBtn");
+    if (importBtn) importBtn.onclick = wbImportPickedFromQuery;
+    const sAdd = $("wbSAddBtn");
+    if (sAdd) sAdd.onclick = () => { wbManualAdd("screen").catch((e) => toast("添加失败：" + e.message)); };
+    const sManual = $("wbSManual");
+    if (sManual) sManual.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); wbManualAdd("screen").catch((e) => toast("添加失败：" + e.message)); }
+    });
+    const sDate = $("wbSDate"); if (sDate) sDate.onchange = wbScreenChanged;
+    const sRun = $("wbSRun"); if (sRun) sRun.onclick = wbRunScreen;
+
+    const eScope = $("wbEScope");
+    if (eScope) eScope.onchange = () => {
+      wbe.scope = eScope.value;
+      if (eScope.value === "picked" && !wbe.pickedCodes.length && wbq.snapshot && (wbq.snapshot.okCodes || []).length) {
+        wbe.pickedCodes = wbq.snapshot.okCodes.slice();
+        wbe.pickedMeta = Object.assign({}, wbe.pickedMeta, wbq.snapshot.codeMeta || {});
+        wbe.from = "来自查询结果";
+        wbe.sourceSnapshot = { date: wbFmtDate(wbq.snapshot.date), adjust: wbq.snapshot.adjust, count: wbe.pickedCodes.length };
+      }
+      const pbox = $("wbEPickedBox");
+      if (pbox) pbox.hidden = eScope.value !== "picked";
+      wbRenderPickedChips("export");
+      wbRenderSummaries();
+    };
+    const eAdd = $("wbEAddBtn");
+    if (eAdd) eAdd.onclick = () => { wbManualAdd("export").catch((e) => toast("添加失败：" + e.message)); };
+    const eManual = $("wbEManual");
+    if (eManual) eManual.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); wbManualAdd("export").catch((e) => toast("添加失败：" + e.message)); }
+    });
+    const eAttach = $("wbEAttach");
+    if (eAttach) eAttach.onchange = () => {
+      const box = $("wbEAttachBox");
+      if (box) box.hidden = !eAttach.checked;
+      wbRenderSummaries();
+    };
+    const eDate = $("wbEDate"); if (eDate) eDate.onchange = wbRenderSummaries;
+    const ePrice = $("wbEPrice"); if (ePrice) ePrice.onchange = wbRenderSummaries;
+    const eRun = $("wbERun"); if (eRun) eRun.onclick = wbRunExport;
+    // 使用指引：用户主动开启（R2-05）
+    const guideBtn = $("wbGuideBtn");
+    if (guideBtn) guideBtn.onclick = () => startBqGuide();
+  }
+
+  function initWorkbenchPage() {
+    if (!wbInited) {
+      wbInited = true;
+      wbBind();
+      wbLoadDataStamp();
+      wbRenderScreenPicked();
+      wbRenderPickedChips("export");
+      wbRenderSummaries();
+      // 刷新恢复：本地记着的进行中任务重新轮询
+      let screenIds = [];
+      try { screenIds = JSON.parse(localStorage.getItem(WB_LS_SCREEN) || "[]"); } catch (e) { screenIds = []; }
+      if (screenIds.length) {
+        const last = screenIds[screenIds.length - 1];
+        wbPollScreenJob(last);
+      }
+    }
+    if (wbInited) {
+      wbEnsureScreenRules();
+      wbRefreshExportJobs();
+      wbRenderSummaries();
+    }
+  }
+  window.initWorkbenchPage = initWorkbenchPage;
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else boot();
