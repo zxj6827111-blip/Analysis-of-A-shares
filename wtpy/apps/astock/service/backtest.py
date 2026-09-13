@@ -1940,14 +1940,41 @@ def run_backtest(
                     "calendar_path": str(cfg.tdx_root),
                 }
             except Exception:
-                # 无 TDX 部署且无 calendar.json:回退数据集推导日历,
-                # 与 repo 模式同一来源;仍失败则置空(不崩溃)。
+                # 无 TDX 部署且无 calendar.json：回退到最新 ready 数据集推导
+                # 日历（与仓储模式、数据健康页同一来源），服务器无通达信
+                # 目录时靠这条路径拿日历。三处都不可用才置空。
                 cal = None
                 calendar_meta = {"calendar_source": "unavailable"}
+                try:
+                    from ..data.calendar import build_calendar_from_dataset
+                    from ..data.dataset_store import DatasetStore
+                    from ..data.tushare_product import select_tushare_base
+
+                    _cal_store = DatasetStore(cfg.market_data_root)
+                    _cal_base = select_tushare_base(_cal_store)
+                    if _cal_base is not None:
+                        cal, calendar_meta = build_calendar_from_dataset(
+                            _cal_store,
+                            _cal_base.dataset_id,
+                            cache_dir=Path(cfg.storage_root) / "calendars",
+                        )
+                except Exception:
+                    cal = None
+                    calendar_meta = {"calendar_source": "unavailable"}
         if cal is not None and cal.dates:
             calendar_meta["calendar_first"] = int(cal.dates[0])
             calendar_meta["calendar_last"] = int(cal.dates[-1])
             calendar_meta["calendar_count"] = len(cal.dates)
+
+    # 日历是引擎的硬前置（周/月调仓、entry_lag 都在日历上求解）：三处来源
+    # 都没有时给出可读错误（API 侧映射为 400），而不是让引擎在
+    # self.calendar.dates 上抛 AttributeError（曾表现为无 TDX 服务器的
+    # 回测 500）。
+    if cal is None or not cal.dates:
+        raise ValueError(
+            "交易日历不可用：calendar.json 缺失、无通达信目录、"
+            "且无可用数据集可推导日历；请先完成行情数据同步后再回测。"
+        )
 
     # Gate C D6 §5: signals earlier than the calendar's first day must be
     # EXCLUDED explicitly — never squeezed onto the first trading day.
