@@ -441,25 +441,44 @@ def test_review_reuse_fingerprint_match_hits(tmp_path):
 
 # ---------------- 端到端：run_backtest 真实执行 NAMELIKE 规则 ----------------
 
-def _bt_sandbox(tmp_path):
-    """沙箱回测环境：两只票的 csv 日线 + 一条 NAMELIKE 规则。"""
+def _bt_sandbox(tmp_path, *, with_calendar: bool = True):
+    """沙箱回测环境：两只票的 csv 日线 + 一条 NAMELIKE 规则。
+
+    日历必须显式落盘：引擎构造要求 calendar，而默认 ``cfg.tdx_root`` 指向
+    本机 ``D:\\通达信``——本机能从 TDX 推导日历、CI（无 TDX）拿到 None 并在
+    引擎里崩（AttributeError: 'NoneType' object has no attribute 'dates'）。
+    封闭 tdx_root + 显式 calendar.json，使本机与 CI 同口径。
+    ``with_calendar=False`` 供"日历三处来源全缺"的 fail-closed 用例使用。
+    """
+    from datetime import date, timedelta
+
+    from wtpy.apps.astock.data.calendar import TradeCalendar
     from wtpy.apps.astock.service.backtest import BacktestRequest
 
     storage, ind = tmp_path / "bt_st", tmp_path / "bt_ind"
     storage.mkdir()
     ind.mkdir()
-    cfg = get_default_config(storage_root=storage, indicator_dir=ind)
+    cfg = get_default_config(
+        storage_root=storage, indicator_dir=ind, tdx_root=tmp_path / "no_tdx"
+    )
+    # 连续合法自然日（含周末）当作交易日：必须用真实存在的日期，
+    # 否则周键 isocalendar 会对 20260631 这类假日期抛 ValueError
+    sessions = [
+        int((date(2026, 6, 1) + timedelta(days=i)).strftime("%Y%m%d"))
+        for i in range(59)
+    ]
     for mk, c6 in (("SSE", "600000"), ("SZSE", "000001")):
         d = storage / "csv" / "day" / mk
         d.mkdir(parents=True, exist_ok=True)
         lines = ["date,open,high,low,close,amount,volume"]
-        for i in range(1, 60):
-            dt = 20260600 + i
+        for i, dt in enumerate(sessions, start=1):
             o, c = 10.0, 10.0 + i * 0.05
             lines.append(
                 f"{dt},{o:.2f},{(c + 0.2):.2f},{(o - 0.1):.2f},{c:.2f},1000000,100000"
             )
         (d / f"{c6}.csv").write_text("\n".join(lines), encoding="utf-8")
+    if with_calendar:
+        TradeCalendar(sessions).save(cfg.calendar_path)
     svc = RuleService(cfg)
     created = svc.create_rule(
         name="nl_bt", formula_text="去风险:=NOT(NAMELIKE('ST'));\nXG:C>OPEN AND 去风险;\n"
@@ -625,6 +644,31 @@ def test_backtest_combine_all_skips_code_when_one_rule_fails(tmp_path, monkeypat
     assert combined["n_events"] == 0, "任一参与规则失败时不得产组合信号"
     errs = combined.get("errors_sample") or []
     assert any("组合信号未产生" in (e.get("error") or "") for e in errs), errs
+
+
+def test_backtest_without_any_calendar_source_fails_closed(tmp_path, monkeypatch):
+    """日历三处来源全缺（无 calendar.json / 无通达信 / 无数据集）：可读错误。
+
+    服务器没有通达信目录（实测 ``cfg.tdx_root = D:\\通达信`` 不存在、
+    ``storage/astock/calendar.json`` 也不存在），此时必须在进入引擎前
+    fail-closed 报「交易日历不可用」（API 映射 400），而不是让引擎在
+    ``self.calendar.dates`` 上抛 AttributeError（表现为回测 500）。
+    """
+    monkeypatch.setenv("MARKET_DATA_ROOT", str(tmp_path / "no_market_data"))
+    cfg, rid, BacktestRequest = _bt_sandbox(tmp_path, with_calendar=False)
+    with pytest.raises(ValueError, match="交易日历不可用"):
+        run_backtest(
+            cfg,
+            BacktestRequest(
+                rule_ids=[rid],
+                codes=["600000"],
+                start=20260601,
+                end=20260630,
+                research_unadjusted=True,
+                use_signal_cache=False,
+                artifact_level="summary",
+            ),
+        )
 
 
 
