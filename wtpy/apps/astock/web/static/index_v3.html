@@ -2084,57 +2084,196 @@ body.wbt-scroll-locked {
   font-weight: 500;
   color: #f3f7fc;
 }
+
+/* Strict Table Alignment Helpers */
+.wb-root .wbt-table th.wbt-al-left,
+.wb-root .wbt-table td.wbt-al-left {
+  text-align: left !important;
+}
+.wb-root .wbt-table th.wbt-al-right,
+.wb-root .wbt-table td.wbt-al-right {
+  text-align: right !important;
+}
+.wb-root .wbt-table th.wbt-al-center,
+.wb-root .wbt-table td.wbt-al-center {
+  text-align: center !important;
+}
+
+/* Drawer Fixes */
+#wbTrackBfRuleList {
+  max-height: 180px !important;
+  min-height: 80px;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  background: #081424 !important;
+  border: 1px solid #1a3554 !important;
+  border-radius: 6px !important;
+  padding: 6px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+  box-sizing: border-box !important;
+}
+#wbTrackBfRuleList label.wb-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #c5d4e5;
+  font-size: 12px;
+  transition: background .12s;
+  min-height: auto;
+}
+#wbTrackBfRuleList label.wb-check:hover {
+  background: rgba(47, 134, 255, 0.08);
+}
+#wbTrackBfRuleList label.wb-check input[type="checkbox"] {
+  accent-color: #2f86ff;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* L2 Expanded Card Styles (1:1 with media_1789532664226.png) */
+.wbt-l2-expanded > td {
+  padding: 14px 16px !important;
+  background: #061220 !important;
+  border-bottom: 1px solid #1a3554 !important;
+}
 .wbt-l2-expand-wrap {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 380px minmax(0, 1fr);
   gap: 20px;
-  padding: 16px;
+  padding: 16px 18px;
   background: #081525;
-  border-radius: 6px;
+  border-radius: 8px;
+  border: 1px solid #1a3554;
+  box-sizing: border-box;
 }
 .wbt-l2-stats-col {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  border-right: 1px solid #24425f;
+  gap: 12px;
+  border-right: 1px solid #162942;
   padding-right: 18px;
 }
-.wbt-l2-stat-row {
+.wbt-l2-daily-col {
   display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: #829bb6;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
 }
-.wbt-l2-stat-row b, .wbt-l2-stat-row span:last-child {
+.wbt-l2-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f3f7fc;
+}
+.wbt-l2-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wbt-l2-panel-icon {
+  color: #2f86ff;
+  flex-shrink: 0;
+}
+.wbt-btn-query {
+  background: rgba(47, 134, 255, 0.12);
+  border: 1px solid rgba(47, 134, 255, 0.35);
+  color: #50a0ff;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.wbt-btn-query:hover {
+  background: rgba(47, 134, 255, 0.25);
+  border-color: #2f86ff;
+  color: #ffffff;
+}
+.wbt-l2-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.wbt-l2-metric-box {
+  background: rgba(12, 28, 48, 0.7);
+  border: 1px solid #162942;
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wbt-l2-metric-lbl {
+  font-size: 11px;
+  color: #829bb6;
+  line-height: 1.2;
+}
+.wbt-l2-metric-val {
+  font-size: 15px;
+  font-weight: 700;
   color: #f3f7fc;
   font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+.wbt-l2-metric-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: #829bb6;
 }
 .wbt-daily-grid {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
-  overflow-x: auto;
 }
 .wbt-daily-card {
-  flex: 1;
-  min-width: 90px;
-  background: #0e223a;
-  border: 1px solid #24425f;
+  background: rgba(12, 28, 48, 0.7);
+  border: 1px solid #162942;
   border-radius: 6px;
-  padding: 10px;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
+  gap: 4px;
 }
-.wbt-daily-head {
-  font-size: 12px;
+.wbt-daily-date {
+  font-size: 11px;
   color: #829bb6;
-  margin-bottom: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.wbt-daily-weekday {
+  font-size: 11px;
+  color: #c5d4e5;
+  margin-bottom: 2px;
 }
 .wbt-daily-ret {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  line-height: 1.2;
 }
 .wbt-daily-close {
   font-size: 11px;
+  color: #829bb6;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.wbt-l2-cov-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
   color: #829bb6;
   margin-top: 4px;
 }
@@ -2724,20 +2863,24 @@ body.wbt-scroll-locked {
       <div id="wbTrackBfSinglePanel" class="wbt-drawer-section">
         <div class="wbt-drawer-section">
           <label class="wbt-drawer-section-title" for="wbTrackBfWeek">1. 选择信号周</label>
-          <div class="wb-row">
-            <input id="wbTrackBfWeek" placeholder="如 20260731 或 2026-07-31" autocomplete="off" aria-label="补算信号日" style="max-width:260px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+            <span style="font-size:13px;color:#c5d4e5">信号周（周五）</span>
+            <div style="position:relative;width:220px">
+              <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#829bb6;pointer-events:none">📅</span>
+              <input id="wbTrackBfWeek" placeholder="如 20260731 或 2026-07-31" autocomplete="off" aria-label="补算信号日" style="width:100%;box-sizing:border-box;padding-left:32px;background:#081424;border:1px solid #1a3554;border-radius:6px;color:#f3f7fc;height:34px;font-family:monospace">
+            </div>
           </div>
-          <span class="wb-muted" style="font-size:12px">信号日必须是该自然周最后一个交易日（通常周五，节假日周是周四，填错会提示正确日期）。</span>
+          <span class="wb-muted" style="font-size:11px">信号日必须是该自然周最后一个交易日（通常周五，节假日周是周四，填错会提示正确日期）。</span>
         </div>
 
         <div class="wbt-drawer-section">
-          <span class="wbt-drawer-section-title">2. 选择规则范围</span>
-          <div class="wb-row" style="gap:16px">
-            <label class="wb-check" style="min-height:32px">
+          <span class="wbt-drawer-section-title">2. 选择补算规则</span>
+          <div class="wb-row" style="gap:16px;align-items:center">
+            <label class="wb-check" style="min-height:30px;cursor:pointer">
               <input type="radio" name="wbtBfRuleScopeRadio" id="wbTrackBfScopeAll" value="all" checked>
-              <span>全部规则（整周回填）</span>
+              <span>全部规则（使用回测规则）</span>
             </label>
-            <label class="wb-check" style="min-height:32px">
+            <label class="wb-check" style="min-height:30px;cursor:pointer">
               <input type="radio" name="wbtBfRuleScopeRadio" id="wbTrackBfScopeCustom" value="custom">
               <span>指定规则（最多 5 条）</span>
             </label>
@@ -2746,16 +2889,16 @@ body.wbt-scroll-locked {
             重新扫描该历史周的全部可执行规则，属于全市场重任务，耗时较长。不选规则=补全部规则。
           </div>
           <!-- 指定规则选择区 -->
-          <div id="wbTrackBfCustomRulesWrap" style="display:none;flex-direction:column;gap:8px">
-            <input id="wbTrackBfRuleSearch" placeholder="检索规则…" autocomplete="off" aria-label="检索补算规则">
-            <div class="wb-row" style="font-size:12px;justify-content:space-between">
-              <div style="display:flex;gap:8px;align-items:center">
-                <span id="wbTrackBfRuleCount" class="wb-muted">已选 0 条</span>
-                <span class="wb-muted">（最多 5 条，更多请整周回填）</span>
+          <div id="wbTrackBfCustomRulesWrap" style="display:none;flex-direction:column;gap:10px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="position:relative;flex:1">
+                <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#829bb6;pointer-events:none">🔍</span>
+                <input id="wbTrackBfRuleSearch" placeholder="搜索策略名称/规则 ID..." autocomplete="off" aria-label="检索补算规则" style="width:100%;box-sizing:border-box;padding-left:32px;background:#081424;border:1px solid #1a3554;border-radius:6px;color:#f3f7fc;height:34px;font-size:12px">
               </div>
+              <span id="wbTrackBfRuleCount" class="wb-mono" style="font-size:12px;color:#2f86ff;font-weight:600;white-space:nowrap">已选 0 条</span>
               <button type="button" class="wb-secondary" id="wbTrackBfRuleClear" style="min-height:28px;padding:2px 10px;font-size:12px">清空</button>
             </div>
-            <div class="wb-rulebox" id="wbTrackBfRuleList" aria-label="可补算规则" style="max-height:180px">
+            <div class="wb-rulebox" id="wbTrackBfRuleList" aria-label="可补算规则" style="max-height:180px;overflow-y:auto;overflow-x:hidden;background:#081424;border:1px solid #1a3554;border-radius:6px;padding:6px;box-sizing:border-box">
               <span class="wb-muted">展开即加载规则…</span>
             </div>
             <div class="wb-chips" id="wbTrackBfRuleChips" aria-live="polite"></div>
@@ -2764,26 +2907,34 @@ body.wbt-scroll-locked {
         </div>
 
         <div class="wbt-drawer-section">
-          <span class="wbt-drawer-section-title">3. 任务预估</span>
+          <span class="wbt-drawer-section-title">3. 任务信息</span>
           <div id="wbTrackBfEstimate" class="wbt-task-estimate">
-            <div class="wbt-task-estimate-item">
-              <span>历史信号周</span>
-              <span id="wbTrackBfEstWeek">—</span>
+            <div class="wbt-task-estimate-main" style="display:flex;gap:14px;align-items:center">
+              <div class="wbt-task-icon-box" style="width:42px;height:42px;border-radius:8px;background:rgba(47,134,255,0.12);border:1px solid rgba(47,134,255,0.3);display:flex;align-items:center;justify-content:center;color:#2f86ff;flex-shrink:0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+              </div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+                <div class="wbt-task-estimate-item">
+                  <span>历史信号周</span>
+                  <span id="wbTrackBfEstWeek" class="wb-mono">—</span>
+                </div>
+                <div class="wbt-task-estimate-item">
+                  <span>规则范围</span>
+                  <span id="wbTrackBfEstScope">全部规则</span>
+                </div>
+                <div class="wbt-task-estimate-item">
+                  <span>任务类型</span>
+                  <span>按当前规则历史重建</span>
+                </div>
+              </div>
             </div>
-            <div class="wbt-task-estimate-item">
-              <span>规则范围</span>
-              <span id="wbTrackBfEstScope">全部规则</span>
+            <div class="wbt-drawer-warn-box" style="margin-top:10px;padding:8px 12px;background:rgba(230,162,60,0.1);border:1px solid rgba(230,162,60,0.25);border-radius:6px;font-size:11px;color:#e6a23c;line-height:1.5;display:flex;align-items:flex-start;gap:6px">
+              <span style="font-size:13px;line-height:1">⚠</span>
+              <span>历史补算按当前规则、当前可用股票池及历史行情重建，不代表当时实际发布的名单。</span>
             </div>
-            <div class="wbt-task-estimate-item">
-              <span>任务类型</span>
-              <span>按当前规则历史重建</span>
-            </div>
-            <div class="wbt-task-estimate-item">
-              <span>预计耗时</span>
-              <span id="wbTrackBfEstTime">较长，通常约 60~90+ 分钟/周</span>
-            </div>
-            <div class="wb-muted" style="font-size:11px;margin-top:4px">
-              实际耗时受机器性能与数据量影响。补算按当前规则重建，不等于当时真实发布的名单。
+            <div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:11px;color:#829bb6">
+              <span>🕒</span>
+              <span id="wbTrackBfEstTime">时间预估: 较长，通常约 60~90+ 分钟/周</span>
             </div>
           </div>
         </div>
@@ -17025,21 +17176,21 @@ async function boot() {
     const l1Win = "胜率(首日开盘)";
 
     let html = '<table class="wbt-table"><thead><tr>'
-      + '<th style="width:140px">信号周</th>'
-      + '<th style="text-align:right">入选</th>'
-      + '<th style="text-align:right">有效样本</th>'
-      + '<th style="text-align:right">' + esc(l1Win) + "</th>"
-      + '<th style="text-align:right">' + esc(l1Ret) + "</th>"
-      + '<th style="text-align:right" title="相对沪深300指数的首日开盘超额收益">平均超额(首日开盘)</th>'
-      + '<th style="text-align:center">状态</th>'
-      + "<th>数据来源</th>"
-      + '<th style="text-align:center">操作</th>'
+      + '<th class="wbt-al-left" style="width:140px">信号周</th>'
+      + '<th class="wbt-al-right">入选</th>'
+      + '<th class="wbt-al-right">有效样本</th>'
+      + '<th class="wbt-al-right">' + esc(l1Win) + "</th>"
+      + '<th class="wbt-al-right">' + esc(l1Ret) + "</th>"
+      + '<th class="wbt-al-right" title="相对沪深300指数的首日开盘超额收益">平均超额(首日开盘)</th>'
+      + '<th class="wbt-al-center">状态</th>'
+      + '<th class="wbt-al-center">数据来源</th>'
+      + '<th class="wbt-al-center" style="width:110px">操作</th>'
       + "</tr></thead><tbody>";
 
     html += pageWeeks.map((w) => {
       const a = w.aggregate || null;
       const runTag = w.run_kind === "backfill"
-        ? '<span class="wbt-tag backfill">回填</span>'
+        ? '<span class="wbt-tag backfill">历史补算</span>'
         : '<span class="wbt-tag">周五发布</span>';
       const scopeTag = w.rules_scope === "subset"
         ? '<span class="wbt-tag subset" title="该周仅补算了部分指定规则">指定规则补算</span>' : "";
@@ -17053,17 +17204,17 @@ async function boot() {
       const excessStr = wbtPctSigned(a ? a.mean_excess_exec : null);
 
       return "<tr>"
-        + '<td><strong class="wb-mono">' + esc(wbFmtDate(w.week_id)) + "</strong>"
+        + '<td class="wbt-al-left"><strong class="wb-mono">' + esc(wbFmtDate(w.week_id)) + "</strong>"
         + '<div class="wb-muted wb-mono" style="font-size:11px;margin-top:2px">' + esc(w.week_id != null ? String(w.week_id) : "") + "</div></td>"
-        + '<td class="wb-mono" style="text-align:right">' + esc(String(w.selected_count != null ? w.selected_count : 0)) + "</td>"
-        + '<td class="wb-mono" style="text-align:right">' + esc(String(validCount)) + "</td>"
-        + '<td class="wb-mono" style="text-align:right">' + winRateStr + "</td>"
-        + '<td class="wb-mono" style="text-align:right">' + retStr + "</td>"
-        + '<td class="wb-mono" style="text-align:right">' + excessStr + "</td>"
-        + '<td style="text-align:center">' + compBadge + "</td>"
-        + '<td><div style="display:flex;gap:4px;align-items:center">' + runTag + (scopeTag ? " " + scopeTag : "") + "</div></td>"
-        + '<td style="text-align:center"><button type="button" class="wb-secondary" data-wbt-week="' + esc(String(w.week_id))
-        + '" data-wbt-week-rule="' + esc(wbt.ruleId || "") + '" style="min-height:30px;padding:3px 12px;font-size:12px">周明细 →</button></td>'
+        + '<td class="wb-mono wbt-al-right">' + esc(String(w.selected_count != null ? w.selected_count : 0)) + "</td>"
+        + '<td class="wb-mono wbt-al-right">' + esc(String(validCount)) + "</td>"
+        + '<td class="wb-mono wbt-al-right">' + winRateStr + "</td>"
+        + '<td class="wb-mono wbt-al-right">' + retStr + "</td>"
+        + '<td class="wb-mono wbt-al-right">' + excessStr + "</td>"
+        + '<td class="wbt-al-center">' + compBadge + "</td>"
+        + '<td class="wbt-al-center">' + (scopeTag || runTag) + "</td>"
+        + '<td class="wbt-al-center"><button type="button" class="wbt-table-btn" data-wbt-week="' + esc(String(w.week_id))
+        + '" data-wbt-week-rule="' + esc(wbt.ruleId || "") + '">周明细 →</button></td>'
         + "</tr>";
     }).join("");
 
@@ -17250,17 +17401,17 @@ async function boot() {
 
   /** L2 默认列（V1.1 实施规格：代码/名称/首日开盘/期末收盘/最高收益/最大回撤/本周收益/超额收益/成交状态/状态/操作）。 */
   const WBT_L2_COLS = [
-    { key: "code", label: "代码" },
-    { key: "name", label: "名称" },
-    { key: "open", label: "首日开盘", title: "跟踪自然周首个实际交易日开盘价" },
-    { key: "close_end", label: "期末收盘", title: "跟踪自然周最后一个实际交易日收盘价" },
-    { key: "max_gain", label: "最高收益", title: "周内最高价相对首日开盘价；下方小字为见顶在周几" },
-    { key: "drawdown", label: "最大回撤 ⓘ", title: "按跟踪窗口内逐日收盘价序列计算的峰谷回撤；日 K 无法判断同日高低先后" },
-    { key: "week_ret", label: "本周收益", title: "跟踪自然周首日开盘买入至期末收盘卖出收益" },
-    { key: "excess", label: "超额收益", title: "相对沪深300指数的首日开盘超额收益" },
-    { key: "fill", label: "成交状态", title: "一字涨停买不进、停牌或缺 K 线的标的不计入有效统计" },
-    { key: "status", label: "状态" },
-    { key: "op", label: "操作" },
+    { key: "code", label: "代码", align: "left", width: "110px" },
+    { key: "name", label: "名称", align: "left", width: "120px" },
+    { key: "open", label: "首日开盘", align: "right", title: "跟踪自然周首个实际交易日开盘价" },
+    { key: "close_end", label: "期末收盘", align: "right", title: "跟踪自然周最后一个实际交易日收盘价" },
+    { key: "max_gain", label: "最高收益", align: "right", title: "周内最高价相对首日开盘价；下方小字为见顶在周几" },
+    { key: "drawdown", label: "最大回撤 ⓘ", align: "right", title: "按跟踪窗口内逐日收盘价序列计算的峰谷回撤；日 K 无法判断同日高低先后" },
+    { key: "week_ret", label: "本周收益", align: "right", title: "跟踪自然周首日开盘买入至期末收盘卖出收益" },
+    { key: "excess", label: "超额收益", align: "right", title: "相对沪深300指数的首日开盘超额收益" },
+    { key: "fill", label: "成交状态", align: "center", title: "一字涨停买不进、停牌或缺 K 线的标的不计入有效统计" },
+    { key: "status", label: "状态", align: "center" },
+    { key: "op", label: "操作", align: "center", width: "150px" },
   ];
 
   function wbtL2SortValue(r, key) {
@@ -17321,39 +17472,87 @@ async function boot() {
       const dd = byDate[Number(d)];
       const dateStr = wbFmtDate(d);
       const wd = wbtWeekdayCn(d);
-      const head = '<div class="wbt-daily-head">' + esc(dateStr.length >= 10 ? dateStr.slice(5) : dateStr) + ' ' + esc(wd) + '</div>';
       if (!dd) {
-        return '<div class="wbt-daily-card">' + head + '<div class="wb-muted" style="font-size:12px;margin-top:4px">停牌/缺数据</div></div>';
+        return '<div class="wbt-daily-card">'
+          + '<div class="wbt-daily-date">' + esc(dateStr) + '</div>'
+          + '<div class="wbt-daily-weekday">' + esc(wd) + '</div>'
+          + '<div class="wbt-daily-ret wb-muted" style="font-size:13px;margin:6px 0">停牌/缺数据</div>'
+          + '<div class="wbt-daily-close">—</div>'
+          + '</div>';
       }
       const dayRet = dd.ret_vs_week_open != null ? dd.ret_vs_week_open : dd.ret_vs_signal_close;
-      const closeStr = dd.close != null ? ('收盘 ' + wbtRaw(dd.close)) : '';
+      const closeStr = dd.close != null ? ('收盘 ' + wbtRaw(dd.close)) : '—';
+      const retCls = dayRet > 0 ? 'wb-pos' : (dayRet < 0 ? 'wb-neg' : '');
       return '<div class="wbt-daily-card">'
-        + head
-        + '<div class="wbt-daily-ret ' + (dayRet > 0 ? 'wb-pos' : (dayRet < 0 ? 'wb-neg' : '')) + '">'
-        + wbtPctSigned(dayRet) + '</div>'
+        + '<div class="wbt-daily-date">' + esc(dateStr) + '</div>'
+        + '<div class="wbt-daily-weekday">' + esc(wd) + '</div>'
+        + '<div class="wbt-daily-ret ' + retCls + '">' + wbtPctSigned(dayRet) + '</div>'
         + '<div class="wbt-daily-close">' + esc(closeStr) + '</div>'
         + '</div>';
     }).join('');
 
+    const validDays = dates.filter((d) => !!byDate[Number(d)]).length;
+    const covText = "数据覆盖率: " + validDays + " / " + dates.length + (validDays === dates.length ? " (本周" + dates.length + "个交易日数据完整)" : " (部分交易日缺数据)");
+
+    let dateRangeStr = "";
+    if (dates.length >= 2) {
+      dateRangeStr = " (" + wbFmtDate(dates[0]) + " ~ " + wbFmtDate(dates[dates.length - 1]) + ")";
+    }
+
+    const dispCode = r.code_disp || r.code;
+    const stockName = r.name ? (dispCode + " " + r.name) : dispCode;
+
     return '<div class="wbt-l2-expand-wrap">'
       + '<div class="wbt-l2-stats-col">'
-      + '<div style="font-size:13px;font-weight:600;color:var(--wbt-text);margin-bottom:6px">个股关键指标</div>'
-      + '<div class="wbt-l2-stat-row"><span>首日开盘</span><b>' + wbtRaw(r.entry_open_week) + '</b></div>'
-      + '<div class="wbt-l2-stat-row"><span>期末收盘</span><b>' + wbtRaw(r.close_week_end) + '</b></div>'
-      + '<div class="wbt-l2-stat-row"><span>最高收益</span><span>' + (maxGain != null ? (wbtPctSigned(maxGain) + (peakDate ? ' · ' + esc(wbtWeekdayCn(peakDate)) : '')) : '—') + '</span></div>'
-      + '<div class="wbt-l2-stat-row"><span>最大回撤</span><span>' + wbtPctSigned(r.drawdown_close_sig) + '</span></div>'
-      + '<div class="wbt-l2-stat-row"><span>本周收益</span><span>' + wbtPctSigned(r.ret_close_exec != null ? r.ret_close_exec : r.ret_close_sig) + '</span></div>'
-      + '<div class="wbt-l2-stat-row"><span>沪深300</span><span>' + wbtPctSigned(bench) + '</span></div>'
-      + '<div class="wbt-l2-stat-row"><span>超额收益</span><span>' + wbtPctSigned(excess) + '</span></div>'
-      + '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--wbt-line-soft)">'
-      + '<button type="button" class="wb-secondary" data-wbt-q="' + esc(r.code) + '" style="font-size:12px;padding:4px 10px">查卦象 →</button>'
+      + '<div class="wbt-l2-panel-head">'
+      + '<div class="wbt-l2-panel-title">'
+      + '<svg class="wbt-l2-panel-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>'
+      + '<span>个股明细 · ' + esc(stockName) + '</span>'
+      + '</div>'
+      + '<button type="button" class="wbt-btn-query" data-wbt-q="' + esc(r.code) + '">查卦象 →</button>'
+      + '</div>'
+      + '<div class="wbt-l2-metric-grid">'
+      + '<div class="wbt-l2-metric-box">'
+      + '<div class="wbt-l2-metric-lbl">入场价 (首日开盘)</div>'
+      + '<div class="wbt-l2-metric-val">' + wbtRaw(r.entry_open_week) + '</div>'
+      + '</div>'
+      + '<div class="wbt-l2-metric-box">'
+      + '<div class="wbt-l2-metric-lbl">期末价 (周五收盘)</div>'
+      + '<div class="wbt-l2-metric-val">' + wbtRaw(r.close_week_end) + '</div>'
+      + '</div>'
+      + '<div class="wbt-l2-metric-box">'
+      + '<div class="wbt-l2-metric-lbl">最高收益</div>'
+      + '<div class="wbt-l2-metric-val">' + (maxGain != null ? wbtPctSigned(maxGain) : '—') + '</div>'
+      + (peakDate ? '<div class="wbt-l2-metric-sub">' + esc(wbtWeekdayCn(peakDate)) + '</div>' : '')
+      + '</div>'
+      + '<div class="wbt-l2-metric-box">'
+      + '<div class="wbt-l2-metric-lbl">最大回撤</div>'
+      + '<div class="wbt-l2-metric-val">' + wbtPctSigned(r.drawdown_close_sig) + '</div>'
+      + '</div>'
+      + '<div class="wbt-l2-metric-box">'
+      + '<div class="wbt-l2-metric-lbl">周收益</div>'
+      + '<div class="wbt-l2-metric-val">' + wbtPctSigned(r.ret_close_exec != null ? r.ret_close_exec : r.ret_close_sig) + '</div>'
+      + '</div>'
+      + '<div class="wbt-l2-metric-box">'
+      + '<div class="wbt-l2-metric-lbl">超额收益</div>'
+      + '<div class="wbt-l2-metric-val">' + wbtPctSigned(excess) + '</div>'
       + '</div>'
       + '</div>'
-      + '<div style="flex:1;min-width:0">'
-      + '<div style="font-size:13px;font-weight:600;color:var(--wbt-text);margin-bottom:10px">实际跟踪周每日收益（相对首日开盘）</div>'
+      + '</div>'
+      + '<div class="wbt-l2-daily-col">'
+      + '<div class="wbt-l2-panel-head">'
+      + '<div class="wbt-l2-panel-title">'
+      + '<svg class="wbt-l2-panel-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>'
+      + '<span>每日收益表现' + esc(dateRangeStr) + '</span>'
+      + '</div>'
+      + '</div>'
       + '<div class="wbt-daily-grid">' + dayCards + '</div>'
+      + '<div class="wbt-l2-cov-footer">'
+      + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>'
+      + '<span>' + esc(covText) + '</span>'
+      + '</div>'
       + (r.theoretical_open_ret != null
-          ? '<p class="wb-muted" style="font-size:12px;margin-top:10px">理论开盘收益 ' + esc(wbtPct(r.theoretical_open_ret))
+          ? '<p class="wb-muted" style="font-size:11px;margin-top:2px">理论开盘收益 ' + esc(wbtPct(r.theoretical_open_ret))
             + '（首日无 K 线或买不进时的参考值，未计入成交口径统计）</p>' : '')
       + '</div>'
       + '</div>';
@@ -17375,23 +17574,25 @@ async function boot() {
     const isBackfill = !!j.backfill || String(j.run_kind) === "backfill";
     const isSubsetScope = String(j.rules_scope || "") === "subset";
     const back = $("wbTrackL2Back");
-    if (back) back.textContent = wbt.l2From === "l0" ? "← 返回指标总览" : "← 返回历史周列表";
+    if (back) back.textContent = wbt.l2From === "l0" ? "← 返回指标总览" : "← 返回策略历史";
 
     const tw = Array.isArray(j.track_week) && j.track_week.length === 2 ? j.track_week : null;
     const weekDates = (j.track_week_dates || []).map(Number).filter((d) => d > 0);
 
-    // 头部信息
+    // 头部信息: 1:1 matching media_1789532664226.png
     const ruleLabel = wbt.weekRule ? (wbtRuleName(wbt.weekRule) || wbt.weekRule) : "全部规则";
-    let headHtml = '<strong style="font-size:16px;color:var(--wbt-text)">' + esc(ruleLabel) + '</strong>'
-      + '<span class="wb-muted" style="margin:0 4px">|</span>'
-      + '<span class="wb-mono" style="font-weight:600;font-size:15px;color:var(--wbt-text)">' + esc(wbFmtDate(j.week_id)) + '</span>'
-      + '<span class="wb-muted" style="font-size:13px">（' + esc(wbtWeekdayCn(j.week_id) || "周五") + '）</span>';
+    let headHtml = '<span style="font-size:18px;font-weight:700;color:#f3f7fc">跟踪</span>'
+      + '<span class="wb-muted" style="margin:0 8px;font-weight:300">|</span>'
+      + '<strong style="font-size:18px;font-weight:700;color:#ffffff">' + esc(ruleLabel) + '</strong>'
+      + '<span class="wb-muted" style="margin:0 8px;font-weight:300">|</span>'
+      + '<span class="wb-mono" style="font-size:16px;color:#c5d4e5">信号周 ' + esc(wbFmtDate(j.week_id)) + '</span>'
+      + '<span class="wb-muted" style="font-size:13px;margin-left:4px">（' + esc(wbtWeekdayCn(j.week_id) || "周五") + '）</span>';
 
     const compCls = j.completion === "complete" ? "complete" : (j.completion === "pending" ? "pending" : "running");
-    headHtml += '<span class="wbt-tag ' + compCls + '">' + esc(wbtCompletionLabel(j.completion)) + '</span>';
-    headHtml += isBackfill ? '<span class="wbt-tag backfill">回填</span>' : '<span class="wbt-tag">周五链</span>';
+    headHtml += '<span class="wbt-tag ' + compCls + '" style="margin-left:8px">' + esc(wbtCompletionLabel(j.completion)) + '</span>';
+    headHtml += isBackfill ? '<span class="wbt-tag backfill" style="margin-left:4px">回填</span>' : '<span class="wbt-tag" style="margin-left:4px">周五链</span>';
     if (isSubsetScope) {
-      headHtml += '<span class="wbt-tag subset" title="该周仅补算了部分指定规则">指定规则补算</span>';
+      headHtml += '<span class="wbt-tag subset" style="margin-left:4px" title="该周仅补算了部分指定规则">指定规则补算</span>';
     }
     if (headBox) headBox.innerHTML = headHtml;
 
@@ -17429,7 +17630,7 @@ async function boot() {
       }
     }
     if (j.backfill_notice) {
-      bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">回填数据提示</strong>'
+      bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">回填数据提示:</strong>'
         + '<span class="wb-warn">' + esc(j.backfill_notice) + '</span></div>';
     }
     if (isSubsetScope && j.scope_notice) {
@@ -17457,14 +17658,14 @@ async function boot() {
       const label = c.key === "week_ret" ? retLabel : c.label;
       const sortable = ["code", "name", "open", "close_end", "max_gain", "drawdown", "week_ret", "excess"].indexOf(c.key) >= 0;
       const arrow = wbt.l2SortKey === c.key ? (wbt.l2SortDesc ? " ▾" : " ▴") : "";
-      html += '<th'
+      const alCls = "wbt-al-" + (c.align || "left");
+      html += '<th class="' + alCls + '"'
         + (sortable ? ' data-wbt-l2sort="' + esc(c.key) + '" style="cursor:pointer"' : '')
         + (c.title ? ' title="' + esc(c.title) + '"' : '')
-        + (c.key === "code" || c.key === "name" ? ' style="text-align:left"' : (c.key === "status" || c.key === "op" ? ' style="text-align:center"' : ''))
+        + (c.width ? ' style="width:' + c.width + '"' : '')
         + '>' + esc(label + arrow) + '</th>';
     });
     html += '</tr></thead><tbody>';
-
 
     html += rows.map((r) => {
       const key = wbtRowKey(r);
@@ -17485,26 +17686,27 @@ async function boot() {
         : r.status === "no_bar" ? "无行情（停牌/缺数据）"
         : r.status === "pending" ? "进行中" : (r.status || "—");
       const nameCell = r.name ? esc(String(r.name)) : '<span class="wb-muted">—</span>';
+      const isExp = wbt.l2Expanded.has(key);
 
       return '<tr>'
-        + '<td><strong class="wb-mono">' + esc(r.code_disp || r.code) + '</strong></td>'
-        + '<td>' + nameCell + '</td>'
-        + '<td class="wb-mono">' + wbtRaw(r.entry_open_week) + '</td>'
-        + '<td class="wb-mono">' + wbtRaw(r.close_week_end) + '</td>'
-        + '<td class="wb-mono">' + mg + '</td>'
-        + '<td class="wb-mono">' + dd + '</td>'
-        + '<td class="wb-mono">' + wbtPctSigned(weekRet) + '</td>'
-        + '<td class="wb-mono">' + wbtPctSigned(excess) + '</td>'
-        + '<td>' + (unbuyable
+        + '<td class="wbt-al-left"><span class="wbt-expand-icon" data-wbt-expand="' + esc(key) + '" style="cursor:pointer;margin-right:6px;color:#829bb6;font-size:12px;display:inline-block;width:12px">' + (isExp ? '▼' : '▶') + '</span><strong class="wb-mono">' + esc(r.code_disp || r.code) + '</strong></td>'
+        + '<td class="wbt-al-left"><strong>' + nameCell + '</strong></td>'
+        + '<td class="wb-mono wbt-al-right">' + wbtRaw(r.entry_open_week) + '</td>'
+        + '<td class="wb-mono wbt-al-right">' + wbtRaw(r.close_week_end) + '</td>'
+        + '<td class="wb-mono wbt-al-right">' + mg + '</td>'
+        + '<td class="wb-mono wbt-al-right">' + dd + '</td>'
+        + '<td class="wb-mono wbt-al-right">' + wbtPctSigned(weekRet) + '</td>'
+        + '<td class="wb-mono wbt-al-right">' + wbtPctSigned(excess) + '</td>'
+        + '<td class="wbt-al-center">' + (unbuyable
             ? '<span class="wbt-tag running" title="一字涨停买不进，未计入胜率与收益统计">一字未买入</span>'
             : esc(wbtFillLabel(r.fill_status))) + '</td>'
-        + '<td style="text-align:center">' + esc(statusLabel) + '</td>'
-        + '<td style="text-align:center">'
-        + '<button type="button" class="wb-secondary" data-wbt-expand="' + esc(key) + '" style="margin-right:6px">'
-        + (wbt.l2Expanded.has(key) ? "收起 ▲" : "详情 ▼") + '</button>'
-        + '<button type="button" class="wb-secondary" data-wbt-q="' + esc(r.code) + '">查卦象</button>'
+        + '<td class="wbt-al-center">' + esc(statusLabel) + '</td>'
+        + '<td class="wbt-al-center">'
+        + '<button type="button" class="wbt-table-btn" data-wbt-expand="' + esc(key) + '" style="margin-right:6px">'
+        + (isExp ? "收起 ▲" : "查看详情") + '</button>'
+        + '<button type="button" class="wbt-table-btn" data-wbt-q="' + esc(r.code) + '">查卦象</button>'
         + '</td></tr>'
-        + (wbt.l2Expanded.has(key)
+        + (isExp
             ? '<tr class="wb-l2-detail wbt-l2-expanded"><td colspan="' + WBT_L2_COLS.length + '">'
               + wbtRowDetailHtml(r, weekDates) + '</td></tr>'
             : '');
@@ -17612,16 +17814,16 @@ async function boot() {
     const rawWeek = (($("wbTrackBfWeek") || {}).value || "").trim();
     const isCustom = $("wbTrackBfScopeCustom") && $("wbTrackBfScopeCustom").checked;
     const pickedCount = wbt.bfChecked ? wbt.bfChecked.size : 0;
-    if (estWeek) estWeek.textContent = rawWeek || "未填写";
+    if (estWeek) estWeek.textContent = rawWeek || "—";
     if (estScope) {
       estScope.textContent = isCustom
-        ? (pickedCount > 0 ? (pickedCount + " 条指定规则") : "未选择（不选=全部规则）")
+        ? (pickedCount > 0 ? (pickedCount + " 条指定规则") : "全部规则")
         : "全部规则";
     }
     if (estTime) {
       if (isCustom && pickedCount > 0) {
         const minEst = pickedCount * 8, maxEst = pickedCount * 11;
-        estTime.textContent = "约 " + minEst + " ~ " + maxEst + " 分钟";
+        estTime.textContent = "时间预估: 单条指定规则通常约 " + minEst + " ~ " + maxEst + " 分钟";
       } else {
         estTime.textContent = "较长，通常约 60~90+ 分钟/周";
       }
@@ -17687,11 +17889,16 @@ async function boot() {
     const rows = wbt.bfRules.filter((r) =>
       !term || String(r.name).toLowerCase().includes(term) || String(r.id).toLowerCase().includes(term));
     box.innerHTML = rows.map((r) => {
-      // 同名规则（如两条「735金叉及趋势」）靠来源区分，前端不按名去重
-      const nm = (r.name || r.id) + (r.source ? " [" + r.source + "]" : "");
-      return '<label class="wb-check" style="min-height:34px;padding:4px 8px;display:flex;align-items:center;cursor:pointer"><input type="checkbox" data-wb-bf-rule="' + esc(r.id) + '"'
-        + (wbt.bfChecked.has(r.id) ? " checked" : "") + '><span style="flex:1;margin-left:6px">' + esc(nm) + "</span>"
-        + '<span class="wb-muted wb-mono" style="font-size:11px;margin-left:8px">' + esc(r.id.slice(0, 6)) + "</span></label>";
+      const nm = r.name || r.id;
+      const fp = r.fingerprint ? String(r.fingerprint).slice(0, 6) : (r.source || "user");
+      return '<label class="wb-check" style="min-height:36px;padding:6px 10px;display:flex;align-items:center;cursor:pointer;gap:8px;border-radius:4px;transition:background .12s">'
+        + '<input type="checkbox" data-wb-bf-rule="' + esc(r.id) + '"'
+        + (wbt.bfChecked.has(r.id) ? " checked" : "") + '>'
+        + '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">'
+        + '<span style="color:#f3f7fc;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(nm) + '</span>'
+        + '<span class="wb-muted wb-mono" style="font-size:11px">版本 ' + esc(fp) + '</span>'
+        + '</div>'
+        + '</label>';
     }).join("") || '<span class="wb-muted">没有匹配的规则（已选 ' + wbt.bfChecked.size + " 条仍在生效）</span>";
     box.querySelectorAll("input[data-wb-bf-rule]").forEach((x) => {
       x.onchange = () => {
@@ -17713,7 +17920,7 @@ async function boot() {
   function wbtRenderBackfillRuleState() {
     const n = wbt.bfChecked.size;
     const cnt = $("wbTrackBfRuleCount");
-    if (cnt) cnt.textContent = "已选 " + n + " 条";
+    if (cnt) cnt.textContent = "已选 " + n + "/" + WBT_BF_MAX_RULES;
     const names = Array.from(wbt.bfChecked).map((id) => {
       const r = wbt.bfRules.find((x) => x.id === id);
       return r ? (r.name || id) : id;
