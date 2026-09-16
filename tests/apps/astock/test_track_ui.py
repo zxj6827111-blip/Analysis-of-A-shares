@@ -521,3 +521,18 @@ def test_subset_notice_text_from_backend_only(v3_html: str):
     assert "esc(j.scope_notice)" in detail, "必须直接渲染后端 scope_notice"
     assert "不代表这些规则当周没有入选" not in v3_html, \
         "前端不得复制后端文案（两处措辞会漂移）"
+
+
+def test_l0_v11_redesign_kpis_sparkline_and_exec_excess(v3_html: str):
+    """L0 首页 V1.1 重构：4 KPI 容器、Sparkline SVG 函数、exec 超额展示。"""
+    assert 'id="wbTrackL0Kpis"' in v3_html, "缺少 L0 KPI 容器"
+    overview = _extract_js_function(v3_html, "wbtRenderOverview")
+    assert "wbtRenderL0Kpis(" in overview, "渲染总览必须调用 KPI 渲染"
+    assert "weekly_equal_mean_excess_exec" in overview, "L0 必须展示 exec 超额"
+    assert "wbtSparklineSvg(r.trend_weeks)" in overview, "L0 表格必须调用原生 Sparkline"
+    spark = _extract_js_function(v3_html, "wbtSparklineSvg")
+    assert "<svg" in spark and "polyline" in spark, "Sparkline 必须输出原生 SVG"
+    kpi_fn = _extract_js_function(v3_html, "wbtRenderL0Kpis")
+    for need in ("跟踪策略", "最新信号周", "累计入选", "已结算"):
+        assert need in kpi_fn, f"L0 4 卡缺少「{need}」"
+

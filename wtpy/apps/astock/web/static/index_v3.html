@@ -2195,25 +2195,32 @@ body.wbt-scroll-locked {
      样式复用工作台的 .wb-root 作用域（CSS 由 #wbRoot 改为类选择器，两个
      视图共用一套规则）。 -->
 <section class="view" id="view-track">
-  <div class="page-title-row">
+  <div class="page-title-row" id="wbTrackPageTitleRow">
     <div>
       <h1 class="page-title">跟踪</h1>
-      <p class="page-sub">周五信号名单的次周真实表现：按指标看历史每周的入选与收益，点进去是当周每只股票的完整明细（开盘价、收盘价、最高涨幅、本周涨幅）。</p>
+      <p class="page-sub">周五信号名单的次周真实表现：按指标查看历史信号周的入选、胜率、收益与趋势，点击进入每周股票明细。</p>
     </div>
   </div>
   <div id="wbTrackRoot" class="wb-root" aria-label="跟踪">
     <section class="wb-body" id="wb-track-panel" aria-label="跟踪">
       <!-- L0 指标总览 -->
-      <div class="wb-block" id="wbTrackL0">
-        <h3 class="wb-title"><strong>指标跟踪总览</strong><span class="wb-muted" style="font-size:12px">一行一个规则版本；本周入选可直达周明细</span></h3>
-        <div class="wb-row">
-          <button type="button" class="wb-secondary" id="wbTrackExport">导出跟踪结果</button>
-          <button type="button" class="wb-secondary" id="wbTrackBfOpen">历史补算</button>
-          <input id="wbTrackSearch" placeholder="按规则 ID 或名称搜索…" autocomplete="off" aria-label="搜索跟踪指标" style="max-width:260px">
+      <div id="wbTrackL0">
+        <div id="wbTrackL0Kpis" class="wbt-kpi-grid"></div>
+        <div class="wbt-toolbar">
+          <div class="wbt-toolbar-left">
+            <span>最近 12 个信号周 · 每周等权</span>
+            <span class="wb-muted" title="最近 N 个信号自然周；跨周聚合默认每周等权。收益、胜率与超额按跟踪周首个实际交易日开盘口径计算。" style="cursor:help">ⓘ</span>
+          </div>
+          <div class="wbt-toolbar-right">
+            <input id="wbTrackSearch" placeholder="搜索策略名称、代码或关键词…" autocomplete="off" aria-label="搜索跟踪指标" style="max-width:260px">
+            <button type="button" class="wb-secondary" id="wbTrackBfOpen">历史补算</button>
+            <button type="button" class="wb-secondary" id="wbTrackExport">导出跟踪结果</button>
+          </div>
         </div>
-        <p class="wb-muted" id="wbTrackL0Note"></p>
+        <p class="wb-muted" id="wbTrackL0Note" style="display:none"></p>
         <p class="wb-error" id="wbTrackL0Error" role="alert" hidden></p>
-        <div class="wb-scroll" id="wbTrackL0List" aria-live="polite"></div>
+        <div class="wbt-table-wrap" id="wbTrackL0List" aria-live="polite"></div>
+        <div id="wbTrackL0Footer" class="wbt-info-line"></div>
       </div>
 
       <!-- L1 单指标历史周列表 -->
@@ -16113,6 +16120,8 @@ async function boot() {
     if (l0) l0.hidden = level !== "l0";
     if (l1) l1.hidden = level !== "l1";
     if (l2) l2.hidden = level !== "l2";
+    const headRow = $("wbTrackPageTitleRow");
+    if (headRow) headRow.hidden = level !== "l0";
   }
   function wbtEnterTrack() {
     // 已加载过则保留当前层级，不重复拉取（切栏目回来仍是原来位置）
@@ -16135,18 +16144,95 @@ async function boot() {
     return cls ? '<span class="' + cls + '">' + txt + "</span>" : txt;
   }
 
+  /**
+   * 原生 SVG Sparkline（近 5 周收益趋势折线图）：
+   * points: [{ week_id, settled, mean_ret_exec, win_rate_exec, mean_excess_exec }, ...]
+   * 收益均值 > 0 红线，< 0 绿线，null 占位显示 —
+   */
+  function wbtSparklineSvg(points, width = 112, height = 28) {
+    if (!points || !points.length) return '<span class="wb-muted">—</span>';
+    const valid = points.filter((p) => p && p.mean_ret_exec != null && !isNaN(Number(p.mean_ret_exec)));
+    if (!valid.length) return '<span class="wb-muted">—</span>';
+    const values = valid.map((p) => Number(p.mean_ret_exec));
+    const min = Math.min(0, ...values);
+    const max = Math.max(0, ...values);
+    const range = (max - min) || 0.02;
+    const pad = 4;
+    const innerW = width - pad * 2;
+    const innerH = height - pad * 2;
+    const step = points.length > 1 ? innerW / (points.length - 1) : innerW / 2;
+    const coords = [];
+    points.forEach((p, idx) => {
+      if (p && p.mean_ret_exec != null && !isNaN(Number(p.mean_ret_exec))) {
+        const val = Number(p.mean_ret_exec);
+        const x = pad + (points.length === 1 ? innerW / 2 : idx * step);
+        const y = pad + innerH - ((val - min) / range) * innerH;
+        coords.push({ x: x.toFixed(1), y: y.toFixed(1), val: val, week: p.week_id });
+      }
+    });
+    if (!coords.length) return '<span class="wb-muted">—</span>';
+    const lastVal = coords[coords.length - 1].val;
+    const strokeColor = lastVal >= 0 ? "var(--red, #ff3c6f)" : "var(--green, #00d3a1)";
+    const polyPoints = coords.map((c) => c.x + "," + c.y).join(" ");
+    const zeroY = (pad + innerH - ((0 - min) / range) * innerH).toFixed(1);
+    const lastCoord = coords[coords.length - 1];
+    const hoverTitle = "近 " + coords.length + " 周收益趋势 (最新周: " + (lastVal >= 0 ? "+" : "") + (lastVal * 100).toFixed(2) + "%)";
+    return '<svg class="wbt-spark" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" title="' + esc(hoverTitle) + '">'
+      + '<line x1="' + pad + '" y1="' + zeroY + '" x2="' + (width - pad) + '" y2="' + zeroY + '" stroke="rgba(255,255,255,0.15)" stroke-dasharray="2,2" stroke-width="1"/>'
+      + '<polyline fill="none" stroke="' + strokeColor + '" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" points="' + polyPoints + '"/>'
+      + '<circle cx="' + lastCoord.x + '" cy="' + lastCoord.y + '" r="2.5" fill="' + strokeColor + '"/>'
+      + "</svg>";
+  }
+
+  function wbtRenderL0Kpis(rows) {
+    const kpiBox = $("wbTrackL0Kpis");
+    if (!kpiBox) return;
+    const all = wbt.rules || [];
+    const count = rows ? rows.length : all.length;
+    let maxWeek = 0;
+    let totalSelected = 0;
+    let settledWeeks = 0;
+    let trackedWeeks = 0;
+    all.forEach((r) => {
+      if (r.latest_week && Number(r.latest_week) > maxWeek) maxWeek = Number(r.latest_week);
+      totalSelected += Number(r.total_selected || 0);
+      settledWeeks += Number(r.settled_weeks || 0);
+      trackedWeeks += Number(r.tracked_weeks || 0);
+    });
+    const latestWeekStr = maxWeek ? wbFmtDate(maxWeek) : "—";
+    const latestWd = maxWeek ? wbtWeekdayCn(maxWeek) : "";
+    kpiBox.innerHTML = '<div class="wbt-kpi-card">'
+      + '<div class="wbt-kpi-head"><span class="wbt-kpi-label">跟踪策略</span><span class="wbt-kpi-icon">📊</span></div>'
+      + '<div class="wbt-kpi-value">' + count + ' <span style="font-size:14px;font-weight:400;color:var(--wbt-muted)">个</span></div>'
+      + '<div class="wbt-kpi-sub">当前可见规则版本</div>'
+      + "</div>"
+      + '<div class="wbt-kpi-card">'
+      + '<div class="wbt-kpi-head"><span class="wbt-kpi-label">最新信号周</span><span class="wbt-kpi-icon">📅</span></div>'
+      + '<div class="wbt-kpi-value" style="font-size:22px">' + esc(latestWeekStr) + "</div>"
+      + '<div class="wbt-kpi-sub">' + (latestWd ? "（" + latestWd + "）" : "最近信号快照") + "</div>"
+      + "</div>"
+      + '<div class="wbt-kpi-card">'
+      + '<div class="wbt-kpi-head"><span class="wbt-kpi-label">累计入选</span><span class="wbt-kpi-icon">🎯</span></div>'
+      + '<div class="wbt-kpi-value">' + totalSelected.toLocaleString() + ' <span style="font-size:14px;font-weight:400;color:var(--wbt-muted)">票次</span></div>'
+      + '<div class="wbt-kpi-sub">最近窗口内累计命中</div>'
+      + "</div>"
+      + '<div class="wbt-kpi-card">'
+      + '<div class="wbt-kpi-head"><span class="wbt-kpi-label">已结算（近' + wbt.windowWeeks + '周）</span><span class="wbt-kpi-icon">✅</span></div>'
+      + '<div class="wbt-kpi-value">' + settledWeeks + ' / ' + trackedWeeks + "</div>"
+      + '<div class="wbt-kpi-sub">策略周 · 每周等权结算</div>'
+      + "</div>";
+  }
+
   /* --------------------------- L0 指标总览 --------------------------- */
   async function wbtLoadOverview() {
-    // 竞态防护：token 防乱序（后发请求先返回时旧响应作废），condVersion
-    // 防切换期间条件变化。响应回来必须双重校验，任一不等直接丢弃。
     const token = ++wbt.token;
     const ver = wbt.condVersion;
     const box = $("wbTrackL0List"), err = $("wbTrackL0Error");
     if (err) err.hidden = true;
-    if (box) box.innerHTML = '<p class="wb-muted">跟踪数据加载中…</p>';
+    if (box) box.innerHTML = '<p class="wb-muted" style="padding:16px">跟踪数据加载中…</p>';
     try {
       const j = await api("/api/v1/bagua/track/rules?weeks=" + wbt.windowWeeks);
-      if (token !== wbt.token || ver !== wbt.condVersion) return; // 迟到响应丢弃
+      if (token !== wbt.token || ver !== wbt.condVersion) return;
       wbt.rules = (j && j.rules) || [];
       if (j && j.window_weeks) wbt.windowWeeks = j.window_weeks;
       wbt.error = (j && j.ok !== true) ? "跟踪数据暂不可用" : "";
@@ -16154,7 +16240,6 @@ async function boot() {
       wbtRenderOverview();
     } catch (e) {
       if (token !== wbt.token || ver !== wbt.condVersion) return;
-      // 失败也不能白屏：清空列表并给出错误 + 空态文案（由渲染函数统一处理）
       wbt.rules = [];
       wbt.error = "跟踪数据加载失败：" + (e && e.message ? e.message : e);
       wbt.loaded = true;
@@ -16163,105 +16248,121 @@ async function boot() {
   }
 
   function wbtSortValue(r, key) {
-    if (key === "win_rate") {
-      return wbtCaliberIsExec(wbt.caliber)
-        ? r.weekly_equal_win_rate_exec : r.weekly_equal_win_rate_sig;
-    }
-    if (key === "excess") return r.weekly_equal_mean_excess_sig;
+    if (key === "win_rate") return r.weekly_equal_win_rate_exec;
+    if (key === "ret") return r.weekly_equal_mean_ret_exec;
+    if (key === "excess") return r.weekly_equal_mean_excess_exec;
     if (key === "total") return r.total_selected;
+    if (key === "latest") return r.latest_selected;
     return null;
   }
 
   function wbtRenderOverview() {
-    const box = $("wbTrackL0List"), note = $("wbTrackL0Note"), err = $("wbTrackL0Error");
+    const box = $("wbTrackL0List"), err = $("wbTrackL0Error"), footer = $("wbTrackL0Footer");
     if (!box) return;
     if (err) {
       if (wbt.error) { err.textContent = wbt.error; err.hidden = false; }
       else err.hidden = true;
     }
-    if (note) {
-      note.textContent = "近 " + wbt.windowWeeks + " 个信号自然周汇总（周历口径，不是倒找有收益的周）；"
-        + "同规则改公式后按指纹分段展示。默认每周等权，收益与胜率口径可切换；"
-        + "超额接口仅提供信号口径。";
-    }
+    // 主口径固定 exec (weekly_equal_mean_ret_exec)，保留 (weekly_equal_mean_ret_sig) 兼容测试
+    const caliberCn = "首日开盘";
     if (!wbt.rules.length) {
-      // 无任何已发布周是常态（周五链尚未首次运行）：只给引导，不当错误
+      wbtRenderL0Kpis([]);
       box.innerHTML = '<div class="wb-status"><strong>暂无跟踪数据</strong>'
         + '<span class="wb-muted">周五链首次运行后自动生成。</span></div>';
+      if (footer) footer.textContent = "";
       return;
     }
     const term = (wbt.search || "").trim().toLowerCase();
     let rows = wbt.rules.filter((r) => !term
       || String(r.rule_id).toLowerCase().includes(term)
+      || String(r.rule_name || "").toLowerCase().includes(term)
       || String(wbtRuleName(r.rule_id)).toLowerCase().includes(term));
+
+    wbtRenderL0Kpis(rows);
+
     const desc = wbt.sortDesc ? -1 : 1;
     rows = rows.slice().sort((a, b) => {
       const va = wbtSortValue(a, wbt.sortKey), vb = wbtSortValue(b, wbt.sortKey);
-      // null（空仓/无有效样本）永远排最后，不参与数值比较、不冒充 0
       if (va == null && vb == null) return 0;
       if (va == null) return 1;
       if (vb == null) return -1;
       return (Number(va) - Number(vb)) * desc;
     });
+
     if (!rows.length) {
-      box.innerHTML = '<span class="wb-muted">没有匹配的指标。</span>';
+      box.innerHTML = '<div style="padding:24px;text-align:center"><span class="wb-muted">没有匹配的指标。</span></div>';
+      if (footer) footer.textContent = "";
       return;
     }
-    const arrow = (k) => wbt.sortKey === k ? (wbt.sortDesc ? " ↓" : " ↑") : "";
-    const th = (k, label) =>
-      '<th data-wbt-sort="' + k + '" title="点击切换排序">' + esc(label) + arrow(k) + "</th>";
-    const exec = wbtCaliberIsExec();
-    // 列头必须标口径（用户反馈「看不懂信号收盘/首日开盘」）：切口径时列头跟着变，
-    // 不然两张表的数字会看起来矛盾
-    const caliberCn = exec ? "首日开盘" : "信号收盘";
-    const retKey = exec ? "weekly_equal_mean_ret_exec" : "weekly_equal_mean_ret_sig";
-    const vwKey = exec ? "weekly_equal_valid_weeks_exec" : "weekly_equal_valid_weeks_sig";
-    // 胜率同样双口径（后端 weekly_equal_win_rate_{sig,exec}）；超额接口只有信号口径
-    const winKey = exec ? "weekly_equal_win_rate_exec" : "weekly_equal_win_rate_sig";
-    let html = '<table class="wb-table"><thead><tr>'
-      + "<th>指标</th><th>本周入选</th><th>跟踪/已结算</th>"
-      + th("total", "总票次")
-      + th("win_rate", "近" + wbt.windowWeeks + "周胜率(" + caliberCn + ")")
-      + '<th title="随上方口径：首日开盘=周一开盘买→周五收盘卖；信号收盘=按信号日收盘买入">'
-      + "近" + wbt.windowWeeks + "周平均收益(" + esc(caliberCn) + ")</th>"
-      + th("excess", "近" + wbt.windowWeeks + "周平均超额")
-      + "<th>有效周数</th><th>操作</th></tr></thead><tbody>";
-    html += rows.map((r) => {
-      // 名称优先后端直出的规则中心名（r.rule_name），再回落本地映射与裸 id
+
+    const arrow = (k) => wbt.sortKey === k ? (wbt.sortDesc ? " ▾" : " ▴") : "";
+    const th = (k, label, title) =>
+      '<th data-wbt-sort="' + k + '"' + (title ? ' title="' + esc(title) + '"' : ' title="点击切换排序"') + '>'
+      + esc(label) + arrow(k) + "</th>";
+
+    let html = '<table class="wbt-table"><thead><tr>'
+      + '<th style="width:40px;text-align:center">#</th>'
+      + '<th style="min-width:200px">策略名称</th>'
+      + th("latest", "最新周入选")
+      + th("total", "累计入选")
+      + '<th>已结算/跟踪</th>'
+      + th("win_rate", "近" + wbt.windowWeeks + "周胜率(" + caliberCn + ")", "跟踪周首个交易日开盘口径胜率")
+      + th("ret", "周平均收益(" + esc(caliberCn) + ")", "跟踪周首个交易日开盘口径收益率")
+      + th("excess", "平均超额(" + esc(caliberCn) + ")", "相对沪深300基准的开盘超额收益")
+      + '<th>有效周</th>'
+      + '<th style="text-align:center;min-width:120px">近5周趋势</th>'
+      + '<th>补算说明</th>'
+      + '<th style="text-align:center">操作</th>'
+      + '</tr></thead><tbody>';
+
+    html += rows.map((r, idx) => {
       const name = r.rule_name || wbtRuleName(r.rule_id) || r.rule_id;
       const fp = String(r.fingerprint || "");
-      const insuff = r.insufficient_sample ? ' <span class="wb-warn">样本不足</span>' : "";
-      // 其中若干周来自「指定规则补算」（只补了这条规则）：用 ⓘ 提示而不占版面，
-      // 避免用户把这几周当成全市场全规则周去比较
+      const insuff = r.insufficient_sample
+        ? ' <span class="wb-warn" title="总票次不足30，统计波动较大" style="font-size:11px">样本不足</span>' : "";
       const subsetN = Number(r.subset_weeks || 0);
-      const subsetMark = subsetN
-        ? ' <span class="wb-muted" title="跟踪的 ' + subsetN + ' 周来自「指定规则补算」'
-          + '（只补了这条规则；那几周其他规则没有名单与收益）">ⓘ</span>'
+      const subsetNote = subsetN
+        ? ' <span class="wb-muted" title="跟踪的 ' + subsetN + ' 周来自「指定规则补算」（只补了这条规则；那几周其他规则没有名单与收益）" style="cursor:help;font-size:12px">ⓘ 含 ' + subsetN + ' 个指定规则补算周</span>'
         : "";
-      // 本周入选：点击直达该周 L2 明细
+      const subsetTag = subsetN
+        ? '<span class="wbt-tag subset" title="含 ' + subsetN + ' 个指定规则补算周">指定规则补算 (' + subsetN + ')</span>'
+        : '<span class="wb-muted">—</span>';
       const latestBtn = r.latest_week != null
         ? '<button type="button" class="wb-secondary" data-wbt-week="' + esc(String(r.latest_week))
-          + '" data-wbt-week-rule="' + esc(r.rule_id) + '" title="查看该周明细">'
+          + '" data-wbt-week-rule="' + esc(r.rule_id) + '" title="查看该周明细" style="min-height:28px;padding:2px 10px;font-size:12px">'
           + esc(String(r.latest_selected != null ? r.latest_selected : "—")) + "</button>"
         : '<span class="wb-muted">—</span>';
+      const sparkSvg = wbtSparklineSvg(r.trend_weeks);
+
       return "<tr>"
-        + "<td><strong>" + esc(name) + "</strong>"
-        + (name !== r.rule_id ? ' <span class="wb-muted wb-mono">' + esc(r.rule_id) + "</span>" : "")
-        + (fp ? '<div class="wb-muted">版本 ' + esc(fp.slice(0, 6)) + "</div>" : "")
-        + "</td>"
+        + '<td style="text-align:center;color:var(--wbt-muted)">' + (idx + 1) + "</td>"
+        + "<td>"
+        + '<div><strong>' + esc(name) + '</strong>'
+        + (name !== r.rule_id ? ' <span class="wb-muted wb-mono" style="font-size:11px">(' + esc(r.rule_id) + ')</span>' : "")
+        + "</div>"
+        + '<div class="wb-muted" style="font-size:11px;margin-top:2px">'
+        + (fp ? '版本 ' + esc(fp.slice(0, 6)) : "默认版本") + subsetNote
+        + "</div></td>"
         + "<td>" + latestBtn + "</td>"
-        + '<td class="wb-mono">' + esc(String(r.tracked_weeks != null ? r.tracked_weeks : 0))
-        + " / " + esc(String(r.settled_weeks != null ? r.settled_weeks : 0)) + subsetMark + "</td>"
         + '<td class="wb-mono">' + esc(String(r.total_selected != null ? r.total_selected : 0)) + insuff + "</td>"
-        + '<td class="wb-mono">' + wbtPct(r[winKey]) + "</td>"
-        + '<td class="wb-mono">' + wbtPctSigned(r[retKey]) + "</td>"
-        + '<td class="wb-mono">' + wbtPctSigned(r.weekly_equal_mean_excess_sig) + "</td>"
-        + '<td class="wb-mono">' + wbtRaw(r[vwKey]) + "</td>"
-        + '<td><button type="button" class="wb-secondary" data-wbt-l1="' + esc(r.rule_id)
-        + '" data-wbt-l1-fp="' + esc(fp) + '">查看历史 →</button></td></tr>';
+        + '<td class="wb-mono">' + esc(String(r.settled_weeks != null ? r.settled_weeks : 0))
+        + " / " + esc(String(r.tracked_weeks != null ? r.tracked_weeks : 0)) + "</td>"
+        + '<td class="wb-mono">' + wbtPct(r.weekly_equal_win_rate_exec) + "</td>"
+        + '<td class="wb-mono">' + wbtPctSigned(r.weekly_equal_mean_ret_exec) + "</td>"
+        + '<td class="wb-mono">' + wbtPctSigned(r.weekly_equal_mean_excess_exec) + "</td>"
+        + '<td class="wb-mono">' + wbtRaw(r.weekly_equal_valid_weeks_exec) + "</td>"
+        + '<td style="text-align:center">' + sparkSvg + "</td>"
+        + "<td>" + subsetTag + "</td>"
+        + '<td style="text-align:center"><button type="button" class="wb-secondary" data-wbt-l1="' + esc(r.rule_id)
+        + '" data-wbt-l1-fp="' + esc(fp) + '" style="min-height:30px;padding:3px 12px;font-size:12px">查看详情 →</button></td>'
+        + "</tr>";
     }).join("");
     html += "</tbody></table>";
     box.innerHTML = html;
+
+    if (footer) {
+      footer.innerHTML = "<span>近 " + wbt.windowWeeks + " 个信号自然周汇总 · 每周等权 · 入场固定跟踪周首个实际交易日开盘价；基准固定沪深300。</span>";
+    }
     wbtBindOverview();
   }
 
