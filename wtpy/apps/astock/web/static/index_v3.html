@@ -2240,14 +2240,24 @@ body.wbt-scroll-locked {
 
       <!-- L2 周明细 -->
       <div class="wb-block" id="wbTrackL2" hidden>
-        <div class="wb-row">
-          <button type="button" class="wb-secondary" id="wbTrackL2Back">← 返回周列表</button>
+        <div class="wbt-page-head">
+          <div class="wbt-page-title-row" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+            <button type="button" class="wb-secondary" id="wbTrackL2Back">← 返回周列表</button>
+            <div id="wbTrackL2Header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"></div>
+          </div>
+          <div id="wbTrackL2Subtitle" class="wbt-page-sub" style="margin-top:6px;margin-left:2px"></div>
         </div>
-        <div id="wbTrackL2Summary"></div>
+        <div id="wbTrackL2Summary" style="display:none"></div>
+        <div class="wbt-kpi-grid wbt-kpi-grid-5" id="wbTrackL2Kpis" style="margin-bottom:14px"></div>
+        <div id="wbTrackL2Banners" style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px"></div>
         <p class="wb-error" id="wbTrackL2Error" role="alert" hidden></p>
-        <div class="wb-scroll" id="wbTrackL2List" aria-live="polite"></div>
+        <div class="wbt-table-wrap" id="wbTrackL2List" aria-live="polite"></div>
+        <div class="wbt-info-line" id="wbTrackL2Footnote" style="margin-top:12px">
+          <span>* 跟踪自然周首个实际交易日开盘买入，最后一个实际交易日收盘卖出；点「详情」展开个股逐日收益与诊断指标。超额收益基准：沪深300。</span>
+        </div>
       </div>
     </section>
+
   </div>
 
   <!-- 历史补算 Drawer -->
@@ -16590,9 +16600,14 @@ async function boot() {
     wbt.weekId = weekId;
     wbt.weekRule = ruleId || "";
     wbtShowLevel("l2");
-    const sum = $("wbTrackL2Summary"), list = $("wbTrackL2List"), err = $("wbTrackL2Error");
+    const sum = $("wbTrackL2Summary"), headBox = $("wbTrackL2Header"), subBox = $("wbTrackL2Subtitle"),
+          kpis = $("wbTrackL2Kpis"), banners = $("wbTrackL2Banners"), list = $("wbTrackL2List"), err = $("wbTrackL2Error");
     if (err) err.hidden = true;
-    if (sum) sum.innerHTML = '<span class="wb-muted">周明细加载中…</span>';
+    if (headBox) headBox.innerHTML = '<span class="wb-muted">周明细加载中…</span>';
+    if (subBox) subBox.innerHTML = "";
+    if (kpis) kpis.innerHTML = "";
+    if (banners) banners.innerHTML = "";
+    if (sum) sum.innerHTML = "";
     if (list) list.innerHTML = "";
     try {
       let url = "/api/v1/bagua/track/weeks/" + encodeURIComponent(String(weekId));
@@ -16603,7 +16618,7 @@ async function boot() {
       wbtRenderWeekDetail();
     } catch (e) {
       if (token !== wbt.token || ver !== wbt.condVersion) return;
-      if (sum) sum.innerHTML = "";
+      if (headBox) headBox.innerHTML = "";
       if (err) { err.textContent = "周明细加载失败：" + (e && e.message ? e.message : e); err.hidden = false; }
     }
   }
@@ -16636,7 +16651,7 @@ async function boot() {
     const wd = dt.getDay();
     return wd === 0 ? 7 : wd;
   }
-    /** 星期中文（1=周一…7=周日）；非法日期返回空串（不猜、不填占位）。 */
+  /** 星期中文（1=周一…7=周日）；非法日期返回空串（不猜、不填占位）。 */
   function wbtWeekdayCn(dateInt) {
     const wd = wbtWeekday(dateInt);
     return wd >= 1 && wd <= 7 ? "周" + "一二三四五六日"[wd - 1] : "";
@@ -16648,17 +16663,72 @@ async function boot() {
   /** 展开行的键：同票多规则必须各展开各的。 */
   function wbtRowKey(r) { return String(r.code || "") + "|" + String(r.rule_id || ""); }
 
-  /** L2 默认列（用户要求：代码/名称/开盘价/周五收盘价/最高涨幅/本周涨幅）。
-   *  逐日收益、回撤、超额等诊断列收进「详情」行——18 列平铺太密，
-   *  列表页只留看得懂的少数列。 */
+  /** L2 五张 KPI 汇总卡（契约 §3，来自后端 ui_summary） */
+  function wbtRenderL2Kpis(j) {
+    const box = $("wbTrackL2Kpis");
+    if (!box) return;
+    const uis = (j && j.ui_summary) || {};
+    const rows = (j && j.rows) || [];
+    const selCount = uis.selected_count != null ? uis.selected_count : (j && j.selected_count != null ? j.selected_count : rows.length);
+    
+    // 兼容回退计算
+    const validRows = rows.filter((r) => r.status === "ok" && String(r.fill_status) === "ok" && r.ret_close_exec != null);
+    const validCount = uis.valid_exec_count != null ? uis.valid_exec_count : validRows.length;
+    
+    let winRate = uis.win_rate_exec;
+    let posCount = 0;
+    if (winRate == null && validCount > 0) {
+      posCount = validRows.filter((r) => Number(r.ret_close_exec) > 0).length;
+      winRate = posCount / validCount;
+    } else if (validCount > 0 && winRate != null) {
+      posCount = Math.round(Number(winRate) * Number(validCount));
+    }
+    
+    const meanRet = uis.mean_ret_exec != null ? uis.mean_ret_exec : (validCount > 0 ? (validRows.reduce((acc, r) => acc + Number(r.ret_close_exec), 0) / validCount) : null);
+    
+    const excessRows = validRows.filter((r) => r.excess_exec != null);
+    const meanExcess = uis.mean_excess_exec != null ? uis.mean_excess_exec : (excessRows.length > 0 ? (excessRows.reduce((acc, r) => acc + Number(r.excess_exec), 0) / excessRows.length) : null);
+
+    const winSub = validCount > 0 ? (posCount + " / " + validCount + " 只盈利") : "首日开盘口径";
+
+    box.innerHTML = '<div class="wbt-kpi-card">'
+      + '<div class="wbt-kpi-head"><span class="wbt-kpi-label">入选股票</span><span class="wbt-kpi-icon">🎯</span></div>'
+      + '<div class="wbt-kpi-value">' + esc(String(selCount)) + '</div>'
+      + '<div class="wbt-kpi-sub">当周命中总数</div>'
+      + '</div>'
+      + '<div class="wbt-kpi-card">'
+      + '<div class="wbt-kpi-head"><span class="wbt-kpi-label">有效样本</span><span class="wbt-kpi-icon">📊</span></div>'
+      + '<div class="wbt-kpi-value">' + esc(String(validCount)) + '</div>'
+      + '<div class="wbt-kpi-sub">剔除一字涨停停牌</div>'
+      + '</div>'
+      + '<div class="wbt-kpi-card">'
+      + '<div class="wbt-kpi-head"><span class="wbt-kpi-label">胜率(首日开盘)</span><span class="wbt-kpi-icon">📈</span></div>'
+      + '<div class="wbt-kpi-value">' + wbtPct(winRate) + '</div>'
+      + '<div class="wbt-kpi-sub">' + esc(winSub) + '</div>'
+      + '</div>'
+      + '<div class="wbt-kpi-card">'
+      + '<div class="wbt-kpi-head"><span class="wbt-kpi-label">平均收益(首日开盘)</span><span class="wbt-kpi-icon">💰</span></div>'
+      + '<div class="wbt-kpi-value">' + wbtPctSigned(meanRet) + '</div>'
+      + '<div class="wbt-kpi-sub">首日开盘至期末收盘</div>'
+      + '</div>'
+      + '<div class="wbt-kpi-card">'
+      + '<div class="wbt-kpi-head"><span class="wbt-kpi-label">平均超额(首日开盘)</span><span class="wbt-kpi-icon">⚡</span></div>'
+      + '<div class="wbt-kpi-value">' + wbtPctSigned(meanExcess) + '</div>'
+      + '<div class="wbt-kpi-sub">超额基准沪深300</div>'
+      + '</div>';
+  }
+
+  /** L2 默认列（V1.1 实施规格：代码/名称/首日开盘/期末收盘/最高收益/最大回撤/本周收益/超额收益/成交状态/状态/操作）。 */
   const WBT_L2_COLS = [
     { key: "code", label: "代码" },
     { key: "name", label: "名称" },
-    { key: "open", label: "周一开盘价", title: "跟踪周首日开盘价——「首日开盘」口径的买入基准" },
-    { key: "close_end", label: "周五收盘价", title: "跟踪周最后交易日收盘价（节假日短周即当周最后一天）" },
-    { key: "max_gain", label: "最高涨幅", title: "周内最高价相对信号日收盘价；下方小字为见顶在周几" },
-    { key: "week_ret", label: "本周涨幅", title: "随上方口径：首日开盘=周一开盘买→周五收盘卖；信号收盘=按信号日收盘买入" },
-    { key: "fill", label: "可成交性", title: "一字涨停买不进的票不进「首日开盘」口径统计" },
+    { key: "open", label: "首日开盘", title: "跟踪自然周首个实际交易日开盘价" },
+    { key: "close_end", label: "期末收盘", title: "跟踪自然周最后一个实际交易日收盘价" },
+    { key: "max_gain", label: "最高收益", title: "周内最高价相对首日开盘价；下方小字为见顶在周几" },
+    { key: "drawdown", label: "最大回撤 ⓘ", title: "按跟踪窗口内逐日收盘价序列计算的峰谷回撤；日 K 无法判断同日高低先后" },
+    { key: "week_ret", label: "本周收益", title: "跟踪自然周首日开盘买入至期末收盘卖出收益" },
+    { key: "excess", label: "超额收益", title: "相对沪深300指数的首日开盘超额收益" },
+    { key: "fill", label: "成交状态", title: "一字涨停买不进、停牌或缺 K 线的标的不计入有效统计" },
     { key: "status", label: "状态" },
     { key: "op", label: "操作" },
   ];
@@ -16668,8 +16738,10 @@ async function boot() {
     if (key === "name") return String(r.name || "");
     if (key === "open") return wbtNum(r.entry_open_week);
     if (key === "close_end") return wbtNum(r.close_week_end);
-    if (key === "max_gain") return wbtNum(r.max_gain_sig);
-    if (key === "week_ret") return wbtNum(wbtCaliberIsExec() ? r.ret_close_exec : r.ret_close_sig);
+    if (key === "max_gain") return wbtNum(r.max_gain_exec != null ? r.max_gain_exec : r.max_gain_sig);
+    if (key === "drawdown") return wbtNum(r.drawdown_close_sig);
+    if (key === "week_ret") return wbtNum(wbtCaliberIsExec() ? r.ret_close_exec : (r.ret_close_sig != null ? r.ret_close_sig : r.ret_close_exec));
+    if (key === "excess") return wbtNum(r.excess_exec != null ? r.excess_exec : (r.excess_sig != null ? r.excess_sig : null));
     return null;
   }
 
@@ -16691,7 +16763,7 @@ async function boot() {
 
   function wbtPendingHtml(picks) {
     if (!picks || !picks.length) return "";
-    return '<div class="wb-block"><h3 class="wb-title"><strong>待结算（' + picks.length + " 只）</strong>"
+    return '<div class="wb-block" style="margin-top:14px"><h3 class="wb-title"><strong>待结算（' + picks.length + " 只）</strong>"
       + '<span class="wb-muted" style="font-size:12px">快照已命中、跟踪尚未结算：每周五晚自动结算上一信号周，'
       + '急用可用「补算指定周」立即结算</span></h3>'
       + '<div class="wb-chips">' + picks.map((p) =>
@@ -16702,149 +16774,220 @@ async function boot() {
       + "</div></div>";
   }
 
-
-    /** 详情行：逐日收益（按跟踪周**实际交易日**渲染，不写死周一~周五）+
-   *  入场/回撤/双口径/超额等诊断字段。短周、停牌日都按真实日期显示。 */
+  /** 详情行：逐日收益（按跟踪周**实际交易日**渲染，不写死周一~周五）+
+   *  首日开盘/期末收盘/最高收益/最大回撤/沪深300/超额收益等个股诊断指标。 */
   function wbtRowDetailHtml(r, weekDates) {
     const byDate = {};
     (r.daily || []).forEach((d) => { byDate[Number(d.date)] = d; });
     let dates = (weekDates || []).slice();
     if (!dates.length) dates = Object.keys(byDate).map(Number).sort((a, b) => a - b);
     const exec = wbtCaliberIsExec();
-    const dayCells = dates.map((d) => {
+    const bench = exec ? (r.bench_ret_exec != null ? r.bench_ret_exec : r.bench_ret_sig) : r.bench_ret_sig;
+    const excess = exec ? (r.excess_exec != null ? r.excess_exec : r.excess_sig) : r.excess_sig;
+    const maxGain = r.max_gain_exec != null ? r.max_gain_exec : r.max_gain_sig;
+    const peakDate = r.max_gain_exec_date != null ? r.max_gain_exec_date : r.max_gain_sig_date;
+
+    const dayCards = dates.map((d) => {
       const dd = byDate[Number(d)];
-      const head = esc(wbFmtDate(d)) + '<div class="wb-muted">' + esc(wbtWeekdayCn(d)) + "</div>";
-      if (!dd) return "<td>" + head + '<div class="wb-muted">停牌/缺数据</div></td>';
-      return "<td>" + head
-        + '<div class="wb-mono">' + wbtPct(dd.ret_vs_signal_close) + "</div>"
-        + '<div class="wb-muted wb-mono">收盘 ' + esc(wbtRaw(dd.close)) + "</div></td>";
-    }).join("");
-    const bench = exec ? r.bench_ret_exec : r.bench_ret_sig;
-    const excess = exec ? r.excess_exec : r.excess_sig;
-    return '<div class="wb-block"><div class="wb-stats">'
-      + "<span>入场价（信号日收盘）<b>" + esc(wbtRaw(r.entry_close_signal)) + "</b></span>"
-      + "<span>首日开盘 " + esc(wbtRaw(r.entry_open_week)) + "</span>"
-      + "<span>周五收盘 " + esc(wbtRaw(r.close_week_end)) + "</span>"
-      + "<span>周内最低相对入场 " + wbtPct(r.min_low_ret_sig) + "</span>"
-      + "<span>峰谷回撤（按收盘）" + wbtPct(r.drawdown_close_sig) + "</span>"
-      + "<span>周五收益(信号) " + wbtPct(r.ret_close_sig) + "</span>"
-      + "<span>周五收益(开盘) " + wbtPct(r.ret_close_exec) + "</span>"
-      + "</div>"
+      const dateStr = wbFmtDate(d);
+      const wd = wbtWeekdayCn(d);
+      const head = '<div class="wbt-daily-head">' + esc(dateStr.length >= 10 ? dateStr.slice(5) : dateStr) + ' ' + esc(wd) + '</div>';
+      if (!dd) {
+        return '<div class="wbt-daily-card">' + head + '<div class="wb-muted" style="font-size:12px;margin-top:4px">停牌/缺数据</div></div>';
+      }
+      const dayRet = dd.ret_vs_week_open != null ? dd.ret_vs_week_open : dd.ret_vs_signal_close;
+      const closeStr = dd.close != null ? ('收盘 ' + wbtRaw(dd.close)) : '';
+      return '<div class="wbt-daily-card">'
+        + head
+        + '<div class="wbt-daily-ret ' + (dayRet > 0 ? 'wb-pos' : (dayRet < 0 ? 'wb-neg' : '')) + '">'
+        + wbtPctSigned(dayRet) + '</div>'
+        + '<div class="wbt-daily-close">' + esc(closeStr) + '</div>'
+        + '</div>';
+    }).join('');
+
+    return '<div class="wbt-l2-expand-wrap">'
+      + '<div class="wbt-l2-stats-col">'
+      + '<div style="font-size:13px;font-weight:600;color:var(--wbt-text);margin-bottom:6px">个股关键指标</div>'
+      + '<div class="wbt-l2-stat-row"><span>首日开盘</span><b>' + wbtRaw(r.entry_open_week) + '</b></div>'
+      + '<div class="wbt-l2-stat-row"><span>期末收盘</span><b>' + wbtRaw(r.close_week_end) + '</b></div>'
+      + '<div class="wbt-l2-stat-row"><span>最高收益</span><span>' + (maxGain != null ? (wbtPctSigned(maxGain) + (peakDate ? ' · ' + esc(wbtWeekdayCn(peakDate)) : '')) : '—') + '</span></div>'
+      + '<div class="wbt-l2-stat-row"><span>最大回撤</span><span>' + wbtPctSigned(r.drawdown_close_sig) + '</span></div>'
+      + '<div class="wbt-l2-stat-row"><span>本周收益</span><span>' + wbtPctSigned(r.ret_close_exec != null ? r.ret_close_exec : r.ret_close_sig) + '</span></div>'
+      + '<div class="wbt-l2-stat-row"><span>沪深300</span><span>' + wbtPctSigned(bench) + '</span></div>'
+      + '<div class="wbt-l2-stat-row"><span>超额收益</span><span>' + wbtPctSigned(excess) + '</span></div>'
+      + '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--wbt-line-soft)">'
+      + '<button type="button" class="wb-secondary" data-wbt-q="' + esc(r.code) + '" style="font-size:12px;padding:4px 10px">查卦象 →</button>'
+      + '</div>'
+      + '</div>'
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="font-size:13px;font-weight:600;color:var(--wbt-text);margin-bottom:10px">实际跟踪周每日收益（相对首日开盘）</div>'
+      + '<div class="wbt-daily-grid">' + dayCards + '</div>'
       + (r.theoretical_open_ret != null
-          ? '<p class="wb-muted" style="font-size:12px">理论开盘收益 ' + esc(wbtPct(r.theoretical_open_ret))
-            + "（首日无 K 线或买不进时的参考值，未计入成交口径统计）</p>" : "")
-      + '<div class="wb-stats"><span>沪深300 ' + esc(wbtPct(bench)) + "</span>"
-      + "<span>超额（" + esc(exec ? "首日开盘" : "信号收盘") + "）" + esc(wbtPct(excess)) + "</span></div>"
-      + '<div class="wb-scroll"><table class="wb-table"><thead><tr>'
-      + "<th>逐日（相对信号日收盘）</th>" + dayCells + "</tr></thead></table></div>"
-      + "</div>";
+          ? '<p class="wb-muted" style="font-size:12px;margin-top:10px">理论开盘收益 ' + esc(wbtPct(r.theoretical_open_ret))
+            + '（首日无 K 线或买不进时的参考值，未计入成交口径统计）</p>' : '')
+      + '</div>'
+      + '</div>';
   }
 
   function wbtRenderWeekDetail() {
-    const sum = $("wbTrackL2Summary"), box = $("wbTrackL2List");
-    if (!sum || !box) return;
+    const sum = $("wbTrackL2Summary"), headBox = $("wbTrackL2Header"), subBox = $("wbTrackL2Subtitle"),
+          kpis = $("wbTrackL2Kpis"), banners = $("wbTrackL2Banners"), box = $("wbTrackL2List");
+    if (!box) return;
     const j = wbt.week;
-    if (!j) { sum.innerHTML = ""; box.innerHTML = ""; return; }
+    if (!j) {
+      if (headBox) headBox.innerHTML = "";
+      if (subBox) subBox.innerHTML = "";
+      if (kpis) kpis.innerHTML = "";
+      if (banners) banners.innerHTML = "";
+      box.innerHTML = "";
+      return;
+    }
     const isBackfill = !!j.backfill || String(j.run_kind) === "backfill";
     const isSubsetScope = String(j.rules_scope || "") === "subset";
     const back = $("wbTrackL2Back");
-    if (back) back.textContent = wbt.l2From === "l0" ? "← 返回指标总览" : "← 返回周列表";
+    if (back) back.textContent = wbt.l2From === "l0" ? "← 返回指标总览" : "← 返回历史周列表";
+
     const tw = Array.isArray(j.track_week) && j.track_week.length === 2 ? j.track_week : null;
     const weekDates = (j.track_week_dates || []).map(Number).filter((d) => d > 0);
-    let head = "<div class='wb-row'><strong>信号周 " + esc(wbFmtDate(j.week_id)) + "</strong>"
-      + '<span class="wb-muted wb-mono">' + esc(j.week_id != null ? String(j.week_id) : "") + "</span>"
-      + (wbt.weekRule ? '<span class="wb-muted">规则 ' + esc(wbtRuleName(wbt.weekRule) || wbt.weekRule) + "</span>" : "")
-      + "</div>"
-      + '<div class="wb-row">'
-      + wbtHtmlTag(wbtCompletionLabel(j.completion), j.completion === "complete" ? "" : "running")
-      + wbtHtmlTag("运行：" + (WBT_RUNKIND[j.run_kind] || j.run_kind || "—"))
-      + (isBackfill ? wbtHtmlTag("回填", "running") : "")
-      + (isSubsetScope ? wbtHtmlTag("指定规则补算", "running") : "")
-      + (tw ? '<span class="wb-muted">跟踪周 ' + esc(wbFmtDate(tw[0])) + " ~ " + esc(wbFmtDate(tw[1]))
-            + "（" + weekDates.length + " 个交易日" + (j.short_week ? "，短周" : "") + "）</span>" : "")
-      + (j.snapshot_id ? '<span class="wb-muted wb-mono">快照 ' + esc(String(j.snapshot_id)) + "</span>" : "")
-      + "</div>"
-      + '<div class="wb-stats">' + wbtCoverageHtml(j.coverage) + "</div>";
-    // 回填数据必须显著位置展示免责全文（契约 §9：UI/导出必带）
+
+    // 头部信息
+    const ruleLabel = wbt.weekRule ? (wbtRuleName(wbt.weekRule) || wbt.weekRule) : "全部规则";
+    let headHtml = '<strong style="font-size:16px;color:var(--wbt-text)">' + esc(ruleLabel) + '</strong>'
+      + '<span class="wb-muted" style="margin:0 4px">|</span>'
+      + '<span class="wb-mono" style="font-weight:600;font-size:15px;color:var(--wbt-text)">' + esc(wbFmtDate(j.week_id)) + '</span>'
+      + '<span class="wb-muted" style="font-size:13px">（' + esc(wbtWeekdayCn(j.week_id) || "周五") + '）</span>';
+
+    const compCls = j.completion === "complete" ? "complete" : (j.completion === "pending" ? "pending" : "running");
+    headHtml += '<span class="wbt-tag ' + compCls + '">' + esc(wbtCompletionLabel(j.completion)) + '</span>';
+    headHtml += isBackfill ? '<span class="wbt-tag backfill">回填</span>' : '<span class="wbt-tag">周五链</span>';
+    if (isSubsetScope) {
+      headHtml += '<span class="wbt-tag subset" title="该周仅补算了部分指定规则">指定规则补算</span>';
+    }
+    if (headBox) headBox.innerHTML = headHtml;
+
+    let subHtml = "";
+    if (tw) {
+      subHtml = '<span>跟踪区间：<strong class="wb-mono">' + esc(wbFmtDate(tw[0])) + ' ~ ' + esc(wbFmtDate(tw[1])) + '</strong>'
+        + '（' + weekDates.length + ' 个实际交易日' + (j.short_week ? ' · 短周' : '') + '）</span>';
+    }
+    if (j.snapshot_id) {
+      subHtml += '<span class="wb-muted wb-mono" style="margin-left:12px">快照 ' + esc(String(j.snapshot_id)) + '</span>';
+    }
+    if (j.coverage) {
+      subHtml += '<span class="wb-stats" style="margin-left:12px">' + wbtCoverageHtml(j.coverage) + '</span>';
+    }
+    if (subBox) subBox.innerHTML = subHtml;
+
+    // 5 KPIs
+    wbtRenderL2Kpis(j);
+
+    // 警示横幅
+    let bannerHtml = "";
+    const uis = j.ui_summary || {};
+    const retCov = uis.return_coverage_exec != null ? uis.return_coverage_exec : (j.coverage && j.coverage.week_first_open != null ? j.coverage.week_first_open : null);
+    const excessCov = uis.excess_coverage_exec != null ? uis.excess_coverage_exec : (j.coverage && j.coverage.excess != null ? j.coverage.excess : null);
+    const selCount = uis.selected_count != null ? uis.selected_count : (j.rows || []).length;
+
+    if (selCount > 0 && retCov != null && retCov < 0.90) {
+      bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">⚠ 数据完整性警示</strong>'
+        + '<span class="wb-warn">首日开盘收益覆盖率 ' + (retCov * 100).toFixed(1) + '%，部分股票因一字涨停、停牌/缺数据或判定未知而未计入统计；“已结算”不代表数据完整。</span></div>';
+    }
+    if (selCount > 0 && (excessCov == null || excessCov === 0 || excessCov < 0.90)) {
+      if (excessCov == null || excessCov === 0) {
+        bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">⚠ 基准数据提示</strong>'
+          + '<span class="wb-warn">沪深300基准数据缺失/边界不完整，本周股票收益已计算，但超额收益暂不可用。</span></div>';
+      }
+    }
     if (j.backfill_notice) {
-      head += '<div class="wb-warnbox"><strong class="wb-warn">回填数据提示</strong>'
-        + '<span class="wb-warn">' + esc(j.backfill_notice) + "</span></div>";
+      bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">回填数据提示</strong>'
+        + '<span class="wb-warn">' + esc(j.backfill_notice) + '</span></div>';
     }
-    // 指定规则补算：该周只有这几条规则跑过筛选，其余规则当周**没有名单**
-    // （不是"当周空仓"）——文案来自后端单一来源（契约 §6），前端不另写一套
     if (isSubsetScope && j.scope_notice) {
-      head += '<div class="wb-warnbox"><strong class="wb-warn">指定规则补算</strong>'
-        + '<span class="wb-warn">' + esc(j.scope_notice) + "</span></div>";
+      bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">指定规则补算</strong>'
+        + '<span class="wb-warn">' + esc(j.scope_notice) + '</span></div>';
     }
-    // 窗口未结束：说明「现在看到的是进行中的浮动值」，避免被误读成已结算收益
     if (String(j.completion) === "pending" || j.window_ended === false) {
-      head += '<div class="wb-warnbox"><strong class="wb-warn">进行中（未结算）</strong>'
-        + '<span class="wb-warn">跟踪周尚未走完或行情未到齐，下方收益为截至最新数据日的浮动值，'
-        + "每周五结算后自动更新为最终值。</span></div>";
+      bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">进行中（未结算）</strong>'
+        + '<span class="wb-warn">跟踪周尚未走完或行情未到齐，下方收益为截至最新数据日的浮动值，每周五结算后自动更新为最终值。</span></div>';
     }
-    sum.innerHTML = head;
+    if (banners) banners.innerHTML = bannerHtml;
+
     const rows = wbtSortL2Rows(j.rows || []);
     if (!rows.length) {
-      box.innerHTML = '<div class="wb-status"><strong>该周暂无已结算明细</strong>'
-        + '<span class="wb-muted">跟踪产物尚未生成：每周五晚自动结算上一信号周，'
-        + "也可用下方「补算指定周」立即结算。</span></div>"
+      box.innerHTML = '<div class="wb-status" style="padding:24px;text-align:center"><strong>该周暂无已结算明细</strong>'
+        + '<div class="wb-muted" style="margin-top:6px">跟踪产物尚未生成：每周五晚自动结算上一信号周，也可用下方「补算指定周」立即结算。</div></div>'
         + wbtPendingHtml(j.pending_picks);
       wbtBindWeekDetail(j);
       return;
     }
-    const retLabel = wbtCaliberIsExec() ? "本周涨幅(首日开盘)" : "本周涨幅(信号收盘)";
-    let html = '<table class="wb-table"><thead><tr>';
+
+    const retLabel = "本周涨幅(首日开盘)";
+    let html = '<table class="wbt-table"><thead><tr>';
     WBT_L2_COLS.forEach((c) => {
       const label = c.key === "week_ret" ? retLabel : c.label;
-      const sortable = ["code", "name", "open", "close_end", "max_gain", "week_ret"].indexOf(c.key) >= 0;
+      const sortable = ["code", "name", "open", "close_end", "max_gain", "drawdown", "week_ret", "excess"].indexOf(c.key) >= 0;
       const arrow = wbt.l2SortKey === c.key ? (wbt.l2SortDesc ? " ▾" : " ▴") : "";
-      html += "<th"
-        + (sortable ? ' data-wbt-l2sort="' + esc(c.key) + '" style="cursor:pointer"' : "")
-        + (c.title ? ' title="' + esc(c.title) + '"' : "")
-        + ">" + esc(label + arrow) + "</th>";
+      html += '<th'
+        + (sortable ? ' data-wbt-l2sort="' + esc(c.key) + '" style="cursor:pointer"' : '')
+        + (c.title ? ' title="' + esc(c.title) + '"' : '')
+        + (c.key === "code" || c.key === "name" ? ' style="text-align:left"' : (c.key === "status" || c.key === "op" ? ' style="text-align:center"' : ''))
+        + '>' + esc(label + arrow) + '</th>';
     });
-    html += "</tr></thead><tbody>";
+    html += '</tr></thead><tbody>';
+
+
     html += rows.map((r) => {
       const key = wbtRowKey(r);
-      const weekRet = wbtCaliberIsExec() ? r.ret_close_exec : r.ret_close_sig;
+      const weekRet = r.ret_close_exec != null ? r.ret_close_exec : r.ret_close_sig;
       const unbuyable = String(r.fill_status) === "limit_up_unbuyable";
-      const mg = r.max_gain_sig != null
-        ? wbtPct(r.max_gain_sig) + '<div class="wb-muted">'
-          + esc(wbtWeekdayCn(r.max_gain_sig_date) || "—") + "</div>"
+      // 最高收益：周内最高价相对首日开盘
+      const maxGain = r.max_gain_exec != null ? r.max_gain_exec : r.max_gain_sig;
+      const peakDate = r.max_gain_exec_date != null ? r.max_gain_exec_date : r.max_gain_sig_date;
+
+      const mg = maxGain != null
+        ? wbtPctSigned(maxGain) + '<div class="wb-muted" style="font-size:11px">' + esc(wbtWeekdayCn(peakDate) || "—") + '</div>'
         : "—";
+      const dd = r.drawdown_close_sig != null ? wbtPctSigned(r.drawdown_close_sig) : "—";
+      const excess = r.excess_exec != null ? r.excess_exec : (r.excess_sig != null ? r.excess_sig : null);
+
       const statusLabel = r.status === "ok"
         ? (String(j.completion) === "pending" ? "进行中" : "已结算")
         : r.status === "no_bar" ? "无行情（停牌/缺数据）"
         : r.status === "pending" ? "进行中" : (r.status || "—");
       const nameCell = r.name ? esc(String(r.name)) : '<span class="wb-muted">—</span>';
-      return "<tr>"
-        + "<td><strong>" + esc(r.code_disp || r.code) + "</strong></td>"
-        + "<td>" + nameCell + "</td>"
-        + '<td class="wb-mono">' + wbtRaw(r.entry_open_week) + "</td>"
-        + '<td class="wb-mono">' + wbtRaw(r.close_week_end) + "</td>"
-        + '<td class="wb-mono">' + mg + "</td>"
-        + '<td class="wb-mono">' + wbtPctSigned(weekRet) + "</td>"
-        + "<td>" + (unbuyable
-            ? wbtHtmlTag(wbtFillLabel(r.fill_status), "running")
-            : esc(wbtFillLabel(r.fill_status))) + "</td>"
-        + "<td>" + esc(statusLabel) + "</td>"
-        + "<td>"
-        + '<button type="button" class="wb-secondary" data-wbt-expand="' + esc(key) + '">'
-        + (wbt.l2Expanded.has(key) ? "收起" : "详情") + "</button>"
+
+      return '<tr>'
+        + '<td><strong class="wb-mono">' + esc(r.code_disp || r.code) + '</strong></td>'
+        + '<td>' + nameCell + '</td>'
+        + '<td class="wb-mono">' + wbtRaw(r.entry_open_week) + '</td>'
+        + '<td class="wb-mono">' + wbtRaw(r.close_week_end) + '</td>'
+        + '<td class="wb-mono">' + mg + '</td>'
+        + '<td class="wb-mono">' + dd + '</td>'
+        + '<td class="wb-mono">' + wbtPctSigned(weekRet) + '</td>'
+        + '<td class="wb-mono">' + wbtPctSigned(excess) + '</td>'
+        + '<td>' + (unbuyable
+            ? '<span class="wbt-tag running" title="一字涨停买不进，未计入胜率与收益统计">一字未买入</span>'
+            : esc(wbtFillLabel(r.fill_status))) + '</td>'
+        + '<td style="text-align:center">' + esc(statusLabel) + '</td>'
+        + '<td style="text-align:center">'
+        + '<button type="button" class="wb-secondary" data-wbt-expand="' + esc(key) + '" style="margin-right:6px">'
+        + (wbt.l2Expanded.has(key) ? "收起 ▲" : "详情 ▼") + '</button>'
         + '<button type="button" class="wb-secondary" data-wbt-q="' + esc(r.code) + '">查卦象</button>'
-        + "</td></tr>"
+        + '</td></tr>'
         + (wbt.l2Expanded.has(key)
-            ? '<tr class="wb-l2-detail"><td colspan="' + WBT_L2_COLS.length + '">'
-              + wbtRowDetailHtml(r, weekDates) + "</td></tr>"
-            : "");
+            ? '<tr class="wb-l2-detail wbt-l2-expanded"><td colspan="' + WBT_L2_COLS.length + '">'
+              + wbtRowDetailHtml(r, weekDates) + '</td></tr>'
+            : '');
     }).join("");
-    html += "</tbody></table>";
-    html += '<p class="wb-muted">点「详情」展开该票的逐日收益、回撤与超额；'
-      + "「最高涨幅」是周内最高价相对信号日收盘，见顶星期标在数值下方。</p>";
-    html += wbtPendingHtml(j.pending_picks);
+
+    html += '</tbody></table>';
     box.innerHTML = html;
+    if (j.pending_picks && j.pending_picks.length) {
+      box.innerHTML += wbtPendingHtml(j.pending_picks);
+    }
     wbtBindWeekDetail(j);
   }
+
 
 
     function wbtBindWeekDetail(j) {

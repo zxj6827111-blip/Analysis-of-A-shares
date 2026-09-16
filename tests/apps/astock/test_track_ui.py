@@ -212,24 +212,31 @@ def test_empty_states_are_guidance(v3_html: str):
 
 
 def test_l2_slim_columns_with_name_and_week_end_close(v3_html: str):
-    """L2 默认列 = 用户要求的少数列（代码/名称/开盘价/周五收盘/最高涨幅/
-    本周涨幅），诊断列收进详情——不再 18 列平铺。"""
+    """L2 默认列 = 用户要求的精简列（代码/名称/首日开盘/期末收盘/最高收益/
+    本周收益/超额收益/成交状态等），诊断列收进详情。"""
     m = re.search(r"const WBT_L2_COLS = \[(.*?)\n  \];", v3_html, flags=re.S)
     assert m, "缺少 L2 列定义"
     cols = m.group(1)
-    for need in ("代码", "名称", "周一开盘价", "周五收盘价", "最高涨幅", "本周涨幅", "可成交性"):
+    for need in ("代码", "名称", "首日开盘", "期末收盘", "最高收益", "本周收益", "成交状态"):
         assert need in cols, f"L2 默认列缺少「{need}」"
     # 诊断列不再进默认列（收进详情行）
-    for gone in ("周一", "周二", "峰谷回撤", "超额"):
+    for gone in ("周一", "周二", "峰谷回撤"):
         assert ('label: "%s"' % gone) not in cols, f"「{gone}」应从默认列收进详情"
     detail = _extract_js_function(v3_html, "wbtRenderWeekDetail")
     # 名称列：产物 name 字段（缺名显示「—」，绝不拿代码冒充）
     assert "r.name" in detail, "L2 必须渲染产物里的股票名称"
-    # 周五收盘价用产物的显式字段，不从 daily 反推
-    assert "close_week_end" in detail, "L2 必须用 close_week_end（周五收盘价）"
+    # 期末收盘价用产物的显式字段，不从 daily 反推
+    assert "close_week_end" in detail, "L2 必须用 close_week_end（期末收盘价）"
     # 见顶「周几」：日期 + 中文星期
-    assert "wbtWeekdayCn(" in detail, "最高涨幅必须标注见顶在周几"
-    assert "最高涨幅" in detail and "max_gain_sig" in detail
+    assert "wbtWeekdayCn(" in detail, "最高收益必须标注见顶在周几"
+    assert ("最高收益" in detail or "最高涨幅" in detail) and ("max_gain_exec" in detail or "max_gain_sig" in detail)
+    # V1.1 exec 口径核心字段断言
+    assert "entry_open_week" in detail, "L2 必须包含 entry_open_week"
+    assert "ret_close_exec" in detail, "L2 必须包含 ret_close_exec"
+    assert "excess_exec" in detail, "L2 必须包含 excess_exec"
+    row_detail = _extract_js_function(v3_html, "wbtRowDetailHtml")
+    assert "ret_vs_week_open" in row_detail, "详情行逐日收益必须按首日开盘口径"
+
 
 
 def test_l2_row_expand_sort_and_unbuyable_mark(v3_html: str):
@@ -547,6 +554,20 @@ def test_l1_v11_kpis_and_pagination(v3_html: str):
     weeks = _extract_js_function(v3_html, "wbtRenderRuleWeeks")
     assert "mean_excess_exec" in weeks, "L1 表格必须包含平均超额(首日开盘)"
     assert "wbt.l1Page" in weeks or "wbtTrackState.l1Page" in weeks, "L1 表格必须支持分页"
+
+
+def test_l2_v11_kpis_and_coverage_warning(v3_html: str):
+    """L2 周级个股明细 V1.1 重构：5 KPI 汇总卡、完整性警示横幅与逐日收益。"""
+    assert 'id="wbTrackL2Kpis"' in v3_html, "缺少 L2 KPI 容器"
+    assert 'id="wbTrackL2Banners"' in v3_html, "缺少 L2 警示横幅容器"
+    kpi_fn = _extract_js_function(v3_html, "wbtRenderL2Kpis")
+    for need in ("入选股票", "有效样本", "胜率(首日开盘)", "平均收益(首日开盘)", "平均超额(首日开盘)"):
+        assert need in kpi_fn, f"L2 汇总卡缺少「{need}」"
+    detail = _extract_js_function(v3_html, "wbtRenderWeekDetail")
+    assert "wbtRenderL2Kpis(" in detail, "渲染周明细必须调用 KPI 渲染"
+    assert "0.90" in detail, "必须检查 90% 覆盖率门槛"
+    assert "数据完整性警示" in detail, "低覆盖率必须展示数据完整性警示横幅"
+
 
 
 
