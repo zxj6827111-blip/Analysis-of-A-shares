@@ -536,3 +536,17 @@ def test_l0_v11_redesign_kpis_sparkline_and_exec_excess(v3_html: str):
     for need in ("跟踪策略", "最新信号周", "累计入选", "已结算"):
         assert need in kpi_fn, f"L0 4 卡缺少「{need}」"
 
+
+def test_l1_v11_kpis_and_pagination(v3_html: str):
+    """L1 规则周级历史页 V1.1 重构：5 KPI 汇总卡、分页与口径。"""
+    assert 'id="wbTrackL1Summary"' in v3_html, "缺少 L1 汇总卡容器"
+    assert 'id="wbTrackL1Pagination"' in v3_html, "缺少 L1 分页容器"
+    kpi_fn = _extract_js_function(v3_html, "wbtRenderL1Summary")
+    for need in ("跟踪周", "已结算", "胜率(首日开盘)", "平均收益(首日开盘)", "平均超额(首日开盘)"):
+        assert need in kpi_fn, f"L1 汇总卡缺少「{need}」"
+    weeks = _extract_js_function(v3_html, "wbtRenderRuleWeeks")
+    assert "mean_excess_exec" in weeks, "L1 表格必须包含平均超额(首日开盘)"
+    assert "wbt.l1Page" in weeks or "wbtTrackState.l1Page" in weeks, "L1 表格必须支持分页"
+
+
+
