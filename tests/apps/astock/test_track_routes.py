@@ -524,3 +524,138 @@ class TestRuleCatalogSync:
         ).json()
         assert body["removed_from_catalog"] is True
         assert body["count"] == 1
+
+
+class TestTrackV11Metrics:
+    """V1.1 P0 数据口径测试：exec excess 聚合、trend_weeks、ui_summary。"""
+
+    def test_l0_exec_excess_and_trend_weeks(self, track_client):
+        client, cfg, _ = track_client
+        # 构造连续 3 周
+        for wid, exc1, exc2 in [
+            (20260828, 0.01, 0.03),
+            (20260904, -0.02, 0.00),
+            (20260911, 0.04, None),
+        ]:
+            sid = _publish_snap(cfg, wid, ["SZSE.000001.SZ", "SZSE.000002.SZ"])
+            rows = [
+                {
+                    "code": "SZSE.000001.SZ", "rule_id": "txt_测试规则A",
+                    "ret_close_sig": 0.02, "ret_close_exec": 0.02,
+                    "fill_status": "ok", "status": "ok",
+                    "excess_exec": exc1,
+                },
+                {
+                    "code": "SZSE.000002.SZ", "rule_id": "txt_测试规则A",
+                    "ret_close_sig": -0.01, "ret_close_exec": -0.01,
+                    "fill_status": "ok", "status": "ok",
+                    "excess_exec": exc2,
+                },
+            ]
+            _write_track(cfg, sid, wid, rows=rows)
+
+        r = client.get("/api/v1/bagua/track/rules")
+        assert r.status_code == 200
+        rule = r.json()["rules"][0]
+
+        # 检查 L0 exec excess
+        assert "weekly_equal_mean_excess_exec" in rule
+        assert "weekly_equal_valid_weeks_excess_exec" in rule
+        assert rule["weekly_equal_valid_weeks_excess_exec"] == 3
+        # 3 周的 mean_excess_exec:
+        # 第1周: (0.01 + 0.03)/2 = 0.02
+        # 第2周: (-0.02 + 0.00)/2 = -0.01
+        # 第3周: 0.04 (exc2 为 None，分母为 1)
+        # 等权均值 = (0.02 - 0.01 + 0.04) / 3 = 0.016667
+        assert rule["weekly_equal_mean_excess_exec"] == pytest.approx(0.016667, abs=1e-5)
+
+        # 检查 trend_weeks
+        tw = rule["trend_weeks"]
+        assert len(tw) == 3
+        # 时间升序
+        assert [w["week_id"] for w in tw] == [20260828, 20260904, 20260911]
+        assert tw[0]["settled"] is True
+        assert tw[0]["mean_ret_exec"] == pytest.approx(0.03)  # 来自 aggregate 的 mean_ret_close_exec
+        assert tw[0]["mean_excess_exec"] == pytest.approx(0.02)
+        assert tw[2]["mean_excess_exec"] == pytest.approx(0.04)
+
+    def test_l1_rule_weeks_has_exec_excess(self, track_client):
+        client, cfg, _ = track_client
+        sid = _publish_snap(cfg, 20260911, ["SZSE.000001.SZ", "SZSE.000002.SZ"])
+        rows = [
+            {
+                "code": "SZSE.000001.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": 0.03, "ret_close_exec": 0.03,
+                "fill_status": "ok", "status": "ok",
+                "excess_exec": 0.015,
+            },
+            {
+                "code": "SZSE.000002.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": 0.01, "ret_close_exec": 0.01,
+                "fill_status": "ok", "status": "ok",
+                "excess_exec": -0.005,
+            },
+        ]
+        _write_track(cfg, sid, 20260911, rows=rows)
+
+        r = client.get("/api/v1/bagua/track/rules/txt_测试规则A/weeks")
+        assert r.status_code == 200
+        week_entry = r.json()["weeks"][0]
+        agg = week_entry["aggregate"]
+        assert agg["excess_exec_valid_count"] == 2
+        assert agg["mean_excess_exec"] == pytest.approx(0.005)
+        assert agg["win_rate_excess_exec"] == 0.5
+
+    def test_l2_ui_summary_metrics_and_exclusions(self, track_client):
+        client, cfg, _ = track_client
+        # 4 只票: 1买入正收益且超额, 1买入负收益且基准缺(excess=None), 1涨停买不进, 1无K线
+        sid = _publish_snap(
+            cfg, 20260911,
+            ["SZSE.000001.SZ", "SZSE.000002.SZ", "SZSE.000003.SZ", "SZSE.000004.SZ"]
+        )
+        rows = [
+            {
+                "code": "SZSE.000001.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": 0.06, "ret_close_exec": 0.05,
+                "fill_status": "ok", "status": "ok",
+                "excess_exec": 0.03,
+            },
+            {
+                "code": "SZSE.000002.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": -0.01, "ret_close_exec": -0.02,
+                "fill_status": "ok", "status": "ok",
+                "excess_exec": None,  # 基准缺失
+            },
+            {
+                "code": "SZSE.000003.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": 0.09, "ret_close_exec": None,
+                "fill_status": "limit_up_unbuyable", "status": "ok",
+                "excess_exec": None,
+            },
+            {
+                "code": "SZSE.000004.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": None, "ret_close_exec": None,
+                "fill_status": "no_bar", "status": "no_bar",
+                "excess_exec": None,
+            },
+        ]
+        _write_track(cfg, sid, 20260911, rows=rows)
+
+        r = client.get("/api/v1/bagua/track/weeks/20260911")
+        assert r.status_code == 200
+        body = r.json()
+        assert "ui_summary" in body
+        s = body["ui_summary"]
+        assert s["selected_count"] == 4
+        # valid_exec_count 必须排除 limit_up_unbuyable 和 no_bar
+        assert s["valid_exec_count"] == 2
+        # win_rate_exec: 2 只中有 1 只 > 0 → 0.5
+        assert s["win_rate_exec"] == 0.5
+        # mean_ret_exec: (0.05 - 0.02)/2 = 0.015
+        assert s["mean_ret_exec"] == pytest.approx(0.015)
+        # mean_excess_exec: 只有 1 只有有效超额 0.03
+        assert s["mean_excess_exec"] == pytest.approx(0.03)
+        # coverage
+        assert s["return_coverage_exec"] == 0.5  # 2 / 4
+        assert s["excess_coverage_exec"] == 0.25  # 1 / 4
+

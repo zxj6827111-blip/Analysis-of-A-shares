@@ -86,6 +86,46 @@ def _mean(values) -> Optional[float]:
     return round(sum(vals) / len(vals), 6)
 
 
+def _with_exec_excess_stats(
+    track: Optional[dict], rule_id: str, agg: Optional[dict]
+) -> Optional[dict]:
+    """派生并注入 exec 超额口径统计（契约 §3，不 bump immutable track schema）。
+
+    UI 主显示的超额必须统一为首个实际交易日开盘口径（excess_exec）；
+    历史产物已在逐票 rows[] 中落盘 excess_exec，在此只读层派生聚合字段，
+    避免仅为展示字段重算并覆盖不可变历史产物。
+    """
+    if agg is None:
+        return None
+    new_agg = dict(agg)
+    if not track or not track.get("rows"):
+        new_agg.setdefault("excess_exec_valid_count", 0)
+        new_agg.setdefault("mean_excess_exec", None)
+        new_agg.setdefault("win_rate_excess_exec", None)
+        return new_agg
+
+    rid_str = str(rule_id)
+    # 筛选属于该规则、评估状态正常、可成交、且具有有效 exec 超额的样本
+    # 严格排除 limit_up_unbuyable / no_bar / unknown / benchmark 缺失 (excess_exec=None)
+    excess_rows = [
+        r
+        for r in track.get("rows") or []
+        if str(r.get("rule_id")) == rid_str
+        and r.get("status", "ok") == "ok"
+        and r.get("fill_status", "ok") == "ok"
+        and r.get("excess_exec") is not None
+    ]
+    cnt = len(excess_rows)
+    new_agg["excess_exec_valid_count"] = cnt
+    new_agg["mean_excess_exec"] = _mean([r["excess_exec"] for r in excess_rows])
+    if cnt > 0:
+        pos_cnt = sum(1 for r in excess_rows if float(r["excess_exec"]) > 0)
+        new_agg["win_rate_excess_exec"] = round(pos_cnt / cnt, 4)
+    else:
+        new_agg["win_rate_excess_exec"] = None
+    return new_agg
+
+
 # 规则目录 TTL 缓存秒数：list_screen_rules 会扫指标目录（重）；跟踪页刷新/
 # 搜索很频繁，目录却在秒级内不会变
 _CATALOG_TTL_SEC = 30
@@ -224,11 +264,12 @@ def api_track_rules(
             )
             agg = None
             if track:
-                agg = next(
+                raw_agg = next(
                     (a for a in track.get("rule_aggregates") or []
                      if str(a.get("rule_id")) == rid),
                     None,
                 )
+                agg = _with_exec_excess_stats(track, rid, raw_agg)
             seg["weeks"].append(
                 {
                     "week_id": wid,
@@ -269,6 +310,11 @@ def api_track_rules(
             w["aggregate"].get("mean_excess_sig")
             for w in settled_weeks
             if w["aggregate"] and w["aggregate"].get("mean_excess_sig") is not None
+        ]
+        weekly_excess_exec = [
+            w["aggregate"].get("mean_excess_exec")
+            for w in settled_weeks
+            if w["aggregate"] and w["aggregate"].get("mean_excess_exec") is not None
         ]
         # 票次加权：全部周票池合并。
         # 胜率与收益是两套分子：胜率分子必须用各周 win_rate_* × 该周有效
@@ -335,9 +381,34 @@ def api_track_rules(
                 "weekly_equal_mean_ret_sig": _mean(weekly_sig),
                 "weekly_equal_mean_ret_exec": _mean(weekly_exec),
                 "weekly_equal_mean_excess_sig": _mean(weekly_excess),
+                "weekly_equal_mean_excess_exec": _mean(weekly_excess_exec),
                 "weekly_equal_valid_weeks_sig": len(weekly_sig),
                 "weekly_equal_valid_weeks_exec": len(weekly_exec),
                 "weekly_equal_valid_weeks_excess": len(weekly_excess),
+                "weekly_equal_valid_weeks_excess_exec": len(weekly_excess_exec),
+                # 近 5 周趋势：最多返回最近 5 个相关周（周历升序），直接供前端原生 SVG 绘制 Sparkline，杜绝 N+1
+                "trend_weeks": [
+                    {
+                        "week_id": int(w["week_id"]),
+                        "settled": bool(w["settled"]),
+                        "mean_ret_exec": (
+                            w["aggregate"].get("mean_ret_close_exec")
+                            if w.get("aggregate")
+                            else None
+                        ),
+                        "win_rate_exec": (
+                            w["aggregate"].get("win_rate_exec")
+                            if w.get("aggregate")
+                            else None
+                        ),
+                        "mean_excess_exec": (
+                            w["aggregate"].get("mean_excess_exec")
+                            if w.get("aggregate")
+                            else None
+                        ),
+                    }
+                    for w in seg["weeks"][-5:]
+                ],
                 # 票次加权（并列口径）：逐票胜率 = Σ(周胜率×周有效数)/Σ有效数
                 # （分母只计有胜率的周；与 mean_ret 的分母可能不同属正常）
                 "ticket_win_rate_sig": (
@@ -439,11 +510,12 @@ def api_track_rule_weeks(
         track = _track_for_week(ctx.cfg, snap, wid)
         agg = None
         if track:
-            agg = next(
+            raw_agg = next(
                 (a for a in track.get("rule_aggregates") or []
                  if str(a.get("rule_id")) == rid_used),
                 None,
             )
+            agg = _with_exec_excess_stats(track, rid_used, raw_agg)
         rows.append(
             {
                 "week_id": wid,
@@ -564,6 +636,58 @@ def api_track_week_detail(
                 )
     scope = sc.snapshot_rules_scope(snap)
     scope_ids = sc.scoped_rule_ids(snap)
+
+    # UI 摘要指标（契约 §3，成交假设口径）：
+    # 胜率与收益分母必须排除 limit_up_unbuyable / no_bar / unknown
+    total_selected_codes = {str(r.get("code")) for r in rows} | {
+        str(p.get("code")) for p in matched_pending
+    }
+    selected_count = len(total_selected_codes)
+
+    valid_exec_rows = [
+        r
+        for r in rows
+        if r.get("status", "ok") == "ok"
+        and r.get("fill_status", "ok") == "ok"
+        and r.get("ret_close_exec") is not None
+    ]
+    valid_exec_count = len(valid_exec_rows)
+    if valid_exec_count > 0:
+        pos_exec_count = sum(
+            1 for r in valid_exec_rows if float(r["ret_close_exec"]) > 0
+        )
+        win_rate_exec = round(pos_exec_count / valid_exec_count, 4)
+        mean_ret_exec = _mean([r["ret_close_exec"] for r in valid_exec_rows])
+    else:
+        win_rate_exec = None
+        mean_ret_exec = None
+
+    excess_exec_rows = [
+        r for r in valid_exec_rows if r.get("excess_exec") is not None
+    ]
+    mean_excess_exec = (
+        _mean([r["excess_exec"] for r in excess_exec_rows])
+        if excess_exec_rows
+        else None
+    )
+
+    if selected_count > 0:
+        return_coverage_exec = round(valid_exec_count / selected_count, 4)
+        excess_coverage_exec = round(len(excess_exec_rows) / selected_count, 4)
+    else:
+        return_coverage_exec = None
+        excess_coverage_exec = None
+
+    ui_summary = {
+        "selected_count": selected_count,
+        "valid_exec_count": valid_exec_count,
+        "win_rate_exec": win_rate_exec,
+        "mean_ret_exec": mean_ret_exec,
+        "mean_excess_exec": mean_excess_exec,
+        "return_coverage_exec": return_coverage_exec,
+        "excess_coverage_exec": excess_coverage_exec,
+    }
+
     return {
         "ok": True,
         "week_id": int(entry_asof),
@@ -592,6 +716,7 @@ def api_track_week_detail(
         "rows": rows,
         "pending_picks": matched_pending,
         "backfill_notice": BACKFILL_NOTICE if str(snap.get("run_kind")) == "backfill" else None,
+        "ui_summary": ui_summary,
     }
 
 
