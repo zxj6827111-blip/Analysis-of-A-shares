@@ -56,6 +56,14 @@ class ApiContext:
     bq_screen_queue: Optional[Any] = None  # queue.Queue，懒创建
     bq_screen_worker_started: bool = False
 
+    # 跟踪「补算指定历史周」：分钟级重任务（补快照=全市场扫描 + 结算），
+    # 异步跑 CLI 子进程。单 worker 顺序执行（防连点并发全市场读）；
+    # heavy-job 全局锁由子进程自己抢，抢不到会记待办并由 serve 的
+    # _auto_heavy_job_retry 退避重试循环兜底（复用既有互斥/补偿机制）。
+    track_backfill_lock: threading.Lock = field(default_factory=threading.Lock)
+    track_backfill_jobs: Dict[str, Any] = field(default_factory=dict)  # job_id -> job
+    track_backfill_worker_started: bool = False
+
     wl_cache: Dict[str, Any] = field(
         default_factory=lambda: {"key": None, "ts": 0.0, "payload": None}
     )

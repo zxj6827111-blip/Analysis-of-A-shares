@@ -35,6 +35,8 @@ from .api_routes import (
     research,
     rules,
     system,
+    track_backfill,
+    tracking,
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
@@ -55,6 +57,8 @@ _ALL_ROUTERS = (
     bagua.router,
     bagua_workbench.router,
     system.router,
+    tracking.router,
+    track_backfill.router,
 )
 
 # Shared cross-thread lock for eod_sync_state.json writes: the EOD watcher
@@ -472,6 +476,8 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             # storage/astock/indicator_review/review_{asof}.json，全市场导出
             # 读取后追加「735」「5日外」两个 sheet。失败不自动重试：下周五
             # 重来，或手动 `python -m wtpy.apps.astock review-weekly --asof <日>` 补跑。
+            # --rules all：全规则预筛快照（阶段 1 契约）同链产出——下一段
+            # 的 track 结算与网页筛选 cache-first 都依赖该发布快照。
             review_rc = None
             review_finished_at = None
             if stock_rc == 0:
@@ -480,7 +486,7 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                     # 显式锚定 storage_root：复核结果必须落在导出侧读取的同一
                     # storage（不依赖子进程 cwd/env 推导）
                     "--storage", str(cfg.storage_root),
-                    "review-weekly", "--asof", str(today),
+                    "review-weekly", "--asof", str(today), "--rules", "all",
                 ]
                 review_log = None
                 try:
@@ -519,6 +525,92 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                 else:
                     print(f"[EOD_SYNC] 指标复核失败（exit={review_rc}）")
 
+            # 入选跟踪链（阶段 2）：串行结算**上一信号周**名单的次周收益
+            # （本周新名单「待下周结算」，契约 §2）。--previous-week 使 CLI
+            # 锚定最近发布快照周的上一信号周——审查 B-2：无该参数时锚
+            # latest=今晚刚发布的新周，窗口未结束 → 恒 pending(3)。
+            # gating（审查 B-4）：只看 stock_rc——track 的输入依赖是上周
+            # 发布快照 + 本周行情，review 失败不影响这两个输入（latest
+            # 指针在 review 失败时仍是上周的，完全确定）；no_snapshot 分
+            # 支自己会兜住冷启动。各段独立：track 失败不影响 review 产物。
+            tracking_rc = None
+            tracking_finished_at = None
+            tracking_week = None
+            if stock_rc == 0:
+                track_cmd = [
+                    sys.executable, "-u", "-m", "wtpy.apps.astock",
+                    "--storage", str(cfg.storage_root),
+                    "track-weekly", "--previous-week",
+                ]
+                track_log = None
+                try:
+                    track_log = open(
+                        cfg.market_data_root / "sync_logs"
+                        / f"screen_tracking_{today}.log",
+                        "a",
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    track_log = None
+                try:
+                    print("[EOD_SYNC] 启动入选股票次周跟踪结算…")
+                    track_proc = subprocess.Popen(
+                        track_cmd,
+                        stdout=track_log or subprocess.DEVNULL,
+                        stderr=(
+                            subprocess.STDOUT if track_log else subprocess.DEVNULL
+                        ),
+                        env=env,
+                        # 与 review 段一致：-m 导入需锚定仓库根，不依赖 cwd
+                        cwd=str(Path(__file__).resolve().parents[3]),
+                    )
+                    tracking_rc = track_proc.wait()
+                except Exception as e:
+                    tracking_rc = -1
+                    print(f"[EOD_SYNC] 跟踪结算启动失败: {e}")
+                finally:
+                    if track_log:
+                        track_log.close()
+                tracking_finished_at = _dt.datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                # 记实际结算周（审查 B-1）：--previous-week 锚的是上一信号周，
+                # 不是链触发日——从最新发布快照推导，读不到（冷启动无快照）
+                # 时如实置 None，绝不拿 today 冒充
+                tracking_week = None
+                if tracking_rc is not None:
+                    try:
+                        from .service.screen_snapshots import (
+                            latest_published_snapshot as _latest_snap,
+                        )
+                        from .service.screen_tracking import (
+                            _load_calendar_or_none as _load_cal,
+                            previous_signal_week as _prev_week,
+                        )
+
+                        _snap = _latest_snap(cfg)
+                        _cal = _load_cal(cfg)
+                        if _snap is not None and _cal is not None:
+                            _prev = _prev_week(
+                                _cal, int(_snap.get("week_id") or 0)
+                            )
+                            tracking_week = str(_prev) if _prev else None
+                    except Exception:  # noqa: BLE001
+                        tracking_week = None
+                if tracking_rc == 0:
+                    print(
+                        f"[EOD_SYNC] 跟踪结算完成"
+                        f"（信号周={tracking_week or '未知'}）"
+                    )
+                else:
+                    # 独立 exit code 只记账：不影响 review 产物，也不让 rc
+                    # 反映 track 的失败（治理/复核同理——各自独立可观测）
+                    print(
+                        f"[EOD_SYNC] 跟踪结算未完成（exit={tracking_rc}，"
+                        f"信号周={tracking_week or '未知'}，产物不受影响；"
+                        f"可手动 track-weekly --previous-week 补）"
+                    )
+
             st = _load_state()
             prev_retry = int(st.get("retry_count") or 0)
             finished = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -535,6 +627,10 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                 "last_indicator_review_asof": (
                     str(today) if review_rc is not None else None
                 ),
+                # 跟踪链独立退出码记账（不影响 last_sync_exit_code 的重试语义）
+                "last_tracking_exit_code": tracking_rc,
+                "last_tracking_finished_at": tracking_finished_at,
+                "last_tracking_week": tracking_week,
             }
             if rc == 0:
                 extra["retry_count"] = 0
@@ -1135,7 +1231,158 @@ def serve(host: str = "127.0.0.1", port: int = 8765, cfg: Optional[AStockConfig]
         name="astock-eod-sync",
     ).start()
 
+    # heavy-job 待办重试（契约 §7）：抢锁失败的任务不能等到下周五——服务
+    # 运行期按 5/15/30 分钟有界退避轮询补跑，不依赖重启。
+    _thr.Thread(
+        target=_auto_heavy_job_retry,
+        args=(cfg, app.state.astock),
+        daemon=True,
+        name="astock-heavy-job-retry",
+    ).start()
+
     uvicorn.run(app, host=host, port=port)
+
+
+def _heavy_job_command(task_key: str, storage_root: Path) -> Optional[List[str]]:
+    """heavy-job 待办 → CLI 命令（契约 §7 补跑映射）。
+
+    可测的纯函数（后台线程里做字符串解析必须锁住映射）：
+      track_<YYYYMMDD>     → track-weekly --week <D>
+      backfill_<N>         → track-weekly --backfill <N>
+      review_all_<YYYYMMDD>→ review-weekly --rules all --asof <D>
+    未知类型 / 参数不合法 → None（调用方跳过并保留欠账，绝不猜命令）。
+    格式校验防"另一个体系的 key 被解析成非法命令"（如 tracking_task_key
+    产生的 track_snap_xxx 会被当 --week 传给 CLI → exit 2 误标 exhausted）。
+    """
+    cmd = [
+        sys.executable, "-u", "-m", "wtpy.apps.astock",
+        "--storage", str(storage_root),
+    ]
+
+    def _is_date(s: str) -> bool:
+        return len(s) == 8 and s.isdigit()
+
+    if task_key.startswith("track_"):
+        arg = task_key.split("_", 1)[1]
+        if not _is_date(arg):
+            return None
+        return cmd + ["track-weekly", "--week", arg]
+    if task_key.startswith("backfill_"):
+        arg = task_key.split("_", 1)[1]
+        if not (arg.isdigit() and int(arg) > 0):
+            return None
+        return cmd + ["track-weekly", "--backfill", arg]
+    if task_key.startswith("review_all_"):
+        arg = task_key.split("_", 2)[2]
+        if arg == "0":
+            # 手动 review-weekly --rules all 不带 --asof：按最新数据面重算
+            # （0 是 asof 缺省的记号，不是日期——合法任务，不能当非法键）
+            return cmd + ["review-weekly", "--rules", "all"]
+        if not _is_date(arg):
+            return None
+        return cmd + ["review-weekly", "--rules", "all", "--asof", arg]
+    return None
+
+
+def _auto_heavy_job_retry(cfg: AStockConfig, ctx: "ApiContext") -> None:
+    """heavy-job 待办的服务运行期重试循环（契约 §7 有界退避）。
+
+    每 ``ASTOCK_HEAVY_JOB_RETRY_POLL_SECONDS``（默认 120s）检查一次持久化
+    待办；到期的任务以**子进程**方式补跑（与周五链同构：重任务不占 API
+    进程内存）。串行 + 每轮最多 1 个（9/13 OOM 教训：绝不并发重任务）。
+    EOD 同步进行中时跳过本轮（让行情面先落地，避免读半截数据）。
+
+    环境变量：
+      ASTOCK_HEAVY_JOB_RETRY_ENABLED=0|1   (默认 1)
+      ASTOCK_HEAVY_JOB_RETRY_POLL_SECONDS=N (默认 120, 最小 30)
+    """
+    from .service import heavy_job as _hj
+    import os as _os
+    import time as _time
+
+    # _env_flag 是 _auto_eod_sync 内的局部函数：本线程按**完全相同**的
+    # 语义独立实现（白名单 in ("1","true","yes","on")），避免两处判定漂移
+    def _env_flag(name: str, default: str = "1") -> bool:
+        return str(_os.environ.get(name, default)).strip().lower() in (
+            "1", "true", "yes", "on",
+        )
+
+    if not _env_flag("ASTOCK_HEAVY_JOB_RETRY_ENABLED", "1"):
+        print("[HEAVY_JOB] 待办重试已禁用（ASTOCK_HEAVY_JOB_RETRY_ENABLED=0）")
+        return
+    poll = max(30, int(_os.environ.get("ASTOCK_HEAVY_JOB_RETRY_POLL_SECONDS", "120")))
+    storage_root = Path(cfg.storage_root)
+    repo_root = Path(__file__).resolve().parents[3]
+    # 启动延迟：不与启动期的对账/同步抢资源
+    _time.sleep(min(60, poll))
+
+    def _runner(task_key: str) -> bool:
+        """按 task_key 解析并 spawn 对应 CLI（子进程持锁，父不持）。"""
+        cmd = _heavy_job_command(task_key, storage_root)
+        if cmd is None:
+            # 无法映射的键（历史版本格式/手工写入）：标欠账并退出自动
+            # 重试。否则它会一直到期 → 每轮 120s 空转一次，永不收敛。
+            from .service import screen_contract as _sc_mod
+
+            _sc_mod.record_pending_job(
+                storage_root, task_key, reason="unmappable_task_key",
+                mark_exhausted=True,
+            )
+            print(f"[HEAVY_JOB] 未知待办类型，标记欠账不再自动重试: {task_key}")
+            return False
+        log_path = cfg.market_data_root / "sync_logs" / f"heavy_job_{task_key}.log"
+        log_fh = None
+        try:
+            log_fh = open(log_path, "a", encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            log_fh = None
+        try:
+            print(f"[HEAVY_JOB] 补跑待办: {task_key}")
+            proc = subprocess.Popen(
+                cmd,
+                stdout=log_fh or subprocess.DEVNULL,
+                stderr=(subprocess.STDOUT if log_fh else subprocess.DEVNULL),
+                cwd=str(repo_root),
+            )
+            rc = proc.wait()
+        except Exception as e:  # noqa: BLE001
+            info = _hj.record_runner_spawn_failure(storage_root, task_key)
+            print(
+                f"[HEAVY_JOB] 补跑启动失败（已记账退避，"
+                f"attempts={info.get('attempts')}）: {e}"
+            )
+            return False
+        finally:
+            if log_fh:
+                log_fh.close()
+        # 0=完成；3=可重试（子进程内已按真实 completion 记账：pending/
+        # blocked_benchmark/data_version_changed/skipped_locked，抢锁失败
+        # 在 run_with_heavy_lock 内已记一次）——本层对 0/3 不重复写；
+        # 1/2=不可重试标欠账；其余异常码（信号杀死/OOM/崩溃）按有界退避记账。
+        print(f"[HEAVY_JOB] {task_key} 退出码={rc}")
+        info = _hj.record_runner_exit(storage_root, task_key, rc)
+        if info is not None:
+            print(
+                f"[HEAVY_JOB] {task_key} {info.get('reason')}"
+                f"（attempts={info.get('attempts')}，"
+                f"exhausted={info.get('exhausted')}）"
+            )
+            return False
+        return rc == 0
+
+    while True:
+        try:
+            _time.sleep(poll)
+            # EOD 同步进行中：让行情面先落地（避免读半截数据）
+            with ctx.sync_lock:
+                if ctx.sync_state.get("running"):
+                    continue
+            jobs = _hj.pending_retry_due(storage_root)
+            if not jobs:
+                continue
+            _hj.retry_due_jobs(storage_root, runner=_runner, max_per_pass=1)
+        except Exception as e:  # noqa: BLE001 — 轮询循环绝不因单次异常退出
+            print(f"[HEAVY_JOB] 重试轮询异常（继续）: {e}")
 
 
 def main(argv: Optional[List[str]] = None) -> int:

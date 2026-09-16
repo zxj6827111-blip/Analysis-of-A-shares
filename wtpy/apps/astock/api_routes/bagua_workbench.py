@@ -1,10 +1,13 @@
 """卦象工作台路由（PLAN-BAGUA-UX-V1.1）：统一标的检索、可用日期、按规则筛选。
 
 筛选是独立内存任务容器 + 单工作线程 + 有界等待队列，不与导出/同卦任务混用。
+cache-first：发布快照可完整服务时直接组装（不占队列）；未覆盖走原任务路径。
 """
 
 from __future__ import annotations
 
+import time
+import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -26,6 +29,8 @@ class BaguaScreenBody(BaseModel):
     # scope=picked 时必填（规范标识优先，兼容六位/带前缀形式）
     scope: str = "all"  # all | picked
     codes: Optional[List[str]] = None
+    # True=绕过快照缓存强制现算（手动重算不落官方快照）
+    force_recompute: bool = False
 
 
 @router.get("/api/v1/bagua/instruments")
@@ -68,6 +73,63 @@ def api_bagua_screen_rules(ctx: ApiContext = Depends(get_ctx)) -> dict:
     from ..service.screening import list_screen_rules
 
     return list_screen_rules(ctx)
+
+
+@router.get("/api/v1/bagua/screen/latest")
+def api_bagua_screen_latest(
+    rule_ids: Optional[str] = Query(
+        None, description="逗号分隔规则 ID（缺省=快照全部规则）"
+    ),
+    match_mode: str = Query("any", description="any | all"),
+    codes: Optional[str] = Query(
+        None, description="逗号分隔规范标识（picked 范围；缺省=全市场）"
+    ),
+    ctx: ApiContext = Depends(get_ctx),
+) -> dict:
+    """最近发布快照的筛选视图：前端进筛选页签的默认数据源（秒回）。
+
+    不做规则可执行性预检（快照里有哪些规则是事实，缺的如实报 uncovered）。
+    与 POST /screen 的 cache 分支共用 try_screen_from_snapshot——同快照
+    同规则同范围必然同结果（契约 §A4 验收口径）。
+    """
+    from ..service import screening
+
+    rid_list = [r.strip() for r in (rule_ids or "").split(",") if r.strip()]
+    if match_mode not in ("any", "all"):
+        raise HTTPException(400, "match_mode 必须是 any 或 all")
+    code_list = None
+    if codes is not None:
+        code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    try:
+        # latest：不指定 asof → resolve_screen_asof 默认取数据面最新交易日，
+        # 与快照 week 对齐（快照周即最新已发布周）
+        result = screening.try_screen_from_snapshot(
+            ctx.cfg,
+            rule_ids=rid_list or _snapshot_rule_ids(ctx),
+            match_mode=match_mode,
+            asof=None,
+            codes=code_list,
+        )
+    except screening.ScreenError as e:
+        raise HTTPException(400, str(e)) from e
+    if result is None:
+        return {
+            "ok": True,
+            "available": False,
+            "reason": "no_published_snapshot",
+            "message": "尚无已发布的预筛快照（周五链首次运行后可用）",
+        }
+    return {"ok": True, "available": True, **result}
+
+
+def _snapshot_rule_ids(ctx: ApiContext) -> List[str]:
+    """快照内全部规则 ID（latest 未显式指定规则时用）。"""
+    from ..service import screen_snapshots as ss
+
+    snap = ss.latest_published_snapshot(ctx.cfg)
+    if snap is None:
+        return []
+    return [str(r.get("rule_id")) for r in snap.get("rules") or []]
 
 
 @router.post("/api/v1/bagua/screen")
@@ -123,6 +185,64 @@ def api_bagua_screen(
     except screening.ScreenError as e:
         raise HTTPException(400, str(e)) from e
     try:
+        # cache-first：发布快照能完整服务本组规则时直接组装结果（秒回，
+        # 不占任务队列）；picked 越界/规则缺失/公式已改 → 落回现算。
+        # force_recompute=1 显式绕过（手动重算场景）。
+        if not payload.force_recompute:
+            cached = screening.try_screen_from_snapshot(
+                ctx.cfg,
+                rule_ids=[str(r).strip() for r in payload.rule_ids],
+                match_mode=payload.match_mode,
+                asof=payload.asof,
+                codes=payload.codes if payload.scope == "picked" else None,
+            )
+            if cached is not None:
+                job_id = "bqscr_" + uuid.uuid4().hex[:12]
+                rec = {
+                    "job_id": job_id,
+                    "kind": "screen",
+                    "status": "done",
+                    "created_at": time.time(),
+                    "created_hm": time.strftime("%H:%M:%S", time.localtime()),
+                    "started_at": time.time(),
+                    "finished_at": time.time(),
+                    "message": (
+                        f"筛选完成（快照缓存）：命中 {cached.get('matched_count', 0)} 只"
+                        f"（数据日 {cached.get('asof')}）"
+                    ),
+                    "params": {
+                        "rule_ids": [str(r).strip() for r in payload.rule_ids],
+                        "match_mode": payload.match_mode,
+                        "asof": (None if payload.asof in (None, "", "latest") else str(payload.asof)),
+                        "codes": payload.codes if payload.scope == "picked" else None,
+                        "scope": payload.scope,
+                    },
+                    "scope_summary": (
+                        "全部 A 股" if payload.scope == "all"
+                        else f"指定 {len(payload.codes or [])} 只股票"
+                    ),
+                    "rules_summary": "、".join(str(r).strip() for r in payload.rule_ids),
+                    "asof_used": cached.get("asof"),
+                    "result_status": "ok",
+                    "progress": None,
+                    "result": cached,
+                    "error": None,
+                    "cancelled": False,
+                }
+                with ctx.bq_screen_lock:
+                    if len(ctx.bq_screen_jobs) >= 30:
+                        finished = sorted(
+                            (
+                                (k, v)
+                                for k, v in ctx.bq_screen_jobs.items()
+                                if v.get("status") in ("done", "error")
+                            ),
+                            key=lambda kv: float(kv[1].get("finished_at") or 0),
+                        )
+                        for k, _v in finished[: max(0, len(finished) - 20)]:
+                            ctx.bq_screen_jobs.pop(k, None)
+                    ctx.bq_screen_jobs[job_id] = rec
+                return {k: v for k, v in rec.items() if k != "result"}
         return submit_screen_job(
             ctx,
             rule_ids=[str(r).strip() for r in payload.rule_ids],

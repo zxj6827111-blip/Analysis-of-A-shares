@@ -195,8 +195,9 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="stop-loop"):
         _auto_eod_sync(cfg, ctx)
 
-    # 股票链 + 指数/ETF 链（默认开启）+ 指标复核链；治理被本用例显式关闭
-    assert len(calls) == 3, calls
+    # 股票链 + 指数/ETF 链（默认开启）+ 指标复核链 + 跟踪结算链；
+    # 治理被本用例显式关闭
+    assert len(calls) == 4, calls
     cmd = calls[0][0]
     assert "--source" in cmd and "tushare" in cmd
     mode_index = cmd.index("--mode")
@@ -204,7 +205,8 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
     write_mode_index = cmd.index("--write-mode")
     assert cmd[write_mode_index + 1] == "delta"
     assert "--fresh" in cmd
-    # 复核链：显式 --storage 锚定导出侧读取的同一 storage
+    # 复核链：显式 --storage 锚定导出侧读取的同一 storage；
+    # --rules all 产出全规则预筛快照（阶段 1 契约，track 链依赖它）
     review_cmd = calls[2][0]
     assert "review-weekly" in review_cmd
     assert review_cmd[review_cmd.index("--storage") + 1] == str(
@@ -212,6 +214,13 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
     )
     assert review_cmd[review_cmd.index("--asof") + 1] == str(
         int(_dt.date.today().strftime("%Y%m%d"))
+    )
+    assert review_cmd[review_cmd.index("--rules") + 1] == "all"
+    # 跟踪链：复核成功后串行结算上一信号周名单（独立 exit code 记账）
+    track_cmd = calls[3][0]
+    assert "track-weekly" in track_cmd
+    assert track_cmd[track_cmd.index("--storage") + 1] == str(
+        tmp_path / "astock"
     )
     assert "--token" in cmd and "test_token_123" in cmd
     assert "--storage-root" in cmd and str(tmp_path) in cmd
@@ -223,6 +232,12 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
     assert st.get("last_trigger_date")
     assert st.get("last_sync_started_at")
     assert st.get("enabled") is True
+    # 跟踪链独立退出码写进状态（供 UI 观测，不影响主同步重试语义）
+    assert st.get("last_tracking_exit_code") == 0
+    assert st.get("last_tracking_finished_at")
+    # last_tracking_week 记录实际结算的信号周：本环境无发布快照（冷
+    # 启动）→ 如实 None；绝不拿链触发日 today 冒充（审查 B-1）
+    assert st.get("last_tracking_week") is None
 
 
 def test_auto_eod_sync_success_runs_governance(monkeypatch, tmp_path):
@@ -289,10 +304,11 @@ def test_auto_eod_sync_success_runs_governance(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="stop-loop"):
         _auto_eod_sync(cfg, ctx)
 
-    assert len(calls) == 3
+    assert len(calls) == 4
     sync_cmd = calls[0][0]
     governance_cmd = calls[1][0]
     review_cmd = calls[2][0]
+    track_cmd = calls[3][0]
     assert "sync_market_data.py" in " ".join(sync_cmd)
     assert "govern_market_data.py" in " ".join(governance_cmd)
     assert governance_cmd[-2:] == ["--maintain", "--apply"]
@@ -301,6 +317,8 @@ def test_auto_eod_sync_success_runs_governance(monkeypatch, tmp_path):
     # 指标复核挂在治理之后，asof 取本次同步 end-date（今天）
     assert "review-weekly" in review_cmd
     assert "--asof" in review_cmd
+    # 跟踪链在复核之后串行执行（复核产出快照后结算上一信号周）
+    assert "track-weekly" in track_cmd
 
     state = _json.loads(state_path.read_text(encoding="utf-8"))
     assert state["last_sync_exit_code"] == 0
@@ -309,6 +327,10 @@ def test_auto_eod_sync_success_runs_governance(monkeypatch, tmp_path):
     assert state["last_indicator_review_exit_code"] == 0
     assert state["last_indicator_review_finished_at"]
     assert state["last_indicator_review_asof"]
+    assert state["last_tracking_exit_code"] == 0
+    assert state["last_tracking_finished_at"]
+    # 冷启动无发布快照：实际结算周如实为 None（不拿 today 冒充）
+    assert state["last_tracking_week"] is None
 
 
 def test_auto_eod_sync_skips_when_fresh(monkeypatch, tmp_path):
@@ -890,13 +912,16 @@ def test_auto_eod_sync_index_etf_chain_default_on(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="stop-loop"):
         _auto_eod_sync(cfg, ctx)
 
-    # 股票链 + 指数/ETF 链 + 治理链 + 指标复核链
-    assert len(calls) == 4, calls
+    # 股票链 + 指数/ETF 链 + 治理链 + 复核链 + 跟踪结算链
+    assert len(calls) == 5, calls
     ie_cmd = calls[1]
     ie_txt = " ".join(ie_cmd)
     assert "sync_market_data.py" in ie_txt
     assert "--asset-class" in ie_cmd and "all" in ie_cmd
     assert "--mode" in ie_cmd and "incremental" in ie_cmd
+    # 复核链带 --rules all（全规则快照），跟踪链在其后串行结算
+    assert "review-weekly" in " ".join(calls[3])
+    assert "track-weekly" in " ".join(calls[4])
 
 
 def _drive_eod_chain(monkeypatch, tmp_path, exit_codes):
@@ -981,21 +1006,24 @@ def test_auto_eod_sync_ie_warning_partial_still_runs_governance(monkeypatch, tmp
     """IE 链 exit=2（warning 级 partial，如 ETF 面指针发布失败）不阻塞治理链。
 
     治理只作用于股票 overlay 层；同时总退出码保持 2，同晚重试与状态
-    可观测性不受影响。
+    可观测性不受影响。跟踪链同样不受 IE warning 影响（只看股票链 rc）。
     """
-    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 2, 0, 0])
+    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 2, 0, 0, 0])
 
-    # 股票链 -> IE 链 -> 治理链 -> 复核链，四段都执行
-    assert len(calls) == 4, calls
+    # 股票链 -> IE 链 -> 治理链 -> 复核链 -> 跟踪链，五段都执行
+    assert len(calls) == 5, calls
     assert "govern_market_data.py" in " ".join(calls[2])
     assert calls[2][-2:] == ["--maintain", "--apply"]
     assert "review-weekly" in calls[3]
+    assert "track-weekly" in calls[4]
 
     assert state["last_sync_exit_code"] == 2
     assert state["last_governance_exit_code"] == 0
     assert state["last_governance_finished_at"]
     # 复核只看股票链退出码：IE warning 级 partial 不阻塞复核
     assert state["last_indicator_review_exit_code"] == 0
+    # 跟踪链同理：门控条件是 stock_rc==0 且 review_rc==0
+    assert state["last_tracking_exit_code"] == 0
     # 治理放行不等于同步成功：非零退出码必须仍触发同晚重试
     assert state["retry_count"] == 1
     assert state["pending_retry_at"]
@@ -1003,23 +1031,27 @@ def test_auto_eod_sync_ie_warning_partial_still_runs_governance(monkeypatch, tmp
 
 def test_auto_eod_sync_ie_hard_fail_blocks_governance(monkeypatch, tmp_path):
     """IE 链 exit=1（硬失败）维持"同步不干净就不治理"的既有语义。"""
-    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 1, 0])
+    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 1, 0, 0])
 
-    # 治理被 IE 硬失败阻塞，但复核只依赖股票链（rc=0）照常执行
-    assert len(calls) == 3, calls
+    # 治理被 IE 硬失败阻塞，但复核只依赖股票链（rc=0）照常执行，
+    # 跟踪链在复核成功后继续（与治理互不阻塞，各段独立门控）
+    assert len(calls) == 4, calls
     assert "govern_market_data.py" not in " ".join(map(" ".join, calls))
     assert "review-weekly" in calls[2]
+    assert "track-weekly" in calls[3]
     assert state["last_sync_exit_code"] == 1
     assert state["last_governance_exit_code"] is None
     assert state["last_indicator_review_exit_code"] == 0
+    assert state["last_tracking_exit_code"] == 0
 
 
 def test_auto_eod_sync_stocks_partial_blocks_governance(monkeypatch, tmp_path):
     """股票链自身 exit=2 仍跳过 IE 链与治理（既有语义回归保护）。"""
     calls, state = _drive_eod_chain(monkeypatch, tmp_path, [2])
 
-    # 股票链失败同样跳过指标复核（复核门控看 stock_rc）
+    # 股票链失败同样跳过指标复核与跟踪结算（两者的门控都看 stock_rc）
     assert len(calls) == 1, calls
     assert state["last_sync_exit_code"] == 2
     assert state["last_governance_exit_code"] is None
     assert state["last_indicator_review_exit_code"] is None
+    assert state["last_tracking_exit_code"] is None
