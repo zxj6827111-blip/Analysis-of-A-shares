@@ -307,20 +307,35 @@ def test_caliber_fixed_to_exec_and_explained(v3_html: str):
     assert "wb-pos" in signed and "wb-neg" in signed, "收益类数字必须带涨跌色"
 
 
-def test_backfill_box_is_collapsed_by_default(v3_html: str):
-    """补算入口默认折叠（2026-09-16 用户要求）：需要时点开，平时不占版面。
+def test_backfill_drawer_structure_and_behavior(v3_html: str):
+    """历史补算升级为右侧抽屉（V1.1 契约）：默认 hidden 收起，L0 按钮呼出。
 
-    与「信号日必须是该周最后一个交易日」的校验配套：入口收起但校验在，
-    填错会被拒绝并提示正确日期。
+    包含遮罩、抽屉容器、关闭按钮、单周/批量 Tab 切换、Escape 键盘支持，
+    且包含原有控件 ID（保证功能与测试兼容）。
     """
-    m = re.search(r'<details id="wbTrackBfBox"([^>]*)>', v3_html)
-    assert m, "补算区必须用 <details> 折叠"
-    assert "open" not in m.group(1), "补算区必须默认收起"
-    # 折叠标题要点明用途（用户靠它找到入口）
-    assert "补算指定历史周" in v3_html
+    assert 'id="wbTrackBfDrawer"' in v3_html, "缺少补算抽屉容器"
+    assert 'id="wbTrackBfMask"' in v3_html, "缺少抽屉遮罩"
+    assert 'id="wbTrackBfOpen"' in v3_html, "缺少打开补算抽屉按钮"
+    assert 'id="wbTrackBfClose"' in v3_html, "缺少关闭抽屉按钮"
+    assert 'id="wbTrackBfCancel"' in v3_html, "缺少取消按钮"
+    assert 'id="wbTrackBfTabSingle"' in v3_html, "缺少指定历史周 Tab"
+    assert 'id="wbTrackBfTabBatch"' in v3_html, "缺少批量最近 N 周 Tab"
+    assert 'role="dialog"' in v3_html and 'aria-modal="true"' in v3_html
+    # 默认隐藏
+    m_drawer = re.search(r'<aside id="wbTrackBfDrawer"[^>]*hidden', v3_html)
+    assert m_drawer, "抽屉默认必须 hidden"
+    m_mask = re.search(r'<div id="wbTrackBfMask"[^>]*hidden', v3_html)
+    assert m_mask, "遮罩默认必须 hidden"
+    # 抽屉标题与说明
+    assert "历史补算" in v3_html
+    assert "补算说明" in v3_html
     # 控件与轮询逻辑都在（收起不影响功能）
     for el in ("wbTrackBfWeek", "wbTrackBfRun", "wbTrackBfJobs"):
         assert 'id="%s"' % el in v3_html
+    # ESC 键关闭与滚动锁定
+    bind = _extract_js_function(v3_html, "wbtBind")
+    assert "Escape" in bind and "wbtCloseBackfillDrawer" in bind
+    assert "wbt-scroll-locked" in v3_html
 
 
 def test_pending_picks_show_name_and_how_to_settle(v3_html: str):
@@ -417,17 +432,13 @@ def test_task_center_shows_track_backfill(v3_html: str):
 
 
 def test_backfill_rule_picker_present(v3_html: str):
-    """规则选择器：嵌套折叠 + 检索 + 复选列表 + chips（原生多选框已被淘汰）。
+    """规则选择器：抽屉面板 + 单选范围切换 + 检索 + 复选列表 + chips。
 
-    2026-09-16 UI 重做理由（用户反馈原生 select multiple 无法操作）：
-    Ctrl+点击多选无提示、一次只见 3 行、无搜索、选中态滚出视野不可见——
-    改为与筛选页同款（wb-rulebox 复选列表 + 检索 + 已选 chips）。
+    2026-09-16 V1.1 UI：整周回填 vs 最多 5 条指定规则切换，
+    单周与批量分 Tab 隔离，已选 chips 与计数同步。
     """
-    # 嵌套折叠：默认收起，只有要指定规则才展开（不选=全部规则）
-    m = re.search(r'<details id="wbTrackBfRulesBox"([^>]*)>', v3_html)
-    assert m, "缺少规则选择折叠区 wbTrackBfRulesBox"
-    assert "open" not in m.group(1), "规则选择必须默认收起（不选=全部规则，不占版面）"
-    # 折叠标题必须实时反映当前选择（默认文案写明「全部规则」）
+    assert 'id="wbTrackBfSinglePanel"' in v3_html, "缺少单周补算面板"
+    assert 'id="wbTrackBfBatchPanel"' in v3_html, "缺少批量补算面板"
     assert 'id="wbTrackBfRuleSummary"' in v3_html
     assert "规则：全部规则" in v3_html
     for el in ("wbTrackBfRuleSearch", "wbTrackBfRuleList", "wbTrackBfRuleChips",
@@ -435,25 +446,24 @@ def test_backfill_rule_picker_present(v3_html: str):
         assert 'id="%s"' % el in v3_html, "缺少规则选择器控件 %s" % el
     # 上限必须前置可见（别等勾选到第 6 条才被 400 顶回来）
     assert "最多 5 条" in v3_html
-    # 两个操作必须分块（「补某一周」与「批量」不再混排一行）
+    # 两个操作必须分块（「补某一周」与「批量」分 Tab）
     assert "批量补最近 N 周" in v3_html
     assert "不支持指定规则" in v3_html
-    # 「不选=全部规则」的语义必须在默认视图中可见
+    # 「不选规则=补全部规则」的语义必须在默认视图中可见
     assert "不选规则=补全部规则" in v3_html
 
 
 def test_backfill_rules_lazy_load_and_executable_only(v3_html: str):
-    """规则列表懒加载（展开面板才拉）且只列可执行规则。"""
+    """规则列表懒加载（打开抽屉才拉）且只列可执行规则。"""
     loader = _extract_js_function(v3_html, "wbtLoadBackfillRules")
     assert "/api/v1/bagua/screen/rules" in loader, "规则来源必须是筛选规则目录（同一口径）"
     assert "r.executable" in loader, "不可执行规则提交必被后端 400 拒绝，不能列出误导"
     assert "bfRulesLoaded" in loader, "必须做一次性加载缓存（不重复打接口）"
     # 加载后剔除失效勾选（规则被删后保持勾选会在提交时 400）
     assert "wbt.bfChecked" in loader and "live" in loader
-    # 懒加载挂在 details 展开事件上
-    bind = _extract_js_function(v3_html, "wbtBind")
-    assert "wbTrackBfBox" in bind and "ontoggle" in bind and "bfBox.open" in bind, \
-        "规则列表必须挂在展开事件上懒加载"
+    # 懒加载挂在抽屉打开函数上
+    open_fn = _extract_js_function(v3_html, "wbtOpenBackfillDrawer")
+    assert "wbtLoadBackfillRules()" in open_fn, "规则列表必须在打开抽屉时懒加载"
 
 
 def test_backfill_rule_list_uses_set_state_and_max_guard(v3_html: str):

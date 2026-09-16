@@ -1400,6 +1400,394 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
 .wb-root .wb-scroll{overflow-x:auto}
 .wb-root .wb-warn{color:#f0c674}
 .wb-root .wb-warnbox{padding:10px 12px;border:1px solid #8a6d1f;border-radius:8px;background:rgba(240,198,116,.12);display:grid;gap:6px}
+
+/* Tracking Module V1.1 High-Fidelity Styles (.wbt-*) */
+.wb-root {
+  --wbt-bg: #071423;
+  --wbt-bg-deep: #06111f;
+  --wbt-panel: #0b1b2f;
+  --wbt-panel-2: #0e223a;
+  --wbt-panel-soft: #102844;
+  --wbt-line: #24425f;
+  --wbt-line-soft: #19344f;
+  --wbt-text: #f3f7fc;
+  --wbt-text-2: #c5d4e5;
+  --wbt-muted: #829bb6;
+  --wbt-blue: #2f86ff;
+  --wbt-blue-2: #50a0ff;
+  --wbt-blue-soft: rgba(47,134,255,.12);
+  --wbt-pos: var(--red);
+  --wbt-neg: var(--green);
+  --wbt-warn: #f5b63e;
+  --wbt-warn-bg: rgba(245,182,62,.10);
+  --wbt-danger: #ff5d6c;
+  --wbt-ok: #30d59a;
+}
+body.wbt-scroll-locked {
+  overflow: hidden;
+}
+.wb-root .wbt-page-head {
+  margin-bottom: 16px;
+}
+.wb-root .wbt-page-title {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--wbt-text);
+  margin: 0 0 6px 0;
+}
+.wb-root .wbt-page-sub {
+  font-size: 13px;
+  color: var(--wbt-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+.wb-root .wbt-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin: 18px 0 20px;
+}
+.wb-root .wbt-kpi-grid-5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.wb-root .wbt-kpi-card {
+  background: var(--wbt-panel);
+  border: 1px solid var(--wbt-line);
+  border-radius: 9px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 104px;
+  box-sizing: border-box;
+}
+.wb-root .wbt-kpi-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.wb-root .wbt-kpi-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--wbt-muted);
+}
+.wb-root .wbt-kpi-icon {
+  font-size: 16px;
+  opacity: 0.8;
+}
+.wb-root .wbt-kpi-value {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--wbt-text);
+  line-height: 1.2;
+}
+.wb-root .wbt-kpi-sub {
+  font-size: 12px;
+  color: var(--wbt-muted);
+  margin-top: 4px;
+}
+.wb-root .wbt-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 18px 0 14px;
+  flex-wrap: wrap;
+}
+.wb-root .wbt-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--wbt-text-2);
+}
+.wb-root .wbt-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.wb-root .wbt-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--wbt-line);
+  border-radius: 8px;
+  background: var(--wbt-panel);
+}
+.wb-root .wbt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: right;
+}
+.wb-root .wbt-table th, .wb-root .wbt-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--wbt-line);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.wb-root .wbt-table th {
+  height: 46px;
+  background: rgba(14, 34, 58, 0.75);
+  color: var(--wbt-muted);
+  font-weight: 600;
+  font-size: 12px;
+}
+.wb-root .wbt-table td {
+  height: 48px;
+  color: var(--wbt-text);
+}
+.wb-root .wbt-table th:first-child, .wb-root .wbt-table td:first-child {
+  text-align: left;
+}
+.wb-root .wbt-table tbody tr:hover {
+  background: rgba(47, 134, 255, 0.045);
+}
+.wb-root .wbt-table th[data-wbt-sort], .wb-root .wbt-table th[data-wbt-l2sort] {
+  cursor: pointer;
+  user-select: none;
+}
+.wb-root .wbt-table th[data-wbt-sort]:hover, .wb-root .wbt-table th[data-wbt-l2sort]:hover {
+  color: var(--wbt-text);
+}
+.wb-root .wbt-spark {
+  display: inline-block;
+  vertical-align: middle;
+}
+.wb-root .wbt-info-line {
+  font-size: 12px;
+  color: var(--wbt-muted);
+  margin-top: 10px;
+  line-height: 1.6;
+}
+.wb-root .wbt-tag {
+  display: inline-block;
+  border: 1px solid var(--wbt-line);
+  border-radius: 6px;
+  padding: 1px 8px;
+  font-size: 12px;
+  color: var(--wbt-muted);
+}
+.wb-root .wbt-tag.complete {
+  color: #30d59a;
+  border-color: rgba(48, 213, 154, 0.3);
+  background: rgba(48, 213, 154, 0.08);
+}
+.wb-root .wbt-tag.running, .wb-root .wbt-tag.pending {
+  color: #f5b63e;
+  border-color: rgba(245, 182, 62, 0.3);
+  background: rgba(245, 182, 62, 0.08);
+}
+.wb-root .wbt-tag.subset {
+  color: #50a0ff;
+  border-color: rgba(80, 160, 255, 0.3);
+  background: rgba(80, 160, 255, 0.08);
+}
+.wb-root .wbt-tag.backfill {
+  color: #9fc7ff;
+  border-color: rgba(159, 199, 255, 0.3);
+  background: rgba(159, 199, 255, 0.08);
+}
+/* Drawer & Mask */
+#wbTrackBfMask {
+  position: fixed;
+  top: var(--app-topbar-height, 68px);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(2, 9, 18, 0.58);
+  backdrop-filter: blur(2px);
+  z-index: 1000;
+}
+#wbTrackBfDrawer {
+  position: fixed;
+  top: var(--app-topbar-height, 68px);
+  right: 0;
+  bottom: 0;
+  width: clamp(500px, 32vw, 580px);
+  background: #0b1b2f;
+  border-left: 1px solid #24425f;
+  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  z-index: 1001;
+  box-sizing: border-box;
+}
+#wbTrackBfDrawer[hidden], #wbTrackBfMask[hidden] {
+  display: none !important;
+}
+.wbt-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid #24425f;
+}
+.wbt-drawer-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #f3f7fc;
+  margin: 0;
+}
+.wbt-drawer-close {
+  background: transparent;
+  border: none;
+  color: #829bb6;
+  font-size: 24px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.wbt-drawer-close:hover {
+  color: #f3f7fc;
+  background: rgba(255, 255, 255, 0.08);
+}
+.wbt-drawer-tabs {
+  display: flex;
+  padding: 0 24px;
+  gap: 12px;
+  border-bottom: 1px solid #24425f;
+  background: #081525;
+}
+.wbt-drawer-tab {
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #829bb6;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.wbt-drawer-tab:hover {
+  color: #f3f7fc;
+}
+.wbt-drawer-tab.active {
+  color: #2f86ff;
+  border-bottom-color: #2f86ff;
+  font-weight: 600;
+}
+.wbt-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.wbt-drawer-info {
+  padding: 12px 14px;
+  background: rgba(47, 134, 255, 0.08);
+  border: 1px solid rgba(47, 134, 255, 0.25);
+  border-radius: 8px;
+  font-size: 12px;
+  color: #c5d4e5;
+  line-height: 1.6;
+}
+.wbt-drawer-info strong {
+  color: #2f86ff;
+  display: block;
+  margin-bottom: 4px;
+}
+.wbt-drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.wbt-drawer-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f3f7fc;
+}
+.wbt-drawer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid #24425f;
+  background: #081525;
+}
+.wbt-task-estimate {
+  background: rgba(14, 34, 58, 0.6);
+  border: 1px solid #24425f;
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  color: #c5d4e5;
+}
+.wbt-task-estimate-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.wbt-task-estimate-item span:first-child {
+  color: #829bb6;
+}
+.wbt-task-estimate-item span:last-child {
+  font-weight: 500;
+  color: #f3f7fc;
+}
+.wbt-l2-expand-wrap {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 20px;
+  padding: 16px;
+  background: #081525;
+  border-radius: 6px;
+}
+.wbt-l2-stats-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-right: 1px solid #24425f;
+  padding-right: 18px;
+}
+.wbt-l2-stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #829bb6;
+}
+.wbt-l2-stat-row b, .wbt-l2-stat-row span:last-child {
+  color: #f3f7fc;
+  font-variant-numeric: tabular-nums;
+}
+.wbt-daily-grid {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+}
+.wbt-daily-card {
+  flex: 1;
+  min-width: 90px;
+  background: #0e223a;
+  border: 1px solid #24425f;
+  border-radius: 6px;
+  padding: 10px;
+  text-align: center;
+}
+.wbt-daily-head {
+  font-size: 12px;
+  color: #829bb6;
+  margin-bottom: 6px;
+}
+.wbt-daily-ret {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wbt-daily-close {
+  font-size: 11px;
+  color: #829bb6;
+  margin-top: 4px;
+}
 @media(max-width:510px){
   .wb-root .wb-header{padding:16px}
   .wb-root .wb-modes{padding:0 12px 14px;gap:5px}
@@ -1820,61 +2208,9 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
         <h3 class="wb-title"><strong>指标跟踪总览</strong><span class="wb-muted" style="font-size:12px">一行一个规则版本；本周入选可直达周明细</span></h3>
         <div class="wb-row">
           <button type="button" class="wb-secondary" id="wbTrackExport">导出跟踪结果</button>
+          <button type="button" class="wb-secondary" id="wbTrackBfOpen">历史补算</button>
           <input id="wbTrackSearch" placeholder="按规则 ID 或名称搜索…" autocomplete="off" aria-label="搜索跟踪指标" style="max-width:260px">
         </div>
-        <!-- 补算指定历史周：默认折叠（2026-09-16 用户要求收起，需要时点开）。
-             信号日必须是该周最后一个交易日——填错会被入口拒绝并提示正确日期。
-             2026-09-16 v2（UI 重做）：「补某一周」与「批量」分块成行；规则选择
-             复用筛选页同款「检索+复选+chips」（原生多选框要 Ctrl+点击、无搜索、
-             选中态滚出视野后不可见），并收进嵌套折叠，标题实时显示当前是
-             「全部规则」还是「已选 N 条」。 -->
-        <details id="wbTrackBfBox">
-          <summary class="wb-muted" style="cursor:pointer;font-size:12px">补算指定历史周（验证规则在过去某周选出的股票与表现）</summary>
-          <div class="wb-block" style="margin-top:8px">
-            <div class="wb-row">
-              <strong style="font-size:13px">补某一周</strong>
-              <span class="wb-muted" style="font-size:12px">信号日=该周最后一个交易日（通常周五，节假日周是周四，填错会提示正确日期）</span>
-            </div>
-            <div class="wb-row">
-              <input id="wbTrackBfWeek" placeholder="如 20260731 或 2026-07-31" autocomplete="off" aria-label="补算信号日" style="max-width:210px">
-              <button type="button" class="wb-secondary" id="wbTrackBfRun">补算该周</button>
-              <span class="wb-muted" style="font-size:12px">不选规则=补全部规则（整周回填）</span>
-            </div>
-            <!-- 规则选择：默认全部规则；嵌套折叠，只有要指定规则才展开 -->
-            <details id="wbTrackBfRulesBox" style="border-top:none;padding-top:0">
-              <summary class="wb-muted" style="cursor:pointer;font-size:12px" id="wbTrackBfRuleSummary">规则：全部规则（点开可只补指定规则，单条快约 6~10 倍）</summary>
-              <div class="wb-block" style="margin-top:6px;max-width:580px">
-                <input id="wbTrackBfRuleSearch" placeholder="检索规则…" autocomplete="off" aria-label="检索补算规则">
-                <div class="wb-row" style="font-size:12px">
-                  <button type="button" class="wb-secondary" id="wbTrackBfRuleClear" style="min-height:32px;padding:4px 10px">清空</button>
-                  <span class="wb-muted" id="wbTrackBfRuleCount">已选 0 条</span>
-                  <span class="wb-muted">（最多 5 条，更多请整周回填）</span>
-                </div>
-                <div class="wb-rulebox" id="wbTrackBfRuleList" aria-label="可补算规则"><span class="wb-muted">展开即加载规则…</span></div>
-                <div class="wb-chips" id="wbTrackBfRuleChips" aria-live="polite"></div>
-              </div>
-            </details>
-          </div>
-          <div class="wb-block" style="margin-top:4px">
-            <div class="wb-row">
-              <strong style="font-size:13px">批量补最近 N 周</strong>
-              <span class="wb-muted" style="font-size:12px">总是补全部规则，不支持指定规则</span>
-            </div>
-            <div class="wb-row">
-              <select id="wbTrackBfWeeks" aria-label="批量补算最近 N 周" style="max-width:140px">
-                <option value="4">最近 4 周</option>
-                <option value="8">最近 8 周</option>
-                <option value="12">最近 12 周</option>
-              </select>
-              <button type="button" class="wb-secondary" id="wbTrackBfRunN">批量补算</button>
-            </div>
-          </div>
-          <p class="wb-muted" style="font-size:12px;line-height:1.7">
-            补算按<b>当前规则</b>重建该周名单与收益，<b>不等于当时真实发布的名单</b>；
-            指定规则只能补<b>更早的、还没发布名单的历史周</b>（最新的周归周五链；已有全量名单的周直接点进去看单条规则即可）。
-          </p>
-          <div class="wb-jobs" id="wbTrackBfJobs" aria-live="polite"></div>
-        </details>
         <p class="wb-muted" id="wbTrackL0Note"></p>
         <p class="wb-error" id="wbTrackL0Error" role="alert" hidden></p>
         <div class="wb-scroll" id="wbTrackL0List" aria-live="polite"></div>
@@ -1901,6 +2237,132 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
       </div>
     </section>
   </div>
+
+  <!-- 历史补算 Drawer -->
+  <div id="wbTrackBfMask" hidden></div>
+  <aside id="wbTrackBfDrawer" role="dialog" aria-modal="true" aria-label="历史补算" hidden>
+    <div class="wbt-drawer-head">
+      <h3 class="wbt-drawer-title">历史补算</h3>
+      <button type="button" class="wbt-drawer-close" id="wbTrackBfClose" aria-label="关闭历史补算">×</button>
+    </div>
+    <div class="wbt-drawer-tabs">
+      <button type="button" class="wbt-drawer-tab active" id="wbTrackBfTabSingle">指定历史周</button>
+      <button type="button" class="wbt-drawer-tab" id="wbTrackBfTabBatch">批量最近 N 周</button>
+    </div>
+    <div class="wbt-drawer-body">
+      <div class="wbt-drawer-info">
+        <strong>ⓘ 补算说明</strong>
+        历史补算基于当前规则和当前可用股票池，按所选历史周重新计算名单与跟踪表现。
+        结果用于策略历史回测与研究参考，不等于当时真实发布的名单。
+      </div>
+
+      <!-- 单周补算面板 -->
+      <div id="wbTrackBfSinglePanel" class="wbt-drawer-section">
+        <div class="wbt-drawer-section">
+          <label class="wbt-drawer-section-title" for="wbTrackBfWeek">1. 选择信号周</label>
+          <div class="wb-row">
+            <input id="wbTrackBfWeek" placeholder="如 20260731 或 2026-07-31" autocomplete="off" aria-label="补算信号日" style="max-width:260px">
+          </div>
+          <span class="wb-muted" style="font-size:12px">信号日必须是该自然周最后一个交易日（通常周五，节假日周是周四，填错会提示正确日期）。</span>
+        </div>
+
+        <div class="wbt-drawer-section">
+          <span class="wbt-drawer-section-title">2. 选择规则范围</span>
+          <div class="wb-row" style="gap:16px">
+            <label class="wb-check" style="min-height:32px">
+              <input type="radio" name="wbtBfRuleScopeRadio" id="wbTrackBfScopeAll" value="all" checked>
+              <span>全部规则（整周回填）</span>
+            </label>
+            <label class="wb-check" style="min-height:32px">
+              <input type="radio" name="wbtBfRuleScopeRadio" id="wbTrackBfScopeCustom" value="custom">
+              <span>指定规则（最多 5 条）</span>
+            </label>
+          </div>
+          <div id="wbTrackBfAllRulesNote" class="wb-muted" style="font-size:12px">
+            重新扫描该历史周的全部可执行规则，属于全市场重任务，耗时较长。不选规则=补全部规则。
+          </div>
+          <!-- 指定规则选择区 -->
+          <div id="wbTrackBfCustomRulesWrap" style="display:none;flex-direction:column;gap:8px">
+            <input id="wbTrackBfRuleSearch" placeholder="检索规则…" autocomplete="off" aria-label="检索补算规则">
+            <div class="wb-row" style="font-size:12px;justify-content:space-between">
+              <div style="display:flex;gap:8px;align-items:center">
+                <span id="wbTrackBfRuleCount" class="wb-muted">已选 0 条</span>
+                <span class="wb-muted">（最多 5 条，更多请整周回填）</span>
+              </div>
+              <button type="button" class="wb-secondary" id="wbTrackBfRuleClear" style="min-height:28px;padding:2px 10px;font-size:12px">清空</button>
+            </div>
+            <div class="wb-rulebox" id="wbTrackBfRuleList" aria-label="可补算规则" style="max-height:180px">
+              <span class="wb-muted">展开即加载规则…</span>
+            </div>
+            <div class="wb-chips" id="wbTrackBfRuleChips" aria-live="polite"></div>
+            <span id="wbTrackBfRuleSummary" class="wb-muted" style="font-size:12px">规则：全部规则</span>
+          </div>
+        </div>
+
+        <div class="wbt-drawer-section">
+          <span class="wbt-drawer-section-title">3. 任务预估</span>
+          <div id="wbTrackBfEstimate" class="wbt-task-estimate">
+            <div class="wbt-task-estimate-item">
+              <span>历史信号周</span>
+              <span id="wbTrackBfEstWeek">—</span>
+            </div>
+            <div class="wbt-task-estimate-item">
+              <span>规则范围</span>
+              <span id="wbTrackBfEstScope">全部规则</span>
+            </div>
+            <div class="wbt-task-estimate-item">
+              <span>任务类型</span>
+              <span>按当前规则历史重建</span>
+            </div>
+            <div class="wbt-task-estimate-item">
+              <span>预计耗时</span>
+              <span id="wbTrackBfEstTime">较长，通常约 60~90+ 分钟/周</span>
+            </div>
+            <div class="wb-muted" style="font-size:11px;margin-top:4px">
+              实际耗时受机器性能与数据量影响。补算按当前规则重建，不等于当时真实发布的名单。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 批量最近 N 周面板 -->
+      <div id="wbTrackBfBatchPanel" class="wbt-drawer-section" style="display:none">
+        <div class="wbt-drawer-section">
+          <label class="wbt-drawer-section-title" for="wbTrackBfWeeks">1. 选择范围</label>
+          <div class="wb-row">
+            <select id="wbTrackBfWeeks" aria-label="批量补算最近 N 周" style="max-width:180px">
+              <option value="4">最近 4 周</option>
+              <option value="8">最近 8 周</option>
+              <option value="12">最近 12 周</option>
+            </select>
+          </div>
+        </div>
+        <div class="wbt-drawer-section">
+          <span class="wbt-drawer-section-title">2. 规则范围</span>
+          <div class="wb-muted" style="font-size:13px">全部规则</div>
+          <div class="wb-warn" style="font-size:12px">ⓘ 批量补算不支持指定规则。</div>
+        </div>
+        <div class="wbt-drawer-section">
+          <span class="wbt-drawer-section-title">3. 任务说明</span>
+          <p class="wb-muted" style="font-size:12px;line-height:1.6">
+            批量补最近 N 周：批量按<b>当前规则</b>重建最近 N 个历史信号周名单与收益，<b>不等于当时真实发布的名单</b>。
+          </p>
+        </div>
+      </div>
+
+      <!-- 任务列表 -->
+      <div class="wbt-drawer-section">
+        <span class="wbt-drawer-section-title">补算任务状态</span>
+        <div class="wb-jobs" id="wbTrackBfJobs" aria-live="polite"></div>
+      </div>
+    </div>
+    <div class="wbt-drawer-footer">
+      <button type="button" class="wb-secondary" id="wbTrackBfCancel">取消</button>
+      <button type="button" class="wb-primary" id="wbTrackBfSubmit">▶ 开始补算</button>
+      <button type="button" id="wbTrackBfRun" style="display:none">补算该周</button>
+      <button type="button" id="wbTrackBfRunN" style="display:none">批量补算</button>
+    </div>
+  </aside>
 </section>
 
 <!-- 查询卦象（PLAN-BAGUA-UX-V1.1 升级版：主导航唯一卦象入口，内部三页签
@@ -15612,6 +16074,8 @@ async function boot() {
     l2SortKey: "week_ret", l2SortDesc: true, l2Expanded: new Set(),
     // 补算任务：轮询定时器 + 「本轮是否真有任务在跑」（决定结束后是否刷新）
     bfTimer: null, bfHadRunning: false,
+    // 补算 Drawer 状态与客户端分页
+    bfDrawerOpen: false, bfMode: "single", l1Page: 1, l1PageSize: 10,
   };
   // 跟踪完成状态中文映射（运行状态，只表示评估是否结束，不代表数据完整）
   const WBT_COMPLETION = {
@@ -16248,6 +16712,61 @@ async function boot() {
     toast("已带入跟踪明细条件（" + wbFmtDate(weekDate) + " · Tushare 前复权），请重新查询。");
   }
 
+  /* ---------- 历史补算 Drawer 控制与任务预估 ---------- */
+
+  function wbtOpenBackfillDrawer(mode) {
+    wbt.bfDrawerOpen = true;
+    if (mode) wbtSetBackfillMode(mode);
+    const mask = $("wbTrackBfMask"), drawer = $("wbTrackBfDrawer");
+    if (mask) mask.hidden = false;
+    if (drawer) drawer.hidden = false;
+    document.body.classList.add("wbt-scroll-locked");
+    wbtLoadBackfillRules();
+    wbtUpdateBackfillEstimate();
+  }
+
+  function wbtCloseBackfillDrawer() {
+    wbt.bfDrawerOpen = false;
+    const mask = $("wbTrackBfMask"), drawer = $("wbTrackBfDrawer");
+    if (mask) mask.hidden = true;
+    if (drawer) drawer.hidden = true;
+    document.body.classList.remove("wbt-scroll-locked");
+  }
+
+  function wbtSetBackfillMode(mode) {
+    wbt.bfMode = mode;
+    const isSingle = mode === "single";
+    const tabSingle = $("wbTrackBfTabSingle"), tabBatch = $("wbTrackBfTabBatch");
+    const pSingle = $("wbTrackBfSinglePanel"), pBatch = $("wbTrackBfBatchPanel");
+    if (tabSingle) tabSingle.classList.toggle("active", isSingle);
+    if (tabBatch) tabBatch.classList.toggle("active", !isSingle);
+    if (pSingle) pSingle.style.display = isSingle ? "flex" : "none";
+    if (pBatch) pBatch.style.display = isSingle ? "none" : "flex";
+  }
+
+  function wbtUpdateBackfillEstimate() {
+    const estWeek = $("wbTrackBfEstWeek");
+    const estScope = $("wbTrackBfEstScope");
+    const estTime = $("wbTrackBfEstTime");
+    const rawWeek = (($("wbTrackBfWeek") || {}).value || "").trim();
+    const isCustom = $("wbTrackBfScopeCustom") && $("wbTrackBfScopeCustom").checked;
+    const pickedCount = wbt.bfChecked ? wbt.bfChecked.size : 0;
+    if (estWeek) estWeek.textContent = rawWeek || "未填写";
+    if (estScope) {
+      estScope.textContent = isCustom
+        ? (pickedCount > 0 ? (pickedCount + " 条指定规则") : "未选择（不选=全部规则）")
+        : "全部规则";
+    }
+    if (estTime) {
+      if (isCustom && pickedCount > 0) {
+        const minEst = pickedCount * 8, maxEst = pickedCount * 11;
+        estTime.textContent = "约 " + minEst + " ~ " + maxEst + " 分钟";
+      } else {
+        estTime.textContent = "较长，通常约 60~90+ 分钟/周";
+      }
+    }
+  }
+
   /* ---------- 补算指定历史周（异步 CLI 子进程） ---------- */
 
   // 单次指定规则补算的规则数上限（与后端 MAX_SUBSET_RULES 一致；前端先挡一道，
@@ -16353,6 +16872,7 @@ async function boot() {
           + "）——补算只跑这几条";
       }
     }
+    wbtUpdateBackfillEstimate();
   }
 
   /** 当前选中的规则 ID（空数组 = 全部规则 = 整周回填）。 */
@@ -16574,9 +17094,59 @@ async function boot() {
       if (wbt.l2From === "l0" || !wbt.weeks) { wbtShowLevel("l0"); wbtRenderOverview(); }
       else wbtShowLevel("l1");
     };
-    // 补算指定历史周：单周（YYYYMMDD，可选只补指定规则）+ 批量（最近 N 周，全规则）
-    const bfBox = $("wbTrackBfBox");
-    if (bfBox) bfBox.ontoggle = () => { if (bfBox.open) wbtLoadBackfillRules(); };
+    // 历史补算 Drawer 控制
+    const bfOpen = $("wbTrackBfOpen");
+    if (bfOpen) bfOpen.onclick = () => wbtOpenBackfillDrawer("single");
+    const bfClose = $("wbTrackBfClose");
+    if (bfClose) bfClose.onclick = wbtCloseBackfillDrawer;
+    const bfCancel = $("wbTrackBfCancel");
+    if (bfCancel) bfCancel.onclick = wbtCloseBackfillDrawer;
+    const bfMask = $("wbTrackBfMask");
+    if (bfMask) bfMask.onclick = wbtCloseBackfillDrawer;
+    const tabSingle = $("wbTrackBfTabSingle");
+    if (tabSingle) tabSingle.onclick = () => wbtSetBackfillMode("single");
+    const tabBatch = $("wbTrackBfTabBatch");
+    if (tabBatch) tabBatch.onclick = () => wbtSetBackfillMode("batch");
+
+    const scopeAll = $("wbTrackBfScopeAll");
+    const scopeCustom = $("wbTrackBfScopeCustom");
+    const customWrap = $("wbTrackBfCustomRulesWrap");
+    const allNote = $("wbTrackBfAllRulesNote");
+    if (scopeAll && scopeCustom) {
+      scopeAll.onchange = () => {
+        if (scopeAll.checked) {
+          if (customWrap) customWrap.style.display = "none";
+          if (allNote) allNote.style.display = "block";
+          wbtUpdateBackfillEstimate();
+        }
+      };
+      scopeCustom.onchange = () => {
+        if (scopeCustom.checked) {
+          if (customWrap) customWrap.style.display = "flex";
+          if (allNote) allNote.style.display = "none";
+          wbtUpdateBackfillEstimate();
+        }
+      };
+    }
+    const bfWeek = $("wbTrackBfWeek");
+    if (bfWeek) bfWeek.oninput = wbtUpdateBackfillEstimate;
+    const bfSubmit = $("wbTrackBfSubmit");
+    if (bfSubmit) bfSubmit.onclick = () => {
+      if (wbt.bfMode === "single") {
+        const run = $("wbTrackBfRun");
+        if (run) run.click();
+      } else {
+        const runN = $("wbTrackBfRunN");
+        if (runN) runN.click();
+      }
+    };
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && wbt.bfDrawerOpen) {
+        wbtCloseBackfillDrawer();
+      }
+    });
+
+    // 补算单周与批量提交逻辑
     const bfRuleSearch = $("wbTrackBfRuleSearch");
     if (bfRuleSearch) bfRuleSearch.oninput = wbtRenderBackfillRules;
     const bfRuleClear = $("wbTrackBfRuleClear");
