@@ -659,3 +659,24 @@ class TestTrackV11Metrics:
         assert s["return_coverage_exec"] == 0.5  # 2 / 4
         assert s["excess_coverage_exec"] == 0.25  # 1 / 4
 
+    def test_l2_rows_carry_bagua_and_week_gua(self, track_client):
+        """V1.1.3：验证 L2 详情接口返回行均包含 week_gua 与 bagua 结构。"""
+        client, cfg, _ = track_client
+        sid = _publish_snap(cfg, 20260911, ["SZSE.000001.SZ", "SZSE.000002.SZ"])
+        _write_track(
+            cfg, sid, 20260911,
+            rows=[{"code": "SZSE.000001.SZ", "rule_id": "txt_测试规则A", "ret_close_sig": 0.05}],
+        )
+        r = client.get("/api/v1/bagua/track/weeks/20260911")
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["rows"]) == 1
+        r0 = body["rows"][0]
+        assert "week_gua" in r0
+        assert "bagua" in r0
+        # 待结算票也应挂载
+        assert len(body["pending_picks"]) == 1
+        p0 = body["pending_picks"][0]
+        assert "week_gua" in p0
+        assert "bagua" in p0
+

@@ -2277,6 +2277,56 @@ body.wbt-scroll-locked {
   color: #829bb6;
   margin-top: 4px;
 }
+/* L2 Bagua & Consensus Panels (V1.1.3) */
+.wbt-l2-bagua-wrap {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #162942;
+}
+.wbt-l2-bagua-card {
+  background: rgba(10, 24, 42, 0.75);
+  border: 1px solid #1a3554;
+  border-radius: 6px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+}
+.wbt-l2-bagua-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.wbt-l2-bagua-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #f3f7fc;
+}
+.wbt-l2-bagua-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.wbt-l2-bagua-lbl {
+  color: #829bb6;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.wbt-l2-bagua-val {
+  color: #c5d4e5;
+  word-break: break-all;
+}
 @media(max-width:510px){
   .wb-root .wb-header{padding:16px}
   .wb-root .wb-modes{padding:0 12px 14px;gap:5px}
@@ -17399,10 +17449,11 @@ async function boot() {
       + '</div></div>';
   }
 
-  /** L2 默认列（V1.1 实施规格：代码/名称/首日开盘/期末收盘/最高收益/最大回撤/本周收益/超额收益/成交状态/状态/操作）。 */
+  /** L2 默认列（V1.1 实施规格：代码/名称/周卦/首日开盘/期末收盘/最高收益/最大回撤/本周收益/超额收益/成交状态/状态/操作）。 */
   const WBT_L2_COLS = [
     { key: "code", label: "代码", align: "left", width: "110px", title: "标的代码（优先显示简码，悬停见全码）" },
     { key: "name", label: "名称", align: "left", width: "120px", title: "股票名称（悬停可查看完整股票全称）" },
+    { key: "week_gua", label: "周卦", align: "center", width: "140px", title: "信号日（上周五）收盘起卦所得周卦组合" },
     { key: "open", label: "首日开盘", align: "right", title: "跟踪自然周首个实际交易日开盘价" },
     { key: "close_end", label: "期末收盘", align: "right", title: "跟踪自然周最后一个实际交易日收盘价" },
     { key: "max_gain", label: "最高收益", align: "right", title: "周内最高价相对首日开盘价；下方小字为见顶在周几" },
@@ -17417,6 +17468,7 @@ async function boot() {
   function wbtL2SortValue(r, key) {
     if (key === "code") return String(r.code || "");
     if (key === "name") return String(r.name || "");
+    if (key === "week_gua") return String(r.week_gua || (r.bagua && r.bagua.week && r.bagua.week.combo) || "");
     if (key === "open") return wbtNum(r.entry_open_week);
     if (key === "close_end") return wbtNum(r.close_week_end);
     if (key === "max_gain") return wbtNum(r.max_gain_exec != null ? r.max_gain_exec : r.max_gain_sig);
@@ -17504,6 +17556,52 @@ async function boot() {
     const dispCode = r.code_disp || r.code;
     const stockName = r.name ? (dispCode + " " + r.name) : dispCode;
 
+    const bg = r.bagua || {};
+    const bw = bg.week || null;
+    const bm = bg.month || null;
+
+    let baguaHtml = "";
+    if (bw || bm) {
+      const wCombo = bw && bw.combo ? esc(bw.combo) : "—";
+      const mCombo = bm && bm.combo ? esc(bm.combo) : "—";
+      const wCons = bw && bw.combo ? wbConsBadge(bw.consensus) : "";
+      const mCons = bm && bm.combo ? wbConsBadge(bm.consensus) : "";
+      const wYao = bw && bw.yao_explain ? esc(bw.yao_explain) : "—";
+      const mYao = bm && bm.yao_explain ? esc(bm.yao_explain) : "—";
+      const wGao = bw && bw.gaodao ? esc(bw.gaodao) : "—";
+      const mGao = bm && bm.gaodao ? esc(bm.gaodao) : "—";
+
+      baguaHtml = '<div class="wbt-l2-bagua-wrap">'
+        + '<div class="wbt-l2-bagua-card">'
+        + '<div class="wbt-l2-bagua-head">'
+        + '<div class="wbt-l2-bagua-title">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="12 6 12 12 16 14"></polygon></svg>'
+        + '<span>周卦：</span><strong class="wb-mono" style="color:#60a5fa;font-size:13px">' + wCombo + '</strong>'
+        + '</div>'
+        + (wCons ? ('<div>' + wCons + '</div>') : '')
+        + '</div>'
+        + '<div class="wbt-l2-bagua-row"><span class="wbt-l2-bagua-lbl">爻辞解释：</span><span class="wbt-l2-bagua-val wb-muted">' + wYao + '</span></div>'
+        + '<div class="wbt-l2-bagua-row"><span class="wbt-l2-bagua-lbl">周·高岛易断：</span><span class="wbt-l2-bagua-val">' + wGao + '</span></div>'
+        + '</div>'
+        + '<div class="wbt-l2-bagua-card">'
+        + '<div class="wbt-l2-bagua-head">'
+        + '<div class="wbt-l2-bagua-title">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>'
+        + '<span>月卦：</span><strong class="wb-mono" style="color:#a78bfa;font-size:13px">' + mCombo + '</strong>'
+        + '</div>'
+        + (mCons ? ('<div>' + mCons + '</div>') : '')
+        + '</div>'
+        + '<div class="wbt-l2-bagua-row"><span class="wbt-l2-bagua-lbl">爻辞解释：</span><span class="wbt-l2-bagua-val wb-muted">' + mYao + '</span></div>'
+        + '<div class="wbt-l2-bagua-row"><span class="wbt-l2-bagua-lbl">月·高岛易断：</span><span class="wbt-l2-bagua-val">' + mGao + '</span></div>'
+        + '</div>'
+        + '</div>';
+    } else {
+      baguaHtml = '<div class="wbt-l2-bagua-wrap" style="grid-template-columns:1fr">'
+        + '<div class="wbt-l2-bagua-card" style="align-items:center;justify-content:center;padding:10px;color:#829bb6;font-size:12px">'
+        + '<span>暂无该标的周卦与月卦共识数据（可点击行末「查卦象」实时测算）</span>'
+        + '</div></div>';
+    }
+
     return '<div class="wbt-l2-expand-wrap">'
       + '<div class="wbt-l2-stats-col">'
       + '<div class="wbt-l2-panel-head">'
@@ -17511,7 +17609,6 @@ async function boot() {
       + '<svg class="wbt-l2-panel-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>'
       + '<span>个股明细 · ' + esc(stockName) + '</span>'
       + '</div>'
-      + '<button type="button" class="wbt-btn-query" data-wbt-q="' + esc(r.code) + '">查卦象 →</button>'
       + '</div>'
       + '<div class="wbt-l2-metric-grid">'
       + '<div class="wbt-l2-metric-box">'
@@ -17556,6 +17653,7 @@ async function boot() {
       + (r.theoretical_open_ret != null
           ? '<p class="wb-muted" style="font-size:11px;margin-top:2px">理论开盘收益 ' + esc(wbtPct(r.theoretical_open_ret))
             + '（首日无 K 线或买不进时的参考值，未计入成交口径统计）</p>' : '')
+      + baguaHtml
       + '</div>'
       + '</div>';
   }
@@ -17658,7 +17756,7 @@ async function boot() {
     let html = '<table class="wbt-table"><thead><tr>';
     WBT_L2_COLS.forEach((c) => {
       const label = c.key === "week_ret" ? retLabel : c.label;
-      const sortable = ["code", "name", "open", "close_end", "max_gain", "drawdown", "week_ret", "excess"].indexOf(c.key) >= 0;
+      const sortable = ["code", "name", "week_gua", "open", "close_end", "max_gain", "drawdown", "week_ret", "excess"].indexOf(c.key) >= 0;
       const arrow = wbt.l2SortKey === c.key ? (wbt.l2SortDesc ? " ▾" : " ▴") : "";
       const alCls = "wbt-al-" + (c.align || "left");
       html += '<th class="' + alCls + '"'
@@ -17688,11 +17786,16 @@ async function boot() {
         : r.status === "no_bar" ? "无行情（停牌/缺数据）"
         : r.status === "pending" ? "进行中" : (r.status || "—");
       const nameCell = r.name ? esc(String(r.name)) : '<span class="wb-muted">—</span>';
+      const weekGuaStr = r.week_gua || (r.bagua && r.bagua.week && r.bagua.week.combo) || "";
+      const weekGuaCell = weekGuaStr
+        ? ('<span class="wb-mono" style="font-weight:600;color:#c5d4e5">' + esc(weekGuaStr) + '</span>')
+        : '<span class="wb-muted">—</span>';
       const isExp = wbt.l2Expanded.has(key);
 
       return '<tr>'
         + '<td class="wbt-al-left" title="' + esc(r.code || '') + '"><span class="wbt-expand-icon" data-wbt-expand="' + esc(key) + '" style="cursor:pointer;margin-right:6px;color:#829bb6;font-size:12px;display:inline-block;width:12px">' + (isExp ? '▼' : '▶') + '</span><strong class="wb-mono">' + esc(r.code_disp || r.code) + '</strong></td>'
         + '<td class="wbt-al-left" title="' + esc(r.name ? (r.code + ' ' + r.name) : (r.code || '')) + '"><strong>' + nameCell + '</strong></td>'
+        + '<td class="wbt-al-center">' + weekGuaCell + '</td>'
         + '<td class="wb-mono wbt-al-right">' + wbtRaw(r.entry_open_week) + '</td>'
         + '<td class="wb-mono wbt-al-right">' + wbtRaw(r.close_week_end) + '</td>'
         + '<td class="wb-mono wbt-al-right">' + mg + '</td>'

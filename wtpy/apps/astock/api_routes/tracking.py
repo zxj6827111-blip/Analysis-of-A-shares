@@ -549,6 +549,91 @@ def api_track_rule_weeks(
     return resp
 
 
+def _enrich_rows_with_bagua(cfg, entry_asof: int, rows: List[dict]) -> None:
+    """为每行股票注入周卦、月卦及高岛/倾向共识信息（与每周导出 Excel 同源口径）。
+
+    失败/无数据/测试 mock 环境时静默回退，绝不阻断 L2 跟踪明细返回。
+    """
+    if not rows:
+        return
+    try:
+        from ..service.bagua_query import (
+            BaguaCalculator,
+            _bagua_combo,
+            _bagua_consensus_label,
+            _bagua_gaodao_explain,
+            _bagua_yao_explain,
+            _month_attributions,
+            _query_bagua_periods_for_code,
+        )
+
+        calc = (
+            BaguaCalculator.from_json(cfg.bagua_json)
+            if getattr(cfg, "bagua_json", None)
+            else None
+        )
+        asof = int(entry_asof)
+        attrs = _month_attributions(asof)
+        month_asof = attrs[0]["cast_asof"] if attrs else asof
+        asof_map = {"WEEK": asof, "MONTH": month_asof}
+
+        bagua_cache: Dict[str, dict] = {}
+        for r in rows:
+            code = str(r.get("code") or "").strip()
+            if not code:
+                r["week_gua"] = ""
+                r["bagua"] = None
+                continue
+
+            if code not in bagua_cache:
+                info: dict = {"week_gua": "", "bagua": None}
+                for adj in ("tushare_qfq", "raw"):
+                    try:
+                        res = _query_bagua_periods_for_code(
+                            cfg,
+                            code=code,
+                            asof=asof,
+                            periods=["WEEK", "MONTH"],
+                            adjust=adj,
+                            calc=calc,
+                            asof_map=asof_map,
+                        )
+                        w = res.get("WEEK")
+                        if w and w.get("ok"):
+                            m = res.get("MONTH")
+                            week_combo = _bagua_combo(w)
+                            month_combo = _bagua_combo(m) if m else ""
+                            info["week_gua"] = week_combo
+                            info["bagua"] = {
+                                "week": {
+                                    "combo": week_combo,
+                                    "yao_explain": _bagua_yao_explain(w),
+                                    "gaodao": _bagua_gaodao_explain(w),
+                                    "consensus": _bagua_consensus_label(w) or "一般",
+                                    "action_signal": str((w.get("bagua") or {}).get("action_signal") or ""),
+                                },
+                                "month": {
+                                    "combo": month_combo,
+                                    "yao_explain": _bagua_yao_explain(m) if m else "",
+                                    "gaodao": _bagua_gaodao_explain(m) if m else "",
+                                    "consensus": (_bagua_consensus_label(m) or "一般") if m else "一般",
+                                    "action_signal": str((m.get("bagua") or {}).get("action_signal") or "") if m else "",
+                                },
+                            }
+                            break
+                    except Exception:
+                        continue
+                bagua_cache[code] = info
+
+            cached = bagua_cache[code]
+            r["week_gua"] = cached.get("week_gua") or ""
+            r["bagua"] = cached.get("bagua")
+    except Exception:
+        for r in rows:
+            r.setdefault("week_gua", "")
+            r.setdefault("bagua", None)
+
+
 @router.get("/api/v1/bagua/track/weeks/{entry_asof}")
 def api_track_week_detail(
     entry_asof: int,
@@ -634,6 +719,11 @@ def api_track_week_detail(
                         "close": m.get("close"),
                     }
                 )
+
+    # 注入周卦、月卦、高岛与共识倾向字段（V1.1.3 卦象共识增强）
+    _enrich_rows_with_bagua(ctx.cfg, int(entry_asof), rows)
+    _enrich_rows_with_bagua(ctx.cfg, int(entry_asof), matched_pending)
+
     scope = sc.snapshot_rules_scope(snap)
     scope_ids = sc.scoped_rule_ids(snap)
 

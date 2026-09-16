@@ -217,12 +217,14 @@ def test_l2_slim_columns_with_name_and_week_end_close(v3_html: str):
     m = re.search(r"const WBT_L2_COLS = \[(.*?)\n  \];", v3_html, flags=re.S)
     assert m, "缺少 L2 列定义"
     cols = m.group(1)
-    for need in ("代码", "名称", "首日开盘", "期末收盘", "最高收益", "本周收益", "成交状态"):
+    for need in ("代码", "名称", "周卦", "首日开盘", "期末收盘", "最高收益", "本周收益", "成交状态"):
         assert need in cols, f"L2 默认列缺少「{need}」"
+    assert "week_gua" in cols, "L2 列配置必须包含 week_gua 字段键"
     # 诊断列不再进默认列（收进详情行）
     for gone in ("周一", "周二", "峰谷回撤"):
         assert ('label: "%s"' % gone) not in cols, f"「{gone}」应从默认列收进详情"
     detail = _extract_js_function(v3_html, "wbtRenderWeekDetail")
+    assert "week_gua" in detail, "L2 表格渲染必须包含 week_gua"
     # 名称列：产物 name 字段（缺名显示「—」，绝不拿代码冒充）
     assert "r.name" in detail, "L2 必须渲染产物里的股票名称"
     # 期末收盘价用产物的显式字段，不从 daily 反推
@@ -236,6 +238,9 @@ def test_l2_slim_columns_with_name_and_week_end_close(v3_html: str):
     assert "excess_exec" in detail, "L2 必须包含 excess_exec"
     row_detail = _extract_js_function(v3_html, "wbtRowDetailHtml")
     assert "ret_vs_week_open" in row_detail, "详情行逐日收益必须按首日开盘口径"
+    assert "wbt-l2-bagua-wrap" in row_detail, "详情行必须包含周卦与月卦共识面板"
+    assert "周卦：" in row_detail and "月卦：" in row_detail, "面板必须包含周卦与月卦"
+    assert "wbt-btn-query" not in row_detail, "左侧头部查卦象按钮已依要求移除"
 
 
 
