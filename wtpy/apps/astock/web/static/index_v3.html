@@ -17401,8 +17401,8 @@ async function boot() {
 
   /** L2 默认列（V1.1 实施规格：代码/名称/首日开盘/期末收盘/最高收益/最大回撤/本周收益/超额收益/成交状态/状态/操作）。 */
   const WBT_L2_COLS = [
-    { key: "code", label: "代码", align: "left", width: "110px" },
-    { key: "name", label: "名称", align: "left", width: "120px" },
+    { key: "code", label: "代码", align: "left", width: "110px", title: "标的代码（优先显示简码，悬停见全码）" },
+    { key: "name", label: "名称", align: "left", width: "120px", title: "股票名称（悬停可查看完整股票全称）" },
     { key: "open", label: "首日开盘", align: "right", title: "跟踪自然周首个实际交易日开盘价" },
     { key: "close_end", label: "期末收盘", align: "right", title: "跟踪自然周最后一个实际交易日收盘价" },
     { key: "max_gain", label: "最高收益", align: "right", title: "周内最高价相对首日开盘价；下方小字为见顶在周几" },
@@ -17492,7 +17492,9 @@ async function boot() {
     }).join('');
 
     const validDays = dates.filter((d) => !!byDate[Number(d)]).length;
-    const covText = "数据覆盖率: " + validDays + " / " + dates.length + (validDays === dates.length ? " (本周" + dates.length + "个交易日数据完整)" : " (部分交易日缺数据)");
+    const covText = dates.length > 0
+      ? ("数据覆盖率: " + validDays + " / " + dates.length + (validDays === dates.length ? " (本周" + dates.length + "个交易日数据完整)" : " (部分交易日缺数据)"))
+      : "暂无交易日行情数据";
 
     let dateRangeStr = "";
     if (dates.length >= 2) {
@@ -17689,8 +17691,8 @@ async function boot() {
       const isExp = wbt.l2Expanded.has(key);
 
       return '<tr>'
-        + '<td class="wbt-al-left"><span class="wbt-expand-icon" data-wbt-expand="' + esc(key) + '" style="cursor:pointer;margin-right:6px;color:#829bb6;font-size:12px;display:inline-block;width:12px">' + (isExp ? '▼' : '▶') + '</span><strong class="wb-mono">' + esc(r.code_disp || r.code) + '</strong></td>'
-        + '<td class="wbt-al-left"><strong>' + nameCell + '</strong></td>'
+        + '<td class="wbt-al-left" title="' + esc(r.code || '') + '"><span class="wbt-expand-icon" data-wbt-expand="' + esc(key) + '" style="cursor:pointer;margin-right:6px;color:#829bb6;font-size:12px;display:inline-block;width:12px">' + (isExp ? '▼' : '▶') + '</span><strong class="wb-mono">' + esc(r.code_disp || r.code) + '</strong></td>'
+        + '<td class="wbt-al-left" title="' + esc(r.name ? (r.code + ' ' + r.name) : (r.code || '')) + '"><strong>' + nameCell + '</strong></td>'
         + '<td class="wb-mono wbt-al-right">' + wbtRaw(r.entry_open_week) + '</td>'
         + '<td class="wb-mono wbt-al-right">' + wbtRaw(r.close_week_end) + '</td>'
         + '<td class="wb-mono wbt-al-right">' + mg + '</td>'

@@ -39,6 +39,7 @@ ParserCTPFlow
 .codegraph/
 .codex/
 .agents/
+.agent/
 __pycache__/
 *.egg-info/
 .mypy_cache/
