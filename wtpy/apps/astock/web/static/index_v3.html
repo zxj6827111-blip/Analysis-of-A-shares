@@ -17598,8 +17598,30 @@ async function boot() {
     } else {
       baguaHtml = '<div class="wbt-l2-bagua-wrap" style="grid-template-columns:1fr">'
         + '<div class="wbt-l2-bagua-card" style="align-items:center;justify-content:center;padding:10px;color:#829bb6;font-size:12px">'
-        + '<span>暂无该标的周卦与月卦共识数据（可点击行末「查卦象」实时测算）</span>'
+        + '<span>暂无该标的周卦与月卦共识数据</span>'
         + '</div></div>';
+    }
+
+    // 信号基准与诊断数据（填补左侧空白，形成多维度个股评估闭环）
+    const sigClose = r.entry_close_signal;
+    let gapRatio = null;
+    let gapSub = "—";
+    if (r.entry_open_week != null && sigClose != null && Number(sigClose) > 0) {
+      gapRatio = Number(r.entry_open_week) / Number(sigClose) - 1.0;
+      gapSub = gapRatio > 0.0005 ? "高开入场" : (gapRatio < -0.0005 ? "低开入场" : "平开入场");
+    }
+    const minLow = r.min_low_ret_sig;
+    const ruleName = r.rule_name || wbtRuleName(r.rule_id) || r.rule_id || "—";
+    const ruleId = r.rule_id || "";
+    const actSig = bw && bw.action_signal ? bw.action_signal : (bg && bg.week && bg.week.action_signal ? bg.week.action_signal : "");
+    let actBadge = '<span class="wb-muted">—</span>';
+    if (actSig) {
+      const a = String(actSig).trim();
+      let cls = "wb-cons-neutral";
+      if (a === "新开仓" || a === "加仓") cls = "wb-cons-good";
+      else if (a === "减仓" || a === "清仓") cls = "wb-cons-bad";
+      else if (a === "持有") cls = "wb-cons-neutral";
+      actBadge = '<span class="wb-cons ' + cls + '" style="font-size:12px;padding:1px 8px">' + esc(a) + '</span>';
     }
 
     return '<div class="wbt-l2-expand-wrap">'
@@ -17614,27 +17636,70 @@ async function boot() {
       + '<div class="wbt-l2-metric-box">'
       + '<div class="wbt-l2-metric-lbl">入场价 (首日开盘)</div>'
       + '<div class="wbt-l2-metric-val">' + wbtRaw(r.entry_open_week) + '</div>'
+      + '<div class="wbt-l2-metric-sub">首日开盘基准</div>'
       + '</div>'
       + '<div class="wbt-l2-metric-box">'
       + '<div class="wbt-l2-metric-lbl">期末价 (周五收盘)</div>'
       + '<div class="wbt-l2-metric-val">' + wbtRaw(r.close_week_end) + '</div>'
+      + '<div class="wbt-l2-metric-sub">周末结算收盘</div>'
       + '</div>'
       + '<div class="wbt-l2-metric-box">'
       + '<div class="wbt-l2-metric-lbl">最高收益</div>'
       + '<div class="wbt-l2-metric-val">' + (maxGain != null ? wbtPctSigned(maxGain) : '—') + '</div>'
-      + (peakDate ? '<div class="wbt-l2-metric-sub">' + esc(wbtWeekdayCn(peakDate)) + '</div>' : '')
+      + '<div class="wbt-l2-metric-sub">' + (peakDate ? esc(wbtWeekdayCn(peakDate)) : '周内最高点') + '</div>'
       + '</div>'
       + '<div class="wbt-l2-metric-box">'
       + '<div class="wbt-l2-metric-lbl">最大回撤</div>'
       + '<div class="wbt-l2-metric-val">' + wbtPctSigned(r.drawdown_close_sig) + '</div>'
+      + '<div class="wbt-l2-metric-sub">收盘序列回撤</div>'
       + '</div>'
       + '<div class="wbt-l2-metric-box">'
       + '<div class="wbt-l2-metric-lbl">周收益</div>'
       + '<div class="wbt-l2-metric-val">' + wbtPctSigned(r.ret_close_exec != null ? r.ret_close_exec : r.ret_close_sig) + '</div>'
+      + '<div class="wbt-l2-metric-sub">' + (exec ? '首日开盘口径' : '信号收盘口径') + '</div>'
       + '</div>'
       + '<div class="wbt-l2-metric-box">'
       + '<div class="wbt-l2-metric-lbl">超额收益</div>'
       + '<div class="wbt-l2-metric-val">' + wbtPctSigned(excess) + '</div>'
+      + '<div class="wbt-l2-metric-sub">相对沪深300</div>'
+      + '</div>'
+      + '</div>'
+      + '<div class="wbt-l2-panel-head" style="margin-top:2px">'
+      + '<div class="wbt-l2-panel-title" style="font-size:12px;color:#829bb6">'
+      + '<svg class="wbt-l2-panel-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2f86ff" stroke-width="2"><path d="M12 20v-6M6 20V10M18 20V4"/></svg>'
+      + '<span>信号基准与策略诊断</span>'
+      + '</div>'
+      + '</div>'
+      + '<div class="wbt-l2-metric-grid">'
+      + '<div class="wbt-l2-metric-box">'
+      + '<div class="wbt-l2-metric-lbl">信号日收盘</div>'
+      + '<div class="wbt-l2-metric-val">' + wbtRaw(sigClose) + '</div>'
+      + '<div class="wbt-l2-metric-sub">信号基准起算价</div>'
+      + '</div>'
+      + '<div class="wbt-l2-metric-box">'
+      + '<div class="wbt-l2-metric-lbl">隔周末跳空</div>'
+      + '<div class="wbt-l2-metric-val">' + (gapRatio != null ? wbtPctSigned(gapRatio) : '—') + '</div>'
+      + '<div class="wbt-l2-metric-sub">' + esc(gapSub) + '</div>'
+      + '</div>'
+      + '<div class="wbt-l2-metric-box">'
+      + '<div class="wbt-l2-metric-lbl">沪深300同期</div>'
+      + '<div class="wbt-l2-metric-val">' + (bench != null ? wbtPctSigned(bench) : '—') + '</div>'
+      + '<div class="wbt-l2-metric-sub">同期基准涨跌</div>'
+      + '</div>'
+      + '<div class="wbt-l2-metric-box">'
+      + '<div class="wbt-l2-metric-lbl">周内最深探底</div>'
+      + '<div class="wbt-l2-metric-val">' + (minLow != null ? wbtPctSigned(minLow) : '—') + '</div>'
+      + '<div class="wbt-l2-metric-sub">盘中最低收益</div>'
+      + '</div>'
+      + '<div class="wbt-l2-metric-box">'
+      + '<div class="wbt-l2-metric-lbl">周卦操作建议</div>'
+      + '<div class="wbt-l2-metric-val" style="display:flex;align-items:center;min-height:20px">' + actBadge + '</div>'
+      + '<div class="wbt-l2-metric-sub">易经卦象研判</div>'
+      + '</div>'
+      + '<div class="wbt-l2-metric-box">'
+      + '<div class="wbt-l2-metric-lbl">命中选股规则</div>'
+      + '<div class="wbt-l2-metric-val" style="font-size:12px;font-weight:600;color:#c5d4e5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + esc(ruleName) + '">' + esc(ruleName) + '</div>'
+      + '<div class="wbt-l2-metric-sub" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + esc(ruleId) + '">' + esc(ruleId ? ('ID: ' + ruleId) : '—') + '</div>'
       + '</div>'
       + '</div>'
       + '</div>'
