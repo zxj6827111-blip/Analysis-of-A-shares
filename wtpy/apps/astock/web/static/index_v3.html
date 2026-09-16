@@ -16929,8 +16929,9 @@ async function boot() {
     box.innerHTML = rows.map((r) => {
       // 同名规则（如两条「735金叉及趋势」）靠来源区分，前端不按名去重
       const nm = (r.name || r.id) + (r.source ? " [" + r.source + "]" : "");
-      return '<label class="wb-check"><input type="checkbox" data-wb-bf-rule="' + esc(r.id) + '"'
-        + (wbt.bfChecked.has(r.id) ? " checked" : "") + "><span>" + esc(nm) + "</span></label>";
+      return '<label class="wb-check" style="min-height:34px;padding:4px 8px;display:flex;align-items:center;cursor:pointer"><input type="checkbox" data-wb-bf-rule="' + esc(r.id) + '"'
+        + (wbt.bfChecked.has(r.id) ? " checked" : "") + '><span style="flex:1;margin-left:6px">' + esc(nm) + "</span>"
+        + '<span class="wb-muted wb-mono" style="font-size:11px;margin-left:8px">' + esc(r.id.slice(0, 6)) + "</span></label>";
     }).join("") || '<span class="wb-muted">没有匹配的规则（已选 ' + wbt.bfChecked.size + " 条仍在生效）</span>";
     box.querySelectorAll("input[data-wb-bf-rule]").forEach((x) => {
       x.onchange = () => {
@@ -16990,20 +16991,22 @@ async function boot() {
     const box = $("wbTrackBfJobs");
     if (!box) return;
     const jobs = (body && body.jobs) || [];
-    if (!jobs.length) { box.innerHTML = '<span class="wb-muted">暂无补算任务</span>'; return; }
+    if (!jobs.length) { box.innerHTML = '<span class="wb-muted" style="font-size:12px">暂无补算任务</span>'; return; }
     box.innerHTML = jobs.slice(0, 5).map((j) => {
       const picked = (j.rule_ids || []).length;
       const target = j.week
-        ? (wbFmtDate(j.week) + (picked ? "（指定 " + picked + " 条规则）" : ""))
+        ? (wbFmtDate(j.week) + (picked ? "（指定 " + picked + " 条规则）" : "（全部规则）"))
         : ("最近 " + esc(String(j.weeks_back || 0)) + " 周");
       let note = "";
       if (j.status === "retryable") note = "（重任务锁被占用/数据版本变化，已记待办，服务端稍后自动重试）";
       if (j.status === "failed") note = "（退出码 " + esc(String(j.exit_code)) + "，见服务端日志）";
-      const cls = j.status === "done" ? "" : " running";
-      return '<div class="wb-job"><span' + (cls ? ' class="wb-warn"' : "")
-        + ">" + esc(WBT_BF_STATUS[j.status] || j.status) + "</span>"
-        + "<span>" + esc(String(target)) + "</span>"
-        + (note ? '<span class="wb-muted">' + esc(note) + "</span>" : "")
+      const tagCls = j.status === "done" ? "complete" : (j.status === "failed" ? "error" : "running");
+      return '<div class="wb-job" style="padding:8px 0;border-bottom:1px solid var(--wbt-line-soft, #19344f)">'
+        + '<div style="display:flex;align-items:center;gap:8px">'
+        + '<span class="wbt-tag ' + tagCls + '">' + esc(WBT_BF_STATUS[j.status] || j.status) + "</span>"
+        + '<strong style="font-size:13px">' + esc(String(target)) + "</strong>"
+        + "</div>"
+        + (note ? '<div class="wb-muted" style="font-size:11px">' + esc(note) + "</div>" : "")
         + "</div>";
     }).join("");
   }
