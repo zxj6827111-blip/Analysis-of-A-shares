@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from wtpy.apps.astock.bagua.filter_rules import (
+    KNOWN_ACTION_SIGNALS,
     GuaFilter,
     event_matches_gua_filter,
     filter_events_by_gua_filter,
@@ -63,7 +64,8 @@ def test_json_has_action_and_state_id():
     assert kb["count_yao"] == 384
     e0 = kb["entries"][0]
     assert e0.get("state_id") == "01-1"
-    assert e0.get("action_signal") in ("新开仓", "加仓", "持有", "减仓", "清仓")
+    # 词表随 260911 稿扩到 8 个取值（含 观察/不碰/持有或开仓）
+    assert e0.get("action_signal") in KNOWN_ACTION_SIGNALS
     sids = [e["state_id"] for e in kb["entries"]]
     assert len(sids) == len(set(sids))
 

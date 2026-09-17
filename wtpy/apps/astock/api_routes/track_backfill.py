@@ -38,6 +38,7 @@ weeks_back 限 1..52；同时最多一个 queued/running 任务（单 worker 顺
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -157,37 +158,81 @@ def _resolve_rule_ids(ctx: ApiContext, raw: Optional[List[str]]) -> Optional[Lis
     return ids
 
 
-def _subset_scope_hint(ctx: ApiContext, week: str) -> Optional[str]:
-    """子集补算的两条护栏；返回错误文案（None = 通过）。
+def _published_week_notice(ctx: ApiContext, week: str) -> Optional[str]:
+    """**整周**补算遇到已发布周时的说明（None = 该周还没发布，可正常补算）。
 
-    与 CLI 侧同源判定（publish_decision 的契约护栏 + latest_signal_week），
-    放在入口是为了**快速失败**：全市场扫描要几分钟到十几分钟，用户不该
-    等完之后才被告知"这周不能做子集补算"。
+    整周补算的产出会被 ``publish_decision`` 以 ``already_published`` 拒绝发布
+    （跑了 60~90 分钟，页面数据一点没变），所以在入口就挡住，并把用户引到
+    真正有用的动作：按规则追加（子集补算）。
     """
     from ..service import screen_contract as sc
 
-    # ① 该周已有发布指针（全量或子集）：子集补算不替换已有名单
+    try:
+        idx = sc.load_week_index(Path(ctx.cfg.storage_root))
+        entry = (idx.get("weeks") or {}).get(str(int(week))) or {}
+    except Exception:  # noqa: BLE001 — 索引读失败交给 CLI 侧兜底
+        return None
+    if not entry.get("published_snapshot_id"):
+        return None
+    scope = str(entry.get("rules_scope") or sc.RULES_SCOPE_ALL)
+    scoped = [str(r) for r in (entry.get("scoped_rule_ids") or [])]
+    who = (
+        "该周是「指定规则补算」周，名单只含 " + "、".join(scoped)
+        if scope == sc.RULES_SCOPE_SUBSET and scoped
+        else ("该周已有全量发布名单" if scope != sc.RULES_SCOPE_SUBSET else "该周已有部分规则名单")
+    )
+    return (
+        f"{week} 已有发布快照（来源={entry.get('run_kind') or '—'}；{who}）。"
+        "整周补算不会替换已发布名单（跑了也不会生效），因此未受理。"
+        "要补某条规则请用「指定规则」方式——它会把该规则追加进这一周的名单；"
+        "要重算整周请用 CLI：先 review-weekly 再 track-publish 显式转正。"
+    )
+
+
+def _subset_scope_hint(
+    ctx: ApiContext, week: str, rule_ids: Optional[List[str]] = None
+) -> Optional[str]:
+    """指定规则补算的护栏；返回错误文案（None = 受理）。
+
+    2026-09-16 用户口径修正：**补算单位是「周 × 规则」**。一条规则补过某周，
+    只说明这条规则那一周有数据了，**不代表这一周归它**——别的规则同样要能补
+    这一周。所以该周已有名单时：
+    - 请求的规则**都已在该周名单里** → 无需补算（提示，不白扫）；
+    - 还有规则没覆盖 → 受理"追加"（只扫缺的规则，合并进该周名单）。
+    唯一保留的边界是数据面最新信号周（归周五链，见 ②）。
+    """
+    from ..service import screen_contract as sc
+    from ..service import screen_tracking as tracksvc
+
     try:
         idx = sc.load_week_index(Path(ctx.cfg.storage_root))
         entry = (idx.get("weeks") or {}).get(str(int(week))) or {}
     except Exception:  # noqa: BLE001 — 索引读失败交给 CLI 侧兜底
         entry = {}
     if entry.get("published_snapshot_id"):
-        scope = str(entry.get("rules_scope") or sc.RULES_SCOPE_ALL)
-        if scope == sc.RULES_SCOPE_SUBSET:
-            return (
-                f"{week} 已有「指定规则补算」快照（不替换已有名单）。"
-                "要追加规则请重新提交包含全部目标规则的一次补算，"
-                "或在服务器上用 CLI 处理。"
+        want = [str(r) for r in (rule_ids or [])]
+        snap = None
+        try:
+            from ..service.screen_snapshots import load_published_snapshot_for_week
+
+            snap = load_published_snapshot_for_week(ctx.cfg, int(week))
+        except Exception:  # noqa: BLE001 — 读不到就当"都能追加"，由 CLI 侧定夺
+            snap = None
+        have = {str(r.get("rule_id")) for r in (snap or {}).get("rules") or []}
+        if snap is not None and want and all(r in have for r in want):
+            scope = str(entry.get("rules_scope") or sc.RULES_SCOPE_ALL)
+            extra = (
+                "（该周是全量周，本来就包含这条规则）"
+                if scope != sc.RULES_SCOPE_SUBSET
+                else ""
             )
-        return (
-            f"{week} 已有全量发布快照：该周直接就能看单条规则的结果"
-            "（跟踪栏目 → 指标 → 周明细），不需要子集补算。"
-        )
+            return (
+                f"{week} 的名单里已经有：{'、'.join(want)}{extra}，无需补算——"
+                "直接点该周的「周明细」即可。"
+                "如需用新数据重算，请用 CLI track-publish 显式转正（会记录审计）。"
+            )
     # ② 该周必须早于数据面最新信号周（最新周归周五链）
     try:
-        from ..service import screen_tracking as tracksvc
-
         latest = tracksvc.latest_signal_week(ctx.cfg)
     except Exception:  # noqa: BLE001 — 推不出来就交给契约层护栏兜底
         latest = 0
@@ -197,6 +242,54 @@ def _subset_scope_hint(ctx: ApiContext, week: str) -> Optional[str]:
             "指定规则补算只支持更早的历史周。"
         )
     return None
+
+
+def _week_tracking_ready(cfg, week: str, entry: dict) -> bool:
+    """该周当前发布快照是否已有跟踪产物（结算过）。
+
+    整周补算在"已有名单"的周上不会重新发布（``already_published``），但它仍然会
+    **结算**该周的跟踪——所以只有"已发布且已结算"的周才是真的白跑。追加规则之后
+    的周（名单变了、新快照还没结算）恰恰需要这个入口，不能一起挡。
+    """
+    try:
+        from ..service import screen_contract as sc
+
+        root = Path(cfg.storage_root)
+        snap_id = str(entry.get("published_snapshot_id") or "")
+        if not snap_id:
+            return False
+        cur_path = sc.track_current_path(root, snap_id)
+        if not cur_path.exists():
+            return False
+        cur = json.loads(cur_path.read_text(encoding="utf-8")) or {}
+        rev = str(cur.get("tracking_revision_id") or "")
+        if not rev:
+            return False
+        return sc.track_path(root, snap_id, rev).exists()
+    except Exception:  # noqa: BLE001 — 判定不了就按"没结算"放行（宁可多跑一次）
+        return False
+
+
+def _week_backfill_hint(ctx: ApiContext, week: str) -> Optional[str]:
+    """整周（全部规则）补算的前置校验；返回错误文案（None = 受理）。
+
+    2026-09-16 补：整周补算在"已发布且已结算"的周上是白跑（跑 60~90 分钟全市场
+    扫描，最后 ``publish_decision=already_published`` 不发布，页面数据一点没变），
+    在入口就挡住并指向"按规则追加"。但**已发布未结算**的周必须放行——那正是
+    结算入口（追加规则后就走这条）。
+    """
+    from ..service import screen_contract as sc
+
+    try:
+        idx = sc.load_week_index(Path(ctx.cfg.storage_root))
+        entry = (idx.get("weeks") or {}).get(str(int(week))) or {}
+    except Exception:  # noqa: BLE001
+        entry = {}
+    if not entry.get("published_snapshot_id"):
+        return None
+    if not _week_tracking_ready(ctx.cfg, week, entry):
+        return None  # 名单在、跟踪还没结算 → 放行（会跳过筛选直接结算）
+    return _published_week_notice(ctx, week)
 
 
 def _run_backfill_job(ctx: ApiContext, job: Dict[str, Any]) -> None:
@@ -347,7 +440,12 @@ def api_track_backfill(
         if hint:
             raise HTTPException(400, hint)
     if rule_ids and week is not None:
-        hint = _subset_scope_hint(ctx, week)
+        hint = _subset_scope_hint(ctx, week, rule_ids)
+        if hint:
+            raise HTTPException(400, hint)
+    elif week is not None:
+        # 整周（全部规则）补算：该周已有发布指针时同样是白跑（不会发布）
+        hint = _week_backfill_hint(ctx, week)
         if hint:
             raise HTTPException(400, hint)
 
@@ -421,6 +519,46 @@ def api_track_backfill(
         "status": "queued",
         "message": message,
     }
+
+
+@router.get("/api/v1/bagua/track/published-weeks")
+def api_track_published_weeks(
+    weeks: int = 26,
+    ctx: ApiContext = Depends(get_ctx),
+) -> dict:
+    """已发布信号周清单（倒序，最多 ``weeks`` 个）：补算入口的"哪些周不能再补"。
+
+    为什么需要它（2026-09-16 用户实操反馈）：补算护栏是**按周**判定的——某周一旦
+    有发布指针，**任何规则**的自动补算都不会改动它，跟用户选的那条规则有没有数据
+    无关。页面上原先看不出这一点，用户只能在提交后收到 400，还会被报错里的规则名
+    搞糊涂（那是"占住这一周"的规则，不是他选的那条）。抽屉据本接口提前提示。
+    """
+    from ..service import screen_contract as sc
+
+    if weeks < 1 or weeks > 104:
+        weeks = 26
+    try:
+        idx = sc.load_week_index(Path(ctx.cfg.storage_root))
+        entries = idx.get("weeks") or {}
+    except Exception:  # noqa: BLE001 — 索引不可读时返回空清单（前端退回"不提示"）
+        entries = {}
+    out = []
+    for k in sorted((int(x) for x in entries.keys()), reverse=True)[:weeks]:
+        e = entries.get(str(k)) or {}
+        out.append(
+            {
+                "week_id": k,
+                "published_snapshot_id": e.get("published_snapshot_id"),
+                "run_kind": e.get("run_kind"),
+                "rules_scope": str(e.get("rules_scope") or sc.RULES_SCOPE_ALL),
+                "scoped_rule_ids": [str(x) for x in (e.get("scoped_rule_ids") or [])],
+                "published_at": e.get("published_at"),
+                # 是否已结算跟踪：没结算的周允许用"整周补算"触发结算
+                # （追加规则之后就走这条），已结算的整周补算才是白跑
+                "tracking_ready": _week_tracking_ready(ctx.cfg, str(k), e),
+            }
+        )
+    return {"ok": True, "count": len(out), "weeks": out}
 
 
 @router.get("/api/v1/bagua/track/backfill/status")

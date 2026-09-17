@@ -197,8 +197,15 @@ class BaguaKnowledge:
         return self._by_key.get((upper, lower, yao_order))
 
     def excel_consistency_check(self, xlsx_path: Path | str) -> List[str]:
-        """Row-by-row compare against Excel authority (A1:H385)."""
+        """Row-by-row compare against Excel authority.
+
+        按**表头名**取列（旧版 9 列 / 260911 稿 10 列都能比对），逐行核对
+        卦名·爻位·爻辞·个股行情简判·备注·操作信号，以及「变卦全称」是否
+        指向同一卦序。列号硬编码会在列布局变化时静默比对错误字段。
+        """
         import openpyxl
+
+        from .rebuild_from_excel import build_name_index, read_column_map, split_full_name
 
         xlsx_path = Path(xlsx_path)
         issues: List[str] = []
@@ -211,22 +218,48 @@ class BaguaKnowledge:
             )
         wb = openpyxl.load_workbook(xlsx_path, data_only=True)
         ws = wb.active
-        # rebuild expected names/yao/judgement with same forward-fill as rebuild
-        # Compare each entry excel_row if present, else sequential
+        try:
+            col_map = read_column_map(ws)
+        except ValueError as exc:  # 表头不认识 → 无法比对，如实报出而不是当作通过
+            return issues + [f"excel header not recognised: {exc}"]
+
+        name_to_order, _ = build_name_index(self.entries)
+        # Excel 列字段 → JSON 条目字段（简判在 JSON 侧叫 market_judgement）
+        text_fields = (
+            ("full_name", "full_name", "卦名"),
+            ("yao_name", "yao_name", "爻位"),
+            ("yao_ci", "yao_ci", "爻辞"),
+            ("judgement", "market_judgement", "个股行情简判"),
+            ("note", "note", "备注&实操总结"),
+            ("action_signal", "action_signal", "操作信号"),
+        )
         for idx, e in enumerate(self.entries):
             r = int(e.get("excel_row") or (idx + 2))
-            a = ws.cell(r, 1).value
-            d = ws.cell(r, 4).value
-            f = ws.cell(r, 6).value
-            g = ws.cell(r, 7).value
-            if a is not None and str(a).strip() != e.get("full_name"):
-                issues.append(f"row {r} full_name excel={a!r} json={e.get('full_name')!r}")
-            if d is not None and str(d).strip() != e.get("yao_name"):
-                issues.append(f"row {r} yao_name excel={d!r} json={e.get('yao_name')!r}")
-            if f is not None and str(f).strip() != e.get("yao_ci"):
-                issues.append(f"row {r} yao_ci mismatch at {r}")
-            if g is not None and str(g).strip() != e.get("market_judgement"):
-                issues.append(f"row {r} market_judgement mismatch at {r}")
+            for xl_field, json_field, label in text_fields:
+                col = col_map.get(xl_field)
+                if col is None:
+                    continue
+                cell = ws.cell(r, col).value
+                got = "" if cell is None else str(cell).strip()
+                want = str(e.get(json_field) or "")
+                if got != want:
+                    issues.append(f"row {r} {label} excel={got!r} json={want!r}")
+            # 变卦全称（若该版有该列）必须解析到同一卦序
+            col_full = col_map.get("biangua_full")
+            if col_full is not None:
+                cell = ws.cell(r, col_full).value
+                got = "" if cell is None else str(cell).strip()
+                if got:
+                    _, plain = split_full_name(got)
+                    order = name_to_order.get(plain)
+                    if order is None:
+                        issues.append(f"row {r} 变卦全称无法解析：{got!r}")
+                    elif order != e.get("changed_hexagram_id"):
+                        issues.append(
+                            f"row {r} 变卦全称 {got!r} → 卦序 {order}，"
+                            f"json={e.get('changed_hexagram_id')}"
+                        )
+        return issues
         return issues
 
 

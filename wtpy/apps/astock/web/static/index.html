@@ -38,11 +38,12 @@
     table.fc-table th, table.fc-table td { border:1px solid var(--border); padding:0.35rem 0.45rem; text-align:left; }
     table.fc-table th { color: var(--muted); font-weight:600; }
     .fc-signal { display:inline-block; font-weight:700; padding:0.15rem 0.55rem; border-radius:6px; font-size:0.9rem; }
-    /* 红涨绿跌：加仓/新开仓偏多→红；减仓/清仓偏空→绿 */
+    /* 红涨绿跌：加仓/新开仓偏多→红；减仓/不碰/清仓偏空→绿 */
     .fc-signal-新开仓, .fc-signal-加仓 { background:#3a1520; color:#f31260; }
-    .fc-signal-持有 { background:#1a2a44; color:var(--accent); }
+    .fc-signal-持有, .fc-signal-持有或开仓 { background:#1a2a44; color:var(--accent); }
+    .fc-signal-观察 { background:#222a36; color:var(--muted); }
     .fc-signal-减仓 { background:#143528; color:#3dd68c; }
-    .fc-signal-清仓 { background:#0f2a1c; color:#2eb872; }
+    .fc-signal-不碰, .fc-signal-清仓 { background:#0f2a1c; color:#2eb872; }
     .fc-signal-empty { background:#243044; color:var(--muted); }
 
     /* Forecast stock cards — calm accent palette, clear hierarchy */
@@ -6533,7 +6534,7 @@ XG:CROSS(MA5,MA10);</textarea>
 
     const GuaUI = (function(){
       let hexagrams = null;
-      let ruleVersion = "gua_rules_v20260721";
+      let ruleVersion = "gua_rules_v20260911";
       let loadError = null;
       let committed = {
         enabled: false,

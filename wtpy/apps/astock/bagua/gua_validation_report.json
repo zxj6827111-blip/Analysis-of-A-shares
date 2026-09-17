@@ -1,20 +1,78 @@
 {
   "ok": true,
   "issues": [],
+  "warnings": [],
   "count_entries": 384,
   "count_gua": 64,
   "unique_state_ids": 384,
   "action_signal_counts": {
-    "持有": 140,
-    "新开仓": 77,
+    "持有": 137,
+    "新开仓": 75,
     "加仓": 14,
     "清仓": 88,
-    "减仓": 65
+    "减仓": 65,
+    "不碰": 1,
+    "观察": 3,
+    "持有或开仓": 1
   },
-  "empty_biangua": 210,
+  "empty_biangua": 0,
+  "missing_biangua_full_name": 0,
   "missing_action_signal": 0,
-  "rule_version": "gua_rules_v20260721",
-  "source_file": "64卦384爻行情简判完整版-已添加操作信号.xlsx",
-  "source_sha256": "08703fc6f49c24a90f6e74a79b1e0f3a090ca9169d7abd5f06f064d1139b172c",
+  "notes_filled": 13,
+  "biangua_fill": {
+    "filled_computed": 0,
+    "kept_excel": 384,
+    "excel_conflict": 0,
+    "empty_left": 0,
+    "missing_full_name": 0,
+    "method": "excel_first_with_line_flip_check",
+    "excel_normalized": [
+      {
+        "state_id": "08-2",
+        "excel_biangua": "坎水",
+        "canonical": "坎",
+        "full_name": "坎为水"
+      },
+      {
+        "state_id": "08-5",
+        "excel_biangua": "坤地",
+        "canonical": "坤",
+        "full_name": "坤为地"
+      },
+      {
+        "state_id": "16-4",
+        "excel_biangua": "坤地",
+        "canonical": "坤",
+        "full_name": "坤为地"
+      },
+      {
+        "state_id": "21-6",
+        "excel_biangua": "雷",
+        "canonical": "震",
+        "full_name": "震为雷"
+      },
+      {
+        "state_id": "24-1",
+        "excel_biangua": "坤地",
+        "canonical": "坤",
+        "full_name": "坤为地"
+      },
+      {
+        "state_id": "55-3",
+        "excel_biangua": "震雷",
+        "canonical": "震",
+        "full_name": "震为雷"
+      },
+      {
+        "state_id": "55-6",
+        "excel_biangua": "离火",
+        "canonical": "离",
+        "full_name": "离为火"
+      }
+    ]
+  },
+  "rule_version": "gua_rules_v20260911",
+  "source_file": "64卦384爻行情简判完整版-260911.xlsx",
+  "source_sha256": "a5fa34d5ba6fe4bd9d6a7679889617c42b334b86fce7979c9e23e64ef20b971f",
   "out_json": "E:\\Software Development\\wtpy-master\\wtpy\\apps\\astock\\bagua\\bagua_384.json"
 }

@@ -817,8 +817,8 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .fc-match-warn{color:var(--orange)}
 .fc-match-bad{color:var(--red)}
 .fc-signal{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;border:1px solid var(--line);font-size:11px;font-weight:700}
-.fc-signal-清仓,.fc-signal-空仓{color:#60e6ad;border-color:rgba(53,212,147,.35);background:rgba(53,212,147,.10)}
-.fc-signal-持有,.fc-signal-观望{color:#8bc0ff;border-color:rgba(47,128,255,.38);background:rgba(47,128,255,.10)}
+.fc-signal-清仓,.fc-signal-空仓,.fc-signal-不碰{color:#60e6ad;border-color:rgba(53,212,147,.35);background:rgba(53,212,147,.10)}
+.fc-signal-持有,.fc-signal-观望,.fc-signal-观察,.fc-signal-持有或开仓{color:#8bc0ff;border-color:rgba(47,128,255,.38);background:rgba(47,128,255,.10)}
 .fc-signal-减仓,.fc-signal-减持{color:#ffc46e;border-color:rgba(255,173,51,.38);background:rgba(255,173,51,.11)}
 .fc-signal-加仓,.fc-signal-新开仓{color:#ff8aa7;border-color:rgba(255,79,123,.38);background:rgba(255,79,123,.11)}
 .fc-signal-empty{color:var(--muted)}
@@ -901,8 +901,11 @@ label.exp-chip input.exp-signal-src{pointer-events:auto;cursor:pointer}
     .gua-act { display:inline-block; padding:0.08rem 0.4rem; border-radius:5px; font-size:0.75rem; font-weight:600; }
     .gua-act-新开仓 { background:#152a44; color:#5b9dff; }
     .gua-act-加仓 { background:#24183a; color:#c4a0ff; }
+    .gua-act-持有或开仓 { background:#1c2440; color:#9db6e8; }
     .gua-act-持有 { background:#1a2a30; color:#8aa4b0; }
+    .gua-act-观察 { background:#232a33; color:#9aa7b4; }
     .gua-act-减仓 { background:#3a2410; color:#f0a050; }
+    .gua-act-不碰 { background:#331a20; color:#e08aa0; }
     .gua-act-清仓 { background:#3a1528; color:#f06292; }
     .gua-drawer-mask { position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9000; display:none; }
     .gua-drawer-mask.open { display:block; }
@@ -1776,6 +1779,18 @@ body.wbt-scroll-locked {
   border-color: #2f86ff;
   color: #ffffff;
 }
+/* 周卦分批补齐的状态条：只在计算中或确有失败时出现，补齐完成后自动消失 */
+.wbt-bagua-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border: 1px solid #24425f;
+  border-radius: 6px;
+  background: rgba(14, 34, 58, 0.4);
+  font-size: 12px;
+}
 .wbt-table-btn {
   height: 28px;
   min-height: 28px;
@@ -2061,6 +2076,43 @@ body.wbt-scroll-locked {
   border-top: 1px solid #24425f;
   background: #081525;
 }
+/* 补算任务浮标：抽屉收起后仍在右下角显示任务状态（用户 2026-09-17：提交后
+   只看到一个被抽屉挡住的 toast，不知道任务到底有没有起来）。
+   z-index 高于抽屉，抽屉关着时不会被遮挡；打开抽屉时主动隐藏，避免压住底部按钮。 */
+#wbTrackBfPill {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(560px, calc(100vw - 44px));
+  padding: 10px 14px;
+  border: 1px solid #2f86ff;
+  border-radius: 10px;
+  background: #0f2137;
+  color: #e8f1ff;
+  font-size: 12.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+#wbTrackBfPill[hidden] { display: none !important; }
+#wbTrackBfPill.done { border-color: #2fbf71; }
+#wbTrackBfPill.failed { border-color: #e05c5c; }
+#wbTrackBfPill.stale { border-color: #8fb4dd; }
+#wbTrackBfPill .bfp-hint { color: #8fb4dd; white-space: nowrap; }
+#wbTrackBfPill .bfp-spin {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(47, 134, 255, 0.35);
+  border-top-color: #2f86ff;
+  border-radius: 50%;
+  animation: bfpSpin 0.9s linear infinite;
+}
+@keyframes bfpSpin { to { transform: rotate(360deg); } }
 .wbt-task-estimate {
   background: rgba(14, 34, 58, 0.6);
   border: 1px solid #24425f;
@@ -2202,7 +2254,10 @@ body.wbt-scroll-locked {
 }
 .wbt-l2-metric-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* minmax(0, 1fr) 而非 1fr：1fr 等价 minmax(auto, 1fr)，列宽不能小于内容 min-content。
+     一旦某格出现 white-space:nowrap 的长文本（如规则 ID），该列被撑到整段文本宽度，
+     其余列被挤到各自 min-content；中文可逐字断行，标签于是竖排成一列、整块塌高。 */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 .wbt-l2-metric-box {
@@ -2213,6 +2268,11 @@ body.wbt-scroll-locked {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0; /* grid/flex 子项默认 min-width:auto，会阻止内部文本收缩与省略号生效 */
+}
+/* 需要整行宽度的格子（如「命中选股规则」这类长标识），避免与三列指标挤在一起 */
+.wbt-l2-metric-box-wide {
+  grid-column: 1 / -1;
 }
 .wbt-l2-metric-lbl {
   font-size: 11px;
@@ -2277,6 +2337,73 @@ body.wbt-scroll-locked {
   color: #829bb6;
   margin-top: 4px;
 }
+/* L2 Trend Chart Styles (V1.2) */
+.wbt-l2-chart-wrap {
+  background: rgba(12, 28, 48, 0.7);
+  border: 1px solid #162942;
+  border-radius: 6px;
+  padding: 10px 14px 8px 14px;
+  position: relative;
+  box-sizing: border-box;
+  margin-top: 2px;
+}
+.wbt-l2-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.wbt-l2-chart-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f3f7fc;
+}
+.wbt-l2-chart-meta {
+  font-size: 11px;
+  color: #829bb6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.wbt-trend-svg {
+  display: block;
+  width: 100%;
+  height: 140px;
+  overflow: visible;
+}
+.wbt-trend-svg text {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.wbt-trend-tooltip {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  background: rgba(6, 18, 32, 0.95);
+  border: 1px solid #2f86ff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #f3f7fc;
+  z-index: 10;
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+  transition: opacity .1s ease;
+}
+.wbt-chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 110px;
+  color: #829bb6;
+  font-size: 12px;
+}
 /* L2 Bagua & Consensus Panels (V1.1.3) */
 .wbt-l2-bagua-wrap {
   display: grid;
@@ -2326,6 +2453,20 @@ body.wbt-scroll-locked {
 .wbt-l2-bagua-val {
   color: #c5d4e5;
   word-break: break-all;
+}
+@media (max-width: 900px) {
+  .wbt-l2-expand-wrap {
+    grid-template-columns: 1fr;
+  }
+  .wbt-l2-stats-col {
+    border-right: none;
+    border-bottom: 1px solid #162942;
+    padding-right: 0;
+    padding-bottom: 14px;
+  }
+  .wbt-l2-bagua-wrap {
+    grid-template-columns: 1fr;
+  }
 }
 @media(max-width:510px){
   .wb-root .wb-header{padding:16px}
@@ -2550,8 +2691,11 @@ body.wbt-scroll-locked {
             <div style="display:flex;flex-wrap:wrap;gap:8px 14px;font-size:13px" id="guaActionChecks">
               <label><input type="checkbox" value="新开仓" /> <span class="gua-act gua-act-新开仓">新开仓</span></label>
               <label><input type="checkbox" value="加仓" /> <span class="gua-act gua-act-加仓">加仓</span></label>
+              <label><input type="checkbox" value="持有或开仓" /> <span class="gua-act gua-act-持有或开仓">持有或开仓</span></label>
               <label><input type="checkbox" value="持有" /> <span class="gua-act gua-act-持有">持有</span></label>
+              <label><input type="checkbox" value="观察" /> <span class="gua-act gua-act-观察">观察</span></label>
               <label><input type="checkbox" value="减仓" /> <span class="gua-act gua-act-减仓">减仓</span></label>
+              <label><input type="checkbox" value="不碰" /> <span class="gua-act gua-act-不碰">不碰</span></label>
               <label><input type="checkbox" value="清仓" /> <span class="gua-act gua-act-清仓">清仓</span></label>
             </div>
           </div>
@@ -2921,6 +3065,10 @@ body.wbt-scroll-locked {
             </div>
           </div>
           <span class="wb-muted" style="font-size:11px">信号日必须是该自然周最后一个交易日（通常周五，节假日周是周四，填错会提示正确日期）。</span>
+          <!-- 已发布周提示：补算护栏是**按周**判定的（该周一旦有发布指针，任何规则的
+               自动补算都不会改动它），必须在输入前就看得见，否则用户只能提交后吃 400 -->
+          <div id="wbTrackBfPublishedHint" class="wb-muted" style="font-size:11px;margin-top:6px;line-height:1.6"></div>
+          <div id="wbTrackBfWeekWarn" hidden style="margin-top:6px;font-size:11.5px;line-height:1.6;color:#e6a23c"></div>
         </div>
 
         <div class="wbt-drawer-section">
@@ -3022,12 +3170,15 @@ body.wbt-scroll-locked {
       </div>
     </div>
     <div class="wbt-drawer-footer">
+      <div id="wbTrackBfSubmitError" hidden style="flex:1;min-width:0;font-size:12px;line-height:1.5;color:#e6a23c;word-break:break-all"></div>
       <button type="button" class="wb-secondary" id="wbTrackBfCancel">取消</button>
       <button type="button" class="wb-primary" id="wbTrackBfSubmit">▶ 开始补算</button>
       <button type="button" id="wbTrackBfRun" style="display:none">补算该周</button>
       <button type="button" id="wbTrackBfRunN" style="display:none">批量补算</button>
     </div>
   </aside>
+  <!-- 补算任务浮标：点「开始补算」后抽屉自动收起，任务状态改在这里常驻显示 -->
+  <button type="button" id="wbTrackBfPill" hidden aria-live="polite"></button>
 </section>
 
 <!-- 查询卦象（PLAN-BAGUA-UX-V1.1 升级版：主导航唯一卦象入口，内部三页签
@@ -3416,8 +3567,11 @@ body.wbt-scroll-locked {
               <div style="display:flex;flex-wrap:wrap;gap:8px 14px;font-size:13px" id="expGuaActionChecks">
                 <label><input type="checkbox" value="新开仓" /> 新开仓</label>
                 <label><input type="checkbox" value="加仓" /> 加仓</label>
+                <label><input type="checkbox" value="持有或开仓" /> 持有或开仓</label>
                 <label><input type="checkbox" value="持有" /> 持有</label>
+                <label><input type="checkbox" value="观察" /> 观察</label>
                 <label><input type="checkbox" value="减仓" /> 减仓</label>
+                <label><input type="checkbox" value="不碰" /> 不碰</label>
                 <label><input type="checkbox" value="清仓" /> 清仓</label>
               </div>
             </div>
@@ -4167,9 +4321,11 @@ body.wbt-scroll-locked {
       });
     } catch (netErr) {
       // 网络层失败（断连/超时/被取消）：与 HTTP 错误分开标记，
-      // 轮询逻辑据此区分「暂时断连」与「记录确已失效(404)」
+      // 轮询逻辑据此区分「暂时断连」与「记录确已失效(404)」；
+      // aborted 单独标记——主动 abort（换周/切页）不是故障，不该报错给用户
       const ne = new Error("网络请求失败: " + (netErr && netErr.message));
       ne.network = true;
+      ne.aborted = !!(netErr && String(netErr.name || "") === "AbortError");
       throw ne;
     }
     const text = await r.text();
@@ -5293,7 +5449,7 @@ body.wbt-scroll-locked {
       selected_main_hexagram_ids: switchOn && has ? selected_main_hexagram_ids : [],
       selected_state_ids: switchOn && has ? selected_state_ids : [],
       selected_action_signals: switchOn && has ? selected_action_signals : [],
-      rule_version: (typeof window !== "undefined" && window.GuaUI && false) || "gua_rules_v20260721",
+      rule_version: (typeof window !== "undefined" && window.GuaUI && false) || "gua_rules_v20260911",
       switch_on: switchOn,
       has_selection: !!has,
       label: "experiment_gua_filter",
@@ -12254,7 +12410,7 @@ function renderBtRuleList() {
   }
   const GuaUI = (function(){
     let hexagrams = null;
-    let ruleVersion = "gua_rules_v20260721";
+    let ruleVersion = "gua_rules_v20260911";
     let loadError = null;
     let committed = {
       enabled: false,
@@ -12911,7 +13067,7 @@ function renderBtRuleList() {
       }
       const cfg = draft || committed;
       const selected = new Set(cfg.selected_state_ids || []);
-      const order = ["新开仓", "加仓", "持有", "减仓", "清仓"];
+      const order = ["新开仓", "加仓", "持有或开仓", "持有", "观察", "减仓", "不碰", "清仓"];
       const groups = {};
       order.forEach(function(a){ groups[a] = []; });
       groups["其他"] = [];
@@ -16734,11 +16890,22 @@ async function boot() {
     // 切换；产物里的 sig 口径数据仍在（未被删除），将来要恢复只需加回按钮
     sortKey: "win_rate", sortDesc: true, caliber: "exec", search: "",
     level: "l0", ruleId: null, ruleRow: null, weeks: null, week: null,
-    weekId: null, weekRule: "", l2From: "l1",
+    weekId: null, weekRule: "", l2From: "l1", ruleFingerprint: "", weekFingerprint: "",
     // L2 列表：默认按本周涨幅降序；展开集合按「代码|规则」去重记录
     l2SortKey: "week_ret", l2SortDesc: true, l2Expanded: new Set(),
+    // L2 周卦异步补齐（2026-09-16 性能整改）：列表先行返回，周卦列按代码分批补齐。
+    // baguaByCode 只在当前周有效，切周时必须清空（同票会跨周重复出现）；
+    // baguaAbort 用于切周/离开时真正中断在途请求，baguaToken+condVersion 双校验
+    // 保证迟到响应不覆盖新页面。
+    baguaToken: 0, baguaAbort: null, baguaByCode: {}, baguaOrder: [],
+    baguaTotal: 0, baguaDone: 0, baguaFailed: 0, baguaRunning: false, baguaError: "",
+    // 已补结果对应的跟踪版本：版本变了才作废（同周重进不清，跨周必清）
+    baguaRevision: "",
     // 补算任务：轮询定时器 + 「本轮是否真有任务在跑」（决定结束后是否刷新）
     bfTimer: null, bfHadRunning: false,
+    // 补算任务浮标：最近一次状态快照 + 亲眼看到在跑的任务（只对"自己提交的任务"
+    // 报完成/失败，刷新后翻到的历史失败任务不弹浮标）
+    bfJobs: [], bfPillRunningJob: "", bfPillFinalShown: "", bfPillTimer: null,
     // 补算 Drawer 状态与客户端分页
     bfDrawerOpen: false, bfMode: "single", l1Page: 1, l1PageSize: 10,
   };
@@ -16773,6 +16940,9 @@ async function boot() {
     return r ? r.name : "";
   }
   function wbtShowLevel(level) {
+    // 离开 L2：中断在途补齐（继续跑只是白耗服务端算力），但**保留已补结果**，
+    // 回到 L2 时只续传缺的那部分（wbtResumeBagua）
+    if (level !== "l2" && wbt.baguaRunning) wbtAbortBagua();
     wbt.level = level;
     const l0 = $("wbTrackL0"), l1 = $("wbTrackL1"), l2 = $("wbTrackL2");
     if (l0) l0.hidden = level !== "l0";
@@ -16787,7 +16957,8 @@ async function boot() {
     else {
       if (wbt.level === "l0") wbtRenderOverview();
       if (wbt.level === "l1") wbtRenderRuleWeeks();
-      if (wbt.level === "l2") wbtRenderWeekDetail();
+      // 回到 L2：续传离开时被中断的周卦补齐（已取到的结果保留，不重算）
+      if (wbt.level === "l2") { wbtRenderWeekDetail(); wbtResumeBagua(); }
     }
     // 补算状态：进来就同步一次（可能有在跑的任务），有在跑才继续轮询
     wbtPollBackfill();
@@ -17005,7 +17176,8 @@ async function boot() {
         : '<span class="wb-muted">—</span>';
       const latestBtn = r.latest_week != null
         ? '<button type="button" class="wbt-pill-btn" data-wbt-week="' + esc(String(r.latest_week))
-          + '" data-wbt-week-rule="' + esc(r.rule_id) + '" title="查看该周明细">'
+          + '" data-wbt-week-rule="' + esc(r.rule_id) + '" data-wbt-week-fp="' + esc(r.fingerprint || "")
+          + '" title="查看该周明细">'
           + esc(String(r.latest_selected != null ? r.latest_selected : "—")) + "</button>"
         : '<span class="wb-muted">—</span>';
       const sparkSvg = wbtSparklineSvg(r.trend_weeks);
@@ -17061,7 +17233,9 @@ async function boot() {
       };
     });
     box.querySelectorAll("[data-wbt-week]").forEach((el) => {
-      el.onclick = () => wbtOpenWeek(el.dataset.wbtWeek, el.dataset.wbtWeekRule);
+      el.onclick = () => wbtOpenWeek(
+        el.dataset.wbtWeek, el.dataset.wbtWeekRule, el.dataset.wbtWeekFp
+      );
     });
 
     const refreshBtn = $("wbTrackRefresh");
@@ -17102,6 +17276,9 @@ async function boot() {
     const ver = wbt.condVersion;
     wbt.ruleId = ruleId;
     wbt.ruleRow = row;
+    // 该规则在 L0 归并出的版本指纹：L1 周行没有自带指纹时用它兜底传给 L2，
+    // 保证 canonical（tn6_X）能落到该周实际记录的兄弟 id（txt_X）上
+    wbt.ruleFingerprint = row && row.fingerprint ? String(row.fingerprint) : "";
     wbt.weeks = null;
     wbt.l1Page = 1;
     wbtShowLevel("l1");
@@ -17113,7 +17290,7 @@ async function boot() {
     try {
       let url = "/api/v1/bagua/track/rules/"
         + encodeURIComponent(ruleId) + "/weeks?weeks=26";
-      const fpOfRow = row && row.fingerprint ? String(row.fingerprint) : "";
+      const fpOfRow = wbt.ruleFingerprint;
       if (fpOfRow) url += "&fingerprint=" + encodeURIComponent(fpOfRow);
       const j = await api(url);
       if (token !== wbt.token || ver !== wbt.condVersion) return;
@@ -17246,26 +17423,34 @@ async function boot() {
         ? '<span class="wbt-tag subset" title="该周仅补算了部分指定规则">指定规则补算</span>' : "";
 
       const compCls = w.completion === "complete" ? "complete" : (w.completion === "pending" ? "pending" : "running");
-      const compBadge = '<span class="wbt-tag ' + compCls + '">' + esc(wbtCompletionLabel(w.completion)) + "</span>";
+      // 版本不符周：该周快照里这条规则是另一个版本（公式已改），不拿它的统计冒充
+      const conflict = !!w.version_conflict;
+      const compBadge = conflict
+        ? '<span class="wbt-tag running" title="该周记录的是这条规则的另一个版本（公式已改过），不展示该周统计">版本不符</span>'
+        : '<span class="wbt-tag ' + compCls + '">' + esc(wbtCompletionLabel(w.completion)) + "</span>";
 
       const validCount = a ? (a.valid_exec_count != null ? a.valid_exec_count : (a.valid_count != null ? a.valid_count : "—")) : "—";
       const winRateStr = wbtPct(a ? a.win_rate_exec : null);
       const retStr = wbtPctSigned(a ? a.mean_ret_close_exec : null);
       const excessStr = wbtPctSigned(a ? a.mean_excess_exec : null);
+      const weekBtn = conflict
+        ? '<button type="button" class="wbt-table-btn" disabled title="该周记录的是另一个版本，没有与本版本对应的明细">版本不符</button>'
+        : '<button type="button" class="wbt-table-btn" data-wbt-week="' + esc(String(w.week_id))
+          + '" data-wbt-week-rule="' + esc(w.recorded_rule_id || wbt.ruleId || "")
+          + '" data-wbt-week-fp="' + esc(w.rule_fingerprint || wbt.ruleFingerprint || "")
+          + '" title="查看该周明细">周明细 →</button>';
 
       return "<tr>"
         + '<td class="wbt-al-left"><strong class="wb-mono">' + esc(wbFmtDate(w.week_id)) + "</strong>"
         + '<div class="wb-muted wb-mono" style="font-size:11px;margin-top:2px">' + esc(w.week_id != null ? String(w.week_id) : "") + "</div></td>"
-        + '<td class="wb-mono wbt-al-right">' + esc(String(w.selected_count != null ? w.selected_count : 0)) + "</td>"
-        + '<td class="wb-mono wbt-al-right">' + esc(String(validCount)) + "</td>"
-        + '<td class="wb-mono wbt-al-right">' + winRateStr + "</td>"
-        + '<td class="wb-mono wbt-al-right">' + retStr + "</td>"
-        + '<td class="wb-mono wbt-al-right">' + excessStr + "</td>"
+        + '<td class="wb-mono wbt-al-right">' + esc(conflict ? "—" : String(w.selected_count != null ? w.selected_count : 0)) + "</td>"
+        + '<td class="wb-mono wbt-al-right">' + esc(conflict ? "—" : String(validCount)) + "</td>"
+        + '<td class="wb-mono wbt-al-right">' + (conflict ? "—" : winRateStr) + "</td>"
+        + '<td class="wb-mono wbt-al-right">' + (conflict ? "—" : retStr) + "</td>"
+        + '<td class="wb-mono wbt-al-right">' + (conflict ? "—" : excessStr) + "</td>"
         + '<td class="wbt-al-center">' + compBadge + "</td>"
         + '<td class="wbt-al-center">' + (scopeTag || runTag) + "</td>"
-        + '<td class="wbt-al-center"><button type="button" class="wbt-table-btn" data-wbt-week="' + esc(String(w.week_id))
-        + '" data-wbt-week-rule="' + esc(wbt.ruleId || "") + '">周明细 →</button></td>'
-        + "</tr>";
+        + '<td class="wbt-al-center">' + weekBtn + "</td></tr>";
     }).join("");
 
     html += "</tbody></table>";
@@ -17297,19 +17482,29 @@ async function boot() {
     }
 
     box.querySelectorAll("[data-wbt-week]").forEach((el) => {
-      el.onclick = () => wbtOpenWeek(el.dataset.wbtWeek, el.dataset.wbtWeekRule);
+      el.onclick = () => wbtOpenWeek(
+        el.dataset.wbtWeek, el.dataset.wbtWeekRule, el.dataset.wbtWeekFp
+      );
     });
   }
 
   /* --------------------------- L2 周明细 --------------------------- */
-  async function wbtOpenWeek(weekId, ruleId) {
+  async function wbtOpenWeek(weekId, ruleId, fingerprint) {
     const token = ++wbt.token;
     const ver = wbt.condVersion;
     wbt.l2From = wbt.level; // 记住来源层级：L0 直达或 L1 进入，返回按钮文案/目标不同
+    // 同一周同一规则重进（L1→L2 再回来）：只中断在途请求、保留已补结果续传；
+    // 换周或换规则才清空——否则"续传"名不副实，已补的票会重新走一遍
+    const sameWeek = String(wbt.weekId || "") === String(weekId)
+      && String(wbt.weekRule || "") === String(ruleId || "");
     wbt.week = null;
     wbt.l2Expanded.clear(); // 换周必须清展开集合——键是 code|rule_id，跨周同票同规则会误以为用户展开过
     wbt.weekId = weekId;
     wbt.weekRule = ruleId || "";
+    // 规则版本身份：canonical id 在本周快照里可能不存在（该周记录的是同指纹兄弟
+    // id），必须把指纹一起传给接口，否则会出现「有名单却显示没数据」
+    wbt.weekFingerprint = fingerprint || "";
+    if (sameWeek) wbtAbortBagua(); else wbtResetBagua();
     wbtShowLevel("l2");
     const sum = $("wbTrackL2Summary"), headBox = $("wbTrackL2Header"), subBox = $("wbTrackL2Subtitle"),
           kpis = $("wbTrackL2Kpis"), banners = $("wbTrackL2Banners"), list = $("wbTrackL2List"), err = $("wbTrackL2Error");
@@ -17321,17 +17516,211 @@ async function boot() {
     if (sum) sum.innerHTML = "";
     if (list) list.innerHTML = "";
     try {
-      let url = "/api/v1/bagua/track/weeks/" + encodeURIComponent(String(weekId));
-      if (ruleId) url += "?rule_id=" + encodeURIComponent(ruleId);
+      const q = [];
+      if (ruleId) q.push("rule_id=" + encodeURIComponent(ruleId));
+      if (wbt.weekFingerprint) q.push("fingerprint=" + encodeURIComponent(wbt.weekFingerprint));
+      const url = "/api/v1/bagua/track/weeks/" + encodeURIComponent(String(weekId))
+        + (q.length ? "?" + q.join("&") : "");
       const j = await api(url);
       if (token !== wbt.token || ver !== wbt.condVersion) return; // 迟到响应丢弃
       wbt.week = j || null;
+      // 跟踪版本变了（该周被重算过）→ 之前补的卦象作废，重新取一遍
+      if (j && wbt.baguaRevision
+          && String(j.tracking_revision_id || "") !== String(wbt.baguaRevision)) {
+        wbtResetBagua();
+      }
+      if (j) wbt.baguaRevision = String(j.tracking_revision_id || "");
+      // 后端解析出的版本指纹会回带：后续补齐必须用同一个身份，名单才对得上
+      if (j && j.fingerprint) wbt.weekFingerprint = String(j.fingerprint);
       wbtRenderWeekDetail();
+      // 首次进入补齐全周；同周重进只补缺的（已补结果保留，不重算）
+      if (j && String(j.bagua_mode || "") === "defer") wbtLoadWeekBagua(wbtBaguaRetryCodes());
     } catch (e) {
       if (token !== wbt.token || ver !== wbt.condVersion) return;
       if (headBox) headBox.innerHTML = "";
       if (err) { err.textContent = "周明细加载失败：" + (e && e.message ? e.message : e); err.hidden = false; }
     }
+  }
+
+  /* ------------------- L2 周卦异步补齐（2026-09-16 性能整改） -------------------
+     背景：周明细接口原先在返回前逐票算周卦+月卦，739 行的一周实测 26.7s，
+     整张列表被挡在卦象后面。现在列表先行返回，周卦列由本段按展示顺序分批补齐：
+     - 分批：每批 WBT_BAGUA_CHUNK 只，先填用户看到的前排，逐批回填并重绘；
+     - 中断：换周/离开 L2 时 abort() **客户端**停止继续发批（服务端已开始的
+       那一批会算完——服务端循环没有取消检查，不能声称"服务端也停了"）；
+     - 保留：离开 L2 只中断在途请求、**不清空已补结果**，回来只续传缺的那部分；
+     - 校验：每批响应都要与当前周的 week_id + snapshot_id + tracking_revision_id
+       完全一致才合并，旧批数据绝不落到新页面；
+     - 状态：计算中 / 无数据 / 计算失败 三态分开渲染，月卦另有 month_state，
+       周卦成功而月卦失败时只标月卦并允许重试，未算出的卦象绝不显示成结论。
+     ============================================================== */
+  const WBT_BAGUA_CHUNK = 60;
+
+  /** 中断在途补齐（保留已补结果）：离开 L2 用这个，不要清结果。 */
+  function wbtAbortBagua() {
+    if (wbt.baguaAbort) { try { wbt.baguaAbort.abort(); } catch (_) {} }
+    wbt.baguaAbort = null;
+    wbt.baguaRunning = false;
+    return ++wbt.baguaToken;
+  }
+
+  /** 换周：中断在途补齐并清空上一周的回填结果（结果按代码存在，跨周必须清）。 */
+  function wbtResetBagua() {
+    const token = wbtAbortBagua();
+    wbt.baguaByCode = {};
+    wbt.baguaOrder = [];
+    wbt.baguaTotal = 0;
+    wbt.baguaDone = 0;
+    wbt.baguaFailed = 0;
+    wbt.baguaError = "";
+    return token;
+  }
+
+  /** 本周补齐顺序：按当前展示排序（用户先看到的前排先算），待结算票排最后。 */
+  function wbtBaguaCodes() {
+    const j = wbt.week || {};
+    const rows = wbtSortL2Rows(j.rows || []);
+    const seen = new Set();
+    const out = [];
+    rows.concat(j.pending_picks || []).forEach((r) => {
+      const c = String((r && r.code) || "");
+      if (c && !seen.has(c)) { seen.add(c); out.push(c); }
+    });
+    return out;
+  }
+
+  /** 还没有结果、或周卦/月卦被服务端判失败的标的（重试与自动续传都以此为准）。 */
+  function wbtBaguaRetryCodes() {
+    if (!wbt.week || String(wbt.week.bagua_mode || "") !== "defer") return [];
+    const order = wbt.baguaOrder.length ? wbt.baguaOrder : wbtBaguaCodes();
+    return order.filter((c) => {
+      const v = wbt.baguaByCode[c];
+      return !v || v.state === "error" || v.month_state === "error";
+    });
+  }
+
+  /** 行的有效卦象：异步补齐结果优先，其次首屏占位（pending/empty/error）。
+   *  week_state 与 month_state 分开给出——周卦成功、月卦失败时必须能分别渲染。 */
+  function wbtRowBagua(r) {
+    const ov = wbt.baguaByCode[String((r && r.code) || "")];
+    if (ov) return ov;
+    const b = (r && r.bagua) || null;
+    const gua = (r && r.week_gua) || (b && b.week && b.week.combo) || "";
+    const st = String((r && r.bagua_state) || "") || (gua ? "ok" : "empty");
+    const ms = String((r && r.bagua_month_state) || "")
+      || ((b && b.month && b.month.combo) ? "ok" : (st === "pending" ? "pending" : "empty"));
+    return { state: st, month_state: ms, week_gua: gua, bagua: b };
+  }
+  /** 周/月分开取状态，供列与详情面板各自渲染（未算完绝不显示成结论）。 */
+  function wbtRowBaguaPart(r, part) {
+    const bg = wbtRowBagua(r);
+    const sub = bg.bagua ? bg.bagua[part] : null;
+    const combo = (sub && sub.combo) || (part === "week" ? bg.week_gua : "") || "";
+    const st = part === "week" ? bg.state : (bg.month_state || bg.state);
+    if (combo) return { state: "ok", combo: combo, sub: sub };
+    return { state: st === "ok" ? "empty" : st, combo: "", sub: null };
+  }
+
+  /** 补齐进度/失败提示：只在计算中或确有失败时出现，补齐完成后不常驻。 */
+  function wbtBaguaNoteHtml() {
+    if (wbt.baguaRunning) {
+      return '<div class="wbt-bagua-note"><span class="wb-muted">周卦补齐中 '
+        + esc(String(wbt.baguaDone)) + " / " + esc(String(wbt.baguaTotal)) + " …</span></div>";
+    }
+    if (wbt.baguaError) {
+      return '<div class="wbt-bagua-note"><span class="wb-warn">周卦补齐中断：'
+        + esc(wbt.baguaError) + "</span>"
+        + '<button type="button" class="wbt-table-btn" id="wbTrackL2BaguaRetry">重试</button></div>';
+    }
+    const miss = wbtBaguaRetryCodes().length;
+    if (!miss) return "";
+    return '<div class="wbt-bagua-note"><span class="wb-warn">' + esc(String(miss))
+      + " 只标的卦象未取到</span>"
+      + '<button type="button" class="wbt-table-btn" id="wbTrackL2BaguaRetry">重试</button></div>';
+  }
+
+  /** 该批响应是否仍属于当前页面这一周（旧批数据绝不合并到新页面）。 */
+  function wbtBaguaBatchMatches(bj) {
+    const j = wbt.week || {};
+    if (!bj || String(bj.week_id || "") !== String(j.week_id || "")) return false;
+    if (String(bj.snapshot_id || "") !== String(j.snapshot_id || "")) return false;
+    return String(bj.tracking_revision_id || "") === String(j.tracking_revision_id || "");
+  }
+
+  /**
+   * 分批补齐卦象。
+   * - 不传 codes：补全周（会先清空本周已补结果，语义是「重新补齐」）；
+   * - 传 codes（数组，可为空）：只补这些票，**不动**已补结果——重进/续传走这条，
+   *   空数组表示「没有缺的」，直接返回而不是清空重来。
+   * 单批失败即停（不静默跳过），把未完成的票交给「重试」按钮与自动续传。
+   */
+  async function wbtLoadWeekBagua(codes) {
+    const j = wbt.week;
+    if (!j || j.week_id == null) return;
+    if (wbt.baguaRunning) return; // 防重入：同一周内不并发发起补齐
+    const ver = wbt.condVersion;
+    const explicit = Array.isArray(codes);
+    const token = explicit ? wbt.baguaToken : wbtResetBagua();
+    const list = (explicit ? codes : wbtBaguaCodes()).slice();
+    if (!list.length) return; // 没有要补的票（已全部取到）：不清结果、不发请求
+    if (!wbt.baguaOrder.length) wbt.baguaOrder = wbtBaguaCodes();
+    wbt.baguaTotal = Math.max(wbt.baguaTotal, wbtBaguaRetryCodes().length + wbt.baguaDone);
+    wbt.baguaFailed = 0;
+    wbt.baguaError = "";
+    wbt.baguaRunning = true;
+    const abort = new AbortController();
+    wbt.baguaAbort = abort;
+    wbtRenderWeekDetail(); // 立即出现「周卦补齐中」提示
+    try {
+      for (let i = 0; i < list.length; i += WBT_BAGUA_CHUNK) {
+        if (token !== wbt.baguaToken || ver !== wbt.condVersion) return;
+        const part = list.slice(i, i + WBT_BAGUA_CHUNK);
+        const q = ["codes=" + encodeURIComponent(part.join(","))];
+        if (wbt.weekRule) q.push("rule_id=" + encodeURIComponent(wbt.weekRule));
+        // 必须与明细接口同一个版本身份，否则后端筛出的名单与表格不一致
+        if (wbt.weekFingerprint) q.push("fingerprint=" + encodeURIComponent(wbt.weekFingerprint));
+        const url = "/api/v1/bagua/track/weeks/" + encodeURIComponent(String(j.week_id))
+          + "/bagua?" + q.join("&");
+        const bj = await api(url, { signal: abort.signal });
+        if (token !== wbt.baguaToken || ver !== wbt.condVersion) return;
+        if (!wbtBaguaBatchMatches(bj)) {
+          wbt.baguaError = "数据版本已变化，请重新进入该周";
+          break;
+        }
+        (bj.items || []).forEach((it) => {
+          const c = String((it && it.code) || "");
+          if (!c) return;
+          wbt.baguaByCode[c] = {
+            state: String(it.state || "empty"),
+            // 月卦单独记账：周卦成功、月卦失败的行要能重试，不能被当成已完成
+            month_state: String(it.month_state || it.state || "empty"),
+            week_gua: it.week_gua || "",
+            bagua: it.bagua || null,
+          };
+        });
+        wbt.baguaDone = Object.keys(wbt.baguaByCode).length;
+        wbtRenderWeekDetail();
+      }
+    } catch (e) {
+      if (token !== wbt.baguaToken || ver !== wbt.condVersion) return;
+      if (e && e.aborted) return; // 主动中断（换周/离开）：不报错
+      wbt.baguaError = (e && e.message ? e.message : String(e));
+    } finally {
+      if (token === wbt.baguaToken) {
+        wbt.baguaRunning = false;
+        if (wbt.baguaAbort === abort) wbt.baguaAbort = null;
+        wbt.baguaFailed = wbtBaguaRetryCodes().length;
+        wbtRenderWeekDetail();
+      }
+    }
+  }
+
+  /** 回到 L2 时自动续传未完成的周卦（离开时被中断的那部分）。 */
+  function wbtResumeBagua() {
+    if (!wbt.week || String(wbt.week.bagua_mode || "") !== "defer") return;
+    if (wbt.baguaRunning) return;
+    const miss = wbtBaguaRetryCodes();
+    if (miss.length) wbtLoadWeekBagua(miss);
   }
 
   /**
@@ -17468,7 +17857,9 @@ async function boot() {
   function wbtL2SortValue(r, key) {
     if (key === "code") return String(r.code || "");
     if (key === "name") return String(r.name || "");
-    if (key === "week_gua") return String(r.week_gua || (r.bagua && r.bagua.week && r.bagua.week.combo) || "");
+    // 周卦必须取「与显示同源」的有效值：异步补齐的结果在 wbt.baguaByCode 里，
+    // 直接读行内原始的周卦字段（首屏占位是空串）会得到"显示有卦、排序值为空"
+    if (key === "week_gua") return String(wbtRowBaguaPart(r, "week").combo || "");
     if (key === "open") return wbtNum(r.entry_open_week);
     if (key === "close_end") return wbtNum(r.close_week_end);
     if (key === "max_gain") return wbtNum(r.max_gain_exec != null ? r.max_gain_exec : r.max_gain_sig);
@@ -17507,6 +17898,207 @@ async function boot() {
       + "</div></div>";
   }
 
+  /** 单日收益标准化提取：与跟踪整体口径完全同步（首日开盘 vs 信号收盘），
+   *  累计收益率即当天收盘相对基准价的累计收益，绝不当成单日涨跌。 */
+  function wbtTicketDayRet(dd, exec) {
+    if (!dd) return null;
+    const val = exec
+      ? (dd.ret_vs_week_open != null ? dd.ret_vs_week_open : dd.ret_vs_signal_close)
+      : (dd.ret_vs_signal_close != null ? dd.ret_vs_signal_close : dd.ret_vs_week_open);
+    return (val != null && !isNaN(Number(val))) ? Number(val) : null;
+  }
+
+  /**
+   * 原生 SVG 个股累计收益走势图：
+   * - 展示当前展开股票在跟踪周内的累计收益走势
+   * - 严格按跟踪周实际交易日渲染，支持短周与缺失日
+   * - 缺失交易日不补造、不断代跨连，直线连接真实连续数据点
+   * - 标出 0% 零线与最后一个有效数据点收益率
+   */
+  function wbtRowTrendChartHtml(r, dates, exec, byDate, rowUid, customW) {
+    const caliberName = exec ? "首日开盘基准" : "信号收盘基准";
+    const validPoints = [];
+    const allPoints = (dates || []).map((d, idx) => {
+      const dd = byDate[Number(d)];
+      const ret = wbtTicketDayRet(dd, exec);
+      const pt = {
+        date: Number(d),
+        index: idx,
+        ret: ret,
+        close: (dd && dd.close != null && !isNaN(Number(dd.close))) ? Number(dd.close) : null,
+        valid: ret != null,
+        wd: wbtWeekdayCn(d) || "",
+        dateStr: wbFmtDate(d),
+      };
+      if (pt.valid) validPoints.push(pt);
+      return pt;
+    });
+
+    if (!validPoints.length) {
+      return '<div class="wbt-l2-chart-wrap" data-wbt-trend-wrap="' + esc(rowUid) + '">'
+        + '<div class="wbt-l2-chart-head">'
+        + '<div class="wbt-l2-chart-title">'
+        + '<svg class="wbt-l2-panel-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>'
+        + '<span>本周累计收益走势</span>'
+        + '<span class="wb-muted" style="font-size:11px;font-weight:400">（' + esc(caliberName) + '）</span>'
+        + '</div>'
+        + '</div>'
+        + '<div class="wbt-chart-empty">暂无走势数据（本周无有效交易日行情）</div>'
+        + '</div>';
+    }
+
+    // 连续有效数据段拆分（缺失交易日不断代跨越连线，绝不补造虚假价格）
+    const segments = [];
+    let currSeg = [];
+    validPoints.forEach((pt) => {
+      if (!currSeg.length) {
+        currSeg.push(pt);
+      } else {
+        const prev = currSeg[currSeg.length - 1];
+        if (pt.index === prev.index + 1) {
+          currSeg.push(pt);
+        } else {
+          segments.push(currSeg);
+          currSeg = [pt];
+        }
+      }
+    });
+    if (currSeg.length) segments.push(currSeg);
+
+    // 动态宽度与等比渲染：宽度随卡片真实容器像素适配，杜绝非等比拉伸导致字体与数据点变扁
+    const wrapW = customW || (typeof wbt !== "undefined" ? wbt.chartWidth : null);
+    const svgW = (wrapW && wrapW >= 200) ? Math.round(wrapW) : 800;
+    const svgH = 140;
+    const padL = 58, padR = 56, padT = 18, padB = 26;
+    const innerW = svgW - padL - padR;
+    const innerH = svgH - padT - padB;
+    const n = allPoints.length;
+
+    function getX(idx) {
+      if (n <= 1) return padL + innerW / 2;
+      return padL + (idx / (n - 1)) * innerW;
+    }
+
+    const retVals = validPoints.map((p) => p.ret);
+    let minVal = Math.min(0, ...retVals);
+    let maxVal = Math.max(0, ...retVals);
+    if (minVal === maxVal) {
+      minVal -= 0.01;
+      maxVal += 0.01;
+    } else {
+      const span = maxVal - minVal;
+      minVal -= span * 0.15;
+      maxVal += span * 0.15;
+    }
+    const range = maxVal - minVal || 0.02;
+
+    function getY(ret) {
+      return padT + (1 - (ret - minVal) / range) * innerH;
+    }
+
+    const zeroY = getY(0);
+    const zeroYFixed = zeroY.toFixed(1);
+
+    function fmtPctLabel(v) {
+      if (v == null || isNaN(Number(v))) return "—";
+      const num = Number(v);
+      if (Math.abs(num) < 1e-6) return "0.00%";
+      return (num > 0 ? "+" : "") + (num * 100).toFixed(2) + "%";
+    }
+
+    // 网格与 0% 零基准线
+    let gridHtml = '';
+    gridHtml += '<line x1="' + padL + '" y1="' + padT + '" x2="' + (svgW - padR) + '" y2="' + padT + '" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>';
+    gridHtml += '<line x1="' + padL + '" y1="' + (svgH - padB) + '" x2="' + (svgW - padR) + '" y2="' + (svgH - padB) + '" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>';
+    gridHtml += '<line x1="' + padL + '" y1="' + zeroYFixed + '" x2="' + (svgW - padR) + '" y2="' + zeroYFixed + '" stroke="rgba(255,255,255,0.25)" stroke-dasharray="3,3" stroke-width="1.2"/>';
+    gridHtml += '<text x="' + (padL - 6) + '" y="' + (zeroY + 3.5).toFixed(1) + '" fill="#829bb6" font-size="10" text-anchor="end">0.00%</text>';
+
+    if (Math.abs(getY(maxVal) - zeroY) >= 20) {
+      const topY = getY(maxVal).toFixed(1);
+      gridHtml += '<text x="' + (padL - 6) + '" y="' + (Number(topY) + 3.5).toFixed(1) + '" fill="#5a7695" font-size="9" text-anchor="end">' + esc(fmtPctLabel(maxVal)) + '</text>';
+    }
+    if (Math.abs(getY(minVal) - zeroY) >= 20) {
+      const botY = getY(minVal).toFixed(1);
+      gridHtml += '<text x="' + (padL - 6) + '" y="' + (Number(botY) + 3.5).toFixed(1) + '" fill="#5a7695" font-size="9" text-anchor="end">' + esc(fmtPctLabel(minVal)) + '</text>';
+    }
+
+    gridHtml += '<line class="wbt-trend-guide" id="wbtTrendGuide_' + esc(rowUid) + '" x1="0" y1="' + padT + '" x2="0" y2="' + (svgH - padB) + '" stroke="#2f86ff" stroke-dasharray="2,2" stroke-width="1.2" style="display:none"/>';
+
+    // X 轴日期标签与停牌缺数据占位标注
+    let xTicksHtml = '';
+    allPoints.forEach((pt) => {
+      const x = getX(pt.index).toFixed(1);
+      const dateShort = pt.dateStr.slice(5);
+      const label = dateShort + (pt.wd ? " " + pt.wd : "");
+      xTicksHtml += '<text x="' + x + '" y="' + (svgH - 8) + '" fill="' + (pt.valid ? '#829bb6' : '#4a6582') + '" font-size="10" text-anchor="middle">' + esc(label) + '</text>';
+      if (!pt.valid) {
+        xTicksHtml += '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + (svgH - padB) + '" stroke="rgba(255,255,255,0.04)" stroke-dasharray="2,2"/>';
+        xTicksHtml += '<text x="' + x + '" y="' + (padT + 16) + '" fill="#4a6582" font-size="9" text-anchor="middle">停牌/缺</text>';
+      }
+    });
+
+    // 折线段（连续点用直线连接，避免平滑曲线造出假极值）
+    let polylinesHtml = '';
+    segments.forEach((seg) => {
+      if (seg.length >= 2) {
+        const pts = seg.map((p) => getX(p.index).toFixed(1) + "," + getY(p.ret).toFixed(1)).join(" ");
+        polylinesHtml += '<polyline fill="none" stroke="#388bfd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="' + pts + '"/>';
+      }
+    });
+
+    // 数据点
+    let dotsHtml = '';
+    validPoints.forEach((p) => {
+      const cx = getX(p.index).toFixed(1);
+      const cy = getY(p.ret).toFixed(1);
+      const dotColor = p.ret > 0 ? '#ff4f7b' : (p.ret < 0 ? '#35d493' : '#829bb6');
+      const titleText = p.dateStr + ' ' + p.wd + '&#10;收盘价: ' + (p.close != null ? p.close.toFixed(2) : '—') + '&#10;累计收益: ' + fmtPctLabel(p.ret) + ' (' + caliberName + ')';
+      dotsHtml += '<g class="wbt-chart-dot-group" data-wbt-pt="' + esc(rowUid) + '" data-idx="' + p.index + '" data-date="' + esc(p.dateStr) + '" data-wd="' + esc(p.wd) + '" data-close="' + (p.close != null ? p.close : '') + '" data-ret="' + p.ret + '" data-cal="' + esc(caliberName) + '" data-cx="' + cx + '" data-cy="' + cy + '">'
+        + '<circle cx="' + cx + '" cy="' + cy + '" r="3.5" fill="' + dotColor + '" stroke="#081525" stroke-width="1.5"/>'
+        + '<circle cx="' + cx + '" cy="' + cy + '" r="12" fill="transparent" style="cursor:pointer"/>'
+        + '<title>' + titleText + '</title>'
+        + '</g>';
+    });
+
+    // 最后一个有效数据点收益率标注
+    const lastPt = validPoints[validPoints.length - 1];
+    const lx = Number(getX(lastPt.index).toFixed(1));
+    const ly = Number(getY(lastPt.ret).toFixed(1));
+    const lastPctStr = fmtPctLabel(lastPt.ret);
+    const lastCol = lastPt.ret > 0 ? '#ff4f7b' : (lastPt.ret < 0 ? '#35d493' : '#829bb6');
+    let textAnchor = "start";
+    let labelX = lx + 8;
+    if (labelX + 44 > svgW) {
+      textAnchor = "end";
+      labelX = lx - 8;
+    }
+    let labelY = ly + 4;
+    if (labelY < padT + 4) labelY = padT + 8;
+    if (labelY > svgH - padB) labelY = svgH - padB;
+    const lastLabelHtml = '<text x="' + labelX + '" y="' + labelY + '" fill="' + lastCol + '" font-size="11" font-weight="700" text-anchor="' + textAnchor + '">' + esc(lastPctStr) + '</text>';
+
+    return '<div class="wbt-l2-chart-wrap" data-wbt-trend-wrap="' + esc(rowUid) + '">'
+      + '<div class="wbt-l2-chart-head">'
+      + '<div class="wbt-l2-chart-title">'
+      + '<svg class="wbt-l2-panel-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>'
+      + '<span>本周累计收益走势</span>'
+      + '<span class="wb-muted" style="font-size:11px;font-weight:400">（' + esc(caliberName) + ' · 直线连接真实数据点）</span>'
+      + '</div>'
+      + '<div class="wbt-l2-chart-meta">'
+      + '<span>末点累计收益: <strong class="' + (lastPt.ret > 0 ? 'wb-pos' : (lastPt.ret < 0 ? 'wb-neg' : '')) + '">' + esc(lastPctStr) + '</strong></span>'
+      + '</div>'
+      + '</div>'
+      + '<div class="wbt-trend-tooltip" id="wbtTrendTooltip_' + esc(rowUid) + '"></div>'
+      + '<svg class="wbt-trend-svg" viewBox="0 0 ' + svgW + ' ' + svgH + '">'
+      + gridHtml
+      + xTicksHtml
+      + polylinesHtml
+      + dotsHtml
+      + lastLabelHtml
+      + '</svg>'
+      + '</div>';
+  }
+
   /** 详情行：逐日收益（按跟踪周**实际交易日**渲染，不写死周一~周五）+
    *  首日开盘/期末收盘/最高收益/最大回撤/沪深300/超额收益等个股诊断指标。 */
   function wbtRowDetailHtml(r, weekDates) {
@@ -17532,9 +18124,10 @@ async function boot() {
           + '<div class="wbt-daily-close">—</div>'
           + '</div>';
       }
-      const dayRet = dd.ret_vs_week_open != null ? dd.ret_vs_week_open : dd.ret_vs_signal_close;
+      // 逐日收益按首日开盘口径（ret_vs_week_open），回落信号收盘口径（ret_vs_signal_close）
+      const dayRet = wbtTicketDayRet(dd, exec);
       const closeStr = dd.close != null ? ('收盘 ' + wbtRaw(dd.close)) : '—';
-      const retCls = dayRet > 0 ? 'wb-pos' : (dayRet < 0 ? 'wb-neg' : '');
+      const retCls = dayRet != null ? (dayRet > 0 ? 'wb-pos' : (dayRet < 0 ? 'wb-neg' : '')) : '';
       return '<div class="wbt-daily-card">'
         + '<div class="wbt-daily-date">' + esc(dateStr) + '</div>'
         + '<div class="wbt-daily-weekday">' + esc(wd) + '</div>'
@@ -17556,20 +18149,40 @@ async function boot() {
     const dispCode = r.code_disp || r.code;
     const stockName = r.name ? (dispCode + " " + r.name) : dispCode;
 
-    const bg = r.bagua || {};
+    const bgState = wbtRowBagua(r);
+    const bg = bgState.bagua || {};
     const bw = bg.week || null;
     const bm = bg.month || null;
+    // 周/月分开看状态：周卦成功而月卦失败时，只把月卦那张卡标失败（可重试），
+    // 不能因为月卦没算出来就把整块判成失败、也不能反过来假装月卦没问题
+    const wPart = wbtRowBaguaPart(r, "week");
+    const mPart = wbtRowBaguaPart(r, "month");
 
     let baguaHtml = "";
-    if (bw || bm) {
-      const wCombo = bw && bw.combo ? esc(bw.combo) : "—";
-      const mCombo = bm && bm.combo ? esc(bm.combo) : "—";
+    if (wPart.state === "pending" && mPart.state === "pending") {
+      // 首屏列表已返回、卦象还在算：明确说「计算中」，不显示任何"结论"
+      baguaHtml = '<div class="wbt-l2-bagua-wrap" style="grid-template-columns:1fr">'
+        + '<div class="wbt-l2-bagua-card" style="align-items:center;justify-content:center;padding:10px;color:#829bb6;font-size:12px">'
+        + '<span>周卦与月卦计算中…（列表已先行返回，卦象稍后自动补齐）</span>'
+        + '</div></div>';
+    } else if (wPart.state === "error") {
+      baguaHtml = '<div class="wbt-l2-bagua-wrap" style="grid-template-columns:1fr">'
+        + '<div class="wbt-l2-bagua-card" style="align-items:center;justify-content:center;padding:10px;color:#e8b64c;font-size:12px">'
+        + '<span>该标的周卦获取失败，可用表格上方「重试」再算一次</span>'
+        + '</div></div>';
+    } else if (wPart.combo || mPart.combo) {
+      const wCombo = wPart.combo ? esc(wPart.combo) : "无数据";
+      // 月卦失败 ≠ 月卦无数据：如实标失败，避免把"没算出来"读成"该票没有月卦"
+      const mCombo = mPart.combo ? esc(mPart.combo)
+        : (mPart.state === "error" ? "计算失败" : (mPart.state === "pending" ? "计算中…" : "无数据"));
       const wCons = bw && bw.combo ? wbConsBadge(bw.consensus) : "";
       const mCons = bm && bm.combo ? wbConsBadge(bm.consensus) : "";
       const wYao = bw && bw.yao_explain ? esc(bw.yao_explain) : "—";
-      const mYao = bm && bm.yao_explain ? esc(bm.yao_explain) : "—";
+      const mYao = bm && bm.yao_explain ? esc(bm.yao_explain)
+        : (mPart.state === "error" ? "月卦未取到，可重试" : (mPart.state === "pending" ? "计算中…" : "—"));
       const wGao = bw && bw.gaodao ? esc(bw.gaodao) : "—";
-      const mGao = bm && bm.gaodao ? esc(bm.gaodao) : "—";
+      const mGao = bm && bm.gaodao ? esc(bm.gaodao)
+        : (mPart.state === "error" ? "月卦未取到，可重试" : (mPart.state === "pending" ? "计算中…" : "—"));
 
       baguaHtml = '<div class="wbt-l2-bagua-wrap">'
         + '<div class="wbt-l2-bagua-card">'
@@ -17596,9 +18209,13 @@ async function boot() {
         + '</div>'
         + '</div>';
     } else {
+      // 周卦与月卦都没结果：区分「还没算」与「确实没有」——前者不能读成无数据
+      const st = wPart.state === "error" ? mPart.state : wPart.state;
       baguaHtml = '<div class="wbt-l2-bagua-wrap" style="grid-template-columns:1fr">'
         + '<div class="wbt-l2-bagua-card" style="align-items:center;justify-content:center;padding:10px;color:#829bb6;font-size:12px">'
-        + '<span>暂无该标的周卦与月卦共识数据</span>'
+        + '<span>' + esc(st === "pending" ? "周卦与月卦计算中…"
+            : (st === "error" ? "该标的卦象获取失败，可用表格上方「重试」再算一次"
+              : "暂无该标的周卦与月卦共识数据")) + '</span>'
         + '</div></div>';
     }
 
@@ -17614,15 +18231,25 @@ async function boot() {
     const ruleName = r.rule_name || wbtRuleName(r.rule_id) || r.rule_id || "—";
     const ruleId = r.rule_id || "";
     const actSig = bw && bw.action_signal ? bw.action_signal : (bg && bg.week && bg.week.action_signal ? bg.week.action_signal : "");
-    let actBadge = '<span class="wb-muted">—</span>';
-    if (actSig) {
-      const a = String(actSig).trim();
-      let cls = "wb-cons-neutral";
-      if (a === "新开仓" || a === "加仓") cls = "wb-cons-good";
-      else if (a === "减仓" || a === "清仓") cls = "wb-cons-bad";
-      else if (a === "持有") cls = "wb-cons-neutral";
-      actBadge = '<span class="wb-cons ' + cls + '" style="font-size:12px;padding:1px 8px">' + esc(a) + '</span>';
+    let actBadge;
+    if (wPart.state === "pending") {
+      // 卦象未算完不能渲染成「—」（会被读成"无信号"），如实标计算中
+      actBadge = '<span class="wb-muted" style="font-size:12px">计算中…</span>';
+    } else {
+      actBadge = '<span class="wb-muted">—</span>';
+      if (actSig) {
+        const a = String(actSig).trim();
+        let cls = "wb-cons-neutral";
+        if (a === "新开仓" || a === "加仓") cls = "wb-cons-good";
+        else if (a === "减仓" || a === "不碰" || a === "清仓") cls = "wb-cons-bad";
+        else cls = "wb-cons-neutral";
+        actBadge = '<span class="wb-cons ' + cls + '" style="font-size:12px;padding:1px 8px">' + esc(a) + '</span>';
+      }
     }
+
+    const rowUid = (String(r.code || '') + '_' + String(r.rule_id || '')).replace(/[^a-zA-Z0-9_]/g, '_');
+    const trendChartHtml = wbtRowTrendChartHtml(r, dates, exec, byDate, rowUid, (typeof wbt !== "undefined" ? wbt.chartWidth : null));
+    const caliberName = exec ? "首日开盘基准" : "信号收盘基准";
 
     return '<div class="wbt-l2-expand-wrap">'
       + '<div class="wbt-l2-stats-col">'
@@ -17696,10 +18323,12 @@ async function boot() {
       + '<div class="wbt-l2-metric-val" style="display:flex;align-items:center;min-height:20px">' + actBadge + '</div>'
       + '<div class="wbt-l2-metric-sub">易经卦象研判</div>'
       + '</div>'
-      + '<div class="wbt-l2-metric-box">'
+      // 规则名与规则 ID 都是长标识，单独占一整行；挤进 1/3 格会只剩「短线强势启动（追…」，
+      // 而同期规则名（如"5日外/5日内"）恰恰靠尾部区分，截断后无法辨认
+      + '<div class="wbt-l2-metric-box wbt-l2-metric-box-wide">'
       + '<div class="wbt-l2-metric-lbl">命中选股规则</div>'
-      + '<div class="wbt-l2-metric-val" style="font-size:12px;font-weight:600;color:#c5d4e5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + esc(ruleName) + '">' + esc(ruleName) + '</div>'
-      + '<div class="wbt-l2-metric-sub" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + esc(ruleId) + '">' + esc(ruleId ? ('ID: ' + ruleId) : '—') + '</div>'
+      + '<div class="wbt-l2-metric-val" style="font-size:12px;font-weight:600;color:#c5d4e5;overflow-wrap:anywhere;" title="' + esc(ruleName) + '">' + esc(ruleName) + '</div>'
+      + '<div class="wbt-l2-metric-sub" style="overflow-wrap:anywhere;" title="' + esc(ruleId) + '">' + esc(ruleId ? ('ID: ' + ruleId) : '—') + '</div>'
       + '</div>'
       + '</div>'
       + '</div>'
@@ -17707,7 +18336,7 @@ async function boot() {
       + '<div class="wbt-l2-panel-head">'
       + '<div class="wbt-l2-panel-title">'
       + '<svg class="wbt-l2-panel-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>'
-      + '<span>每日收益表现' + esc(dateRangeStr) + '</span>'
+      + '<span>每日累计收益（' + esc(caliberName) + '）' + esc(dateRangeStr) + '</span>'
       + '</div>'
       + '</div>'
       + '<div class="wbt-daily-grid">' + dayCards + '</div>'
@@ -17718,6 +18347,7 @@ async function boot() {
       + (r.theoretical_open_ret != null
           ? '<p class="wb-muted" style="font-size:11px;margin-top:2px">理论开盘收益 ' + esc(wbtPct(r.theoretical_open_ret))
             + '（首日无 K 线或买不进时的参考值，未计入成交口径统计）</p>' : '')
+      + trendChartHtml
       + baguaHtml
       + '</div>'
       + '</div>';
@@ -17738,11 +18368,19 @@ async function boot() {
     }
     const isBackfill = !!j.backfill || String(j.run_kind) === "backfill";
     const isSubsetScope = String(j.rules_scope || "") === "subset";
+    // 规则身份解析结果：版本不匹配 / 同公式兄弟产物不一致都要显式说出来
+    const ident = j.rule_identity || {};
+    const sibDiv = Array.isArray(ident.sibling_divergence) ? ident.sibling_divergence : null;
     const back = $("wbTrackL2Back");
     if (back) back.textContent = wbt.l2From === "l0" ? "← 返回指标总览" : "← 返回策略历史";
 
     const tw = Array.isArray(j.track_week) && j.track_week.length === 2 ? j.track_week : null;
     const weekDates = (j.track_week_dates || []).map(Number).filter((d) => d > 0);
+
+    const boxW = (box && box.clientWidth > 0) ? box.clientWidth : (window.innerWidth ? Math.min(window.innerWidth - 60, 1400) : 1000);
+    wbt.chartWidth = window.innerWidth <= 900
+      ? Math.max(300, Math.round(boxW - 68))
+      : Math.max(380, Math.round(boxW - 468));
 
     // 头部信息: 1:1 matching media_1789532664226.png
     const ruleLabel = wbt.weekRule ? (wbtRuleName(wbt.weekRule) || wbt.weekRule) : "全部规则";
@@ -17755,9 +18393,26 @@ async function boot() {
 
     const compCls = j.completion === "complete" ? "complete" : (j.completion === "pending" ? "pending" : "running");
     headHtml += '<span class="wbt-tag ' + compCls + '" style="margin-left:8px">' + esc(wbtCompletionLabel(j.completion)) + '</span>';
-    headHtml += isBackfill ? '<span class="wbt-tag backfill" style="margin-left:4px">回填</span>' : '<span class="wbt-tag" style="margin-left:4px">周五链</span>';
+    // 免责/口径文案不再占常驻黄色横幅（用户 2026-09-17：碍眼）——文案仍来自后端
+    // 单一来源（BACKFILL_NOTICE / subset_scope_notice），改挂在标签的悬停说明上；
+    // 导出 meta 同样带全文，需要留证时看导出。
+    const backfillTip = j.backfill_notice ? esc(j.backfill_notice) : "该周名单来自周五链自动跟踪";
+    headHtml += isBackfill
+      ? '<span class="wbt-tag backfill" style="margin-left:4px;cursor:help" title="' + backfillTip + '">回填</span>'
+      : '<span class="wbt-tag" style="margin-left:4px">周五链</span>';
     if (isSubsetScope) {
-      headHtml += '<span class="wbt-tag subset" style="margin-left:4px" title="该周仅补算了部分指定规则">指定规则补算</span>';
+      const subsetTip = j.scope_notice ? esc(j.scope_notice) : "该周仅补算了部分指定规则";
+      headHtml += '<span class="wbt-tag subset" style="margin-left:4px;cursor:help" title="' + subsetTip + '">指定规则补算</span>';
+    }
+    if (sibDiv && sibDiv.length) {
+      // 同公式的多个规则在产物里名单/行数不一致：本页只展示代表规则，没有取并集，
+      // 但不许默默发生——用角标把差异摆到明面上（详见悬停说明）
+      const d0 = sibDiv[0];
+      const cnts = Object.keys(d0.sibling_counts || {}).map((k) =>
+        k + "=" + d0.sibling_counts[k].rows + "行/" + d0.sibling_counts[k].matched + "命中"
+      ).join("，");
+      headHtml += '<span class="wbt-tag" style="margin-left:4px" title="同公式的多个规则在产物里不一致（'
+        + esc(cnts) + '）；本页按代表规则 ' + esc(d0.representative || "") + ' 展示，未取并集">ⓘ 同公式产物不一致</span>';
     }
     if (headBox) headBox.innerHTML = headHtml;
 
@@ -17770,7 +18425,13 @@ async function boot() {
       subHtml += '<span class="wb-muted wb-mono" style="margin-left:12px">快照 ' + esc(String(j.snapshot_id)) + '</span>';
     }
     if (j.coverage) {
-      subHtml += '<span class="wb-stats" style="margin-left:12px">' + wbtCoverageHtml(j.coverage) + '</span>';
+      // 口径标注（用户 2026-09-16 复核）：这里的 coverage 来自**整周产物**
+      // （该周全部规则一起算的覆盖率），与 KPI/横幅里按当前规则名单算的
+      // `ui_summary.*_coverage_exec` 不是同一范围，不标出来会被混读。
+      const covScope = wbt.weekRule ? "整周全部规则" : "整周";
+      subHtml += '<span class="wb-stats" style="margin-left:12px">'
+        + '<span class="wb-muted">覆盖率（' + esc(covScope) + '）：</span>'
+        + wbtCoverageHtml(j.coverage) + '</span>';
     }
     if (subBox) subBox.innerHTML = subHtml;
 
@@ -17780,27 +18441,30 @@ async function boot() {
     // 警示横幅
     let bannerHtml = "";
     const uis = j.ui_summary || {};
+    if (ident.source === "param_unmatched") {
+      // 显式指纹在本周快照里没有记录：明说「该版本本周没有名单」，
+      // 不要让用户以为是"这周本来就没票"（更不能拿别的版本冒充）
+      bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">⚠ 规则版本不匹配</strong>'
+        + '<span class="wb-warn">信号周 ' + esc(wbFmtDate(j.week_id))
+        + ' 的记录里没有与该版本指纹对应的规则（该周记录的是这条规则的另一个版本），'
+        + '因此不展示名单与统计。可返回周列表，用该周实际的规则版本查看。</span></div>';
+    }
     const retCov = uis.return_coverage_exec != null ? uis.return_coverage_exec : (j.coverage && j.coverage.week_first_open != null ? j.coverage.week_first_open : null);
     const excessCov = uis.excess_coverage_exec != null ? uis.excess_coverage_exec : (j.coverage && j.coverage.excess != null ? j.coverage.excess : null);
     const selCount = uis.selected_count != null ? uis.selected_count : (j.rows || []).length;
 
     if (selCount > 0 && retCov != null && retCov < 0.90) {
+      // 本组 = 当前规则（含同指纹兄弟的代表规则）名单；与上方「整周全部规则」
+      // 的覆盖率不是同一范围，标明避免混读
+      const grpScope = wbt.weekRule ? "（当前规则名单）" : "";
       bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">⚠ 数据完整性警示</strong>'
-        + '<span class="wb-warn">首日开盘收益覆盖率 ' + (retCov * 100).toFixed(1) + '%，部分股票因一字涨停、停牌/缺数据或判定未知而未计入统计；“已结算”不代表数据完整。</span></div>';
+        + '<span class="wb-warn">首日开盘收益覆盖率' + esc(grpScope) + ' ' + (retCov * 100).toFixed(1) + '%，部分股票因一字涨停、停牌/缺数据或判定未知而未计入统计；“已结算”不代表数据完整。</span></div>';
     }
     if (selCount > 0 && (excessCov == null || excessCov === 0 || excessCov < 0.90)) {
       if (excessCov == null || excessCov === 0) {
         bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">⚠ 基准数据提示</strong>'
           + '<span class="wb-warn">沪深300基准数据缺失/边界不完整，本周股票收益已计算，但超额收益暂不可用。</span></div>';
       }
-    }
-    if (j.backfill_notice) {
-      bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">回填数据提示:</strong>'
-        + '<span class="wb-warn">' + esc(j.backfill_notice) + '</span></div>';
-    }
-    if (isSubsetScope && j.scope_notice) {
-      bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">指定规则补算</strong>'
-        + '<span class="wb-warn">' + esc(j.scope_notice) + '</span></div>';
     }
     if (String(j.completion) === "pending" || j.window_ended === false) {
       bannerHtml += '<div class="wb-warnbox"><strong class="wb-warn">进行中（未结算）</strong>'
@@ -17812,7 +18476,8 @@ async function boot() {
     if (!rows.length) {
       box.innerHTML = '<div class="wb-status" style="padding:24px;text-align:center"><strong>该周暂无已结算明细</strong>'
         + '<div class="wb-muted" style="margin-top:6px">跟踪产物尚未生成：每周五晚自动结算上一信号周，也可用下方「补算指定周」立即结算。</div></div>'
-        + wbtPendingHtml(j.pending_picks);
+        + wbtPendingHtml(j.pending_picks)
+        + wbtBaguaNoteHtml();
       wbtBindWeekDetail(j);
       return;
     }
@@ -17851,10 +18516,21 @@ async function boot() {
         : r.status === "no_bar" ? "无行情（停牌/缺数据）"
         : r.status === "pending" ? "进行中" : (r.status || "—");
       const nameCell = r.name ? esc(String(r.name)) : '<span class="wb-muted">—</span>';
-      const weekGuaStr = r.week_gua || (r.bagua && r.bagua.week && r.bagua.week.combo) || "";
-      const weekGuaCell = weekGuaStr
-        ? ('<span class="wb-mono" style="font-weight:600;color:#c5d4e5">' + esc(weekGuaStr) + '</span>')
-        : '<span class="wb-muted">—</span>';
+      // 周卦：三态分开渲染——有结果 / 计算中 / 计算失败 / 无数据（绝不把未算出的
+      // 卦象显示成「—」之外的东西，也绝不拿占位冒充结论）。
+      // 取值与排序共用 wbtRowBaguaPart，杜绝"显示有卦、排序值为空"
+      const guaPart = wbtRowBaguaPart(r, "week");
+      const weekGuaStr = guaPart.combo || "";
+      let weekGuaCell;
+      if (weekGuaStr) {
+        weekGuaCell = '<span class="wb-mono" style="font-weight:600;color:#c5d4e5">' + esc(weekGuaStr) + '</span>';
+      } else if (guaPart.state === "pending") {
+        weekGuaCell = '<span class="wb-muted" title="周卦正在计算，补齐后自动显示">计算中…</span>';
+      } else if (guaPart.state === "error") {
+        weekGuaCell = '<span class="wb-warn" title="该标的周卦计算失败，可用表格上方「重试」再算一次">计算失败</span>';
+      } else {
+        weekGuaCell = '<span class="wb-muted" title="该标的在此时点无可用周期K线，算不出周卦">无数据</span>';
+      }
       const isExp = wbt.l2Expanded.has(key);
 
       return '<tr>'
@@ -17883,6 +18559,7 @@ async function boot() {
     }).join("");
 
     html += '</tbody></table>';
+    html += wbtBaguaNoteHtml(); // 补齐进度/失败提示（计算中或确有失败时才出现）
     box.innerHTML = html;
     if (j.pending_picks && j.pending_picks.length) {
       box.innerHTML += wbtPendingHtml(j.pending_picks);
@@ -17899,6 +18576,14 @@ async function boot() {
     box.querySelectorAll("[data-wbt-q]").forEach((btnEl) => {
       btnEl.onclick = () => wbtQueryFromTrack(btnEl.dataset.wbtQ, weekDate);
     });
+    // 周卦补齐重试：只重发未取到结果的票（含服务端判失败的），已补的不重算
+    const baguaRetry = $("wbTrackL2BaguaRetry");
+    if (baguaRetry) {
+      baguaRetry.onclick = () => {
+        const miss = wbtBaguaRetryCodes();
+        if (miss.length) wbtLoadWeekBagua(miss);
+      };
+    }
     // 展开/收起：只重绘明细区，不重发请求（数据已在 wbt.week 里）
     box.querySelectorAll("[data-wbt-expand]").forEach((btnEl) => {
       btnEl.onclick = () => {
@@ -17917,6 +18602,77 @@ async function boot() {
         wbtRenderWeekDetail();
       };
     });
+    // 走势图交互绑定：按股票详情卡片隔离，悬停/点击数据点显示 Tooltip 与参考线
+    box.querySelectorAll(".wbt-l2-chart-wrap").forEach((wrapEl) => {
+      const tipEl = wrapEl.querySelector(".wbt-trend-tooltip");
+      const guideEl = wrapEl.querySelector(".wbt-trend-guide");
+      const svgEl = wrapEl.querySelector(".wbt-trend-svg");
+      if (!tipEl || !svgEl) return;
+      wrapEl.querySelectorAll("[data-wbt-pt]").forEach((g) => {
+        const showTip = (ev) => {
+          if (ev) ev.stopPropagation();
+          const dt = g.dataset.date || "";
+          const wd = g.dataset.wd || "";
+          const cl = g.dataset.close;
+          const ret = Number(g.dataset.ret);
+          const cal = g.dataset.cal || "";
+          const sign = ret > 0 ? "+" : "";
+          const retCls = ret > 0 ? "wb-pos" : (ret < 0 ? "wb-neg" : "");
+          const retTxt = sign + (ret * 100).toFixed(2) + "%";
+          tipEl.innerHTML = '<div style="font-weight:600;margin-bottom:2px">' + esc(dt) + (wd ? (' (' + esc(wd) + ')') : '') + '</div>'
+            + '<div style="color:#829bb6">收盘价: <strong style="color:#f3f7fc">' + (cl ? esc(Number(cl).toFixed(2)) : '—') + '</strong></div>'
+            + '<div>累计收益: <strong class="' + retCls + '">' + retTxt + '</strong> <span style="font-size:10px;color:#829bb6">(' + esc(cal) + ')</span></div>';
+
+          const wrapRect = wrapEl.getBoundingClientRect();
+          const svgRect = svgEl.getBoundingClientRect();
+          const cxVal = Number(g.dataset.cx);
+          const cyVal = Number(g.dataset.cy);
+          const svgBoxW = Number((svgEl.getAttribute("viewBox") || "").split(" ")[2]) || 800;
+          const px = (svgRect.left - wrapRect.left) + (cxVal / svgBoxW) * svgRect.width;
+          const py = (svgRect.top - wrapRect.top) + (cyVal / 140) * svgRect.height;
+
+          tipEl.style.display = "block";
+          const tipW = tipEl.offsetWidth || 130;
+          let finalLeft = Math.round(px);
+          if (finalLeft - tipW / 2 < 8) finalLeft = Math.round(tipW / 2 + 8);
+          if (finalLeft + tipW / 2 > wrapRect.width - 8) finalLeft = Math.round(wrapRect.width - tipW / 2 - 8);
+          tipEl.style.left = finalLeft + "px";
+          tipEl.style.top = Math.round(py - 10) + "px";
+
+          if (guideEl) {
+            guideEl.setAttribute("x1", cxVal);
+            guideEl.setAttribute("x2", cxVal);
+            guideEl.style.display = "block";
+          }
+        };
+        g.onmouseenter = showTip;
+        g.onclick = showTip;
+      });
+      wrapEl.onmouseleave = () => {
+        tipEl.style.display = "none";
+        if (guideEl) guideEl.style.display = "none";
+      };
+      // 点击非数据点空白处时隐藏 Tooltip（触摸屏交互适配）
+      wrapEl.onclick = (e) => {
+        if (!e.target.closest("[data-wbt-pt]")) {
+          tipEl.style.display = "none";
+          if (guideEl) guideEl.style.display = "none";
+        }
+      };
+    });
+
+    if (!window.__wbtTrendResizeBound) {
+      window.__wbtTrendResizeBound = true;
+      let resizeTimer = null;
+      window.addEventListener("resize", function () {
+        if (wbt.level === "l2" && wbt.l2Expanded && wbt.l2Expanded.size > 0) {
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(function () {
+            if (typeof wbtRenderWeekDetail === "function") wbtRenderWeekDetail();
+          }, 150);
+        }
+      });
+    }
   }
 
 
@@ -17953,9 +18709,14 @@ async function boot() {
     const mask = $("wbTrackBfMask"), drawer = $("wbTrackBfDrawer");
     if (mask) mask.hidden = false;
     if (drawer) drawer.hidden = false;
+    // 抽屉里本来就有任务列表，浮标让位（否则压住底部按钮）
+    const pill = $("wbTrackBfPill");
+    if (pill) pill.hidden = true;
     document.body.classList.add("wbt-scroll-locked");
     wbtLoadBackfillRules();
+    wbtLoadPublishedWeeks(); // 已发布周清单：进抽屉就知道哪几周不能再自动补算
     wbtUpdateBackfillEstimate();
+    wbtRenderBackfillJobs({ jobs: wbt.bfJobs }); // 用最近一次快照先渲染，不等轮询
   }
 
   function wbtCloseBackfillDrawer() {
@@ -17964,6 +18725,8 @@ async function boot() {
     if (mask) mask.hidden = true;
     if (drawer) drawer.hidden = true;
     document.body.classList.remove("wbt-scroll-locked");
+    // 收起后任务浮标接棒（在跑就继续显示进度）
+    wbtUpdateBackfillPill(wbt.bfJobs);
   }
 
   function wbtSetBackfillMode(mode) {
@@ -17998,6 +18761,7 @@ async function boot() {
         estTime.textContent = "较长，通常约 60~90+ 分钟/周";
       }
     }
+    wbtUpdateBackfillWeekWarn();
   }
 
   /* ---------- 补算指定历史周（异步 CLI 子进程） ---------- */
@@ -18006,17 +18770,121 @@ async function boot() {
   // 免得用户选十几条再被 400 顶回来）
   const WBT_BF_MAX_RULES = 5;
 
-  /** 提交补算（payload：{week} / {weeks_back} / {week, rule_ids}），提交后开始轮询。 */
-  async function wbtRunBackfill(payload) {
+  // 补算跑完后浮标保留时长（成功/失败各留一会儿，够用户看见即可）
+  const WBT_BF_PILL_KEEP_MS = 12000;
+  // 状态轮询断连时的重试次数与间隔（超过就如实标「状态未知」，不再转圈）
+  const WBT_BF_POLL_MAX_MISS = 3;
+  const WBT_BF_POLL_RETRY_MS = 15000;
+
+  /** 规范化用户输入的信号周（兼容 2026-07-31 / 20260731）。 */
+  function wbtBfWeekKey(raw) {
+    return String(raw == null ? "" : raw).replace(/[-/]/g, "").trim();
+  }
+
+  /** 该周是否已有发布指针（本地缓存，来自 /track/published-weeks）。 */
+  function wbtBfPublishedWeek(weekKey) {
+    const list = wbt.bfPublishedWeeks || [];
+    return list.find((w) => String(w.week_id) === String(weekKey)) || null;
+  }
+
+  /**
+   * 已发布周清单：补算护栏是**按周**判定的——某周一旦有发布指针，任何规则的
+   * 自动补算都不会改动它（跟用户选的规则有没有数据无关）。用户 2026-09-16 就是
+   * 卡在这里：提交后吃 400，还看不懂报错里为什么提到别的规则名（那是占住这一周
+   * 的规则）。所以清单要提前摆出来，并在输入已发布周时立即给原因。
+   */
+  async function wbtLoadPublishedWeeks() {
     try {
-      const j = await api("/api/v1/bagua/track/backfill", {
+      const j = await api("/api/v1/bagua/track/published-weeks?weeks=26");
+      wbt.bfPublishedWeeks = (j && j.weeks) || [];
+    } catch (e) {
+      wbt.bfPublishedWeeks = [];
+    }
+    const hint = $("wbTrackBfPublishedHint");
+    if (hint) {
+      const list = wbt.bfPublishedWeeks || [];
+      if (!list.length) {
+        hint.textContent = "";
+      } else {
+        const recent = list.slice(0, 8).map((w) => String(w.week_id));
+        hint.textContent = "这些周已有名单（仍可追加你的规则）："
+          + recent.join("、") + (list.length > recent.length ? " …" : "");
+      }
+    }
+    wbtUpdateBackfillEstimate();
+  }
+
+  /**
+   * 输入周已有名单 → 说明「可追加哪条规则 / 何时无需补算」，提交前就看得见。
+   *
+   * 2026-09-16 用户口径修正：补算单位是**周 × 规则**，不是"这一周归第一条跑过的
+   * 规则"。该周已有名单时：你选的规则还不在名单里 → 追加（只扫这条规则，合并进
+   * 该周名单，原有规则的名单不动）；已在名单里 → 无需补算。整周模式才会因为
+   * "不替换已发布名单"而没有意义。
+   */
+  function wbtUpdateBackfillWeekWarn() {
+    const box = $("wbTrackBfWeekWarn");
+    if (!box) return;
+    const key = wbtBfWeekKey((($("wbTrackBfWeek") || {}).value || ""));
+    const hit = key.length === 8 ? wbtBfPublishedWeek(key) : null;
+    if (!hit) { box.hidden = true; box.textContent = ""; return; }
+    const isCustom = $("wbTrackBfScopeCustom") && $("wbTrackBfScopeCustom").checked;
+    const picked = wbt.bfChecked ? Array.from(wbt.bfChecked) : [];
+    const scoped = hit.scoped_rule_ids || [];
+    const who = (hit.rules_scope === "subset" && scoped.length)
+      ? "该周名单只含 " + scoped.join("、")
+      : "该周是全量周（所有规则都跑过）";
+    let tail;
+    if (!isCustom) {
+      // 已发布但还没结算的周：整周补算会跳过筛选直接结算（追加规则后的必经一步）
+      tail = hit.tracking_ready
+        ? "该周已结算，整周补算不会替换已发布的名单（跑了也不生效）；要追加规则请改用「指定规则」方式。"
+        : "该周名单已发布、跟踪还没结算：可以提交整周补算来结算（不会再跑一遍全市场筛选）。";
+    } else if (picked.length && picked.every((r) => scoped.indexOf(r) >= 0)) {
+      tail = "你选的规则已在该周名单里，无需补算——直接点该周「周明细」即可。";
+    } else {
+      tail = "提交后只扫描你选的规则，并追加进这一周已有的名单（原有规则的名单不动），随后重新结算该周。";
+    }
+    box.textContent = "ⓘ " + String(hit.week_id) + " 已有名单（" + who + "）。" + tail;
+    box.hidden = false;
+  }
+
+  /**
+   * 补算提交失败的原因：**留在抽屉里**，不只是弹一下 toast。
+   *
+   * 2026-09-16 用户实操反馈：选了一周提交，只看到 "400 Bad Request"，原因得去翻
+   * 服务端日志才知道。这类拒绝有明确理由、且要求用户换做法，必须写在他正在看的地方。
+   */
+  function wbtSetBackfillError(msg) {
+    const box = $("wbTrackBfSubmitError");
+    if (!box) return;
+    const text = String(msg == null ? "" : msg).trim();
+    if (!text) { box.textContent = ""; box.hidden = true; return; }
+    box.textContent = "⚠ " + text;
+    box.hidden = false;
+  }
+
+  /**
+   * 提交补算（payload：{week} / {weeks_back} / {week, rule_ids}）。
+   *
+   * 提交成功后**自动收起抽屉**（用户 2026-09-17）：抽屉常驻时 toast 被它盖住，
+   * 用户看不到任何反馈；收起后由右下角任务浮标接管进度显示。失败则留在抽屉里，
+   * 错误原因就写在底部（wbtSetBackfillError），别让用户去翻日志。
+   */
+  async function wbtRunBackfill(payload) {
+    wbtSetBackfillError("");
+    try {
+      await api("/api/v1/bagua/track/backfill", {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      toast((j && j.message) || "已提交补算任务");
+      wbtCloseBackfillDrawer();
+      toast("已提交补算：" + wbtBackfillJobTarget(payload) + "，后台运行中（右下角可看进度）");
       wbtPollBackfill();
     } catch (e) {
-      toast("补算提交失败：" + (e && e.message ? e.message : e));
+      const msg = e && e.message ? e.message : String(e);
+      wbtSetBackfillError("补算提交失败：" + msg);
+      toast("补算提交失败：" + msg);
     }
   }
 
@@ -18121,41 +18989,159 @@ async function boot() {
 
   const WBT_BF_STATUS = {
     queued: "排队中", running: "进行中", done: "已完成",
-    retryable: "稍后自动重试", failed: "失败",
+    retryable: "未通过", failed: "失败",
   };
+
+  /**
+   * 退出码 3 的如实说明（2026-09-17 用户实测踩到）：
+   * 前端原先把 retryable 一律写成「稍后自动重试」，但**指定规则补算**不会自动
+   * 重试——它的重任务待办键含规则清单，`api._heavy_job_command` 对该键返回 None
+   * （不猜命令），所以服务端不会补跑；用户实际遇到的是"复核被发布门槛拒绝，
+   * 该周没有发布快照"，跟锁/版本都无关。整周补算（不带 rule_ids）才会进自动重试队列。
+   */
+  function wbtBackfillRetryableNote(j) {
+    if (j.status !== "retryable") return "";
+    const code = j.exit_code == null ? "?" : String(j.exit_code);
+    if ((j.rule_ids || []).length) {
+      return "（退出码 " + code + "：指定规则补算不会被服务端自动重试；"
+        + "原因见下方服务端输出末尾的 reason）";
+    }
+    return "（退出码 " + code + "：已记待办，服务端稍后会自动重试）";
+  }
+
+  /** 任务目标文案（周 + 规则范围）：抽屉列表、浮标、提交 toast 共用一处措辞。 */
+  function wbtBackfillJobTarget(j) {
+    const o = j || {};
+    const picked = (o.rule_ids || []).length;
+    return o.week
+      ? (wbFmtDate(o.week) + (picked ? "（指定 " + picked + " 条规则）" : "（全部规则）"))
+      : ("最近 " + String(o.weeks_back || 0) + " 周");
+  }
 
   function wbtRenderBackfillJobs(body) {
     const box = $("wbTrackBfJobs");
     if (!box) return;
     const jobs = (body && body.jobs) || [];
-    if (!jobs.length) { box.innerHTML = '<span class="wb-muted" style="font-size:12px">暂无补算任务</span>'; return; }
+    if (!jobs.length) { box.innerHTML = '<span class="wb-muted" style="font-size:12px">暂无补算任务</span>'; wbtUpdateBackfillPill(jobs); return; }
     box.innerHTML = jobs.slice(0, 5).map((j) => {
       const picked = (j.rule_ids || []).length;
-      const target = j.week
-        ? (wbFmtDate(j.week) + (picked ? "（指定 " + picked + " 条规则）" : "（全部规则）"))
-        : ("最近 " + esc(String(j.weeks_back || 0)) + " 周");
-      let note = "";
-      if (j.status === "retryable") note = "（重任务锁被占用/数据版本变化，已记待办，服务端稍后自动重试）";
+      const target = wbtBackfillJobTarget(j);
+      let note = wbtBackfillRetryableNote(j);
       if (j.status === "failed") note = "（退出码 " + esc(String(j.exit_code)) + "，见服务端日志）";
       const tagCls = j.status === "done" ? "complete" : (j.status === "failed" ? "error" : "running");
+      // 退出码 3 的原因只在服务端输出里（CLI 的 completion/reason JSON）：
+      // 折叠展示末尾若干行，免得用户为了"到底为什么"去翻服务端日志
+      let tail = "";
+      const out = (j.output || []).slice(-8);
+      if (out.length && j.status !== "queued" && j.status !== "running") {
+        tail = '<details style="margin-top:4px"><summary class="wb-muted" style="font-size:11px;cursor:pointer">'
+          + "服务端输出（末 " + out.length + " 行）</summary>"
+          + '<pre style="margin:6px 0 0;padding:8px;max-height:160px;overflow:auto;background:#081424;'
+          + 'border:1px solid #1a3554;border-radius:6px;font-size:11px;line-height:1.5;white-space:pre-wrap">'
+          + esc(out.join("\n")) + "</pre></details>";
+      }
       return '<div class="wb-job" style="padding:8px 0;border-bottom:1px solid var(--wbt-line-soft, #19344f)">'
         + '<div style="display:flex;align-items:center;gap:8px">'
         + '<span class="wbt-tag ' + tagCls + '">' + esc(WBT_BF_STATUS[j.status] || j.status) + "</span>"
         + '<strong style="font-size:13px">' + esc(String(target)) + "</strong>"
         + "</div>"
         + (note ? '<div class="wb-muted" style="font-size:11px">' + esc(note) + "</div>" : "")
+        + tail
         + "</div>";
     }).join("");
+    wbtUpdateBackfillPill(jobs);
+  }
+
+  /** 浮标上显示一条任务（kind: running/done/failed）。 */
+  function wbtShowBackfillPill(kind, job, count) {
+    const pill = $("wbTrackBfPill");
+    if (!pill) return;
+    const label = esc(wbtBackfillJobTarget(job));
+    const hint = '<span class="bfp-hint">点击查看</span>';
+    if (kind === "running") {
+      pill.className = "running";
+      pill.innerHTML = '<span class="bfp-spin"></span><span>补算中：' + label
+        + (count > 1 ? "（共 " + count + " 个任务）" : "") + "</span>" + hint;
+    } else if (kind === "done") {
+      pill.className = "done";
+      pill.innerHTML = "<span>✓ 补算完成：" + label + "</span>" + hint;
+    } else {
+      pill.className = "failed";
+      pill.innerHTML = "<span>⚠ 补算失败：" + label + "</span>"
+        + '<span class="bfp-hint">点击查看原因</span>';
+    }
+    pill.hidden = false;
+  }
+
+  /** 状态拉不到（断连/服务重启）：明确说"不知道"，不冒充"还在跑"。 */
+  function wbtShowBackfillPillStale() {
+    const pill = $("wbTrackBfPill");
+    if (!pill || wbt.bfDrawerOpen) return;
+    pill.className = "stale";
+    pill.innerHTML = "<span>⚠ 补算状态获取失败（断连或服务重启）</span>"
+      + '<span class="bfp-hint">点击查看</span>';
+    pill.hidden = false;
+  }
+
+  /**
+   * 任务浮标（用户 2026-09-17 反馈：点完「开始补算」抽屉不关，toast 又被抽屉盖住，
+   * 根本不知道任务有没有起来）。抽屉收起后，任务状态在右下角常驻：
+   * 在跑 → 转圈 + 周/规则；刚跑完 → 成功/失败留 12 秒。
+   * 只对「本次亲眼看到在跑」的任务报完成，避免刷新后被历史失败任务刷屏。
+   */
+  function wbtUpdateBackfillPill(jobs) {
+    const pill = $("wbTrackBfPill");
+    const list = jobs || [];
+    wbt.bfJobs = list;
+    if (!pill) return;
+    if (wbt.bfDrawerOpen) { pill.hidden = true; return; }
+    const running = list.filter((j) => j.status === "queued" || j.status === "running");
+    if (running.length) {
+      clearTimeout(wbt.bfPillTimer);
+      wbt.bfPillTimer = null;
+      wbt.bfPillRunningJob = running[0].job_id; // 记住是自己看着跑的任务
+      wbt.bfPillFinalShown = "";
+      wbtShowBackfillPill("running", running[0], running.length);
+      return;
+    }
+    const last = list[0] || null;
+    if (last && wbt.bfPillRunningJob && last.job_id === wbt.bfPillRunningJob
+        && wbt.bfPillFinalShown !== last.job_id) {
+      wbt.bfPillFinalShown = last.job_id;
+      wbt.bfPillRunningJob = "";
+      wbtShowBackfillPill(last.status === "done" ? "done" : "failed", last, 1);
+      clearTimeout(wbt.bfPillTimer);
+      wbt.bfPillTimer = setTimeout(() => {
+        const p = $("wbTrackBfPill");
+        if (p) p.hidden = true;
+      }, WBT_BF_PILL_KEEP_MS);
+      return;
+    }
+    if (!wbt.bfPillTimer) pill.hidden = true;
   }
 
   /** 轮询补算状态；有任务在跑才继续轮询，全部结束后刷新一次 L0
-   *  （补算成功的周会出现在指标列表里，用户直接点进去看）。 */
+   *  （补算成功的周会出现在指标列表里，用户直接点进去看）。
+   *  补算动辄几十分钟，中途断连/服务重启很常见：有限次重试后如实标「状态未知」，
+   *  绝不让浮标永远转圈——否则用户会以为任务还活着。 */
   async function wbtPollBackfill() {
     if (wbt.bfTimer) return; // 已在轮询
+    let misses = 0;
     const tick = async () => {
       let body = null;
       try { body = await api("/api/v1/bagua/track/backfill/status"); } catch (e) { body = null; }
-      if (body) wbtRenderBackfillJobs(body);
+      if (!body) {
+        misses += 1;
+        if (misses <= WBT_BF_POLL_MAX_MISS) {
+          wbt.bfTimer = setTimeout(tick, WBT_BF_POLL_RETRY_MS);
+          return;
+        }
+        wbt.bfTimer = null;
+        wbtShowBackfillPillStale();
+        return;
+      }
+      misses = 0;
+      wbtRenderBackfillJobs(body);
       const running = !!(body && body.running > 0);
       if (running) {
         wbt.bfHadRunning = true;
@@ -18344,6 +19330,9 @@ async function boot() {
     if (bfCancel) bfCancel.onclick = wbtCloseBackfillDrawer;
     const bfMask = $("wbTrackBfMask");
     if (bfMask) bfMask.onclick = wbtCloseBackfillDrawer;
+    // 任务浮标：点开抽屉看任务明细/输出（抽屉打开时浮标自己隐藏）
+    const bfPill = $("wbTrackBfPill");
+    if (bfPill) bfPill.onclick = () => wbtOpenBackfillDrawer();
     const tabSingle = $("wbTrackBfTabSingle");
     if (tabSingle) tabSingle.onclick = () => wbtSetBackfillMode("single");
     const tabBatch = $("wbTrackBfTabBatch");
@@ -18370,7 +19359,12 @@ async function boot() {
       };
     }
     const bfWeek = $("wbTrackBfWeek");
-    if (bfWeek) bfWeek.oninput = wbtUpdateBackfillEstimate;
+    if (bfWeek) {
+      bfWeek.oninput = () => {
+        wbtUpdateBackfillEstimate();
+        wbtUpdateBackfillWeekWarn();
+      };
+    }
     const bfSubmit = $("wbTrackBfSubmit");
     if (bfSubmit) bfSubmit.onclick = () => {
       if (wbt.bfMode === "single") {
@@ -18442,6 +19436,9 @@ async function boot() {
     }
   }
   window.initWorkbenchPage = initWorkbenchPage;
+  window.wbt = wbt;
+  window.wbtOpenWeek = wbtOpenWeek;
+  window.wbtRowTrendChartHtml = wbtRowTrendChartHtml;
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else boot();

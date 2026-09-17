@@ -781,3 +781,140 @@ def test_review_user_rule_formula_like_name_sheet_sanitized(tmp_path):
     sheets = {r["rule_id"]: r["sheet"] for r in out["rules"]}
     assert sheets[eq["id"]] == "_1+1"
     assert sheets[ctrl["id"]] == "A_B"
+
+
+# ---------------------------------------------------------------------------
+# 历史票池裁剪（2026-09-17 决策 A）：当日尚未上市的票不入池、不记错
+# ---------------------------------------------------------------------------
+
+
+def _write_list_dates(cfg, mapping, fetched_at="2026-09-17"):
+    """在 storage_root 写一份上市日元数据（code6 → list_date）。"""
+    from pathlib import Path as _Path
+
+    p = _Path(cfg.storage_root) / ir.LIST_DATE_FILENAME
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        json.dumps(
+            {"schema_version": 3, "fetched_at": fetched_at, "stocks": mapping},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return p
+
+
+def test_exclude_not_listed_codes_keeps_unknown_fail_open(tmp_path):
+    """明确 list_date > asof 才剔除；元数据里没有的票一律保留（fail-open）。"""
+    cfg = _cfg(tmp_path)
+    _write_list_dates(cfg, {"600000": 19991110, "600001": 20260901})
+    kept, audit = ir.exclude_not_listed_codes(
+        cfg,
+        ["SSE.STK.600000", "SSE.STK.600001", "SSE.STK.999999"],
+        ASOF,
+    )
+    assert kept == ["SSE.STK.600000", "SSE.STK.999999"], "无上市日的票必须保留"
+    assert audit["applied"] is True
+    assert audit["excluded_count"] == 1
+    assert audit["excluded_codes"] == ["SSE.STK.600001"]
+    assert audit["universe_size_before"] == 3
+    assert audit["list_date_source"].endswith(ir.LIST_DATE_FILENAME)
+    assert audit["list_date_fetched_at"] == "2026-09-17"
+
+
+def test_exclude_not_listed_metadata_missing_is_noop(tmp_path, monkeypatch):
+    """元数据不可用 → 不裁剪（不能因为一个文件读不到就悄悄换票池）。"""
+    from pathlib import Path as _Path
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(ir, "_list_date_candidates", lambda _cfg: [_Path(tmp_path) / "nope.json"])
+    codes = ["SSE.STK.600000", "SSE.STK.600001"]
+    kept, audit = ir.exclude_not_listed_codes(cfg, codes, ASOF)
+    assert kept == codes
+    assert audit["applied"] is False and audit["excluded_count"] == 0
+
+
+def test_exclude_not_listed_asof_unknown_is_noop(tmp_path):
+    """asof 未知（<=0）不裁剪：否则 list_date > 0 会把所有票都删掉。"""
+    cfg = _cfg(tmp_path)
+    _write_list_dates(cfg, {"600000": 19991110, "600001": 20260901})
+    codes = ["SSE.STK.600000", "SSE.STK.600001"]
+    kept, audit = ir.exclude_not_listed_codes(cfg, codes, 0)
+    assert kept == codes
+    assert audit["applied"] is False
+
+
+@requires_real_formulas
+def test_review_skips_not_yet_listed_without_error(tmp_path):
+    """当日尚未上市的票不入池、不记错：这正是 20260605 补算失败的直接原因。"""
+    cfg = _cfg(tmp_path)
+    _write_list_dates(cfg, {"600009": 20260901})
+    summary = ir.run_weekly_review(
+        cfg,
+        asof=ASOF,
+        codes=["SSE.STK.600000", "SSE.STK.600009"],
+        bar_loader=_fake_loader,  # 600009 取不到 K 线 → 未裁剪时会抛错
+        surface_resolver=_ok_surface,
+    )
+    assert summary["status"] == "ok"
+    assert summary["universe_size"] == 1
+    assert summary["error_count"] == 0, "未上市票不得记为加载级失败"
+    assert summary["universe_codes"] == ["SSE.STK.600000"]
+    assert summary["universe_excluded"]["excluded_codes"] == ["SSE.STK.600009"]
+
+
+@requires_real_formulas
+def test_review_without_filter_still_records_real_errors_then_gate_blocks(tmp_path, monkeypatch):
+    """不裁剪时（元数据不可用）真错误照记，规则被判 partial、门槛拒绝发布。
+
+    这条是"修复前"的行为快照：证明裁剪确实是为发布门槛服务的，
+    且真正的加载失败没有被一起吞掉。
+    """
+    from pathlib import Path as _Path
+
+    from wtpy.apps.astock.service import screen_contract as sc
+    from wtpy.apps.astock.service import screen_snapshots as ss
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(ir, "_list_date_candidates", lambda _cfg: [_Path(tmp_path) / "nope.json"])
+    summary = ir.run_weekly_review(
+        cfg,
+        asof=ASOF,
+        codes=["SSE.STK.600000", "SSE.STK.600009"],
+        bar_loader=_fake_loader,
+        surface_resolver=_ok_surface,
+    )
+    assert summary["error_count"] == 1
+    assert summary["errors"][0]["rule"] == "*"
+    payload = ss.build_snapshot_payload(cfg, summary, rule_ids=["txt_735金叉及趋势"])
+    verdict = sc.PublishPolicy().evaluate(payload)
+    assert verdict["publishable"] is False
+    assert verdict["verdict"] == "rule_partial_or_error"
+    assert payload["rules"][0]["status"] == sc.RULE_STATUS_PARTIAL
+
+
+@requires_real_formulas
+def test_snapshot_carries_pool_audit_and_publishes_after_filter(tmp_path):
+    """裁剪后：快照记下"剔了谁、依据哪份元数据"，且门槛放行。"""
+    from wtpy.apps.astock.service import screen_contract as sc
+    from wtpy.apps.astock.service import screen_snapshots as ss
+
+    cfg = _cfg(tmp_path)
+    _write_list_dates(cfg, {"600009": 20260901})
+    summary = ir.run_weekly_review(
+        cfg,
+        asof=ASOF,
+        codes=["SSE.STK.600000", "SSE.STK.600009"],
+        bar_loader=_fake_loader,
+        surface_resolver=_ok_surface,
+    )
+    payload = ss.build_snapshot_payload(cfg, summary, rule_ids=["txt_735金叉及趋势"])
+    assert payload["universe_size"] == 1
+    assert payload["universe_codes"] == ["SSE.STK.600000"]
+    audit = payload["universe_excluded"]
+    assert audit["applied"] is True
+    assert audit["excluded_codes"] == ["SSE.STK.600009"]
+    assert audit["list_date_fetched_at"] == "2026-09-17"
+    verdict = sc.PublishPolicy().evaluate(payload)
+    assert verdict["publishable"] is True, "未上市票不再把规则拖成 partial"
+    assert payload["rules"][0]["status"] == sc.RULE_STATUS_OK

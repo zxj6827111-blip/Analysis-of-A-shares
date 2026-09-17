@@ -441,6 +441,52 @@ def test_review_reuse_fingerprint_match_hits(tmp_path):
 
 # ---------------- 端到端：run_backtest 真实执行 NAMELIKE 规则 ----------------
 
+@pytest.fixture(autouse=True)
+def _offline_identity_factors(monkeypatch):
+    """沙箱回测一律用**离线恒等因子/无分红事件**，单测不去 Baostock 拉真实数据。
+
+    沙箱只有合成 csv、没有因子数据集，服务层会落到 legacy 分支
+    ``build_factor_series(prefer_baostock=True)`` 与 ``build_affine_series`` ——
+    本机有网时真的会登录 Baostock 取回真实因子/分红事件：只要持仓区间跨了除权
+    （如 000001 在 2026-06-12 除权），``fail_closed`` 策略就会把 status 判成
+    ``unsupported_corporate_action``，用例结果随「本机有没有网」而变（本机失败、
+    CI 通过），而且每个用例都要等两次网络往返。本模块验证的是 NAMELIKE 过滤与
+    信号缓存键，与复权事件无关，故固定为恒等/无事件（离线、确定性）。
+    """
+    import wtpy.apps.astock.service.backtest as bt_mod
+    from wtpy.apps.astock.data.adjustments import FactorSeries, identity_factors
+
+    def _identity(std_code, dates, **_kw):
+        dates = [int(d) for d in dates]
+        return FactorSeries(
+            std_code=str(std_code),
+            dates=dates,
+            factors=identity_factors(len(dates)).tolist(),
+            source="test_identity",
+            source_detail="sandbox: offline identity factors (no network)",
+            quality="complete",
+        )
+
+    monkeypatch.setattr(bt_mod, "build_factor_series", _identity)
+
+    # 仿射（分红）面：AffineSeries 在 backtest.py 内是函数内 import，故打源模块即可
+    from wtpy.apps.astock.data import affine_adjust as aa_mod
+
+    def _affine_identity(std_code, dates, **_kw):
+        dates_i = [int(d) for d in dates]
+        return aa_mod.AffineSeries(
+            std_code=str(std_code),
+            dates=dates_i,
+            cum_a=[1.0] * len(dates_i),
+            cum_b=[0.0] * len(dates_i),
+            source="test_no_dividend_events",
+            source_detail="sandbox: offline, no dividend events (no network)",
+            quality="no_events_identity",
+        )
+
+    monkeypatch.setattr(aa_mod, "build_affine_series", _affine_identity)
+
+
 def _bt_sandbox(tmp_path, *, with_calendar: bool = True):
     """沙箱回测环境：两只票的 csv 日线 + 一条 NAMELIKE 规则。
 

@@ -700,6 +700,75 @@ def track_exit_code_for_completion(completion: str) -> int:
     return _TRACK_EXIT_FAILED
 
 
+def _append_missing_rules(cfg, wk: int, subset_rules, args) -> Dict[str, Any]:
+    """把 ``subset_rules`` 里该周还没覆盖的规则并进该周名单。
+
+    用户口径（2026-09-16）：补算单位是 **周 × 规则**。一条规则补过某周，只说明
+    这条规则那一周有数据了，不代表这一周归它——别的规则同样要能补这一周。
+    所以该周已有名单时不再整单拒绝，而是：只扫描缺的那几条规则（成本与规则数
+    线性，不重跑已有规则）→ 合并进该周名单 → 显式替换指针（审计记录原/新指针）。
+
+    返回 ``{"ok", "reason", "added", ...}``；``reason=rules_already_present``
+    表示该周已有全部请求规则（无需扫描）。
+    """
+    pub = ss.load_published_snapshot_for_week(cfg, wk)
+    have = {str(r.get("rule_id")) for r in (pub or {}).get("rules") or []}
+    want = [str(r) for r in subset_rules]
+    missing = [r for r in want if r not in have]
+    if not missing:
+        return {
+            "ok": True,
+            "reason": "rules_already_present",
+            "added": [],
+            "present": [r for r in want if r in have],
+        }
+    print(
+        f"[TRACK] {wk}: 该周已有名单（{len(have)} 条规则），"
+        f"追加缺失的 {len(missing)} 条：{','.join(missing)}"
+    )
+    rc = cmd_review_weekly(
+        argparse.Namespace(
+            asof=str(wk),
+            rules=",".join(missing),
+            publish_scope="subset",
+            codes=None, force=False,
+            run_kind="backfill",
+            tdx_root=getattr(args, "tdx_root", None),
+            storage=getattr(args, "storage", None),
+            indicator_dir=getattr(args, "indicator_dir", None),
+        )
+    )
+    if rc != 0:
+        return {"ok": False, "reason": "review_failed", "review_exit_code": rc}
+    # 该周已有指针 → 复核产出的子集快照不会自动发布，按文件名前缀找回最新那份
+    extra_id = ss.find_latest_snapshot_id_for_week(
+        cfg, wk,
+        require_any_rule_ids=missing,
+        exclude=[str((pub or {}).get("snapshot_id") or "")],
+    )
+    if not extra_id:
+        return {"ok": False, "reason": "extra_snapshot_not_found", "missing": missing}
+    res = ss.append_rules_to_week(
+        cfg, week_id=wk, extra_snapshot_id=extra_id,
+        reason="追加" + ",".join(missing),
+    )
+    if not res.get("appended"):
+        return {
+            "ok": False,
+            "reason": str(res.get("reason") or "append_failed"),
+            "missing": missing,
+            "detail": {k: v for k, v in res.items() if k != "appended"},
+        }
+    return {
+        "ok": True,
+        "reason": "appended",
+        "added": list(res.get("added_rule_ids") or []),
+        "merged_snapshot_id": res.get("merged_snapshot_id"),
+        "previous_snapshot_id": res.get("previous_snapshot_id"),
+        "scoped_rule_ids": res.get("scoped_rule_ids"),
+    }
+
+
 def _resolve_track_week(
     cfg, args, *, calendar=None, default_previous: bool = False
 ) -> int:
@@ -848,6 +917,109 @@ def _latest_signal_week(cfg, cal) -> int:
     包装一层只为在 CLI 侧固定参数顺序（日历由调用方一次性加载复用）。
     """
     return tracksvc.latest_signal_week(cfg, cal)
+
+
+def cmd_track_publish(args: argparse.Namespace) -> int:
+    """显式替换某周的发布指针（契约 docs/plans/auto-screen-track/contract.md §0）。
+
+    为什么需要它（2026-09-16 用户实操反馈）：``backfill`` 只在**完全没有指针**
+    的周补位——某周一旦有了发布快照（哪怕是「指定规则补算」的部分名单），
+    自动路径一律不替换。可契约早就写明"转正走显式 track-publish"，却一直没有
+    实现，于是"某周已经有 A 规则的名单，想再补上 B 规则"在页面上只有 400，
+    在 CLI 上只会安静跳过，用户无路可走。
+
+    本命令就是那条显式路径：把指定快照转成该周的正式指针，原指针/新指针/
+    时间/来源全部记进索引审计（``source=manual:<原因>``）。门槛与周归属照旧
+    校验（``publish_snapshot`` 内做）：快照必须属于该周、必须过发布门槛。
+
+    退出码：0 成功；2 用法/快照不存在/门槛不过/锁被占；1 其他异常。
+    """
+    import re as _re
+
+    cfg = _cfg_from_args(args)
+    cfg.ensure_dirs()
+    raw_week = str(getattr(args, "week", "") or "").strip()
+    week_s = raw_week.replace("-", "").replace("/", "")
+    snapshot_id = str(getattr(args, "snapshot", "") or "").strip()
+    reason = str(getattr(args, "reason", "") or "").strip()
+    if not _re.fullmatch(r"\d{8}", week_s):
+        print("[PUBLISH] --week 需为 8 位日期（YYYYMMDD），例如 20260814")
+        return _TRACK_EXIT_CONFIG
+    if not snapshot_id:
+        print("[PUBLISH] --snapshot 必填（要转正的快照 id）")
+        return _TRACK_EXIT_CONFIG
+    if not reason:
+        print("[PUBLISH] --reason 必填：替换已发布周的名单需要写明原因并留审计")
+        return _TRACK_EXIT_CONFIG
+
+    from .service import heavy_job as _hj
+    from .service import screen_contract as sc
+
+    root = Path(cfg.storage_root)
+    week = int(week_s)
+    idx = sc.load_week_index(root)
+    prev = (idx.get("weeks") or {}).get(str(week)) or {}
+    print(
+        f"[PUBLISH] 目标周 {week} 原指针: "
+        f"{prev.get('published_snapshot_id') or '（无）'}"
+        f"（run_kind={prev.get('run_kind') or '—'}, "
+        f"scope={prev.get('rules_scope') or '—'}）"
+    )
+
+    # 快照自带 run_kind 更如实（索引里的「数据来源」标签按它渲染）：
+    snap_run_kind = "recompute"
+    try:
+        snap_payload = json.loads(
+            sc.snapshot_path(root, snapshot_id).read_text(encoding="utf-8")
+        )
+        snap_run_kind = str(snap_payload.get("run_kind") or "recompute")
+        print(
+            f"[PUBLISH] 本次转正快照: week_id={snap_payload.get('week_id')} "
+            f"run_kind={snap_run_kind} "
+            f"scope={sc.snapshot_rules_scope(snap_payload)} "
+            f"scoped_rules={sc.scoped_rule_ids(snap_payload)}"
+        )
+    except FileNotFoundError:
+        print(f"[PUBLISH] 快照不存在: {sc.snapshot_path(root, snapshot_id)}")
+        return _TRACK_EXIT_CONFIG
+    except Exception as e:  # noqa: BLE001 — 读取失败不阻塞（后面 publish 还会校验）
+        print(f"[PUBLISH] 快照读取异常（继续尝试发布）: {e}")
+
+    def _do_publish() -> int:
+        try:
+            entry = sc.publish_snapshot(
+                root, week, snapshot_id, snap_run_kind,
+                source=f"manual:{reason}",
+            )
+        except FileNotFoundError as e:
+            print(f"[PUBLISH] 快照不存在: {e}")
+            return _TRACK_EXIT_CONFIG
+        except ValueError as e:
+            # 周归属不符 / 未过发布门槛
+            print(f"[PUBLISH] 拒绝替换: {e}")
+            return _TRACK_EXIT_CONFIG
+        print(
+            f"[PUBLISH] 已替换: {week} → {entry.get('published_snapshot_id')}"
+            f"（scope={entry.get('rules_scope')}, scoped={entry.get('scoped_rule_ids')}, "
+            f"published_at={entry.get('published_at')}）"
+        )
+        audit = entry.get("audit") or {}
+        print(
+            f"[PUBLISH] 审计: 原指针={audit.get('previous_snapshot_id') or '（无）'} "
+            f"来源={entry.get('published_by')}"
+        )
+        print("[PUBLISH] 提示：周内名单已变，需要重新结算跟踪时请紧接着跑 "
+              f"track-weekly --week {week}")
+        return _TRACK_EXIT_OK
+
+    # 与链条/补算互斥：指针更新必须在没有重任务写索引时进行（契约 §0「索引锁内更新」。
+    # 仓库没有独立的索引文件锁，实际的互斥手段就是这把 heavy-job 锁）。
+    locked = _hj.run_with_heavy_lock(cfg, f"publish_{week}", fn=_do_publish)
+    if locked.get("skipped_locked"):
+        print("[PUBLISH] 另一个重任务正在运行（heavy-job 锁被占用），未替换指针；"
+              "请等它结束后重跑本命令。")
+        return _TRACK_EXIT_CONFIG
+    return int(locked.get("value") or 0)
 
 
 def cmd_track_weekly(args: argparse.Namespace) -> int:
@@ -1033,6 +1205,36 @@ def _cmd_track_backfill(
                 cfg, wk, calendar=cal,
                 algo_version=tracksvc.TRACKING_ALGO_VERSION,
             )
+        # ── 追加规则（2026-09-16 用户口径：补算单位 = 周 × 规则）─────────────
+        # 该周已有发布名单、但请求的规则还没覆盖 → 只扫缺的那几条，合并进该周名单；
+        # 一条规则补过某周不代表这一周归它，别的规则同样要能补这一周。
+        if subset_rules and reason != "no_published_snapshot":
+            append_res = _append_missing_rules(cfg, wk, subset_rules, args)
+            if append_res.get("reason") == "rules_already_present" and not force_flag:
+                print(
+                    f"[TRACK] {wk}: 跳过（该周已有这些规则的名单，无需补算；"
+                    "如需重算请用 track-publish 显式转正）"
+                )
+                results.append({
+                    "week": wk, "completion": "skipped_rules_already_present",
+                    "reason": "rules_already_present",
+                    "present_rule_ids": append_res.get("present") or [],
+                })
+                continue
+            if not append_res.get("ok") and append_res.get("reason") != "rules_already_present":
+                print(f"[TRACK] {wk}: 追加规则失败（{append_res.get('reason')}）")
+                results.append({"week": wk, "completion": "append_failed", **append_res})
+                overall = _TRACK_EXIT_RETRYABLE
+                continue
+            if append_res.get("ok") and append_res.get("reason") == "appended":
+                print(
+                    f"[TRACK] {wk}: 已追加 {append_res.get('added')} 到该周名单"
+                    f"（新快照 {append_res.get('merged_snapshot_id')}），继续结算…"
+                )
+                need, reason = tracksvc.should_recompute(
+                    cfg, wk, calendar=cal,
+                    algo_version=tracksvc.TRACKING_ALGO_VERSION,
+                )
         if not need and reason == "no_published_snapshot":
             # 无快照 → 先补快照（run_kind=backfill 仅补无指针周）
             if subset_rules:
@@ -1518,6 +1720,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="跟踪运行来源标识（写入产物，与快照 run_kind 对齐）",
     )
     sp.set_defaults(func=cmd_track_weekly)
+
+    sp = sub.add_parser(
+        "track-publish",
+        help="显式替换某周的发布指针（契约 §0：source=manual，门槛与周归属照旧校验，"
+             "索引内记录原指针/新指针/时间/来源审计）",
+    )
+    sp.add_argument("--week", required=True,
+                    help="YYYYMMDD 信号日（该周要替换成哪一周）")
+    sp.add_argument("--snapshot", required=True,
+                    help="要转正的快照 id（服务端产物文件名里的 snap_<id>.json）")
+    # 不用 argparse 的 required：缺原因时给出"为什么要写原因"的自解释文案，
+    # 比 argparse 的 "the following arguments are required" 有用
+    sp.add_argument("--reason", default=None,
+                    help="替换原因（必填；写入审计的 published_by，例如「追加短线强势启动规则」）")
+    sp.set_defaults(func=cmd_track_publish)
 
     sp = sub.add_parser("backtest")
     sp.add_argument("--indicator", action="append", required=True)

@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -113,7 +114,9 @@ def build_snapshot_payload(
     契约要点（§0/§1）：
     - universe_codes 完整清单（子集缓存判定 picked 越界的基础）；
       优先显式传入，否则从 summary.universe_codes 取，最后回源
-      _resolve_codes（与计算同源，绝不 DEMO 兜底）；
+      _resolve_codes（与计算同源，绝不 DEMO 兜底）。复核 summary 自
+      2026-09-17 起自带 universe_codes = **当日已上市**的池（已剔除
+      list_date > asof 的票），规模与清单由同一份 summary 保证一致；
     - failed_codes 从"全规则共享"改为逐规则集合；
     - no_data_codes 完整清单（不只数量）；
     - 逐规则 status：有失败票 → partial；规则级异常视为 error。
@@ -188,6 +191,10 @@ def build_snapshot_payload(
         "status": str(summary.get("status") or ""),
         "universe_size": int(summary.get("universe_size") or len(uni_list)),
         "universe_codes": uni_list,
+        # 票池裁剪审计（2026-09-17）：本次是否按 asof 剔除了"当时尚未上市"的票，
+        # 剔了哪些、上市日元数据来自哪个文件。读取方据此解释池规模为何小于
+        # 当前全市场；缺键 = 旧快照 = 未裁剪。
+        "universe_excluded": dict(summary.get("universe_excluded") or {}),
         "universe_fingerprint": universe_fp,
         "name_snapshot_id": str(summary.get("name_snapshot_id") or ""),
         "rule_fingerprints": rule_fps,
@@ -264,6 +271,182 @@ def write_and_publish_snapshot(
         "rules_scope": sc.snapshot_rules_scope(payload),
         "week_index_entry": entry,
     }
+
+
+def append_rules_to_week(
+    cfg: AStockConfig,
+    *,
+    week_id: int,
+    extra_snapshot_id: str,
+    reason: str = "",
+) -> Dict[str, Any]:
+    """把一份新算出的快照里的规则**追加**进该周已发布名单（补算单位 = 周×规则）。
+
+    用户口径（2026-09-16）：一条规则补过某周，只代表"这条规则那一周有数据了"，
+    **不代表那一周归它**——别的规则同样要能补这一周。原实现用"该周已有发布指针"
+    一刀切拒绝，等于把整周锁给第一条跑过的规则，是错的。
+
+    与「整周重跑」的区别：这里**只并入新规则**，原有规则的名单原样保留
+    （不重扫、数字不变）——重建周最怕已展示过的数字被悄悄改写。
+
+    顺序：合并出新快照（O_EXCL）→ 发布门槛 → 显式替换该周指针（审计记录
+    原指针/新指针/来源，`manual:append_rules:<原因>`）。门槛不过则保留快照
+    供诊断、指针不动。
+    """
+    import copy
+
+    week = int(week_id)
+    root = Path(cfg.storage_root)
+    idx = sc.load_week_index(root)
+    entry = (idx.get("weeks") or {}).get(str(week)) or {}
+    primary_id = str(entry.get("published_snapshot_id") or "")
+    if not primary_id:
+        return {"appended": False, "reason": "no_published_snapshot", "week_id": week}
+    primary = load_snapshot(cfg, primary_id)
+    if primary is None:
+        return {
+            "appended": False,
+            "reason": "published_snapshot_missing",
+            "week_id": week,
+            "published_snapshot_id": primary_id,
+        }
+    extra = load_snapshot(cfg, str(extra_snapshot_id))
+    if extra is None:
+        return {
+            "appended": False,
+            "reason": "extra_snapshot_missing",
+            "week_id": week,
+            "extra_snapshot_id": str(extra_snapshot_id),
+        }
+    if int(extra.get("week_id") or 0) != week:
+        return {
+            "appended": False,
+            "reason": "week_mismatch",
+            "week_id": week,
+            "extra_week_id": int(extra.get("week_id") or 0),
+        }
+
+    have = {str(r.get("rule_id")) for r in primary.get("rules") or []}
+    primary_fps = dict(primary.get("rule_fingerprints") or {})
+    extra_fps = dict(extra.get("rule_fingerprints") or {})
+    new_rules = [
+        r for r in (extra.get("rules") or []) if str(r.get("rule_id")) not in have
+    ]
+    if not new_rules:
+        return {
+            "appended": False,
+            "reason": "rules_already_present",
+            "week_id": week,
+            "already_present": sorted(have & {str(r.get("rule_id")) for r in extra.get("rules") or []}),
+            "published_snapshot_id": primary_id,
+        }
+
+    merged = copy.deepcopy(primary)
+    merged["snapshot_id"] = sc.new_snapshot_id(week)
+    merged["rules"] = list(primary.get("rules") or []) + [
+        # 逐规则记来源：合并周的名单来自两次扫描，必须能追到各自出处
+        dict(
+            r,
+            scan_source_snapshot_id=str(extra_snapshot_id),
+            scan_data_version=extra.get("data_version") or {},
+            scanned_at=extra.get("generated_at"),
+        )
+        for r in new_rules
+    ]
+    merged_fps = dict(primary_fps)
+    for r in new_rules:
+        rid = str(r.get("rule_id"))
+        if extra_fps.get(rid):
+            merged_fps[rid] = str(extra_fps[rid])
+    merged["rule_fingerprints"] = merged_fps
+    if sc.snapshot_rules_scope(primary) == sc.RULES_SCOPE_SUBSET:
+        merged["scoped_rule_ids"] = sorted(
+            set(sc.scoped_rule_ids(primary))
+            | {str(r.get("rule_id")) for r in new_rules}
+        )
+    merged["content_fingerprint"] = sc.content_fingerprint(
+        merged_fps,
+        str(merged.get("universe_fingerprint") or ""),
+        str(merged.get("name_snapshot_id") or ""),
+        merged.get("data_version") or {},
+        week,
+    )
+    merged["merged_from"] = [primary_id, str(extra_snapshot_id)]
+    merged["merged_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    merged["merge_reason"] = str(reason or "")
+
+    path = sc.snapshot_path(root, merged["snapshot_id"])
+    sc.create_snapshot_file_exclusive(path, merged)
+
+    verdict = sc.PublishPolicy().evaluate(merged)
+    if not verdict["publishable"]:
+        logger.warning(
+            "append_rules 合并快照未过发布门槛（%s），保留诊断不替换指针: %s",
+            verdict["verdict"], path,
+        )
+        return {
+            "appended": False,
+            "reason": f"quality_gate:{verdict['verdict']}",
+            "verdict": verdict,
+            "week_id": week,
+            "merged_snapshot_id": merged["snapshot_id"],
+            "snapshot_path": str(path),
+        }
+
+    index_entry = sc.publish_snapshot(
+        root,
+        week,
+        merged["snapshot_id"],
+        str(primary.get("run_kind") or "backfill"),
+        source=f"manual:append_rules:{reason or 'append'}",
+    )
+    return {
+        "appended": True,
+        "reason": "appended_rules",
+        "week_id": week,
+        "added_rule_ids": [str(r.get("rule_id")) for r in new_rules],
+        "previous_snapshot_id": primary_id,
+        "merged_snapshot_id": merged["snapshot_id"],
+        "snapshot_path": str(path),
+        "scoped_rule_ids": list(index_entry.get("scoped_rule_ids") or []),
+        "rules_scope": index_entry.get("rules_scope"),
+        "week_index_entry": index_entry,
+    }
+
+
+def find_latest_snapshot_id_for_week(
+    cfg: AStockConfig,
+    week_id: int,
+    *,
+    require_any_rule_ids: Sequence[str] = (),
+    exclude: Sequence[str] = (),
+) -> Optional[str]:
+    """该周最新的快照 id（按要求覆盖某些规则、排除若干 id）。
+
+    用于「追加规则」流程：复核跑完的子集快照会落盘但**不会发布**（该周已有指针），
+    调用方需要按文件名前缀（`snap_{week}_`）把它找回来再合并。
+    """
+    root = Path(cfg.storage_root)
+    files = sorted(
+        sc.screen_snapshots_dir(root).glob(f"snap_{int(week_id)}_*.json"),
+        key=lambda p: p.stat().st_mtime_ns,
+        reverse=True,
+    )
+    want = {str(r) for r in require_any_rule_ids}
+    skip = {str(x) for x in exclude}
+    for p in files:
+        sid = p.name[len("snap_"):-len(".json")]
+        if sid in skip:
+            continue
+        snap = load_snapshot(cfg, sid)
+        if snap is None or int(snap.get("week_id") or 0) != int(week_id):
+            continue
+        if want:
+            have = {str(r.get("rule_id")) for r in snap.get("rules") or []}
+            if not (have & want):
+                continue
+        return sid
+    return None
 
 
 def load_snapshot(
