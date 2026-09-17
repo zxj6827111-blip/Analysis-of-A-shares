@@ -365,6 +365,47 @@ class TestDetailColumnsV2:
         assert _weekday_cn(0) == ""
 
 
+class TestDetailNameFallback:
+    def test_empty_product_name_filled_from_tushare_cache(
+        self, track_client, monkeypatch
+    ):
+        """产物 name 为空（Tushare-only 部署结算）+ 元数据缓存可用 → 导出补名。
+
+        导出与跟踪页 L2 共用 fill_missing_names：页面有名字、导出却是空列
+        会是新的口径割裂。
+        """
+        import json
+
+        from wtpy.apps.astock.service import stock_names as sn
+
+        client, cfg, storage = track_client
+        monkeypatch.setattr(cfg, "tdx_root", None)
+        monkeypatch.setattr(sn, "_cache", {})
+        monkeypatch.setattr(sn, "_loaded_for", None)
+        (storage / "rizhu_list_dates.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 2, "fetched_at": "2026-09-12",
+                    "stocks": {}, "etfs": {},
+                    "stock_names": {"000001": "平安银行"}, "etf_names": {},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        sid = _publish_snap(cfg, 20260911, ["SZSE.000001.SZ"])
+        _write_track(
+            cfg, sid, 20260911,
+            rows=[{
+                "code": "SZSE.000001.SZ", "rule_id": RID, "name": "",
+                "fill_status": "ok", "ret_close_sig": 0.1,
+            }],
+        )
+        body = client.get("/api/v1/bagua/track/export").json()
+        _, detail = _sheet_dicts(body["path"], "周明细")
+        assert detail[0]["名称"] == "平安银行"
+
+
 # ---------------------------------------------------------------------------
 # 导出与跟踪页同口径（2026-09-15 用户要求「与规则中心一致」）
 # ---------------------------------------------------------------------------

@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import screen_contract as sc
+from .stock_names import fill_missing_names
 
 # 固定 sheet 名（不含用户输入，天然不会冲突/超长，无需 sanitize 消解）
 SHEET_SUMMARY = "指标汇总"
@@ -436,6 +437,11 @@ def export_tracking_xlsx(
             )
             if is_backfill:
                 detail_backfill = True
+
+    # 周明细的名称列读自不可变产物：历史产物可能整列为空（结算部署缺本地
+    # 名称源，如无 TDX / universe.json / 周报快照的 Tushare-only 部署），
+    # 导出前按当前名称源补齐，与跟踪页 L2 共用同一函数；补不到保持空。
+    fill_missing_names(cfg, [dr["row"] for dr in detail_rows])
 
     # ---- 指标汇总（rule × fingerprint 分段，跨周默认每周等权）----
     summary_out: List[List[Any]] = []

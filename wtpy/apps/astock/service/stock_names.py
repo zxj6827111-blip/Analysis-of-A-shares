@@ -1,10 +1,16 @@
 # -*- coding: utf-8 -*-
 """Resolve A-share display names (code6 -> 股票名称).
 
-Sources (first hit wins, cached):
+Sources (cached；前三源为本地导入产物，第四源为纯 Tushare 部署的兜底):
 1. Forecast weekly snapshot stocks.jsonl (if active week present)
 2. TDX hq_cache/infoharbor_ex.code (GBK pipe file)
 3. universe.json SymbolInfo.name (often empty)
+4. rizhu_list_dates.json 的 stock_names/etf_names（Tushare stock_basic 缓存，
+   只补前面三源缺失的代码）
+
+1)-3) 都是「通达信导入时代」的本地产物：Tushare-only 部署三者全无，名称会
+整体为空（跟踪页 L2 名称列全「—」即此因）。第 4 源由 bagua 导出/Namelike
+快照链从 Tushare 拉取维护，是本模块在无本地导入产物时唯一的名称来源。
 """
 
 from __future__ import annotations
@@ -186,6 +192,50 @@ def _load_from_universe(
     return out
 
 
+def _symbol_meta_cache_path(cfg: AStockConfig) -> Path:
+    """Tushare 元数据缓存（rizhu_list_dates.json）路径。
+
+    与 bagua_query 的日柱/名称兜底共用同一份文件（同一 storage_root 下），
+    保证「导出侧写入的缓存」与「本模块读取的缓存」不会各自指向不同文件。
+    """
+    return Path(cfg.storage_root) / "rizhu_list_dates.json"
+
+
+def _load_from_symbol_meta(cfg: AStockConfig) -> Dict[str, str]:
+    """Tushare 元数据缓存名称（code6 -> 名称）。
+
+    Tushare-only 部署（无 TDX infoharbor、无 universe.json、无周报快照）下
+    唯一的本地名称源：由导出/NAMELIKE 快照链的 ``ensure_name_coverage`` /
+    ``ensure_fresh_symbol_names`` 从 Tushare ``stock_basic`` 拉取后落盘。
+
+    **只读本地文件、绝不联网**：本函数会被跟踪页 L2 读取路径调用，联网会把
+    「读一次表格」变成网络等待（首屏性能约束）。缓存缺失/损坏返回 {}——
+    缺名如实留空，绝不拿代码冒充名称。
+    """
+    path = _symbol_meta_cache_path(cfg)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: Dict[str, str] = {}
+    # stock_names 先于 etf_names：指数与股票代码段存在重叠（000001 既是上证
+    # 指数也是平安银行），股票口径优先，与 bagua 侧按 kind 过滤的取舍一致。
+    for section in ("stock_names", "etf_names"):
+        rows = data.get(section)
+        if not isinstance(rows, dict):
+            continue
+        for k, v in rows.items():
+            code = normalize_stock_code(k)
+            name = _clean_name(v)
+            if code and name and code not in out:
+                out[code] = name
+    return out
+
+
 def _source_fingerprint(cfg: AStockConfig) -> str:
     parts = []
     weekly = getattr(cfg, "forecast_weekly_dir", None) or (
@@ -197,6 +247,7 @@ def _source_fingerprint(cfg: AStockConfig) -> str:
         Path(weekly or "") / "index.json",
         Path(tdx) / "T0002" / "hq_cache" / "infoharbor_ex.code",
         Path(storage) / "universe.json",
+        _symbol_meta_cache_path(cfg),
     ):
         try:
             if p.exists():
@@ -223,6 +274,15 @@ def ensure_name_cache(cfg: AStockConfig, *, force: bool = False) -> Dict[str, st
             for k, v in chunk.items():
                 if k and v:
                     merged[k] = v
+        # Tushare 元数据缓存兜底：**只补缺口**，不覆盖上面三源。有本地导入
+        # 产物时口径与从前完全一致（Tushare 名不参与覆盖）；无产物时它就是
+        # 唯一来源，避免 Tushare-only 部署名称整体为空。
+        try:
+            for k, v in _load_from_symbol_meta(cfg).items():
+                if k and v and k not in merged:
+                    merged[k] = v
+        except Exception:
+            pass
         _cache = merged
         _loaded_for = fp
         return _cache
@@ -250,6 +310,45 @@ def display_code_with_name(code: str, name: str) -> str:
     if code and name:
         return f"{code} {name}"
     return code or name or ""
+
+
+def fill_missing_names(
+    cfg: AStockConfig,
+    rows,
+    *,
+    code_key: str = "code",
+    name_key: str = "name",
+) -> int:
+    """把 ``name`` 为空的记录按当前名称源补齐展示名（原地修改），返回补齐条数。
+
+    用途：**不可变产物**不做回写，但历史产物的 name 可能整列为空——结算发生在
+    缺本地导入产物（无 TDX / 无 universe.json / 无周报快照）的部署上时，名称源
+    全缺、name 被写成 ""。展示层（跟踪页 L2）与导出层在读产物时用它补展示名，
+    两处共用同一口径，避免「页面有名字、导出没有」。
+
+    来源与结算层同一函数链（见 :func:`resolve_stock_name`），一次加载整表后查
+    字典，避免逐票重复做来源指纹 stat。补不到保持原样，**绝不拿代码冒充名称**。
+    """
+    targets = [
+        r for r in (rows or ()) if isinstance(r, dict) and not r.get(name_key)
+    ]
+    if not targets:
+        return 0
+    cache = ensure_name_cache(cfg)
+    if not cache:
+        return 0
+    filled = 0
+    for r in targets:
+        raw = str(r.get(code_key) or "")
+        if not raw:
+            continue
+        # 产物 code 可能是 SSE.STK.600033 / SZSE.000003.SZ 两种形态
+        code6 = normalize_stock_code(raw) or normalize_stock_code(raw.split(".")[-1])
+        name = (cache.get(code6) or "") if code6 else ""
+        if name:
+            r[name_key] = name
+            filled += 1
+    return filled
 
 
 def _formula_uses_namelike(spec) -> bool:
