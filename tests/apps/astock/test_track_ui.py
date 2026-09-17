@@ -9,7 +9,7 @@
 
 只做源码级断言（与 test_screen_latest_ui.py / test_bagua_workbench_r2.py 同一
 手法）：页签注册、三个渲染函数与三个 fetch、竞态防护、覆盖率黄色警示、
-backfill_notice 全文渲染、导出调用。
+回填/子集免责全文（悬停说明，不占常驻横幅）、补算提交后收抽屉 + 任务浮标、导出调用。
 """
 
 from __future__ import annotations
@@ -163,12 +163,19 @@ def test_coverage_warning_logic(v3_html: str):
     assert "wbtCoverageHtml(" in detail, "L2 必须展示覆盖率"
 
 
-def test_backfill_notice_is_rendered(v3_html: str):
-    """⑥ 回填免责全文必须显眼渲染（契约 §9：UI 必带）。"""
+def test_backfill_notice_is_hover_only(v3_html: str):
+    """⑥ 回填免责改成悬停说明，不再占常驻黄色横幅。
+
+    2026-09-17 用户反馈「这两条黄提示有点碍眼」：文案本身没问题，问题是常驻占版面。
+    契约 §9 要求 UI 能读到全文，因此改成挂在「回填」标签的 title 上（正文仍直接取
+    后端 `j.backfill_notice`，前端不另写措辞），导出 meta 里同样带全文。
+    """
     detail = _extract_js_function(v3_html, "wbtRenderWeekDetail")
     assert "backfill_notice" in detail, "L2 必须引用 backfill_notice"
     assert "esc(j.backfill_notice)" in detail, "回填提示必须转义后全文渲染"
-    assert "wb-warnbox" in detail, "回填提示必须用醒目警示框"
+    assert "backfillTip" in detail and "title=" in detail, "免责全文必须挂在标签的悬停说明上"
+    assert 'wb-warn">回填数据提示' not in detail, "回填免责不得再作为常驻警示框渲染"
+    assert "回填数据提示" not in v3_html, "常驻回填警示框文案应已移除"
 
 
 def test_export_button_calls_track_export(v3_html: str):
@@ -212,24 +219,36 @@ def test_empty_states_are_guidance(v3_html: str):
 
 
 def test_l2_slim_columns_with_name_and_week_end_close(v3_html: str):
-    """L2 默认列 = 用户要求的少数列（代码/名称/开盘价/周五收盘/最高涨幅/
-    本周涨幅），诊断列收进详情——不再 18 列平铺。"""
+    """L2 默认列 = 用户要求的精简列（代码/名称/首日开盘/期末收盘/最高收益/
+    本周收益/超额收益/成交状态等），诊断列收进详情。"""
     m = re.search(r"const WBT_L2_COLS = \[(.*?)\n  \];", v3_html, flags=re.S)
     assert m, "缺少 L2 列定义"
     cols = m.group(1)
-    for need in ("代码", "名称", "周一开盘价", "周五收盘价", "最高涨幅", "本周涨幅", "可成交性"):
+    for need in ("代码", "名称", "周卦", "首日开盘", "期末收盘", "最高收益", "本周收益", "成交状态"):
         assert need in cols, f"L2 默认列缺少「{need}」"
+    assert "week_gua" in cols, "L2 列配置必须包含 week_gua 字段键"
     # 诊断列不再进默认列（收进详情行）
-    for gone in ("周一", "周二", "峰谷回撤", "超额"):
+    for gone in ("周一", "周二", "峰谷回撤"):
         assert ('label: "%s"' % gone) not in cols, f"「{gone}」应从默认列收进详情"
     detail = _extract_js_function(v3_html, "wbtRenderWeekDetail")
+    assert "week_gua" in detail, "L2 表格渲染必须包含 week_gua"
     # 名称列：产物 name 字段（缺名显示「—」，绝不拿代码冒充）
     assert "r.name" in detail, "L2 必须渲染产物里的股票名称"
-    # 周五收盘价用产物的显式字段，不从 daily 反推
-    assert "close_week_end" in detail, "L2 必须用 close_week_end（周五收盘价）"
+    # 期末收盘价用产物的显式字段，不从 daily 反推
+    assert "close_week_end" in detail, "L2 必须用 close_week_end（期末收盘价）"
     # 见顶「周几」：日期 + 中文星期
-    assert "wbtWeekdayCn(" in detail, "最高涨幅必须标注见顶在周几"
-    assert "最高涨幅" in detail and "max_gain_sig" in detail
+    assert "wbtWeekdayCn(" in detail, "最高收益必须标注见顶在周几"
+    assert ("最高收益" in detail or "最高涨幅" in detail) and ("max_gain_exec" in detail or "max_gain_sig" in detail)
+    # V1.1 exec 口径核心字段断言
+    assert "entry_open_week" in detail, "L2 必须包含 entry_open_week"
+    assert "ret_close_exec" in detail, "L2 必须包含 ret_close_exec"
+    assert "excess_exec" in detail, "L2 必须包含 excess_exec"
+    row_detail = _extract_js_function(v3_html, "wbtRowDetailHtml")
+    assert "ret_vs_week_open" in row_detail, "详情行逐日收益必须按首日开盘口径"
+    assert "wbt-l2-bagua-wrap" in row_detail, "详情行必须包含周卦与月卦共识面板"
+    assert "周卦：" in row_detail and "月卦：" in row_detail, "面板必须包含周卦与月卦"
+    assert "wbt-btn-query" not in row_detail, "左侧头部查卦象按钮已依要求移除"
+
 
 
 def test_l2_row_expand_sort_and_unbuyable_mark(v3_html: str):
@@ -307,20 +326,35 @@ def test_caliber_fixed_to_exec_and_explained(v3_html: str):
     assert "wb-pos" in signed and "wb-neg" in signed, "收益类数字必须带涨跌色"
 
 
-def test_backfill_box_is_collapsed_by_default(v3_html: str):
-    """补算入口默认折叠（2026-09-16 用户要求）：需要时点开，平时不占版面。
+def test_backfill_drawer_structure_and_behavior(v3_html: str):
+    """历史补算升级为右侧抽屉（V1.1 契约）：默认 hidden 收起，L0 按钮呼出。
 
-    与「信号日必须是该周最后一个交易日」的校验配套：入口收起但校验在，
-    填错会被拒绝并提示正确日期。
+    包含遮罩、抽屉容器、关闭按钮、单周/批量 Tab 切换、Escape 键盘支持，
+    且包含原有控件 ID（保证功能与测试兼容）。
     """
-    m = re.search(r'<details id="wbTrackBfBox"([^>]*)>', v3_html)
-    assert m, "补算区必须用 <details> 折叠"
-    assert "open" not in m.group(1), "补算区必须默认收起"
-    # 折叠标题要点明用途（用户靠它找到入口）
-    assert "补算指定历史周" in v3_html
+    assert 'id="wbTrackBfDrawer"' in v3_html, "缺少补算抽屉容器"
+    assert 'id="wbTrackBfMask"' in v3_html, "缺少抽屉遮罩"
+    assert 'id="wbTrackBfOpen"' in v3_html, "缺少打开补算抽屉按钮"
+    assert 'id="wbTrackBfClose"' in v3_html, "缺少关闭抽屉按钮"
+    assert 'id="wbTrackBfCancel"' in v3_html, "缺少取消按钮"
+    assert 'id="wbTrackBfTabSingle"' in v3_html, "缺少指定历史周 Tab"
+    assert 'id="wbTrackBfTabBatch"' in v3_html, "缺少批量最近 N 周 Tab"
+    assert 'role="dialog"' in v3_html and 'aria-modal="true"' in v3_html
+    # 默认隐藏
+    m_drawer = re.search(r'<aside id="wbTrackBfDrawer"[^>]*hidden', v3_html)
+    assert m_drawer, "抽屉默认必须 hidden"
+    m_mask = re.search(r'<div id="wbTrackBfMask"[^>]*hidden', v3_html)
+    assert m_mask, "遮罩默认必须 hidden"
+    # 抽屉标题与说明
+    assert "历史补算" in v3_html
+    assert "补算说明" in v3_html
     # 控件与轮询逻辑都在（收起不影响功能）
     for el in ("wbTrackBfWeek", "wbTrackBfRun", "wbTrackBfJobs"):
         assert 'id="%s"' % el in v3_html
+    # ESC 键关闭与滚动锁定
+    bind = _extract_js_function(v3_html, "wbtBind")
+    assert "Escape" in bind and "wbtCloseBackfillDrawer" in bind
+    assert "wbt-scroll-locked" in v3_html
 
 
 def test_pending_picks_show_name_and_how_to_settle(v3_html: str):
@@ -354,9 +388,20 @@ def test_backfill_entry_submits_and_polls(v3_html: str):
     assert "wbtPollBackfill()" in _extract_js_function(v3_html, "wbtEnterTrack")
     # 免责：补算=按当前规则重建，页面上必须写明
     assert "不等于当时真实发布的名单" in v3_html
-    # retryable 语义要在 UI 里说清楚（锁被占用会稍后自动重试）
+    # retryable（退出码 3）的语义必须如实分开说：指定规则补算**不会**被服务端
+    # 自动重试（重任务待办键含规则清单、_heavy_job_command 不猜命令），
+    # 整周补算才进自动重试队列。2026-09-17 用户实测踩到过一次误导文案。
     jobs = _extract_js_function(v3_html, "wbtRenderBackfillJobs")
-    assert "retryable" in jobs and "自动重试" in jobs
+    assert "wbtBackfillRetryableNote(" in jobs, "退出码 3 的说明必须走共用文案函数"
+    note = _extract_js_function(v3_html, "wbtBackfillRetryableNote")
+    assert "不会被服务端自动重试" in note, "指定规则补算必须说明不会自动重试"
+    assert "稍后会自动重试" in note, "整周补算仍应说明会进自动重试队列"
+    assert "rule_ids" in note, "两种模式的说明必须按有无 rule_ids 分开"
+    # 退出码 3 的真正原因在 CLI 输出末尾：抽屉里要能就地看到，不用翻日志
+    assert "j.output" in jobs, "必须用任务输出展示原因"
+    assert '"running"' in jobs and '"queued"' in jobs, "只对已结束的任务展示输出"
+    assert "<details" in jobs and "服务端输出" in jobs, "失败/未通过原因必须可展开查看"
+    assert "esc(out.join" in jobs, "服务端输出必须转义后渲染"
 
 
 def test_headers_carry_caliber_label(v3_html: str):
@@ -417,17 +462,13 @@ def test_task_center_shows_track_backfill(v3_html: str):
 
 
 def test_backfill_rule_picker_present(v3_html: str):
-    """规则选择器：嵌套折叠 + 检索 + 复选列表 + chips（原生多选框已被淘汰）。
+    """规则选择器：抽屉面板 + 单选范围切换 + 检索 + 复选列表 + chips。
 
-    2026-09-16 UI 重做理由（用户反馈原生 select multiple 无法操作）：
-    Ctrl+点击多选无提示、一次只见 3 行、无搜索、选中态滚出视野不可见——
-    改为与筛选页同款（wb-rulebox 复选列表 + 检索 + 已选 chips）。
+    2026-09-16 V1.1 UI：整周回填 vs 最多 5 条指定规则切换，
+    单周与批量分 Tab 隔离，已选 chips 与计数同步。
     """
-    # 嵌套折叠：默认收起，只有要指定规则才展开（不选=全部规则）
-    m = re.search(r'<details id="wbTrackBfRulesBox"([^>]*)>', v3_html)
-    assert m, "缺少规则选择折叠区 wbTrackBfRulesBox"
-    assert "open" not in m.group(1), "规则选择必须默认收起（不选=全部规则，不占版面）"
-    # 折叠标题必须实时反映当前选择（默认文案写明「全部规则」）
+    assert 'id="wbTrackBfSinglePanel"' in v3_html, "缺少单周补算面板"
+    assert 'id="wbTrackBfBatchPanel"' in v3_html, "缺少批量补算面板"
     assert 'id="wbTrackBfRuleSummary"' in v3_html
     assert "规则：全部规则" in v3_html
     for el in ("wbTrackBfRuleSearch", "wbTrackBfRuleList", "wbTrackBfRuleChips",
@@ -435,25 +476,24 @@ def test_backfill_rule_picker_present(v3_html: str):
         assert 'id="%s"' % el in v3_html, "缺少规则选择器控件 %s" % el
     # 上限必须前置可见（别等勾选到第 6 条才被 400 顶回来）
     assert "最多 5 条" in v3_html
-    # 两个操作必须分块（「补某一周」与「批量」不再混排一行）
+    # 两个操作必须分块（「补某一周」与「批量」分 Tab）
     assert "批量补最近 N 周" in v3_html
     assert "不支持指定规则" in v3_html
-    # 「不选=全部规则」的语义必须在默认视图中可见
+    # 「不选规则=补全部规则」的语义必须在默认视图中可见
     assert "不选规则=补全部规则" in v3_html
 
 
 def test_backfill_rules_lazy_load_and_executable_only(v3_html: str):
-    """规则列表懒加载（展开面板才拉）且只列可执行规则。"""
+    """规则列表懒加载（打开抽屉才拉）且只列可执行规则。"""
     loader = _extract_js_function(v3_html, "wbtLoadBackfillRules")
     assert "/api/v1/bagua/screen/rules" in loader, "规则来源必须是筛选规则目录（同一口径）"
     assert "r.executable" in loader, "不可执行规则提交必被后端 400 拒绝，不能列出误导"
     assert "bfRulesLoaded" in loader, "必须做一次性加载缓存（不重复打接口）"
     # 加载后剔除失效勾选（规则被删后保持勾选会在提交时 400）
     assert "wbt.bfChecked" in loader and "live" in loader
-    # 懒加载挂在 details 展开事件上
-    bind = _extract_js_function(v3_html, "wbtBind")
-    assert "wbTrackBfBox" in bind and "ontoggle" in bind and "bfBox.open" in bind, \
-        "规则列表必须挂在展开事件上懒加载"
+    # 懒加载挂在抽屉打开函数上
+    open_fn = _extract_js_function(v3_html, "wbtOpenBackfillDrawer")
+    assert "wbtLoadBackfillRules()" in open_fn, "规则列表必须在打开抽屉时懒加载"
 
 
 def test_backfill_rule_list_uses_set_state_and_max_guard(v3_html: str):
@@ -490,8 +530,49 @@ def test_backfill_submit_sends_rule_ids_only_when_picked(v3_html: str):
     assert "WBT_BF_MAX_RULES = 5" in v3_html, "前端上限必须与后端 MAX_SUBSET_RULES 一致"
 
 
+def test_backfill_submit_closes_drawer_and_shows_pill(v3_html: str):
+    """提交成功后抽屉自动收起，任务进度改由右下角浮标常驻显示。
+
+    2026-09-17 用户反馈：点「开始补算」后抽屉不关，toast（z-index 300）被抽屉
+    （z-index 1001）盖住，用户"不知道到底有没有进行这个任务"。
+    """
+    run = _extract_js_function(v3_html, "wbtRunBackfill")
+    assert "wbtCloseBackfillDrawer()" in run, "提交成功后必须自动收起抽屉"
+    assert run.index("wbtCloseBackfillDrawer()") < run.index("toast("), \
+        "先收抽屉再弹 toast，否则提示仍被抽屉盖住"
+    assert "wbtPollBackfill()" in run, "提交后必须继续轮询任务状态"
+    # 失败路径必须留着抽屉：错误原因写在抽屉底部（别让用户去翻日志）
+    assert "wbtSetBackfillError" in run
+    assert "wbtCloseBackfillDrawer()" not in run.split("catch", 1)[1], \
+        "提交失败不得关抽屉——抽屉里才有失败原因"
+
+    # 浮标：DOM + 高于抽屉的层级 + 由轮询驱动 + 点击回看
+    assert 'id="wbTrackBfPill"' in v3_html, "缺少任务浮标元素"
+    css = re.search(r"#wbTrackBfPill \{(.*?)\}", v3_html, re.S)
+    assert css, "缺少浮标样式"
+    z = re.search(r"z-index:\s*(\d+)", css.group(1))
+    drawer_z = re.search(r"#wbTrackBfDrawer \{.*?z-index:\s*(\d+)", v3_html, re.S)
+    assert z and drawer_z and int(z.group(1)) > int(drawer_z.group(1)), \
+        "浮标层级必须高于抽屉，否则收起后被遮挡"
+    jobs = _extract_js_function(v3_html, "wbtRenderBackfillJobs")
+    assert "wbtUpdateBackfillPill(" in jobs, "浮标必须由任务状态轮询驱动"
+    pill = _extract_js_function(v3_html, "wbtUpdateBackfillPill")
+    assert "bfDrawerOpen" in pill, "抽屉打开时浮标必须让位（否则压住底部按钮）"
+    assert "queued" in pill and "running" in pill, "运行中状态判定缺失"
+    assert "bfPillRunningJob" in pill, "只对亲眼看着跑完的任务报完成"
+    bind = _extract_js_function(v3_html, "wbtBind")
+    assert "wbTrackBfPill" in bind and "wbtOpenBackfillDrawer" in bind, \
+        "点浮标必须能回到抽屉看明细"
+    close_fn = _extract_js_function(v3_html, "wbtCloseBackfillDrawer")
+    assert "wbtUpdateBackfillPill(" in close_fn, "关抽屉后浮标要接棒显示进度"
+
+
 def test_subset_scope_is_labeled_in_all_three_levels(v3_html: str):
-    """子集周（部分名单）在 L0/L1/L2 都必须标注——否则被读成当周全量结果。"""
+    """子集周（部分名单）在 L0/L1/L2 都必须标注——否则被读成当周全量结果。
+
+    L2 的标注自 2026-09-17 起从常驻警示框改为「指定规则补算」标签 + 悬停全文
+    （用户嫌黄框碍眼）；标注本身仍必须存在，不能变成"看不出来"。
+    """
     overview = _extract_js_function(v3_html, "wbtRenderOverview")
     assert "subset_weeks" in overview and "指定规则补算" in overview, "L0 缺少子集周标记"
     weeks = _extract_js_function(v3_html, "wbtRenderRuleWeeks")
@@ -499,10 +580,13 @@ def test_subset_scope_is_labeled_in_all_three_levels(v3_html: str):
     detail = _extract_js_function(v3_html, "wbtRenderWeekDetail")
     assert "isSubsetScope" in detail and "scope_notice" in detail, \
         "L2 必须渲染后端下发的 scope_notice 全文"
-    assert "wb-warnbox" in detail, "提示必须用醒目提示框（不是一行小字）"
-    # 任务列表里也要能看出是"指定规则"任务
+    assert 'wb-warn">指定规则补算' not in detail, "子集提示不得再作为常驻警示框渲染"
+    assert 'title="\' + subsetTip' in detail, "子集口径全文必须挂在标签悬停说明上"
+    # 任务列表里也要能看出是"指定规则"任务（措辞收在共用目标文案里）
     jobs = _extract_js_function(v3_html, "wbtRenderBackfillJobs")
-    assert "rule_ids" in jobs and "指定" in jobs
+    assert "wbtBackfillJobTarget(" in jobs, "任务行必须用共用的目标文案"
+    target_fn = _extract_js_function(v3_html, "wbtBackfillJobTarget")
+    assert "rule_ids" in target_fn and "指定" in target_fn, "任务文案必须区分指定规则/全部规则"
 
 
 def test_subset_notice_text_from_backend_only(v3_html: str):
@@ -511,3 +595,190 @@ def test_subset_notice_text_from_backend_only(v3_html: str):
     assert "esc(j.scope_notice)" in detail, "必须直接渲染后端 scope_notice"
     assert "不代表这些规则当周没有入选" not in v3_html, \
         "前端不得复制后端文案（两处措辞会漂移）"
+
+
+def test_l0_v11_redesign_kpis_sparkline_and_exec_excess(v3_html: str):
+    """L0 首页 V1.1 重构：4 KPI 容器、Sparkline SVG 函数、exec 超额展示。"""
+    assert 'id="wbTrackL0Kpis"' in v3_html, "缺少 L0 KPI 容器"
+    overview = _extract_js_function(v3_html, "wbtRenderOverview")
+    assert "wbtRenderL0Kpis(" in overview, "渲染总览必须调用 KPI 渲染"
+    assert "weekly_equal_mean_excess_exec" in overview, "L0 必须展示 exec 超额"
+    assert "wbtSparklineSvg(r.trend_weeks)" in overview, "L0 表格必须调用原生 Sparkline"
+    spark = _extract_js_function(v3_html, "wbtSparklineSvg")
+    assert "<svg" in spark and "polyline" in spark, "Sparkline 必须输出原生 SVG"
+    kpi_fn = _extract_js_function(v3_html, "wbtRenderL0Kpis")
+    for need in ("跟踪策略", "最新信号周", "累计入选", "已结算"):
+        assert need in kpi_fn, f"L0 4 卡缺少「{need}」"
+
+
+def test_l1_v11_kpis_and_pagination(v3_html: str):
+    """L1 规则周级历史页 V1.1 重构：5 KPI 汇总卡、分页与口径。"""
+    assert 'id="wbTrackL1Summary"' in v3_html, "缺少 L1 汇总卡容器"
+    assert 'id="wbTrackL1Pagination"' in v3_html, "缺少 L1 分页容器"
+    kpi_fn = _extract_js_function(v3_html, "wbtRenderL1Summary")
+    for need in ("跟踪周", "已结算", "胜率(首日开盘)", "平均收益(首日开盘)", "平均超额(首日开盘)"):
+        assert need in kpi_fn, f"L1 汇总卡缺少「{need}」"
+    weeks = _extract_js_function(v3_html, "wbtRenderRuleWeeks")
+    assert "mean_excess_exec" in weeks, "L1 表格必须包含平均超额(首日开盘)"
+    assert "wbt.l1Page" in weeks or "wbtTrackState.l1Page" in weeks, "L1 表格必须支持分页"
+
+
+def test_l2_v11_kpis_and_coverage_warning(v3_html: str):
+    """L2 周级个股明细 V1.1 重构：5 KPI 汇总卡、完整性警示横幅与逐日收益。"""
+    assert 'id="wbTrackL2Kpis"' in v3_html, "缺少 L2 KPI 容器"
+    assert 'id="wbTrackL2Banners"' in v3_html, "缺少 L2 警示横幅容器"
+    kpi_fn = _extract_js_function(v3_html, "wbtRenderL2Kpis")
+    for need in ("入选股票", "有效样本", "胜率(首日开盘)", "平均收益(首日开盘)", "平均超额(首日开盘)"):
+        assert need in kpi_fn, f"L2 汇总卡缺少「{need}」"
+    detail = _extract_js_function(v3_html, "wbtRenderWeekDetail")
+    assert "wbtRenderL2Kpis(" in detail, "渲染周明细必须调用 KPI 渲染"
+    assert "0.90" in detail, "必须检查 90% 覆盖率门槛"
+    assert "数据完整性警示" in detail, "低覆盖率必须展示数据完整性警示横幅"
+
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# 周卦异步补齐（2026-09-16 性能整改 + 用户复核回归）
+# ---------------------------------------------------------------------------
+
+
+def test_week_gua_sort_uses_same_source_as_display(v3_html: str):
+    """排序与显示必须同源：异步补齐的结果在 wbt.baguaByCode 里，直接读
+    r.week_gua（首屏占位是空串）会得到「显示有卦、排序值为空」。"""
+    sort_fn = _extract_js_function(v3_html, "wbtL2SortValue")
+    assert "wbtRowBaguaPart" in sort_fn or "wbtRowBagua" in sort_fn, (
+        "周卦排序必须走与显示同一个取值函数"
+    )
+    assert "r.week_gua" not in sort_fn, "不得直接读原始行的 week_gua（首屏为空）"
+    detail = _extract_js_function(v3_html, "wbtRenderWeekDetail")
+    assert "wbtRowBaguaPart(r, \"week\")" in detail, "周卦列的取值来源必须与排序一致"
+
+
+def test_bagua_retry_covers_month_failure(v3_html: str):
+    """月卦失败也要能被重试：重试集合必须包含 month_state=error 的票。"""
+    retry_fn = _extract_js_function(v3_html, "wbtBaguaRetryCodes")
+    assert "month_state" in retry_fn, "月卦失败的票必须纳入重试范围"
+    fill = _extract_js_function(v3_html, "wbtLoadWeekBagua")
+    assert "month_state" in fill, "补齐结果必须记录月卦状态"
+    assert "fingerprint" in fill, "补齐请求必须带上与明细一致的版本指纹"
+
+
+def test_leave_l2_keeps_filled_results(v3_html: str):
+    """离开 L2 只中断在途请求、保留已补结果；换周才清空（否则"续传"名不副实）。"""
+    level_fn = _extract_js_function(v3_html, "wbtShowLevel")
+    assert "wbtAbortBagua()" in level_fn, "离开 L2 应中断而不清空"
+    assert "wbtResetBagua()" not in level_fn, "离开 L2 不得清空已补结果"
+    abort_fn = _extract_js_function(v3_html, "wbtAbortBagua")
+    assert "baguaByCode" not in abort_fn, "中断函数不得清结果"
+    reset_fn = _extract_js_function(v3_html, "wbtResetBagua")
+    assert "baguaByCode" in reset_fn, "换周必须清结果（结果按代码存，跨周会串）"
+    resume_fn = _extract_js_function(v3_html, "wbtResumeBagua")
+    assert "wbtBaguaRetryCodes()" in resume_fn, "回到 L2 只续传缺的那部分"
+
+
+def test_week_identity_passed_to_l2(v3_html: str):
+    """规则版本身份：L0/L1 都要把 fingerprint（必要时用本周 recorded_rule_id）
+    传给明细接口，否则 canonical id 在本周快照缺失时会「有名单却显示没数据」。"""
+    open_week = _extract_js_function(v3_html, "wbtOpenWeek")
+    assert "weekFingerprint" in open_week and "fingerprint=" in open_week
+    assert "j.fingerprint" in open_week, "后端解析出的指纹要回写，供补齐复用"
+    l1 = _extract_js_function(v3_html, "wbtRenderRuleWeeks")
+    assert "recorded_rule_id" in l1, "L1 周行应优先用该周实际记录的 rule_id"
+    assert "data-wbt-week-fp" in l1
+    overview = _extract_js_function(v3_html, "wbtRenderOverview")
+    assert "data-wbt-week-fp" in overview, "L0 直达也要带指纹"
+
+
+def test_coverage_scopes_are_labeled(v3_html: str):
+    """覆盖率有两种范围，页面必须标清楚（用户 2026-09-16 复核：391/391=100% 是
+    本组口径，而 99.95% 来自整周产物的 coverage 字段，不标会混读）。"""
+    detail = _extract_js_function(v3_html, "wbtRenderWeekDetail")
+    assert "整周全部规则" in detail, "整周产物的覆盖率必须标出范围"
+    assert "当前规则名单" in detail, "本组口径的覆盖率/横幅必须标出范围"
+    assert "j.coverage" in detail and "ui_summary" in detail
+
+
+def test_version_conflict_and_identity_are_surfaced(v3_html: str):
+    """版本不符 / 版本无匹配 / 同公式兄弟不一致都要在页面上说清楚。"""
+    l1 = _extract_js_function(v3_html, "wbtRenderRuleWeeks")
+    assert "version_conflict" in l1, "L1 版本不符周必须标注"
+    assert "版本不符" in l1
+    detail = _extract_js_function(v3_html, "wbtRenderWeekDetail")
+    assert "param_unmatched" in detail, "L2 版本无匹配必须给出提示而不是空态"
+    assert "规则版本不匹配" in detail
+    assert "sibling_divergence" in detail, "同公式产物不一致必须暴露"
+    assert "同公式产物不一致" in detail
+
+
+def test_l2_expanded_layout_order_and_trend_chart(v3_html: str):
+    """验证个股详情展开布局顺序与累计收益走势图规范：
+    1. 顺序：每日收益卡片 -> 覆盖率说明 -> 走势图 -> 周卦/月卦
+    2. 走势图包含 0% 零线、真实数据点直线连线、末点标注、隔离 Tooltip
+    3. 标题明确标明计算口径基准
+    """
+    row_fn = _extract_js_function(v3_html, "wbtRowDetailHtml")
+    assert "wbt-daily-grid" in row_fn, "必须包含每日收益卡片区域"
+    assert "wbt-l2-cov-footer" in row_fn, "必须包含覆盖率说明"
+    assert "trendChartHtml" in row_fn, "必须包含走势图 HTML"
+    assert "baguaHtml" in row_fn, "必须包含周卦月卦卡片"
+
+    # 验证最终拼接渲染顺序：每日收益 -> 覆盖率 -> 走势图 -> 卦象
+    ret_block = row_fn[row_fn.index("return '<div class=\"wbt-l2-expand-wrap\">"):]
+    pos_cards = ret_block.index("wbt-daily-grid")
+    pos_cov = ret_block.index("wbt-l2-cov-footer")
+    pos_chart = ret_block.index("+ trendChartHtml")
+    pos_bagua = ret_block.index("+ baguaHtml")
+    assert pos_cards < pos_cov < pos_chart < pos_bagua, (
+        f"拼接顺序错误: 期望 cards({pos_cards}) < cov({pos_cov}) < chart({pos_chart}) < bagua({pos_bagua})"
+    )
+
+    # 验证走势图实现函数规范
+    chart_fn = _extract_js_function(v3_html, "wbtRowTrendChartHtml")
+    assert "wbt-l2-chart-wrap" in chart_fn, "走势图必须有专属样式外层"
+    assert "wbt-trend-svg" in chart_fn, "走势图必须使用 SVG 渲染"
+    assert "0.00%" in chart_fn, "走势图必须标明 0% 零线参考"
+    assert "stroke-dasharray" in chart_fn, "零线或辅助线必须有虚线样式"
+    assert "polyline" in chart_fn, "数据点必须使用直线 polyline 连接（避免平滑假极值）"
+    assert "lastPt" in chart_fn or "lastLabelHtml" in chart_fn, "必须包含末点收益率标注"
+    assert "wbt-trend-tooltip" in chart_fn, "必须包含隔离的 Tooltip 骨架"
+    assert "segments" in chart_fn, "必须拆分连续交易日段（缺失交易日断开）"
+
+    # CSS 样式验证
+    assert ".wbt-l2-chart-wrap" in v3_html
+    assert ".wbt-trend-tooltip" in v3_html
+
+
+
+def test_backfill_submit_error_is_shown_inline(v3_html: str):
+    """补算提交失败的原因必须留在抽屉里（不只是一闪而过的 toast）。
+
+    用户 2026-09-16 反馈：选了一周提交只看到 400，原因得去翻服务端日志。
+    """
+    assert 'id="wbTrackBfSubmitError"' in v3_html, "抽屉里缺少失败原因展示位"
+    fn = _extract_js_function(v3_html, "wbtRunBackfill")
+    assert "wbtSetBackfillError(" in fn, "提交失败必须写入内联展示位"
+    setter = _extract_js_function(v3_html, "wbtSetBackfillError")
+    assert "wbTrackBfSubmitError" in setter
+    assert "box.hidden" in setter, "无错误时要收起（不常驻占位）"
+
+
+def test_backfill_drawer_shows_published_weeks_upfront(v3_html: str):
+    """补算抽屉必须提前显示"哪些周已有发布名单"，并在输入已发布周时立刻给原因。
+
+    用户 2026-09-16：提交后才吃 400，且看不懂报错里提到的规则名（那是占住该周的
+    规则，不是他选的规则）。护栏是按周判定的，必须让用户输入前就看得见。
+    """
+    assert 'id="wbTrackBfPublishedHint"' in v3_html, "缺少已发布周清单展示位"
+    assert 'id="wbTrackBfWeekWarn"' in v3_html, "缺少输入已发布周时的即时说明位"
+    loader = _extract_js_function(v3_html, "wbtLoadPublishedWeeks")
+    assert "/api/v1/bagua/track/published-weeks" in loader
+    warn = _extract_js_function(v3_html, "wbtUpdateBackfillWeekWarn")
+    assert "scoped_rule_ids" in warn, "要说明该周名单里已有哪些规则"
+    # 口径：补算单位是周 × 规则 → 已有名单的周应提示"可追加"，而不是"不能用"
+    assert "追加进这一周已有的名单" in warn, "必须说明会追加而不是替换整周"
+    assert "无需补算" in warn, "规则已在名单里时要提示无需补算"
+    opener = _extract_js_function(v3_html, "wbtOpenBackfillDrawer")
+    assert "wbtLoadPublishedWeeks()" in opener, "打开抽屉就应加载清单"

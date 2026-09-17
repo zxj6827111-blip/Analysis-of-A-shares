@@ -285,6 +285,117 @@ def _resolve_codes(cfg: AStockConfig, codes: Optional[Sequence[str]]) -> List[st
     return pool
 
 
+# ---------------------------------------------------------------------------
+# 历史票池的「当时尚未上市」裁剪（2026-09-17 用户决策 A）
+# ---------------------------------------------------------------------------
+
+# Tushare stock_basic 元数据快照（code6 → list_date），与日柱/名称补齐同源
+LIST_DATE_FILENAME = "rizhu_list_dates.json"
+# 审计清单最多记多少只（只记差异，不记全量票池）
+_EXCLUDED_AUDIT_MAX = 200
+
+
+def _list_date_candidates(cfg: AStockConfig) -> List[Path]:
+    """上市日元数据候选路径：storage_root 优先，回退仓库默认 storage/astock。"""
+    repo_default = (
+        Path(__file__).resolve().parents[4] / "storage" / "astock" / LIST_DATE_FILENAME
+    )
+    return [Path(cfg.storage_root) / LIST_DATE_FILENAME, repo_default]
+
+
+def load_stock_list_dates(cfg: AStockConfig) -> Tuple[Dict[str, int], str, str]:
+    """读 code6 → list_date，返回 ``(映射, 来源路径, fetched_at)``。
+
+    文件缺失/损坏一律返回空映射——调用方据此 fail-open 不裁剪：历史周复核
+    不能因为一个元数据文件读不到就悄悄换掉票池。
+    """
+    for path in _list_date_candidates(cfg):
+        try:
+            if not path.exists():
+                continue
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            stocks = {
+                str(k).zfill(6): int(v)
+                for k, v in (raw.get("stocks") or {}).items()
+                if str(v).strip()
+            }
+            return stocks, str(path), str(raw.get("fetched_at") or "")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("上市日元数据读取失败（%s）: %s", path, e)
+    return {}, "", ""
+
+
+def _code6(code: str) -> str:
+    """'SSE.STK.600052' / 'sh600052' / '600052' → '600052'（补齐 6 位）。"""
+    return str(code).split(".")[-1].zfill(6)
+
+
+def exclude_not_listed_codes(
+    cfg: AStockConfig, universe: Sequence[str], asof: int
+) -> Tuple[List[str], Dict[str, Any]]:
+    """剔除 asof 当日**尚未上市**的票，返回 ``(裁剪后票池, 审计信息)``。
+
+    为什么需要（2026-09-17 实测 20260605）：复核票池是**当前**全市场名单，
+    回看历史 asof 时"当时还没上市"的票在数据里没有 asof 当日或之前的 K 线，
+    加载器直接抛错；该错以 ``rule="*"`` 记入 errors，而快照组装会把
+    ``rule="*"`` 的失败算到**每一条规则**头上 → 规则被判 partial → 发布门槛
+    （partial/error 不自动发布）拒绝发布 → 该周没有发布快照 → 结算无从进行。
+    实测 20260605 就是 5 只 6 月上市的新股（688797/001248/001399/301583/
+    301669）把唯一一条规则拖成 partial，整周补算以 exit 3 收场。
+
+    口径（fail-open，宁漏不误删）：
+      - 只有**明确** ``list_date > asof`` 才剔除；元数据缺失、或该票没有上市日
+        → 保留。保留最多退回今天的行为（报错被门槛挡），误删却会静默改动名单；
+      - ``asof <= 0``（基准日未知）→ 不裁剪；
+      - 元数据时效只记录、不设阈值：文件越旧只会"少剔除"（漏掉新上市的新股），
+        不会误删——需要防的是误删。
+    """
+    asof_i = int(asof or 0)
+    codes = [str(c) for c in (universe or [])]
+    audit: Dict[str, Any] = {
+        "rule": "not_listed_as_of",
+        "applied": False,
+        "asof": asof_i,
+        "universe_size_before": len(codes),
+        "excluded_count": 0,
+        "excluded_codes": [],
+        "list_date_source": "",
+        "list_date_fetched_at": "",
+    }
+    if asof_i <= 0 or not codes:
+        return codes, audit
+    list_dates, source, fetched_at = load_stock_list_dates(cfg)
+    if not list_dates:
+        logger.warning(
+            "复核票池裁剪跳过：未找到上市日元数据（%s），按原票池继续",
+            " / ".join(str(p) for p in _list_date_candidates(cfg)),
+        )
+        return codes, audit
+    kept: List[str] = []
+    excluded: List[str] = []
+    for code in codes:
+        listed = list_dates.get(_code6(code))
+        if listed and int(listed) > asof_i:
+            excluded.append(code)
+        else:
+            kept.append(code)
+    audit.update(
+        applied=True,
+        excluded_count=len(excluded),
+        excluded_codes=sorted(excluded)[:_EXCLUDED_AUDIT_MAX],
+        list_date_source=source,
+        list_date_fetched_at=fetched_at,
+    )
+    if excluded:
+        logger.info(
+            "复核票池裁剪 asof=%s：剔除 %d 只当时尚未上市的票（上市日来源 %s）",
+            asof_i,
+            len(excluded),
+            source,
+        )
+    return kept, audit
+
+
 _SHEET_ILLEGAL_CHARS = set('[]:*?/\\')
 # Excel 保留 sheet 名（历史追踪用 History）与工作簿自有 sheet，冲突时回退
 # index-all 是导出侧内置的大盘指数表：Excel sheet 名大小写不敏感，漏收会让
@@ -497,6 +608,10 @@ def run_weekly_review(
         specs.append((rid, eff_sheet, spec))
 
     universe = _resolve_codes(cfg, codes)
+    # 历史基准日的票池裁剪：当日尚未上市的票既不评估也不记错。
+    # 不裁剪的后果见 exclude_not_listed_codes：rule="*" 的加载失败会算到每条
+    # 规则头上 → 规则被判 partial → 发布门槛拒绝整周快照 → 该周补算失败。
+    universe, universe_excluded = exclude_not_listed_codes(cfg, universe, eff_asof)
 
     # NAMELIKE 名称快照：任一规则用到即解析（缺名称的票运行时报错可见）。
     from .stock_names import ensure_stock_names_for
@@ -587,6 +702,10 @@ def run_weekly_review(
         # 任一变化不得互相复用（旧文件缺这些键 = 无法验证 = 不复用）。
         **current_fp,
         "universe_size": n,
+        # 本次**实际评估**的票池（已按 asof 剔除当时尚未上市的票）＋裁剪审计。
+        # 快照组装优先取这份清单，避免"规模是裁剪后的、清单是原始池"的错配。
+        "universe_codes": list(universe),
+        "universe_excluded": universe_excluded,
         "scanned": scanned,
         "missing_count": missing_count,
         "error_count": error_count,

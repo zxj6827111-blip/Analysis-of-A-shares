@@ -80,6 +80,15 @@
 - `no_data` 比例 ≤ 阈值（默认 5%，**可配置策略默认值，不是已验证的数据质量标准**；产物记录实际阈值、缺失数与判定结果）才可发布；不能仅靠 status=ok。
 - 已有任何 published 指针 → 后台重试**不自动替换**（重试产生的新快照只并列保留）。
 - backfill 仅在完全无指针时补位；已发布 backfill 换 weekly_chain / 手工 recompute 转正 → 显式 `track-publish`（source=manual，门槛同样校验，索引锁内更新并记录审计：原指针/新指针/时间/来源）。
+  - 实现（2026-09-16 补齐，此前只有本文档、没有命令）：
+    `python -m wtpy.apps.astock.cli track-publish --week YYYYMMDD --snapshot <快照id> --reason <原因>`
+    —— 门槛与周归属照旧校验，`published_by=manual:<原因>`，走 heavy-job 锁与链条/补算互斥。
+  - 典型场景：某周是「指定规则补算」周（只含 A 规则），要追加 B 规则 →
+    先跑出 B 的快照（`review-weekly --rules B --publish-scope subset`；因该周已有指针，
+    这一步不会自动发布），再 `track-publish` 显式转正，最后 `track-weekly --week YYYYMMDD` 重新结算。
+  - 页面入口（`POST /api/v1/bagua/track/backfill`）对"已有指针的周"一律 400 并给出本命令；
+    **整周补算同样在入口挡住**——否则用户要等 60~90 分钟跑完全市场扫描，才被
+    `already_published` 拒绝发布，页面数据一点没变。
 - 产物字段：`coverage_rate`（分口径）+ 各排除计数；覆盖率低 → UI 黄色警示而非绿色"已结算"。
 
 ## 7. heavy-job 锁与补偿
@@ -196,6 +205,10 @@ bars 加载 0.045 s、公式计算 0.56 s → 单条规则中位 0.052 s/票，�
 - 唯一文案来源 `sc.subset_scope_notice()`：L2 接口与导出 meta 共用；UI
   不得另写一套措辞。文案必须说清"其他规则当周**没有名单**，不代表当周
   没有入选"——否则会被读成"这些规则当周空仓"。
+  **展示形态（2026-09-17 用户口径）**：不再用常驻黄色横幅，改成头部
+  「指定规则补算」标签的悬停说明（`backfill_notice` 同理，挂在「回填」标签上）。
+  文案本身不删、不必删——导出 meta 同样带全文，用户说过口径/免责文字不该占版面
+  （见 UI 偏好：次要文字放 tooltip/导出）。
 
 ### 12.2 三条硬约束（缺一即破坏既有语义）
 
@@ -203,8 +216,14 @@ bars 加载 0.045 s、公式计算 0.56 s → 单条规则中位 0.052 s/票，�
    子集复核一律 `persist=False`（`cmd_review_weekly` 的 `--publish-scope
    subset` 分支），否则该周导出会直接错数据。
 2. **发布护栏**（`publish_decision(..., rules_scope="subset")`）：
-   - 该周已有任何发布指针 → `already_published`（**不替换**，含不替换另一个
-     子集快照；要追加规则请一次性提交全部目标规则）；
+   - 该周已有任何发布指针 → `already_published`（**自动路径不替换**）。
+     2026-09-16 修正（用户口径）：**补算的单位是「周 × 规则」**——一条规则补过
+     某周，不代表那一周归它；别的规则同样要能补同一周。所以"该周已有名单"不再
+     整单拒绝，而是走**追加**：只扫描缺的规则（原有规则的名单原样保留、数字不变），
+     再用 `append_rules_to_week` 合并进该周名单并**显式替换指针**
+     （`source=manual:append_rules:<原因>`，审计记原/新指针；快照记 `merged_from`
+     与逐规则 `scan_source_snapshot_id`）。旧实现用"已有指针"一刀切拒绝，等于把
+     整周锁给第一条跑过的规则，且 400 文案指向的补救路径并不存在。
    - 该周 ≥ 周索引中最新发布周 → `subset_scope_not_historical_week`。
      理由：最新的周归周五链，子集（**部分名单**）一旦占住发布指针，链的全量
      快照会被"已有指针不替换"永久挡住，该周就只剩这几条规则的数据。
@@ -219,11 +238,22 @@ bars 加载 0.045 s、公式计算 0.56 s → 单条规则中位 0.052 s/票，�
 - CLI：`track-weekly --backfill N --rules A,B`（规则白名单 fail-closed：
   拼错的规则名拒绝启动，绝不放行成"该周什么都没有"的空名单快照）；
   单周跟踪不接受 `--rules`（只读已发布快照，规则范围由快照决定）。
+  指定规则且该周已有名单时：缺的规则走"追加"（只扫缺的，合并进该周名单），
+  请求的规则都已在名单里 → `skipped_rules_already_present`（不白扫）。
+- CLI：`track-publish --week YYYYMMDD --snapshot <id> --reason <原因>`
+  —— 显式替换某周指针（`source=manual:<原因>`，门槛/周归属照旧校验）；
+  用于"必须整周重算并转正"的场景。
 - CLI：`review-weekly --rules A,B --publish-scope subset`（`--publish-scope
   all` 必须配 `--rules all`，防"部分名单当全量发布"）；`--run-kind` 缺省在
   子集模式下为 `backfill`。
 - API：`POST /api/v1/bagua/track/backfill` 支持 `{week, rule_ids}`（限
   `MAX_SUBSET_RULES=5` 条；不与 `weeks_back` 同用；同周不同规则集不判重）。
+- UI 提交反馈（2026-09-17 用户反馈补齐）：补算动辄几十分钟，提交后**必须**
+  留下可见的进行中状态。抽屉里的 toast（`z-index:300`）被抽屉（`z-index:1001`）
+  盖住，用户看不到任何反馈，因此约定：提交成功 → **自动收起抽屉** +
+  右下角任务浮标常驻（`#wbTrackBfPill`，轮询驱动，点它回抽屉看明细；
+  跑完留 12 s 报成功/失败）；提交失败 → **不关抽屉**，原因写在抽屉底部
+  （`wbtSetBackfillError`），不让用户去翻服务端日志。
 - heavy-job：子集回填伞键 `backfill_subset_{N}`、子集复核待办键
   `review_subset_{asof}`——它们的重跑命令含规则清单，`_heavy_job_command`
   **不猜命令**（返回 None → 标欠账不再自动重试）。子集补算是用户交互式发起
@@ -246,7 +276,55 @@ bars 加载 0.045 s、公式计算 0.56 s → 单条规则中位 0.052 s/票，�
 结论：单规则补算是"历史周单规则验证"的正确粒度；服务器 8 GB 内存下仍按
 契约 §7 串行（单 worker + heavy-job 全局锁），不因规则少而放开并发。
 
-## 13. 版本
+## 13. 历史基准日的票池裁剪（2026-09-17 用户决策 A）
+
+### 13.1 问题
+
+复核票池取的是**当前**全市场名单（universe.json，cutoff 20260814 的 5217 只），
+回看历史 asof 时，"当时还没上市"的票在数据里没有 asof 当日或之前的 K 线，
+加载器直接抛 `FileNotFoundError`（`bagua_query` 的
+`{code} 无 {asof} 当日或之前K线`）；该错以 `rule="*"` 记入 errors，而
+`build_snapshot_payload` 会把 `rule="*"` 的失败算到**每一条规则**头上
+（加载级失败影响所有规则）→ 规则状态 `ok → partial` → 发布门槛
+`PublishPolicy`（partial/error 不自动发布）判定 `rule_partial_or_error` →
+该周没有发布快照 → 结算无从进行 → 整周补算 `review_not_published` / exit 3。
+
+越早的历史周越容易命中（当时未上市的票越多）。**实测 20260605**：
+`user_20_日平台突破_4c541974` 被 5 只 6 月上市的新股（688797 / 001248 /
+001399 / 301583 / 301669，list_date 20260624 / 20260702 / 20260626 /
+20260710 / 20260609）拖成 partial，补算失败；同一条规则补 20260814 正常，
+因为那些票到 8 月都已上市。
+
+### 13.2 口径（fail-open，宁漏不误删）
+
+- `exclude_not_listed_codes(cfg, universe, asof)` 在 `run_weekly_review`
+  解析票池后、评估之前执行：`list_date > asof` 的票**不入池、不评估、不记错**；
+- 只有**明确知道** list_date > asof 才剔除。元数据缺失、该票没有上市日
+  → 一律保留（保留最多退回今天的行为：报错被门槛挡；误删却会静默改动名单）；
+- `asof <= 0`（基准日未知）→ 不裁剪；
+- 元数据时效只记录、不设阈值：文件越旧只会"少剔除"（漏掉新上市的新股），
+  不会误删。
+
+### 13.3 数据源与审计
+
+- 上市日来源 `storage/astock/rizhu_list_dates.json`（Tushare stock_basic，
+  与日柱/名称补齐同源）；`cfg.storage_root` 优先，回退仓库默认路径；
+- 复核 summary 新增 `universe_codes`（= 本次**实际评估**的池）与
+  `universe_excluded` 审计块（`rule/asof/universe_size_before/excluded_count/
+  excluded_codes(≤200)/list_date_source/list_date_fetched_at/applied`）；
+- 快照透传 `universe_excluded`：读取方据此解释"池规模为何小于当前全市场"；
+  缺键 = 旧快照 = 未裁剪；
+- `universe_fingerprint` 随裁剪后的池变化 → 旧 review_{asof}.json 的幂等复用
+  自动失效（不会拿"未裁剪"的旧结果冒充）。
+
+### 13.4 边界
+
+- 只改**复核（review）**票池；卦象工作台按日现算的票池未动（其症状是
+  `missing_count`/`failed_codes` 进「未完成评估」，不会触发发布门槛）；
+- 已退市票的幸存者偏差不在本轮范围（universe.json 自带
+  `survivor_bias_warning`）。
+
+## 14. 版本
 
 - v4.1（2026-09）：三轮评审定稿；本文件为阶段 0 契约交付物。
 - 2026-09-14：阶段 1/2/3(后端+API) 实现后补 §10 schema 附录。
@@ -254,3 +332,4 @@ bars 加载 0.045 s、公式计算 0.56 s → 单条规则中位 0.052 s/票，�
 - 2026-09-16：二审修正——§3 票次胜率算法（曾以加权收益冒充胜率）与「周等权胜率」全系统单一算法定义（§3/§11）；§7 待办 key 双体系统一清账、单一记账方、rc=3 真实 reason、伞待办 re-arm、命令映射格式校验。
 - 2026-09-16：新增 §12「指定规则补算」（规则范围快照 rules_scope=subset、
   发布历史周护栏、persist=False、读取侧标注、入口与互斥、验收实测）。
+- 2026-09-17：新增 §13「历史基准日的票池裁剪」；原 §13 版本顺延为 §14。

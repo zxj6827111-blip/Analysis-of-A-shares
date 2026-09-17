@@ -34,6 +34,21 @@ def test_gua_side_mapping():
     assert cs.gua_side("观望") == cs.SIDE_NEUTRAL
 
 
+def test_gua_side_new_signals_from_260911():
+    """260911 稿新增三个取值的立场：不碰=规避（差），观察/持有或开仓=中。
+
+    47-6（泽水困 上六）由「新开仓」改为「不碰」后，与高岛「吉」由 ▲双好
+    翻转为「分歧」——这是有意为之：两套体系确实打架，应显式标出而非静默。
+    """
+    assert cs.gua_side("不碰") == cs.SIDE_BAD
+    assert cs.gua_side("观察") == cs.SIDE_NEUTRAL
+    # 复合信号按本模块「方向不明就不强判」取中（要改判偏多只需改 GUA_STANCE 一行）
+    assert cs.gua_side("持有或开仓") == cs.SIDE_NEUTRAL
+    assert "不碰" in cs.GUA_BEARISH
+    assert "观察" not in cs.GUA_BULLISH and "观察" not in cs.GUA_BEARISH
+    assert cs.consensus("不碰", "今当时价发动，即可获利。吉。") == cs.CONSENSUS_CONFLICT
+
+
 # ---------------------------------------------------------------------------
 # 高岛侧：文言语气
 # ---------------------------------------------------------------------------

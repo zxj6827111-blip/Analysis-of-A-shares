@@ -571,26 +571,69 @@ class TestBackfillApiRules:
         assert r.status_code == 400
         assert "需要同时给出 week" in r.json()["detail"]
 
-    def test_existing_pointer_400(self, client):
-        """该周已有发布名单：直接看单规则结果即可，不给子集补算。"""
-        c, env = client
-        _write_week_index(env, {str(WEEK): {
-            "published_snapshot_id": "sid_old", "rules_scope": "all",
-        }})
-        r = c.post("/api/v1/bagua/track/backfill",
-                   json={"week": str(WEEK), "rule_ids": [RULE_A]})
-        assert r.status_code == 400
-        assert "已有全量发布快照" in r.json()["detail"]
+    def test_subset_appends_when_rule_missing_from_week(self, client):
+        """**核心口径**（用户 2026-09-16）：补算单位是「周 × 规则」。
 
-    def test_existing_subset_pointer_400_mentions_resubmit(self, client):
+        某周已有名单（哪怕只含别的规则），只要请求的规则还不在名单里，
+        就受理"追加"——一条规则补过某周不代表这一周归它。
+        """
         c, env = client
-        _write_week_index(env, {str(WEEK): {
-            "published_snapshot_id": "sid_old", "rules_scope": "subset",
-        }})
+        _publish(env, WEEK, [RULE_B], scope=sc.RULES_SCOPE_SUBSET)
+        r = c.post("/api/v1/bagua/track/backfill",
+                   json={"week": str(WEEK), "rule_ids": [RULE_A]})
+        assert r.status_code == 200, r.json()
+        assert r.json()["job_id"]
+
+    def test_subset_400_when_rules_already_in_week(self, client):
+        """请求的规则已在该周名单里 → 提示无需补算（不白花一次全市场扫描）。"""
+        c, env = client
+        _publish(env, WEEK, [RULE_A, RULE_B], scope=sc.RULES_SCOPE_SUBSET)
         r = c.post("/api/v1/bagua/track/backfill",
                    json={"week": str(WEEK), "rule_ids": [RULE_A]})
         assert r.status_code == 400
-        assert "重新提交包含全部目标规则" in r.json()["detail"]
+        detail = r.json()["detail"]
+        assert RULE_A in detail and "无需补算" in detail
+        assert "周明细" in detail
+
+    def test_subset_full_week_already_contains_rule_400(self, client):
+        """全量周本来就包含该规则 → 提示直接看周明细。"""
+        c, env = client
+        _publish(env, WEEK, [RULE_A, RULE_B])
+        r = c.post("/api/v1/bagua/track/backfill",
+                   json={"week": str(WEEK), "rule_ids": [RULE_A]})
+        assert r.status_code == 400
+        detail = r.json()["detail"]
+        assert "全量周" in detail and "周明细" in detail
+
+    def test_full_week_backfill_on_settled_week_400(self, client):
+        """已发布**且已结算**的周：整周补算是白跑 → 入口就挡，别让用户等 1 小时。"""
+        c, env = client
+        sid = _publish(env, WEEK, [RULE_A, RULE_B])["snapshot_id"]
+        _write_track(env, sid, WEEK, [RULE_A, RULE_B])  # 已结算
+        r = c.post("/api/v1/bagua/track/backfill", json={"week": str(WEEK)})
+        assert r.status_code == 400
+        detail = r.json()["detail"]
+        assert "整周补算不会替换已发布名单" in detail
+        assert "指定规则" in detail, "必须把用户引到真正有用的动作（按规则追加）"
+
+    def test_full_week_backfill_on_unsettled_week_allowed(self, client):
+        """已发布但**未结算**的周：整周补算就是结算入口（追加规则后必经）→ 必须受理。
+
+        2026-09-16：这条以前被"已有指针"一刀切挡掉，害得追加完规则后无法结算。
+        """
+        c, env = client
+        _publish(env, WEEK, [RULE_A, RULE_B])
+        r = c.post("/api/v1/bagua/track/backfill", json={"week": str(WEEK)})
+        assert r.status_code == 200, r.json()
+        assert r.json()["job_id"]
+
+    def test_full_week_backfill_on_empty_week_allowed(self, client):
+        """没有发布指针的历史周：整周补算照常受理（护栏只管已发布的周）。"""
+        c, env = client
+        _write_week_index(env, {})
+        r = c.post("/api/v1/bagua/track/backfill", json={"week": str(WEEK)})
+        assert r.status_code == 200
+        assert r.json()["job_id"]
 
     def test_latest_signal_week_400(self, client, monkeypatch):
         from wtpy.apps.astock.service import screen_tracking as tracksvc
@@ -705,3 +748,170 @@ class TestReadLayerScope:
         row = next(w for w in body["weeks"] if w["week_id"] == WEEK)
         assert row["rules_scope"] == "subset"
         assert row["scoped_rule_ids"] == [RULE_A]
+
+
+class TestPublishedWeeksEndpoint:
+    """已发布周清单（补算抽屉据此提前提示"哪几周不能再自动补算"）。
+
+    需求来源（2026-09-16 用户实操）：护栏是**按周**判定的——某周一旦有指针，
+    任何规则的自动补算都不会改动它，与用户选的规则有没有数据无关。页面上原先
+    看不出来，用户提交后只拿到 400，还会被报错里的规则名搞糊涂。
+    """
+
+    def test_lists_published_weeks_desc(self, client):
+        c, env = client
+        _write_week_index(env, {
+            str(WEEK): {"published_snapshot_id": "sid_a", "run_kind": "backfill",
+                        "rules_scope": "subset", "scoped_rule_ids": [RULE_B],
+                        "published_at": "2026-09-15 19:11:14"},
+            str(LATER_WEEK): {"published_snapshot_id": "sid_b", "run_kind": "weekly_chain",
+                              "rules_scope": "all"},
+        })
+        body = c.get("/api/v1/bagua/track/published-weeks?weeks=26").json()
+        assert body["count"] == 2
+        assert [w["week_id"] for w in body["weeks"]] == [LATER_WEEK, WEEK]
+        first = body["weeks"][1]
+        assert first["rules_scope"] == "subset"
+        assert first["scoped_rule_ids"] == [RULE_B]
+        assert first["run_kind"] == "backfill"
+        # 全量周没有 scoped 规则清单
+        assert body["weeks"][0]["scoped_rule_ids"] == []
+
+    def test_empty_index_returns_empty_list(self, client):
+        c, env = client
+        _write_week_index(env, {})
+        body = c.get("/api/v1/bagua/track/published-weeks").json()
+        assert body["ok"] is True and body["count"] == 0
+
+    def test_window_limits_count(self, client):
+        c, env = client
+        _write_week_index(env, {
+            "20260710": {"published_snapshot_id": "s1"},
+            "20260717": {"published_snapshot_id": "s2"},
+            str(WEEK): {"published_snapshot_id": "s3"},
+        })
+        body = c.get("/api/v1/bagua/track/published-weeks?weeks=2").json()
+        assert [w["week_id"] for w in body["weeks"]] == [WEEK, 20260717]
+
+
+class TestAppendRulesToWeek:
+    """把新规则**追加**进该周名单（补算单位 = 周 × 规则，2026-09-16 用户口径）。
+
+    `append_rules_to_week` 是这条口径的实现：只并入新规则、原有规则名单原样保留
+    （不重扫、数字不变），然后显式替换该周指针并记审计。
+    """
+
+    def _extra(self, cfg, asof, rule_ids, *, scope=sc.RULES_SCOPE_SUBSET):
+        """落一份"复核跑完但没发布"的子集快照（追加流程的输入）。"""
+        payload = _snap_payload(asof, rule_ids, scope=scope)
+        sc.create_snapshot_file_exclusive(
+            sc.snapshot_path(Path(cfg.storage_root), payload["snapshot_id"]), payload
+        )
+        return payload["snapshot_id"]
+
+    def test_append_preserves_old_rules_and_adds_new(self, env):
+        _publish(env, WEEK, [RULE_B], scope=sc.RULES_SCOPE_SUBSET)
+        extra_id = self._extra(env, WEEK, [RULE_A])
+        res = ss.append_rules_to_week(
+            env, week_id=WEEK, extra_snapshot_id=extra_id, reason="追加规则A"
+        )
+        assert res["appended"] is True, res
+        assert res["added_rule_ids"] == [RULE_A]
+        snap = ss.load_published_snapshot_for_week(env, WEEK)
+        assert {r["rule_id"] for r in snap["rules"]} == {RULE_A, RULE_B}
+        assert sc.scoped_rule_ids(snap) == [RULE_A, RULE_B]
+        # 原规则（RULE_B）的名单与数据源原样保留，只有新规则带来源快照标记
+        old = next(r for r in snap["rules"] if r["rule_id"] == RULE_B)
+        new = next(r for r in snap["rules"] if r["rule_id"] == RULE_A)
+        assert "scan_source_snapshot_id" not in old
+        assert new["scan_source_snapshot_id"] == extra_id
+        assert snap["merged_from"] == [res["previous_snapshot_id"], extra_id]
+        # 指针替换要留审计
+        idx = sc.load_week_index(Path(env.storage_root))
+        entry = idx["weeks"][str(WEEK)]
+        assert entry["published_snapshot_id"] == res["merged_snapshot_id"]
+        assert entry["published_by"].startswith("manual:append_rules")
+        assert entry["audit"]["previous_snapshot_id"] == res["previous_snapshot_id"]
+
+    def test_append_is_idempotent_for_present_rules(self, env):
+        _publish(env, WEEK, [RULE_A, RULE_B], scope=sc.RULES_SCOPE_SUBSET)
+        extra_id = self._extra(env, WEEK, [RULE_A])
+        res = ss.append_rules_to_week(env, week_id=WEEK, extra_snapshot_id=extra_id)
+        assert res["appended"] is False
+        assert res["reason"] == "rules_already_present"
+        assert res["already_present"] == [RULE_A]
+        # 指针没动
+        snap = ss.load_published_snapshot_for_week(env, WEEK)
+        assert snap["snapshot_id"] == res["published_snapshot_id"]
+
+    def test_append_rejects_week_mismatch(self, env):
+        _publish(env, WEEK, [RULE_B], scope=sc.RULES_SCOPE_SUBSET)
+        extra_id = self._extra(env, LATER_WEEK, [RULE_A])
+        res = ss.append_rules_to_week(env, week_id=WEEK, extra_snapshot_id=extra_id)
+        assert res["appended"] is False and res["reason"] == "week_mismatch"
+
+    def test_append_requires_published_week(self, env):
+        extra_id = self._extra(env, WEEK, [RULE_A])
+        res = ss.append_rules_to_week(env, week_id=WEEK, extra_snapshot_id=extra_id)
+        assert res["appended"] is False and res["reason"] == "no_published_snapshot"
+
+    def test_append_blocks_on_quality_gate(self, env):
+        """门槛不过的新规则不能借追加绕过（快照留诊断，指针不动）。"""
+        _publish(env, WEEK, [RULE_B], scope=sc.RULES_SCOPE_SUBSET)
+        payload = _snap_payload(WEEK, [RULE_A], scope=sc.RULES_SCOPE_SUBSET)
+        payload["rules"][0]["status"] = sc.RULE_STATUS_ERROR
+        sc.create_snapshot_file_exclusive(
+            sc.snapshot_path(Path(env.storage_root), payload["snapshot_id"]), payload
+        )
+        res = ss.append_rules_to_week(
+            env, week_id=WEEK, extra_snapshot_id=payload["snapshot_id"]
+        )
+        assert res["appended"] is False
+        assert str(res["reason"]).startswith("quality_gate:")
+        assert Path(res["snapshot_path"]).exists(), "诊断快照要保留"
+
+    def test_append_keeps_full_scope_when_primary_is_all(self, env):
+        """全量周追加后续规则：scope 保持 all（该周仍是"所有规则"的名单）。"""
+        _publish(env, WEEK, [RULE_B])
+        extra_id = self._extra(env, WEEK, [RULE_A])
+        res = ss.append_rules_to_week(env, week_id=WEEK, extra_snapshot_id=extra_id)
+        assert res["appended"] is True
+        snap = ss.load_published_snapshot_for_week(env, WEEK)
+        assert sc.snapshot_rules_scope(snap) == sc.RULES_SCOPE_ALL
+        assert {r["rule_id"] for r in snap["rules"]} == {RULE_A, RULE_B}
+
+    def test_l2_detail_sees_appended_rule(self, client):
+        """追加后读取层（L2 周明细 + 指纹匹配）立刻能看到新规则。"""
+        c, env = client
+        _publish(env, WEEK, [RULE_B], scope=sc.RULES_SCOPE_SUBSET)
+        extra_id = self._extra(env, WEEK, [RULE_A])
+        ss.append_rules_to_week(env, week_id=WEEK, extra_snapshot_id=extra_id)
+        # 该周没有 track 产物 → 新规则以"待结算"出现（命中清单来自快照）
+        body = c.get("/api/v1/bagua/track/weeks/20260731", params={"rule_id": RULE_A}).json()
+        assert body["rows"] == []
+        codes = [p["code"] for p in body["pending_picks"]]
+        assert codes == ["SZSE.000001.SZ", "SZSE.000002.SZ"], "追加的规则命中应立刻可见"
+        assert body["rules_scope"] == "subset"
+        assert set(body["scoped_rule_ids"]) == {RULE_A, RULE_B}
+
+
+class TestFindLatestSnapshotForWeek:
+    def test_picks_newest_covering_rule(self, env):
+        first = _snap_payload(WEEK, [RULE_A], scope=sc.RULES_SCOPE_SUBSET)
+        sc.create_snapshot_file_exclusive(
+            sc.snapshot_path(Path(env.storage_root), first["snapshot_id"]), first
+        )
+        second = _snap_payload(WEEK, [RULE_B], scope=sc.RULES_SCOPE_SUBSET)
+        sc.create_snapshot_file_exclusive(
+            sc.snapshot_path(Path(env.storage_root), second["snapshot_id"]), second
+        )
+        got = ss.find_latest_snapshot_id_for_week(
+            env, WEEK, require_any_rule_ids=[RULE_B]
+        )
+        assert got == second["snapshot_id"]
+        assert ss.find_latest_snapshot_id_for_week(
+            env, WEEK, require_any_rule_ids=[RULE_B], exclude=[second["snapshot_id"]]
+        ) is None
+
+    def test_no_snapshot_for_week(self, env):
+        assert ss.find_latest_snapshot_id_for_week(env, WEEK) is None

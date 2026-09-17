@@ -7,8 +7,8 @@
 为什么要求两者一致
 ------------------
 两套解读同源于 384 爻骨架，但解读对象不同：
-  - ``action_signal``（新开仓/加仓/持有/减仓/清仓）是现代股市仓位解读，
-    语境是二级市场买卖股票；
+  - ``action_signal``（新开仓/加仓/持有或开仓/持有/观察/减仓/不碰/清仓）是现代股市
+    仓位解读，语境是二级市场买卖股票；
   - 高岛「问营商」是 1901 年实体商业占断，语境是货物贩运、囤积、店基。
 实测两者在全市场导出中约有 13% 的行明确对立（如「卦象抄底 vs 高岛买入者必多剥耗」），
 因此不能把两者合并成单一结论，只在一致时给出提示，分歧交回人工判断。
@@ -24,14 +24,7 @@
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple
-
-# ---------------------------------------------------------------------------
-# 卦象侧：操作信号 → 立场（人工策展的结构化字段，覆盖 384/384，无歧义）
-# ---------------------------------------------------------------------------
-GUA_BULLISH = ("新开仓", "加仓")
-GUA_BEARISH = ("减仓", "清仓")
-# "持有" 视为中性，不参与共识判定
+from typing import Dict, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # 高岛侧：关键词词表（可调）
@@ -52,6 +45,30 @@ SIDE_BAD = "差"
 SIDE_NEUTRAL = "中"
 SIDE_UNKNOWN = "不明"
 
+# ---------------------------------------------------------------------------
+# 卦象侧：操作信号 → 立场（人工策展的结构化字段，覆盖 384/384，无歧义）
+#
+# 20260911 稿新增三个取值，语义按下表处理（数据以 Excel 为准，这里只定立场）：
+#   不碰       = 明确规避 → 差（与减仓/清仓同侧）
+#   观察       = 未表态   → 中（不参与共识）
+#   持有或开仓 = 复合信号 → 中。方向取决于分支（持有=中 / 开仓=好），按本模块
+#                「方向不明就不强判」的一贯做法取中；若日后决定按偏多处理，
+#                把该行改成 SIDE_GOOD 即可。
+# ---------------------------------------------------------------------------
+GUA_STANCE: Dict[str, str] = {
+    "新开仓": SIDE_GOOD,
+    "加仓": SIDE_GOOD,
+    "持有或开仓": SIDE_NEUTRAL,
+    "持有": SIDE_NEUTRAL,
+    "观察": SIDE_NEUTRAL,
+    "减仓": SIDE_BAD,
+    "不碰": SIDE_BAD,
+    "清仓": SIDE_BAD,
+}
+# 兼容既有引用的两个元组（由立场表派生，避免两处各写一份而走样）
+GUA_BULLISH: Tuple[str, ...] = tuple(k for k, v in GUA_STANCE.items() if v == SIDE_GOOD)
+GUA_BEARISH: Tuple[str, ...] = tuple(k for k, v in GUA_STANCE.items() if v == SIDE_BAD)
+
 CONSENSUS_GOOD = "▲双好"
 CONSENSUS_BAD = "▼双差"
 CONSENSUS_CONFLICT = "分歧"
@@ -67,13 +84,8 @@ COLOR_BAD_FILL = "FFE6F4E6"    # 浅绿
 
 
 def gua_side(action_signal: Optional[str]) -> str:
-    """操作信号 → 卦象立场。空信号/持有 均为中性。"""
-    s = str(action_signal or "").strip()
-    if s in GUA_BULLISH:
-        return SIDE_GOOD
-    if s in GUA_BEARISH:
-        return SIDE_BAD
-    return SIDE_NEUTRAL
+    """操作信号 → 卦象立场。空信号/持有/观察 均为中性。"""
+    return GUA_STANCE.get(str(action_signal or "").strip(), SIDE_NEUTRAL)
 
 
 def gaodao_side(text: Optional[str]) -> str:

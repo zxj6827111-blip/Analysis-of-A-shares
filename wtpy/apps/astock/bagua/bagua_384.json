@@ -1,8 +1,8 @@
 {
-  "source_file": "64卦384爻行情简判完整版-已添加操作信号.xlsx",
-  "source_sha256": "08703fc6f49c24a90f6e74a79b1e0f3a090ca9169d7abd5f06f064d1139b172c",
-  "source_path": "E:\\Software Development\\wtpy-master\\指标\\64卦384爻行情简判完整版-已添加操作信号.xlsx",
-  "rule_version": "gua_rules_v20260721",
+  "source_file": "64卦384爻行情简判完整版-260911.xlsx",
+  "source_sha256": "a5fa34d5ba6fe4bd9d6a7679889617c42b334b86fce7979c9e23e64ef20b971f",
+  "source_path": "E:\\Software Development\\wtpy-master\\指标\\64卦384爻行情简判完整版-260911.xlsx",
+  "rule_version": "gua_rules_v20260911",
   "trigrams": {
     "1": {
       "id": 1,
@@ -73,6 +73,7 @@
       "biangua": "姤",
       "changed_hexagram_name": "姤",
       "changed_hexagram_id": 44,
+      "biangua_full_name": "天风姤",
       "yao_ci": "潜龙勿用",
       "line_text": "潜龙勿用",
       "market_judgement": "底部潜伏，不宜重仓进场，耐心筑底",
@@ -108,6 +109,7 @@
       "biangua": "同人",
       "changed_hexagram_name": "同人",
       "changed_hexagram_id": 13,
+      "biangua_full_name": "天火同人",
       "yao_ci": "见龙在田，利见大人",
       "line_text": "见龙在田，利见大人",
       "market_judgement": "底部企稳出现主线，轻仓布局有机会",
@@ -143,6 +145,7 @@
       "biangua": "履",
       "changed_hexagram_name": "履",
       "changed_hexagram_id": 10,
+      "biangua_full_name": "天泽履",
       "yao_ci": "君子终日乾乾，夕惕若厉，无咎",
       "line_text": "君子终日乾乾，夕惕若厉，无咎",
       "market_judgement": "上涨中段震荡反复，时刻风控不追高",
@@ -178,6 +181,7 @@
       "biangua": "小畜",
       "changed_hexagram_name": "小畜",
       "changed_hexagram_id": 9,
+      "biangua_full_name": "风天小畜",
       "yao_ci": "或跃在渊，无咎",
       "line_text": "或跃在渊，无咎",
       "market_judgement": "突破关键压力，可加仓，回撤不深套",
@@ -192,9 +196,7 @@
       "lower_alias": "天",
       "upper_symbol": "☰",
       "lower_symbol": "☰",
-      "biangua_source": "corrected",
-      "biangua_full_name": "䷈风天小畜",
-      "correction_note": "excel=中孚 -> algorithm=小畜"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 6,
@@ -215,6 +217,7 @@
       "biangua": "大有",
       "changed_hexagram_name": "大有",
       "changed_hexagram_id": 14,
+      "biangua_full_name": "火天大有",
       "yao_ci": "飞龙在天，利见大人",
       "line_text": "飞龙在天，利见大人",
       "market_judgement": "主升浪全盛，主线龙头大涨，适合持有",
@@ -250,6 +253,7 @@
       "biangua": "夬",
       "changed_hexagram_name": "夬",
       "changed_hexagram_id": 43,
+      "biangua_full_name": "泽天夬",
       "yao_ci": "亢龙有悔",
       "line_text": "亢龙有悔",
       "market_judgement": "行情顶峰，盛极转衰，冲高必须止盈离场",
@@ -285,6 +289,7 @@
       "biangua": "复",
       "changed_hexagram_name": "复",
       "changed_hexagram_id": 24,
+      "biangua_full_name": "地雷复",
       "yao_ci": "履霜，坚冰至",
       "line_text": "履霜，坚冰至",
       "market_judgement": "初现下跌信号，立刻减仓规避持续阴跌",
@@ -320,6 +325,7 @@
       "biangua": "师",
       "changed_hexagram_name": "师",
       "changed_hexagram_id": 7,
+      "biangua_full_name": "地水师",
       "yao_ci": "直方大，不习无不利",
       "line_text": "直方大，不习无不利",
       "market_judgement": "低位平稳磨盘，持有优质低位股无损耗",
@@ -355,6 +361,7 @@
       "biangua": "谦",
       "changed_hexagram_name": "谦",
       "changed_hexagram_id": 15,
+      "biangua_full_name": "地山谦",
       "yao_ci": "含章可贞，或从王事，无成有终",
       "line_text": "含章可贞，或从王事，无成有终",
       "market_judgement": "跟随主线细分，不做龙头也能稳步小赚",
@@ -390,6 +397,7 @@
       "biangua": "豫",
       "changed_hexagram_name": "豫",
       "changed_hexagram_id": 16,
+      "biangua_full_name": "雷地豫",
       "yao_ci": "括囊，无咎无誉",
       "line_text": "括囊，无咎无誉",
       "market_judgement": "市场方向不明，收缩仓位观望，不操作最稳妥",
@@ -425,6 +433,7 @@
       "biangua": "比",
       "changed_hexagram_name": "比",
       "changed_hexagram_id": 8,
+      "biangua_full_name": "水地比",
       "yao_ci": "黄裳，元吉",
       "line_text": "黄裳，元吉",
       "market_judgement": "磨底尾声，低位价值标的迎来稳健修复行情长期下跌后底部企稳，估值充分消化，阴势转缓，安全边际显现，是坤卦唯一布局窗口。\n操作：分批低吸建底仓，长线布局，不一次性满仓；以中长期持有为主，忌短线频繁操作。",
@@ -460,6 +469,7 @@
       "biangua": "剥",
       "changed_hexagram_name": "剥",
       "changed_hexagram_id": 23,
+      "biangua_full_name": "山地剥",
       "yao_ci": "龙战于野，其血玄黄",
       "line_text": "龙战于野，其血玄黄",
       "market_judgement": "多空剧烈厮杀，大跌大涨交替，极易大幅亏损",
@@ -495,6 +505,7 @@
       "biangua": "比",
       "changed_hexagram_name": "比",
       "changed_hexagram_id": 8,
+      "biangua_full_name": "水地比",
       "yao_ci": "磐桓，利居贞，利建侯",
       "line_text": "磐桓，利居贞，利建侯",
       "market_judgement": "筑底初期徘徊不前，宜守不宜攻，耐心持仓",
@@ -509,8 +520,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☵",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷇水地比"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 15,
@@ -531,6 +541,7 @@
       "biangua": "节",
       "changed_hexagram_name": "节",
       "changed_hexagram_id": 60,
+      "biangua_full_name": "水泽节",
       "yao_ci": "屯如邅如，乘马班如，匪寇婚媾，女子贞不字，十年乃字",
       "line_text": "屯如邅如，乘马班如，匪寇婚媾，女子贞不字，十年乃字",
       "market_judgement": "震荡纠结迟迟不涨，长期磨底，需极大耐心",
@@ -545,8 +556,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☵",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷻水泽节"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 16,
@@ -567,6 +577,7 @@
       "biangua": "既济",
       "changed_hexagram_name": "既济",
       "changed_hexagram_id": 63,
+      "biangua_full_name": "水火既济",
       "yao_ci": "即鹿无虞，惟入于林中，君子几不如舍，往吝",
       "line_text": "即鹿无虞，惟入于林中，君子几不如舍，往吝",
       "market_judgement": "盲目追高必套，及时止损离场",
@@ -581,8 +592,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☵",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷾水火既济"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 17,
@@ -603,6 +613,7 @@
       "biangua": "随",
       "changed_hexagram_name": "随",
       "changed_hexagram_id": 17,
+      "biangua_full_name": "泽雷随",
       "yao_ci": "乘马班如，求婚媾，往吉，无不利",
       "line_text": "乘马班如，求婚媾，往吉，无不利",
       "market_judgement": "回调到位逢低吸纳，顺势而为获利",
@@ -617,8 +628,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☵",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷐泽雷随"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 18,
@@ -639,6 +649,7 @@
       "biangua": "复",
       "changed_hexagram_name": "复",
       "changed_hexagram_id": 24,
+      "biangua_full_name": "地雷复",
       "yao_ci": "屯其膏，小贞吉，大贞凶",
       "line_text": "屯其膏，小贞吉，大贞凶",
       "market_judgement": "小涨可期大涨难成，轻仓操作为宜",
@@ -653,8 +664,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☵",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷗地雷复"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 19,
@@ -675,6 +685,7 @@
       "biangua": "益",
       "changed_hexagram_name": "益",
       "changed_hexagram_id": 42,
+      "biangua_full_name": "风雷益",
       "yao_ci": "乘马班如，泣血涟如",
       "line_text": "乘马班如，泣血涟如",
       "market_judgement": "顶部套牢亏损严重，及时割肉离场",
@@ -689,8 +700,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☵",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷩风雷益"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 20,
@@ -711,6 +721,7 @@
       "biangua": "损",
       "changed_hexagram_name": "损",
       "changed_hexagram_id": 41,
+      "biangua_full_name": "山泽损",
       "yao_ci": "发蒙，利用刑人，用说桎梏，以往吝",
       "line_text": "发蒙，利用刑人，用说桎梏，以往吝",
       "market_judgement": "行情初动方向不明，谨慎操作不冒进",
@@ -725,8 +736,7 @@
       "lower_alias": "水",
       "upper_symbol": "☶",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷨山泽损"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 21,
@@ -747,6 +757,7 @@
       "biangua": "剥",
       "changed_hexagram_name": "剥",
       "changed_hexagram_id": 23,
+      "biangua_full_name": "山地剥",
       "yao_ci": "包蒙吉，纳妇吉，子克家",
       "line_text": "包蒙吉，纳妇吉，子克家",
       "market_judgement": "震荡蓄势持仓待涨，稳中求进",
@@ -761,8 +772,7 @@
       "lower_alias": "水",
       "upper_symbol": "☶",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷖山地剥"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 22,
@@ -783,6 +793,7 @@
       "biangua": "蛊",
       "changed_hexagram_name": "蛊",
       "changed_hexagram_id": 18,
+      "biangua_full_name": "山风蛊",
       "yao_ci": "勿用取女，见金夫，不有躬，无攸利",
       "line_text": "勿用取女，见金夫，不有躬，无攸利",
       "market_judgement": "诱多陷阱不可追涨，观望为上",
@@ -797,8 +808,7 @@
       "lower_alias": "水",
       "upper_symbol": "☶",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷑山风蛊"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 23,
@@ -819,6 +829,7 @@
       "biangua": "未济",
       "changed_hexagram_name": "未济",
       "changed_hexagram_id": 64,
+      "biangua_full_name": "火水未济",
       "yao_ci": "困蒙，吝",
       "line_text": "困蒙，吝",
       "market_judgement": "横盘困局无利可图，减少操作",
@@ -833,8 +844,7 @@
       "lower_alias": "水",
       "upper_symbol": "☶",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷿火水未济"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 24,
@@ -855,6 +865,7 @@
       "biangua": "涣",
       "changed_hexagram_name": "涣",
       "changed_hexagram_id": 59,
+      "biangua_full_name": "风水涣",
       "yao_ci": "童蒙，吉",
       "line_text": "童蒙，吉",
       "market_judgement": "温和上涨简单持有，顺势而为",
@@ -869,8 +880,7 @@
       "lower_alias": "水",
       "upper_symbol": "☶",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷺风水涣"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 25,
@@ -891,6 +901,7 @@
       "biangua": "师",
       "changed_hexagram_name": "师",
       "changed_hexagram_id": 7,
+      "biangua_full_name": "地水师",
       "yao_ci": "击蒙，不利为寇，利御寇",
       "line_text": "击蒙，不利为寇，利御寇",
       "market_judgement": "剧烈波动防守为主，不主动进攻",
@@ -905,8 +916,7 @@
       "lower_alias": "水",
       "upper_symbol": "☶",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷆地水师"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 26,
@@ -927,6 +937,7 @@
       "biangua": "井",
       "changed_hexagram_name": "井",
       "changed_hexagram_id": 48,
+      "biangua_full_name": "水风井",
       "yao_ci": "需于郊，利用恒，无咎",
       "line_text": "需于郊，利用恒，无咎",
       "market_judgement": "底部远观，估值低位但无企稳放量拐点，下跌趋势未结束，风险尚远。操作简判：只入观察池，空仓 / 极小仓跟踪，绝不重仓左侧抄底；",
@@ -962,6 +973,7 @@
       "biangua": "既济",
       "changed_hexagram_name": "既济",
       "changed_hexagram_id": 63,
+      "biangua_full_name": "水火既济",
       "yao_ci": "需于沙，小有言，终吉",
       "line_text": "需于沙，小有言，终吉",
       "market_judgement": "震荡磨人小有波折，小有言” 对应盘中反复洗盘、利空传闻、短线快速回撤，心态易动摇；",
@@ -997,6 +1009,7 @@
       "biangua": "节",
       "changed_hexagram_name": "节",
       "changed_hexagram_id": 60,
+      "biangua_full_name": "水泽节",
       "yao_ci": "需于泥，致寇至",
       "line_text": "需于泥，致寇至",
       "market_judgement": "接近压力位风险加大，减仓避险",
@@ -1032,6 +1045,7 @@
       "biangua": "夬",
       "changed_hexagram_name": "夬",
       "changed_hexagram_id": 43,
+      "biangua_full_name": "泽天夬",
       "yao_ci": "需于血，出自穴",
       "line_text": "需于血，出自穴",
       "market_judgement": "身处深套绝境，禁止恐慌割肉在最低点；顺从盘面等待企稳信号；“出自穴”：熬过极致恐慌后会有修复反弹窗口，届时分批减亏离场",
@@ -1067,6 +1081,7 @@
       "biangua": "泰",
       "changed_hexagram_name": "泰",
       "changed_hexagram_id": 11,
+      "biangua_full_name": "地天泰",
       "yao_ci": "需于酒食，贞吉",
       "line_text": "需于酒食，贞吉",
       "market_judgement": "主升行情享受利润，持仓不动趋势确立，稳健持有，逢回踩支撑分批加仓，舒适持仓吃波段",
@@ -1102,6 +1117,7 @@
       "biangua": "小畜",
       "changed_hexagram_name": "小畜",
       "changed_hexagram_id": 9,
+      "biangua_full_name": "风天小畜",
       "yao_ci": "入于穴，有不速之客三人来，敬之终吉",
       "line_text": "入于穴，有不速之客三人来，敬之终吉",
       "market_judgement": "高位震荡谨慎对待，见好就收行情到末期，不宜再格局长线，以敬畏之心看待分歧，不偏执看多；多路资金进出、涨跌无序，半仓滚动操作，冲高分批止盈；尊重盘面信号，见滞涨、放量滞涨果断减仓，不与趋势对抗",
@@ -1137,6 +1153,7 @@
       "biangua": "履",
       "changed_hexagram_name": "履",
       "changed_hexagram_id": 10,
+      "biangua_full_name": "天泽履",
       "yao_ci": "不永所事，小有言，终吉",
       "line_text": "不永所事，小有言，终吉",
       "market_judgement": "分歧初现震荡小跌，最终无碍",
@@ -1151,8 +1168,7 @@
       "lower_alias": "水",
       "upper_symbol": "☰",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷉天泽履"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 33,
@@ -1173,6 +1189,7 @@
       "biangua": "否",
       "changed_hexagram_name": "否",
       "changed_hexagram_id": 12,
+      "biangua_full_name": "天地否",
       "yao_ci": "不克讼，归而逋，其邑人三百户，无眚",
       "line_text": "不克讼，归而逋，其邑人三百户，无眚",
       "market_judgement": "冲高回落及时退守，避免深套",
@@ -1187,8 +1204,7 @@
       "lower_alias": "水",
       "upper_symbol": "☰",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷋天地否"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 34,
@@ -1209,6 +1225,7 @@
       "biangua": "姤",
       "changed_hexagram_name": "姤",
       "changed_hexagram_id": 44,
+      "biangua_full_name": "天风姤",
       "yao_ci": "食旧德，贞厉，终吉；或从王事，无成",
       "line_text": "食旧德，贞厉，终吉；或从王事，无成",
       "market_judgement": "吃老本行情难有新高，持仓观望",
@@ -1223,8 +1240,7 @@
       "lower_alias": "水",
       "upper_symbol": "☰",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷫天风姤"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 35,
@@ -1245,6 +1261,7 @@
       "biangua": "涣",
       "changed_hexagram_name": "涣",
       "changed_hexagram_id": 59,
+      "biangua_full_name": "风水涣",
       "yao_ci": "不克讼，复即命渝，安贞吉",
       "line_text": "不克讼，复即命渝，安贞吉",
       "market_judgement": "多空争夺失败回归震荡，安守为上",
@@ -1259,8 +1276,7 @@
       "lower_alias": "水",
       "upper_symbol": "☰",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷺风水涣"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 36,
@@ -1281,6 +1297,7 @@
       "biangua": "未济",
       "changed_hexagram_name": "未济",
       "changed_hexagram_id": 64,
+      "biangua_full_name": "火水未济",
       "yao_ci": "讼，元吉",
       "line_text": "讼，元吉",
       "market_judgement": "趋势明朗方向确立，顺势操作",
@@ -1295,8 +1312,7 @@
       "lower_alias": "水",
       "upper_symbol": "☰",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷿火水未济"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 37,
@@ -1317,6 +1333,7 @@
       "biangua": "困",
       "changed_hexagram_name": "困",
       "changed_hexagram_id": 47,
+      "biangua_full_name": "泽水困",
       "yao_ci": "或锡之鞶带，终朝三褫之",
       "line_text": "或锡之鞶带，终朝三褫之",
       "market_judgement": "冲高回落得而复失，不可追高",
@@ -1331,8 +1348,7 @@
       "lower_alias": "水",
       "upper_symbol": "☰",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷮泽水困"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 38,
@@ -1353,6 +1369,7 @@
       "biangua": "临",
       "changed_hexagram_name": "临",
       "changed_hexagram_id": 19,
+      "biangua_full_name": "地泽临",
       "yao_ci": "师出以律，否臧凶",
       "line_text": "师出以律，否臧凶",
       "market_judgement": "行情启动严守纪律，违规必亏",
@@ -1367,8 +1384,7 @@
       "lower_alias": "水",
       "upper_symbol": "☷",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷒地泽临"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 39,
@@ -1389,10 +1405,11 @@
       "biangua": "坤",
       "changed_hexagram_name": "坤",
       "changed_hexagram_id": 2,
+      "biangua_full_name": "坤为地",
       "yao_ci": "在师中吉，无咎，王三锡命",
       "line_text": "在师中吉，无咎，王三锡命",
-      "market_judgement": "主升中段持仓待涨，利润丰厚",
-      "market_summary": "主升中段持仓待涨，利润丰厚",
+      "market_judgement": "身处险市（坎险），主力居中守阵地，有支撑，不易深跌；多空博弈激烈，战场震荡。王三锡命：“三” 代表多次、反复。行情会多次冲高 / 反复试探压力，一波三折，间歇性利好催化脉冲，不要追高。",
+      "market_summary": "身处险市（坎险），主力居中守阵地，有支撑，不易深跌；多空博弈激烈，战场震荡。王三锡命：“三” 代表多次、反复。行情会多次冲高 / 反复试探压力，一波三折，间歇性利好催化脉冲，不要追高。",
       "note": "",
       "action_signal": "持有",
       "upper": 8,
@@ -1403,8 +1420,7 @@
       "lower_alias": "水",
       "upper_symbol": "☷",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷁坤为地"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 40,
@@ -1425,6 +1441,7 @@
       "biangua": "升",
       "changed_hexagram_name": "升",
       "changed_hexagram_id": 46,
+      "biangua_full_name": "地风升",
       "yao_ci": "师或舆尸，凶",
       "line_text": "师或舆尸，凶",
       "market_judgement": "兵败如山大跌在即，立即离场",
@@ -1439,8 +1456,7 @@
       "lower_alias": "水",
       "upper_symbol": "☷",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷭地风升"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 41,
@@ -1461,6 +1477,7 @@
       "biangua": "解",
       "changed_hexagram_name": "解",
       "changed_hexagram_id": 40,
+      "biangua_full_name": "雷水解",
       "yao_ci": "师左次，无咎",
       "line_text": "师左次，无咎",
       "market_judgement": "回调休整无伤大雅，继续持有",
@@ -1475,8 +1492,7 @@
       "lower_alias": "水",
       "upper_symbol": "☷",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷧雷水解"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 42,
@@ -1497,6 +1513,7 @@
       "biangua": "坎",
       "changed_hexagram_name": "坎",
       "changed_hexagram_id": 29,
+      "biangua_full_name": "坎为水",
       "yao_ci": "田有禽，利执言，无咎；长子帅师，弟子舆尸，贞凶",
       "line_text": "田有禽，利执言，无咎；长子帅师，弟子舆尸，贞凶",
       "market_judgement": "机会出现择机入场，选错标的必亏",
@@ -1511,8 +1528,7 @@
       "lower_alias": "水",
       "upper_symbol": "☷",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷜坎为水"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 43,
@@ -1533,6 +1549,7 @@
       "biangua": "蒙",
       "changed_hexagram_name": "蒙",
       "changed_hexagram_id": 4,
+      "biangua_full_name": "山水蒙",
       "yao_ci": "大君有命，开国承家，小人勿用",
       "line_text": "大君有命，开国承家，小人勿用",
       "market_judgement": "行情收尾落袋为安，不可贪心",
@@ -1547,8 +1564,7 @@
       "lower_alias": "水",
       "upper_symbol": "☷",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷃山水蒙"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 44,
@@ -1569,6 +1585,7 @@
       "biangua": "屯",
       "changed_hexagram_name": "屯",
       "changed_hexagram_id": 3,
+      "biangua_full_name": "水雷屯",
       "yao_ci": "有孚比之，无咎；有孚盈缶，终来有它吉",
       "line_text": "有孚比之，无咎；有孚盈缶，终来有它吉",
       "market_judgement": "底部企稳资金进场，顺势跟入",
@@ -1604,6 +1621,7 @@
       "biangua": "坎",
       "changed_hexagram_name": "坎",
       "changed_hexagram_id": 29,
+      "biangua_full_name": "坎为水",
       "yao_ci": "比之自内，贞吉",
       "line_text": "比之自内，贞吉",
       "market_judgement": "内在驱动上涨，持仓待涨稳健获利",
@@ -1618,9 +1636,7 @@
       "lower_alias": "地",
       "upper_symbol": "☵",
       "lower_symbol": "☷",
-      "biangua_source": "corrected",
-      "biangua_full_name": "䷜坎为水",
-      "correction_note": "excel=坎水 -> algorithm=坎"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 46,
@@ -1641,6 +1657,7 @@
       "biangua": "蹇",
       "changed_hexagram_name": "蹇",
       "changed_hexagram_id": 39,
+      "biangua_full_name": "水山蹇",
       "yao_ci": "比之匪人",
       "line_text": "比之匪人",
       "market_judgement": "跟错主力选错标的，及时换股",
@@ -1676,6 +1693,7 @@
       "biangua": "萃",
       "changed_hexagram_name": "萃",
       "changed_hexagram_id": 45,
+      "biangua_full_name": "泽地萃",
       "yao_ci": "外比之，贞吉",
       "line_text": "外比之，贞吉",
       "market_judgement": "外部资金推动，跟势操作安全获利",
@@ -1711,6 +1729,7 @@
       "biangua": "坤",
       "changed_hexagram_name": "坤",
       "changed_hexagram_id": 2,
+      "biangua_full_name": "坤为地",
       "yao_ci": "显比，王用三驱，失前禽，邑人不诫，吉",
       "line_text": "显比，王用三驱，失前禽，邑人不诫，吉",
       "market_judgement": "主升行情不贪顶底，从容获利",
@@ -1725,9 +1744,7 @@
       "lower_alias": "地",
       "upper_symbol": "☵",
       "lower_symbol": "☷",
-      "biangua_source": "corrected",
-      "biangua_full_name": "䷁坤为地",
-      "correction_note": "excel=坤地 -> algorithm=坤"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 49,
@@ -1748,6 +1765,7 @@
       "biangua": "观",
       "changed_hexagram_name": "观",
       "changed_hexagram_id": 20,
+      "biangua_full_name": "风地观",
       "yao_ci": "比之无首，凶",
       "line_text": "比之无首，凶",
       "market_judgement": "群龙无首行情散乱，离场观望",
@@ -1783,6 +1801,7 @@
       "biangua": "巽",
       "changed_hexagram_name": "巽",
       "changed_hexagram_id": 57,
+      "biangua_full_name": "巽为风",
       "yao_ci": "复自道，何其咎，吉",
       "line_text": "复自道，何其咎，吉",
       "market_judgement": "回调到位回归正道，低吸良机",
@@ -1797,8 +1816,7 @@
       "lower_alias": "天",
       "upper_symbol": "☴",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷸巽为风"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 51,
@@ -1819,6 +1837,7 @@
       "biangua": "家人",
       "changed_hexagram_name": "家人",
       "changed_hexagram_id": 37,
+      "biangua_full_name": "风火家人",
       "yao_ci": "牵复，吉",
       "line_text": "牵复，吉",
       "market_judgement": "联动反弹顺势跟进，稳健获利",
@@ -1833,8 +1852,7 @@
       "lower_alias": "天",
       "upper_symbol": "☴",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷤风火家人"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 52,
@@ -1855,6 +1873,7 @@
       "biangua": "中孚",
       "changed_hexagram_name": "中孚",
       "changed_hexagram_id": 61,
+      "biangua_full_name": "风泽中孚",
       "yao_ci": "舆说辐，夫妻反目",
       "line_text": "舆说辐，夫妻反目",
       "market_judgement": "上涨乏力多空分歧，减仓避险",
@@ -1869,8 +1888,7 @@
       "lower_alias": "天",
       "upper_symbol": "☴",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷼风泽中孚"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 53,
@@ -1891,6 +1909,7 @@
       "biangua": "乾",
       "changed_hexagram_name": "乾",
       "changed_hexagram_id": 1,
+      "biangua_full_name": "乾为天",
       "yao_ci": "有孚，血去惕出，无咎",
       "line_text": "有孚，血去惕出，无咎",
       "market_judgement": "风险释放恐慌消退，可轻仓入场",
@@ -1905,8 +1924,7 @@
       "lower_alias": "天",
       "upper_symbol": "☴",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷀乾为天"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 54,
@@ -1927,6 +1945,7 @@
       "biangua": "大畜",
       "changed_hexagram_name": "大畜",
       "changed_hexagram_id": 26,
+      "biangua_full_name": "山天大畜",
       "yao_ci": "有孚挛如，富以其邻",
       "line_text": "有孚挛如，富以其邻",
       "market_judgement": "主升共振板块齐涨，重仓持有",
@@ -1941,8 +1960,7 @@
       "lower_alias": "天",
       "upper_symbol": "☴",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷙山天大畜"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 55,
@@ -1963,6 +1981,7 @@
       "biangua": "需",
       "changed_hexagram_name": "需",
       "changed_hexagram_id": 5,
+      "biangua_full_name": "水天需",
       "yao_ci": "既雨既处，尚德载，妇贞厉；月几望，君子征凶",
       "line_text": "既雨既处，尚德载，妇贞厉；月几望，君子征凶",
       "market_judgement": "涨势见顶盛极而衰，止盈离场",
@@ -1977,8 +1996,7 @@
       "lower_alias": "天",
       "upper_symbol": "☴",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷄水天需"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 56,
@@ -1999,6 +2017,7 @@
       "biangua": "讼",
       "changed_hexagram_name": "讼",
       "changed_hexagram_id": 6,
+      "biangua_full_name": "天水讼",
       "yao_ci": "素履，往无咎",
       "line_text": "素履，往无咎",
       "market_judgement": "平淡起步稳步上行，安全操作",
@@ -2013,8 +2032,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☰",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷅天水讼"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 57,
@@ -2035,6 +2053,7 @@
       "biangua": "无妄",
       "changed_hexagram_name": "无妄",
       "changed_hexagram_id": 25,
+      "biangua_full_name": "天雷无妄",
       "yao_ci": "履道坦坦，幽人贞吉",
       "line_text": "履道坦坦，幽人贞吉",
       "market_judgement": "走势平稳耐心持有，不求暴利",
@@ -2049,8 +2068,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☰",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷘天雷无妄"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 58,
@@ -2071,6 +2089,7 @@
       "biangua": "乾",
       "changed_hexagram_name": "乾",
       "changed_hexagram_id": 1,
+      "biangua_full_name": "乾为天",
       "yao_ci": "眇能视，跛能履，履虎尾，咥人，凶；武人为于大君",
       "line_text": "眇能视，跛能履，履虎尾，咥人，凶；武人为于大君",
       "market_judgement": "看似能涨实则凶险，盲目跟进必亏",
@@ -2085,8 +2104,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☰",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷀乾为天"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 59,
@@ -2107,6 +2125,7 @@
       "biangua": "中孚",
       "changed_hexagram_name": "中孚",
       "changed_hexagram_id": 61,
+      "biangua_full_name": "风泽中孚",
       "yao_ci": "履虎尾，愬愬，终吉",
       "line_text": "履虎尾，愬愬，终吉",
       "market_judgement": "高位风险谨慎操作，终能获利",
@@ -2121,8 +2140,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☰",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷼风泽中孚"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 60,
@@ -2143,6 +2161,7 @@
       "biangua": "睽",
       "changed_hexagram_name": "睽",
       "changed_hexagram_id": 38,
+      "biangua_full_name": "火泽睽",
       "yao_ci": "夬履，贞厉",
       "line_text": "夬履，贞厉",
       "market_judgement": "强势拉升暗藏风险，严设止损",
@@ -2157,8 +2176,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☰",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷥火泽睽"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 61,
@@ -2179,6 +2197,7 @@
       "biangua": "兑",
       "changed_hexagram_name": "兑",
       "changed_hexagram_id": 58,
+      "biangua_full_name": "兑为泽",
       "yao_ci": "视履考祥，其旋元吉",
       "line_text": "视履考祥，其旋元吉",
       "market_judgement": "复盘行情全身而退，圆满收官",
@@ -2193,8 +2212,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☰",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷹兑为泽"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 62,
@@ -2215,6 +2233,7 @@
       "biangua": "升",
       "changed_hexagram_name": "升",
       "changed_hexagram_id": 46,
+      "biangua_full_name": "地风升",
       "yao_ci": "拔茅茹，以其汇，征吉",
       "line_text": "拔茅茹，以其汇，征吉",
       "market_judgement": "底部启动板块联动上涨，积极入场",
@@ -2250,6 +2269,7 @@
       "biangua": "明夷",
       "changed_hexagram_name": "明夷",
       "changed_hexagram_id": 36,
+      "biangua_full_name": "地火明夷",
       "yao_ci": "包荒，用冯河，不遐遗，朋亡，得尚于中行",
       "line_text": "包荒，用冯河，不遐遗，朋亡，得尚于中行",
       "market_judgement": "主升展开大胆持仓，不丢筹码",
@@ -2285,6 +2305,7 @@
       "biangua": "临",
       "changed_hexagram_name": "临",
       "changed_hexagram_id": 19,
+      "biangua_full_name": "地泽临",
       "yao_ci": "无平不陂，无往不复，艰贞无咎；勿恤其孚，于食有福",
       "line_text": "无平不陂，无往不复，艰贞无咎；勿恤其孚，于食有福",
       "market_judgement": "盛极将衰震荡加剧，坚守仓位",
@@ -2320,6 +2341,7 @@
       "biangua": "大壮",
       "changed_hexagram_name": "大壮",
       "changed_hexagram_id": 34,
+      "biangua_full_name": "雷天大壮",
       "yao_ci": "翩翩，不富以其邻，不戒以孚",
       "line_text": "翩翩，不富以其邻，不戒以孚",
       "market_judgement": "高位回落资金出逃，减仓避险",
@@ -2355,6 +2377,7 @@
       "biangua": "需",
       "changed_hexagram_name": "需",
       "changed_hexagram_id": 5,
+      "biangua_full_name": "水天需",
       "yao_ci": "帝乙归妹，以祉元吉",
       "line_text": "帝乙归妹，以祉元吉",
       "market_judgement": "温和回调仍有机会，轻仓操作",
@@ -2390,6 +2413,7 @@
       "biangua": "大畜",
       "changed_hexagram_name": "大畜",
       "changed_hexagram_id": 26,
+      "biangua_full_name": "山天大畜",
       "yao_ci": "城复于隍，勿用师，自邑告命，贞吝",
       "line_text": "城复于隍，勿用师，自邑告命，贞吝",
       "market_judgement": "趋势反转不可做多，离场观望，城墙要倒了",
@@ -2425,6 +2449,7 @@
       "biangua": "无妄",
       "changed_hexagram_name": "无妄",
       "changed_hexagram_id": 25,
+      "biangua_full_name": "天雷无妄",
       "yao_ci": "拔茅茹，以其汇，贞吉，亨",
       "line_text": "拔茅茹，以其汇，贞吉，亨",
       "market_judgement": "下跌初期抱团取暖，坚守仓位",
@@ -2460,6 +2485,7 @@
       "biangua": "讼",
       "changed_hexagram_name": "讼",
       "changed_hexagram_id": 6,
+      "biangua_full_name": "天水讼",
       "yao_ci": "包承，小人吉，大人否亨",
       "line_text": "包承，小人吉，大人否亨",
       "market_judgement": "阴跌持续弱势反弹，不宜进场",
@@ -2495,6 +2521,7 @@
       "biangua": "遁",
       "changed_hexagram_name": "遁",
       "changed_hexagram_id": 33,
+      "biangua_full_name": "天山遁",
       "yao_ci": "包羞",
       "line_text": "包羞",
       "market_judgement": "持续下跌蒙受亏损，及时止损",
@@ -2530,6 +2557,7 @@
       "biangua": "观",
       "changed_hexagram_name": "观",
       "changed_hexagram_id": 20,
+      "biangua_full_name": "风地观",
       "yao_ci": "有命无咎，畴离祉",
       "line_text": "有命无咎，畴离祉",
       "market_judgement": "转机初现跌势放缓，可轻仓试入",
@@ -2565,6 +2593,7 @@
       "biangua": "晋",
       "changed_hexagram_name": "晋",
       "changed_hexagram_id": 35,
+      "biangua_full_name": "火地晋",
       "yao_ci": "休否，大人吉；其亡其亡，系于苞桑",
       "line_text": "休否，大人吉；其亡其亡，系于苞桑",
       "market_judgement": "否极泰来反转确立，加仓入场",
@@ -2600,6 +2629,7 @@
       "biangua": "萃",
       "changed_hexagram_name": "萃",
       "changed_hexagram_id": 45,
+      "biangua_full_name": "泽地萃",
       "yao_ci": "倾否，先否后喜",
       "line_text": "倾否，先否后喜",
       "market_judgement": "彻底反转跌势终结，大胆做多",
@@ -2635,6 +2665,7 @@
       "biangua": "遁",
       "changed_hexagram_name": "遁",
       "changed_hexagram_id": 33,
+      "biangua_full_name": "天山遁",
       "yao_ci": "同人于门，无咎",
       "line_text": "同人于门，无咎",
       "market_judgement": "行情启动共识初成，轻仓跟入",
@@ -2649,8 +2680,7 @@
       "lower_alias": "火",
       "upper_symbol": "☰",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷠天山遁"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 75,
@@ -2671,6 +2701,7 @@
       "biangua": "乾",
       "changed_hexagram_name": "乾",
       "changed_hexagram_id": 1,
+      "biangua_full_name": "乾为天",
       "yao_ci": "同人于宗，吝",
       "line_text": "同人于宗，吝",
       "market_judgement": "局限单一板块机会有限，难有大赚",
@@ -2685,8 +2716,7 @@
       "lower_alias": "火",
       "upper_symbol": "☰",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷀乾为天"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 76,
@@ -2707,6 +2737,7 @@
       "biangua": "无妄",
       "changed_hexagram_name": "无妄",
       "changed_hexagram_id": 25,
+      "biangua_full_name": "天雷无妄",
       "yao_ci": "伏戎于莽，升其高陵，三岁不兴",
       "line_text": "伏戎于莽，升其高陵，三岁不兴",
       "market_judgement": "空头埋伏冲高必回落，久难上涨",
@@ -2721,8 +2752,7 @@
       "lower_alias": "火",
       "upper_symbol": "☰",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷘天雷无妄"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 77,
@@ -2743,6 +2773,7 @@
       "biangua": "家人",
       "changed_hexagram_name": "家人",
       "changed_hexagram_id": 37,
+      "biangua_full_name": "风火家人",
       "yao_ci": "乘其墉，弗克攻，吉",
       "line_text": "乘其墉，弗克攻，吉",
       "market_judgement": "攻而不破回调蓄力，后市仍可期",
@@ -2757,8 +2788,7 @@
       "lower_alias": "火",
       "upper_symbol": "☰",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷤风火家人"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 78,
@@ -2779,6 +2809,7 @@
       "biangua": "离",
       "changed_hexagram_name": "离",
       "changed_hexagram_id": 30,
+      "biangua_full_name": "离为火",
       "yao_ci": "同人，先号咷而后笑，大师克相遇",
       "line_text": "同人，先号咷而后笑，大师克相遇",
       "market_judgement": "先跌后涨最终大胜，坚定持有",
@@ -2793,8 +2824,7 @@
       "lower_alias": "火",
       "upper_symbol": "☰",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷝离为火"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 79,
@@ -2815,6 +2845,7 @@
       "biangua": "革",
       "changed_hexagram_name": "革",
       "changed_hexagram_id": 49,
+      "biangua_full_name": "泽火革",
       "yao_ci": "同人于郊，无悔",
       "line_text": "同人于郊，无悔",
       "market_judgement": "行情尾声热度消退，落袋无憾",
@@ -2829,8 +2860,7 @@
       "lower_alias": "火",
       "upper_symbol": "☰",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷰泽火革"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 80,
@@ -2851,6 +2881,7 @@
       "biangua": "鼎",
       "changed_hexagram_name": "鼎",
       "changed_hexagram_id": 50,
+      "biangua_full_name": "火风鼎",
       "yao_ci": "无交害，匪咎，艰则无咎",
       "line_text": "无交害，匪咎，艰则无咎",
       "market_judgement": "上涨初期无大风险，稳健持有",
@@ -2865,8 +2896,7 @@
       "lower_alias": "天",
       "upper_symbol": "☲",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷱火风鼎"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 81,
@@ -2887,6 +2917,7 @@
       "biangua": "离",
       "changed_hexagram_name": "离",
       "changed_hexagram_id": 30,
+      "biangua_full_name": "离为火",
       "yao_ci": "大车以载，有攸往，无咎",
       "line_text": "大车以载，有攸往，无咎",
       "market_judgement": "主升行情重仓持有，利润丰厚",
@@ -2901,8 +2932,7 @@
       "lower_alias": "天",
       "upper_symbol": "☲",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷝离为火"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 82,
@@ -2923,6 +2953,7 @@
       "biangua": "睽",
       "changed_hexagram_name": "睽",
       "changed_hexagram_id": 38,
+      "biangua_full_name": "火泽睽",
       "yao_ci": "公用亨于天子，小人弗克",
       "line_text": "公用亨于天子，小人弗克",
       "market_judgement": "高位震荡散户接盘，专业者兑现",
@@ -2937,8 +2968,7 @@
       "lower_alias": "天",
       "upper_symbol": "☲",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷥火泽睽"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 83,
@@ -2959,6 +2989,7 @@
       "biangua": "大畜",
       "changed_hexagram_name": "大畜",
       "changed_hexagram_id": 26,
+      "biangua_full_name": "山天大畜",
       "yao_ci": "匪其彭，无咎",
       "line_text": "匪其彭，无咎",
       "market_judgement": "不盲目追高控制仓位，安全获利",
@@ -2973,8 +3004,7 @@
       "lower_alias": "天",
       "upper_symbol": "☲",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷙山天大畜"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 84,
@@ -2995,6 +3025,7 @@
       "biangua": "乾",
       "changed_hexagram_name": "乾",
       "changed_hexagram_id": 1,
+      "biangua_full_name": "乾为天",
       "yao_ci": "厥孚交如，威如，吉",
       "line_text": "厥孚交如，威如，吉",
       "market_judgement": "资金共识强势上涨，信心满满",
@@ -3009,8 +3040,7 @@
       "lower_alias": "天",
       "upper_symbol": "☲",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷀乾为天"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 85,
@@ -3031,6 +3061,7 @@
       "biangua": "大壮",
       "changed_hexagram_name": "大壮",
       "changed_hexagram_id": 34,
+      "biangua_full_name": "雷天大壮",
       "yao_ci": "自天祐之，吉无不利",
       "line_text": "自天祐之，吉无不利",
       "market_judgement": "行情鼎盛天佑之利，见好就收",
@@ -3045,8 +3076,7 @@
       "lower_alias": "天",
       "upper_symbol": "☲",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷡雷天大壮"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 86,
@@ -3067,6 +3097,7 @@
       "biangua": "明夷",
       "changed_hexagram_name": "明夷",
       "changed_hexagram_id": 36,
+      "biangua_full_name": "地火明夷",
       "yao_ci": "谦谦君子，用涉大川，吉",
       "line_text": "谦谦君子，用涉大川，吉",
       "market_judgement": "低位谦逊稳步上行，安全获利",
@@ -3081,8 +3112,7 @@
       "lower_alias": "山",
       "upper_symbol": "☷",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷣地火明夷"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 87,
@@ -3103,6 +3133,7 @@
       "biangua": "升",
       "changed_hexagram_name": "升",
       "changed_hexagram_id": 46,
+      "biangua_full_name": "地风升",
       "yao_ci": "鸣谦，贞吉",
       "line_text": "鸣谦，贞吉",
       "market_judgement": "名声渐起温和上涨，持仓待涨",
@@ -3117,8 +3148,7 @@
       "lower_alias": "山",
       "upper_symbol": "☷",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷭地风升"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 88,
@@ -3139,6 +3169,7 @@
       "biangua": "坤",
       "changed_hexagram_name": "坤",
       "changed_hexagram_id": 2,
+      "biangua_full_name": "坤为地",
       "yao_ci": "劳谦君子，有终吉",
       "line_text": "劳谦君子，有终吉",
       "market_judgement": "震荡上行辛苦持有，终有回报",
@@ -3153,8 +3184,7 @@
       "lower_alias": "山",
       "upper_symbol": "☷",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷁坤为地"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 89,
@@ -3175,6 +3205,7 @@
       "biangua": "小过",
       "changed_hexagram_name": "小过",
       "changed_hexagram_id": 62,
+      "biangua_full_name": "雷山小过",
       "yao_ci": "无不利，撝谦",
       "line_text": "无不利，撝谦",
       "market_judgement": "全面上涨发挥优势，扩大收益",
@@ -3189,8 +3220,7 @@
       "lower_alias": "山",
       "upper_symbol": "☷",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷽雷山小过"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 90,
@@ -3211,6 +3241,7 @@
       "biangua": "蹇",
       "changed_hexagram_name": "蹇",
       "changed_hexagram_id": 39,
+      "biangua_full_name": "水山蹇",
       "yao_ci": "不富以其邻，利用侵伐，无不利",
       "line_text": "不富以其邻，利用侵伐，无不利",
       "market_judgement": "资金涌入强势突破，大胆做多",
@@ -3225,8 +3256,7 @@
       "lower_alias": "山",
       "upper_symbol": "☷",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷦水山蹇"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 91,
@@ -3247,6 +3277,7 @@
       "biangua": "艮",
       "changed_hexagram_name": "艮",
       "changed_hexagram_id": 52,
+      "biangua_full_name": "艮为山",
       "yao_ci": "鸣谦，利用行师，征邑国",
       "line_text": "鸣谦，利用行师，征邑国",
       "market_judgement": "高位仍有空间，但需警惕见顶",
@@ -3261,8 +3292,7 @@
       "lower_alias": "山",
       "upper_symbol": "☷",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷳艮为山"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 92,
@@ -3283,6 +3313,7 @@
       "biangua": "震",
       "changed_hexagram_name": "震",
       "changed_hexagram_id": 51,
+      "biangua_full_name": "震为雷",
       "yao_ci": "鸣豫，凶",
       "line_text": "鸣豫，凶",
       "market_judgement": "乐观过头盲目追涨必亏刚小幅盈利就极度乐观、大肆看多，小涨便满仓梭哈；短线脉冲无基本面支撑，情绪虚浮。小幅获利切勿膨胀，禁止加仓追高，更不可满仓；当下乐观情绪是短期诱多，极易快速回撤回吐利润；",
@@ -3318,6 +3349,7 @@
       "biangua": "解",
       "changed_hexagram_name": "解",
       "changed_hexagram_id": 40,
+      "biangua_full_name": "雷水解",
       "yao_ci": "介于石，不终日，贞吉",
       "line_text": "介于石，不终日，贞吉",
       "market_judgement": "坚定立场不随波逐流，及时止盈上涨途中时刻警醒，不被舒适行情麻痹，如磐石持守底线，见滞涨立刻减仓，不贪恋短期欢愉。持仓有纪律，设好止盈止损，走势一出现疲软当天就分批兑现；不长期死拿躺平，顺势持有但随时准备落袋",
@@ -3353,6 +3385,7 @@
       "biangua": "小过",
       "changed_hexagram_name": "小过",
       "changed_hexagram_id": 62,
+      "biangua_full_name": "雷山小过",
       "yao_ci": "盱豫，悔；迟有悔",
       "line_text": "盱豫，悔；迟有悔",
       "market_judgement": "观望犹豫错过时机，追悔莫及跟风蹭热点，紧盯龙头涨幅盲目追涨，自身个股弱势，纯靠幻想等拉升；犹豫不操作两头吃亏。操作简判：\n杂毛跟风股切勿追高，看着主线大涨便重仓进场，极易冲高回落",
@@ -3388,6 +3421,7 @@
       "biangua": "坤",
       "changed_hexagram_name": "坤",
       "changed_hexagram_id": 2,
+      "biangua_full_name": "坤为地",
       "yao_ci": "由豫，大有得，勿疑，朋盍簪",
       "line_text": "由豫，大有得，勿疑，朋盍簪",
       "market_judgement": "主升核心重仓持有，收益丰厚全卦核心主升爻，市场资金聚拢抱团主线龙头，趋势顺畅、量能持续放大，多方合力拉升。坚定重仓持有核心龙头，不用怀疑趋势，不频繁换股；\n“朋盍簪”：各路资金汇聚，主升延续，逢回踩低吸",
@@ -3402,9 +3436,7 @@
       "lower_alias": "地",
       "upper_symbol": "☳",
       "lower_symbol": "☷",
-      "biangua_source": "corrected",
-      "biangua_full_name": "䷁坤为地",
-      "correction_note": "excel=坤地 -> algorithm=坤"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 96,
@@ -3425,6 +3457,7 @@
       "biangua": "萃",
       "changed_hexagram_name": "萃",
       "changed_hexagram_id": 45,
+      "biangua_full_name": "泽地萃",
       "yao_ci": "贞疾，恒不死",
       "line_text": "贞疾，恒不死",
       "market_judgement": "高位震荡有病无灾，不会崩盘高位抱团震荡，上方有强抛压、时常回调，全程隐患不断。带病持仓，不可满仓，半仓滚动操作，冲高减、急跌小吸；时刻警惕回调风险，不能一味看多；",
@@ -3460,6 +3493,7 @@
       "biangua": "晋",
       "changed_hexagram_name": "晋",
       "changed_hexagram_id": 35,
+      "biangua_full_name": "火地晋",
       "yao_ci": "冥豫，成有渝，无咎",
       "line_text": "冥豫，成有渝，无咎",
       "market_judgement": "成有渝：狂欢见顶及时转变思路，减仓无咎",
@@ -3495,6 +3529,7 @@
       "biangua": "萃",
       "changed_hexagram_name": "萃",
       "changed_hexagram_id": 45,
+      "biangua_full_name": "泽地萃",
       "yao_ci": "官有渝，贞吉，出门交有功",
       "line_text": "官有渝，贞吉，出门交有功",
       "market_judgement": "行情变化顺势调整，出门获利",
@@ -3509,8 +3544,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☱",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷬泽地萃"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 99,
@@ -3531,6 +3565,7 @@
       "biangua": "兑",
       "changed_hexagram_name": "兑",
       "changed_hexagram_id": 58,
+      "biangua_full_name": "兑为泽",
       "yao_ci": "系小子，失丈夫",
       "line_text": "系小子，失丈夫",
       "market_judgement": "贪小利失大利，选错标的踏空",
@@ -3545,8 +3580,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☱",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷹兑为泽"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 100,
@@ -3567,6 +3601,7 @@
       "biangua": "革",
       "changed_hexagram_name": "革",
       "changed_hexagram_id": 49,
+      "biangua_full_name": "泽火革",
       "yao_ci": "系丈夫，失小子，随有求得，利居贞",
       "line_text": "系丈夫，失小子，随有求得，利居贞",
       "market_judgement": "跟随主线放弃小利，持仓获利",
@@ -3581,8 +3616,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☱",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷰泽火革"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 101,
@@ -3603,6 +3637,7 @@
       "biangua": "屯",
       "changed_hexagram_name": "屯",
       "changed_hexagram_id": 3,
+      "biangua_full_name": "水雷屯",
       "yao_ci": "随有获，贞凶；有孚在道，以明，何咎",
       "line_text": "随有获，贞凶；有孚在道，以明，何咎",
       "market_judgement": "跟随获利但需警惕风险，守正无咎",
@@ -3617,8 +3652,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☱",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷂水雷屯"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 102,
@@ -3639,6 +3673,7 @@
       "biangua": "震",
       "changed_hexagram_name": "震",
       "changed_hexagram_id": 51,
+      "biangua_full_name": "震为雷",
       "yao_ci": "孚于嘉，吉",
       "line_text": "孚于嘉，吉",
       "market_judgement": "优质标的共振，坚定持有大吉",
@@ -3653,8 +3688,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☱",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷲震为雷"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 103,
@@ -3675,6 +3709,7 @@
       "biangua": "无妄",
       "changed_hexagram_name": "无妄",
       "changed_hexagram_id": 25,
+      "biangua_full_name": "天雷无妄",
       "yao_ci": "拘系之，乃从维之，王用亨于西山",
       "line_text": "拘系之，乃从维之，王用亨于西山",
       "market_judgement": "高位套牢被迫持有，难有作为",
@@ -3689,8 +3724,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☱",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷘天雷无妄"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 104,
@@ -3711,6 +3745,7 @@
       "biangua": "大畜",
       "changed_hexagram_name": "大畜",
       "changed_hexagram_id": 26,
+      "biangua_full_name": "山天大畜",
       "yao_ci": "干父之蛊，有子，考无咎，厉终吉",
       "line_text": "干父之蛊，有子，考无咎，厉终吉",
       "market_judgement": "修复旧弊震荡筑底，终会好转主动收拾前期遗留亏损、错误持仓，当下处境煎熬，但彻底清理后终能转吉、持仓逻辑崩坏，是前期操作留下的烂摊子",
@@ -3746,6 +3781,7 @@
       "biangua": "艮",
       "changed_hexagram_name": "艮",
       "changed_hexagram_id": 52,
+      "biangua_full_name": "艮为山",
       "yao_ci": "干母之蛊，不可贞",
       "line_text": "干母之蛊，不可贞",
       "market_judgement": "处理柔性、隐蔽的隐患（浅套、小亏、模糊逻辑），不可固执硬扛、死拿不动",
@@ -3781,6 +3817,7 @@
       "biangua": "蒙",
       "changed_hexagram_name": "蒙",
       "changed_hexagram_id": 4,
+      "biangua_full_name": "山水蒙",
       "yao_ci": "干父之蛊，小有悔，无大咎",
       "line_text": "干父之蛊，小有悔，无大咎",
       "market_judgement": "大刀阔斧整改旧仓，操作节奏易出错，产生小幅踏空、小幅亏损",
@@ -3816,6 +3853,7 @@
       "biangua": "鼎",
       "changed_hexagram_name": "鼎",
       "changed_hexagram_id": 50,
+      "biangua_full_name": "火风鼎",
       "yao_ci": "裕父之蛊，往见吝",
       "line_text": "裕父之蛊，往见吝",
       "market_judgement": "宽容纵容积弊，放任亏损持仓不处理，拖延只会招致持续亏损、进退两难",
@@ -3851,6 +3889,7 @@
       "biangua": "巽",
       "changed_hexagram_name": "巽",
       "changed_hexagram_id": 57,
+      "biangua_full_name": "巽为风",
       "yao_ci": "干父之蛊，用誉",
       "line_text": "干父之蛊，用誉",
       "market_judgement": "仓位结构可优化，无深度套牢，有调整空间居中守正，有条理清理旧仓，是全卦最优操作爻顺势布局主线，整改后收获正向收益与稳定节奏",
@@ -3886,6 +3925,7 @@
       "biangua": "升",
       "changed_hexagram_name": "升",
       "changed_hexagram_id": 46,
+      "biangua_full_name": "地风升",
       "yao_ci": "不事王侯，高尚其事",
       "line_text": "不事王侯，高尚其事",
       "market_judgement": "功成身退离场观望，不恋战",
@@ -3921,6 +3961,7 @@
       "biangua": "师",
       "changed_hexagram_name": "师",
       "changed_hexagram_id": 7,
+      "biangua_full_name": "地水师",
       "yao_ci": "咸临，贞吉",
       "line_text": "咸临，贞吉",
       "market_judgement": "行情启动共振上涨，积极入场",
@@ -3956,6 +3997,7 @@
       "biangua": "复",
       "changed_hexagram_name": "复",
       "changed_hexagram_id": 24,
+      "biangua_full_name": "地雷复",
       "yao_ci": "咸临，吉无不利",
       "line_text": "咸临，吉无不利",
       "market_judgement": "主升展开全面上涨，重仓获利",
@@ -3991,6 +4033,7 @@
       "biangua": "泰",
       "changed_hexagram_name": "泰",
       "changed_hexagram_id": 11,
+      "biangua_full_name": "地天泰",
       "yao_ci": "甘临，无攸利；既忧之，无咎",
       "line_text": "甘临，无攸利；既忧之，无咎",
       "market_judgement": "甜蜜诱多无利可图，警惕则无灾",
@@ -4026,6 +4069,7 @@
       "biangua": "归妹",
       "changed_hexagram_name": "归妹",
       "changed_hexagram_id": 54,
+      "biangua_full_name": "雷泽归妹",
       "yao_ci": "至临，无咎",
       "line_text": "至临，无咎",
       "market_judgement": "临近变盘谨慎操作，控制仓位",
@@ -4061,6 +4105,7 @@
       "biangua": "节",
       "changed_hexagram_name": "节",
       "changed_hexagram_id": 60,
+      "biangua_full_name": "水泽节",
       "yao_ci": "知临，大君之宜，吉",
       "line_text": "知临，大君之宜，吉",
       "market_judgement": "智慧操盘把握节奏，大获其利",
@@ -4096,6 +4141,7 @@
       "biangua": "损",
       "changed_hexagram_name": "损",
       "changed_hexagram_id": 41,
+      "biangua_full_name": "山泽损",
       "yao_ci": "敦临，吉，无咎",
       "line_text": "敦临，吉，无咎",
       "market_judgement": "敦厚收尾平稳结束，落袋为安",
@@ -4131,6 +4177,7 @@
       "biangua": "益",
       "changed_hexagram_name": "益",
       "changed_hexagram_id": 42,
+      "biangua_full_name": "风雷益",
       "yao_ci": "童观，小人无咎，君子吝",
       "line_text": "童观，小人无咎，君子吝",
       "market_judgement": "浅见操作散户无大碍，高手难获利",
@@ -4145,8 +4192,7 @@
       "lower_alias": "地",
       "upper_symbol": "☴",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷩风雷益"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 117,
@@ -4167,6 +4213,7 @@
       "biangua": "涣",
       "changed_hexagram_name": "涣",
       "changed_hexagram_id": 59,
+      "biangua_full_name": "风水涣",
       "yao_ci": "窥观，利女贞",
       "line_text": "窥观，利女贞",
       "market_judgement": "片面观察看不清方向，观望为宜",
@@ -4181,8 +4228,7 @@
       "lower_alias": "地",
       "upper_symbol": "☴",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷺风水涣"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 118,
@@ -4203,6 +4249,7 @@
       "biangua": "渐",
       "changed_hexagram_name": "渐",
       "changed_hexagram_id": 53,
+      "biangua_full_name": "风山渐",
       "yao_ci": "观我生，进退",
       "line_text": "观我生，进退",
       "market_judgement": "审视自身仓位决定进退",
@@ -4217,8 +4264,7 @@
       "lower_alias": "地",
       "upper_symbol": "☴",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷴风山渐"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 119,
@@ -4239,6 +4285,7 @@
       "biangua": "否",
       "changed_hexagram_name": "否",
       "changed_hexagram_id": 12,
+      "biangua_full_name": "天地否",
       "yao_ci": "观国之光，利用宾于王",
       "line_text": "观国之光，利用宾于王",
       "market_judgement": "看清大势顺势而为，跟随主力",
@@ -4253,8 +4300,7 @@
       "lower_alias": "地",
       "upper_symbol": "☴",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷋天地否"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 120,
@@ -4275,6 +4321,7 @@
       "biangua": "剥",
       "changed_hexagram_name": "剥",
       "changed_hexagram_id": 23,
+      "biangua_full_name": "山地剥",
       "yao_ci": "观我生，君子无咎",
       "line_text": "观我生，君子无咎",
       "market_judgement": "审视行情走势，君子操作无咎",
@@ -4289,8 +4336,7 @@
       "lower_alias": "地",
       "upper_symbol": "☴",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷖山地剥"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 121,
@@ -4311,6 +4357,7 @@
       "biangua": "比",
       "changed_hexagram_name": "比",
       "changed_hexagram_id": 8,
+      "biangua_full_name": "水地比",
       "yao_ci": "观其生，君子无咎",
       "line_text": "观其生，君子无咎",
       "market_judgement": "纵观全局超然物外，功成身退",
@@ -4325,8 +4372,7 @@
       "lower_alias": "地",
       "upper_symbol": "☴",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷇水地比"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 122,
@@ -4347,6 +4393,7 @@
       "biangua": "晋",
       "changed_hexagram_name": "晋",
       "changed_hexagram_id": 35,
+      "biangua_full_name": "火地晋",
       "yao_ci": "屦校灭趾，无咎",
       "line_text": "屦校灭趾，无咎",
       "market_judgement": "小惩大戒及时止损，避免大亏",
@@ -4382,6 +4429,7 @@
       "biangua": "睽",
       "changed_hexagram_name": "睽",
       "changed_hexagram_id": 38,
+      "biangua_full_name": "火泽睽",
       "yao_ci": "噬肤灭鼻，无咎",
       "line_text": "噬肤灭鼻，无咎",
       "market_judgement": "顺利获利吃掉小肉，无大碍 个股遇浅套、短期压力位不重，阻力薄，容易突破；\n操作：果断减仓 / 做 T 清浮筹，重仓可分批兑现，下手要狠，不要贪恋小幅利润；\n寓意：阻力薄弱，快进快出即可化解震荡，无大风险；",
@@ -4417,6 +4465,7 @@
       "biangua": "离",
       "changed_hexagram_name": "离",
       "changed_hexagram_id": 30,
+      "biangua_full_name": "离为火",
       "yao_ci": "噬腊肉，遇毒，小吝，无咎",
       "line_text": "噬腊肉，遇毒，小吝，无咎",
       "market_judgement": "看似有反弹机会，实则暗藏利空、套牢盘重；\n操作：只可极轻仓试错，绝不重仓抄底；反弹冲高立刻跑路，不格局；寓意：看似有肉实则藏毒，短期小幅吃亏但不会大亏，及时抽身则平安",
@@ -4452,6 +4501,7 @@
       "biangua": "颐",
       "changed_hexagram_name": "颐",
       "changed_hexagram_id": 27,
+      "biangua_full_name": "山雷颐",
       "yao_ci": "噬干胏，得金矢，利艰贞，吉",
       "line_text": "噬干胏，得金矢，利艰贞，吉",
       "market_judgement": "啃硬骨头艰难获利，坚守得吉有硬逻辑（业绩 / 政策主线），但上方厚重套牢盘，震荡磨人、拉升一波三折；操作：重仓坚守、逢大跌分批低吸补仓，耐住震荡，不频繁换股；\n寓意：骨头难啃但内里有金，熬过震荡必有主升行情；",
@@ -4487,6 +4537,7 @@
       "biangua": "无妄",
       "changed_hexagram_name": "无妄",
       "changed_hexagram_id": 25,
+      "biangua_full_name": "天雷无妄",
       "yao_ci": "噬干肉，得黄金，贞厉，无咎",
       "line_text": "噬干肉，得黄金，贞厉，无咎",
       "market_judgement": "获利丰厚但风险并存，谨慎无咎",
@@ -4522,6 +4573,7 @@
       "biangua": "震",
       "changed_hexagram_name": "震",
       "changed_hexagram_id": 51,
+      "biangua_full_name": "震为雷",
       "yao_ci": "何校灭耳，凶",
       "line_text": "何校灭耳，凶",
       "market_judgement": "套牢深亏不听警示，凶险至极个股深套、高位重仓追涨，无视利空、不听风险信号，筹码全面被套；\n操作：立刻大幅割肉清仓，绝不补仓摊平，回避该股至少一轮周期；\n寓意：执迷不悟、长期扛单，亏损持续放大，极易深套腰斩；",
@@ -4536,9 +4588,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☲",
       "lower_symbol": "☳",
-      "biangua_source": "corrected",
-      "biangua_full_name": "䷲震为雷",
-      "correction_note": "excel=雷 -> algorithm=震"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 128,
@@ -4559,6 +4609,7 @@
       "biangua": "艮",
       "changed_hexagram_name": "艮",
       "changed_hexagram_id": 52,
+      "biangua_full_name": "艮为山",
       "yao_ci": "贲其趾，舍车而徒",
       "line_text": "贲其趾，舍车而徒",
       "market_judgement": "修饰外表步行慢行，轻仓缓步",
@@ -4594,6 +4645,7 @@
       "biangua": "大畜",
       "changed_hexagram_name": "大畜",
       "changed_hexagram_id": 26,
+      "biangua_full_name": "山天大畜",
       "yao_ci": "贲其须",
       "line_text": "贲其须",
       "market_judgement": "表面光鲜无实质上涨，观望为主",
@@ -4629,6 +4681,7 @@
       "biangua": "颐",
       "changed_hexagram_name": "颐",
       "changed_hexagram_id": 27,
+      "biangua_full_name": "山雷颐",
       "yao_ci": "贲如濡如，永贞吉",
       "line_text": "贲如濡如，永贞吉",
       "market_judgement": "装饰润泽持久持仓，终获吉利",
@@ -4664,6 +4717,7 @@
       "biangua": "离",
       "changed_hexagram_name": "离",
       "changed_hexagram_id": 30,
+      "biangua_full_name": "离为火",
       "yao_ci": "贲如皤如，白马翰如，匪寇婚媾",
       "line_text": "贲如皤如，白马翰如，匪寇婚媾",
       "market_judgement": "看似凶险实为机会，低吸良机",
@@ -4699,6 +4753,7 @@
       "biangua": "家人",
       "changed_hexagram_name": "家人",
       "changed_hexagram_id": 37,
+      "biangua_full_name": "风火家人",
       "yao_ci": "贲于丘园，束帛戋戋，吝，终吉",
       "line_text": "贲于丘园，束帛戋戋，吝，终吉",
       "market_judgement": "价值回归虽有波折，终获吉利",
@@ -4734,6 +4789,7 @@
       "biangua": "明夷",
       "changed_hexagram_name": "明夷",
       "changed_hexagram_id": 36,
+      "biangua_full_name": "地火明夷",
       "yao_ci": "白贲，无咎",
       "line_text": "白贲，无咎",
       "market_judgement": "返璞归真朴实上涨，无咎获利",
@@ -4769,6 +4825,7 @@
       "biangua": "颐",
       "changed_hexagram_name": "颐",
       "changed_hexagram_id": 27,
+      "biangua_full_name": "山雷颐",
       "yao_ci": "剥床以足，蔑贞凶",
       "line_text": "剥床以足，蔑贞凶",
       "market_judgement": "下跌开始从底部烂起，凶险",
@@ -4783,8 +4840,7 @@
       "lower_alias": "地",
       "upper_symbol": "☶",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷚山雷颐"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 135,
@@ -4805,6 +4861,7 @@
       "biangua": "蒙",
       "changed_hexagram_name": "蒙",
       "changed_hexagram_id": 4,
+      "biangua_full_name": "山水蒙",
       "yao_ci": "剥床以辨，蔑贞凶",
       "line_text": "剥床以辨，蔑贞凶",
       "market_judgement": "跌势加剧继续下探，离场为上",
@@ -4819,8 +4876,7 @@
       "lower_alias": "地",
       "upper_symbol": "☶",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷃山水蒙"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 136,
@@ -4841,6 +4897,7 @@
       "biangua": "艮",
       "changed_hexagram_name": "艮",
       "changed_hexagram_id": 52,
+      "biangua_full_name": "艮为山",
       "yao_ci": "剥之，无咎",
       "line_text": "剥之，无咎",
       "market_judgement": "持续下跌但有缓冲，损失可控",
@@ -4855,8 +4912,7 @@
       "lower_alias": "地",
       "upper_symbol": "☶",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷳艮为山"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 137,
@@ -4877,6 +4933,7 @@
       "biangua": "晋",
       "changed_hexagram_name": "晋",
       "changed_hexagram_id": 35,
+      "biangua_full_name": "火地晋",
       "yao_ci": "剥床以肤，凶",
       "line_text": "剥床以肤，凶",
       "market_judgement": "深度套牢亏损严重，立即止损",
@@ -4891,8 +4948,7 @@
       "lower_alias": "地",
       "upper_symbol": "☶",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷢火地晋"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 138,
@@ -4913,6 +4969,7 @@
       "biangua": "观",
       "changed_hexagram_name": "观",
       "changed_hexagram_id": 20,
+      "biangua_full_name": "风地观",
       "yao_ci": "贯鱼，以宫人宠，无不利",
       "line_text": "贯鱼，以宫人宠，无不利",
       "market_judgement": "止跌企稳轮番反弹，可轻仓参与",
@@ -4927,8 +4984,7 @@
       "lower_alias": "地",
       "upper_symbol": "☶",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷓风地观"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 139,
@@ -4949,6 +5005,7 @@
       "biangua": "坤",
       "changed_hexagram_name": "坤",
       "changed_hexagram_id": 2,
+      "biangua_full_name": "坤为地",
       "yao_ci": "硕果不食，君子得舆，小人剥庐",
       "line_text": "硕果不食，君子得舆，小人剥庐",
       "market_judgement": "否极泰来君子抄底获利，散户割肉",
@@ -4963,8 +5020,7 @@
       "lower_alias": "地",
       "upper_symbol": "☶",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷁坤为地"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 140,
@@ -4985,6 +5041,7 @@
       "biangua": "坤",
       "changed_hexagram_name": "坤",
       "changed_hexagram_id": 2,
+      "biangua_full_name": "坤为地",
       "yao_ci": "不远复，无祗悔，元吉",
       "line_text": "不远复，无祗悔，元吉",
       "market_judgement": "回调不远即反弹，下跌末端刚现止跌阳线，一阳初动，跌幅未深、尚未深套，反转萌芽信号出现，恐慌割肉者及时买回，空仓者小仓试错建底仓；左侧拐点最佳入场点，不用等完全企稳，轻仓布局无大风险；",
@@ -4999,9 +5056,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☷",
       "lower_symbol": "☳",
-      "biangua_source": "corrected",
-      "biangua_full_name": "䷁坤为地",
-      "correction_note": "excel=坤地 -> algorithm=坤"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 141,
@@ -5022,6 +5077,7 @@
       "biangua": "临",
       "changed_hexagram_name": "临",
       "changed_hexagram_id": 19,
+      "biangua_full_name": "地泽临",
       "yao_ci": "休复，吉",
       "line_text": "休复，吉",
       "market_judgement": "休整后反弹温和上涨，持仓获利初阳确立，温和修复，无剧烈震荡，主力稳步吸筹，反弹流畅无抛压梗阻。操作简判：底仓持有，逢回踩小幅加仓，波段持有吃完整修复段；走势柔和、不用频繁做 T，安心持仓为主；",
@@ -5057,6 +5113,7 @@
       "biangua": "明夷",
       "changed_hexagram_name": "明夷",
       "changed_hexagram_id": 36,
+      "biangua_full_name": "地火明夷",
       "yao_ci": "频复，厉，无咎",
       "line_text": "频复，厉，无咎",
       "market_judgement": "反复震荡波动剧烈，底部反复震荡，涨两日跌三日，来回磨底，心态煎熬，多空反复拉扯，但趋势未破。严禁满仓，分批小仓滚动，高抛低吸降成本；波动凶险容易追涨杀跌，但只要不梭哈、及时止损，不会大亏；",
@@ -5092,6 +5149,7 @@
       "biangua": "震",
       "changed_hexagram_name": "震",
       "changed_hexagram_id": 51,
+      "biangua_full_name": "震为雷",
       "yao_ci": "中行独复",
       "line_text": "中行独复",
       "market_judgement": "中途独自反弹独立行情，轻仓参与板块集体弱势，仅个股自身逻辑独立走出修复，逆市走强，不随大盘阴跌。专一持有这只独立走强标的，不跟风切换杂毛个股；仓位均衡不极端，半仓中线持有，不追高加仓；",
@@ -5127,6 +5185,7 @@
       "biangua": "屯",
       "changed_hexagram_name": "屯",
       "changed_hexagram_id": 3,
+      "biangua_full_name": "水雷屯",
       "yao_ci": "敦复，无悔",
       "line_text": "敦复，无悔",
       "market_judgement": "敦厚反弹扎实上涨，无悔持仓修复中段，走势厚重扎实，无快速脉冲，缓慢稳步抬升，基本面扎实支撑反弹稳健长线持仓，不频繁买卖，以时间换空间；定期复盘核查个股逻辑，逻辑不变就坚定持有；",
@@ -5162,6 +5221,7 @@
       "biangua": "颐",
       "changed_hexagram_name": "颐",
       "changed_hexagram_id": 27,
+      "biangua_full_name": "山雷颐",
       "yao_ci": "迷复，凶，有灾眚；用行师，终有大败",
       "line_text": "迷复，凶，有灾眚；用行师，终有大败",
       "market_judgement": "迷失方向反弹失败，大跌凶险反弹末端，趋势已经拐头向下，仍执念幻想继续大涨，错把下跌当回调抄底摊薄。大凶之爻，立刻清仓离场，绝不补仓、抄反弹；执迷看多会由盈转亏、深度套牢，长期难解套；",
@@ -5197,6 +5257,7 @@
       "biangua": "否",
       "changed_hexagram_name": "否",
       "changed_hexagram_id": 12,
+      "biangua_full_name": "天地否",
       "yao_ci": "无妄，往吉",
       "line_text": "无妄，往吉",
       "market_judgement": "真实上涨顺势而为，吉利",
@@ -5211,8 +5272,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☰",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷋天地否"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 147,
@@ -5233,6 +5293,7 @@
       "biangua": "履",
       "changed_hexagram_name": "履",
       "changed_hexagram_id": 10,
+      "biangua_full_name": "天泽履",
       "yao_ci": "不耕获，不菑畲，则利有攸往",
       "line_text": "不耕获，不菑畲，则利有攸往",
       "market_judgement": "不劳而获行情坐享其成，持仓待涨",
@@ -5247,8 +5308,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☰",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷉天泽履"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 148,
@@ -5269,6 +5329,7 @@
       "biangua": "同人",
       "changed_hexagram_name": "同人",
       "changed_hexagram_id": 13,
+      "biangua_full_name": "天火同人",
       "yao_ci": "无妄之灾，或系之牛，行人之得，邑人之灾",
       "line_text": "无妄之灾，或系之牛，行人之得，邑人之灾",
       "market_judgement": "意外暴跌无妄之灾，及时止损",
@@ -5283,8 +5344,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☰",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷌天火同人"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 149,
@@ -5305,6 +5365,7 @@
       "biangua": "益",
       "changed_hexagram_name": "益",
       "changed_hexagram_id": 42,
+      "biangua_full_name": "风雷益",
       "yao_ci": "可贞，无咎",
       "line_text": "可贞，无咎",
       "market_judgement": "可坚守仓位无大灾",
@@ -5319,8 +5380,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☰",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷩风雷益"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 150,
@@ -5341,6 +5401,7 @@
       "biangua": "噬嗑",
       "changed_hexagram_name": "噬嗑",
       "changed_hexagram_id": 21,
+      "biangua_full_name": "火雷噬嗑",
       "yao_ci": "无妄之疾，勿药有喜",
       "line_text": "无妄之疾，勿药有喜",
       "market_judgement": "意外回调不用恐慌，自愈反弹",
@@ -5355,8 +5416,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☰",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷔火雷噬嗑"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 151,
@@ -5377,6 +5437,7 @@
       "biangua": "随",
       "changed_hexagram_name": "随",
       "changed_hexagram_id": 17,
+      "biangua_full_name": "泽雷随",
       "yao_ci": "无妄，行有眚，无攸利",
       "line_text": "无妄，行有眚，无攸利",
       "market_judgement": "行情末端操作必有损，观望为宜",
@@ -5391,8 +5452,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☰",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷐泽雷随"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 152,
@@ -5413,6 +5473,7 @@
       "biangua": "蛊",
       "changed_hexagram_name": "蛊",
       "changed_hexagram_id": 18,
+      "biangua_full_name": "山风蛊",
       "yao_ci": "有厉，利已",
       "line_text": "有厉，利已",
       "market_judgement": "上涨有风险适合停止加仓",
@@ -5448,6 +5509,7 @@
       "biangua": "贲",
       "changed_hexagram_name": "贲",
       "changed_hexagram_id": 22,
+      "biangua_full_name": "山火贲",
       "yao_ci": "舆说輹",
       "line_text": "舆说輹",
       "market_judgement": "上涨暂停休整蓄力，观望等待",
@@ -5483,6 +5545,7 @@
       "biangua": "损",
       "changed_hexagram_name": "损",
       "changed_hexagram_id": 41,
+      "biangua_full_name": "山泽损",
       "yao_ci": "良马逐，利艰贞；曰闲舆卫，利有攸往",
       "line_text": "良马逐，利艰贞；曰闲舆卫，利有攸往",
       "market_judgement": "蓄力完成，趋势启动，但过程颠簸，需严守风控、反复打磨交易体系",
@@ -5518,6 +5581,7 @@
       "biangua": "大有",
       "changed_hexagram_name": "大有",
       "changed_hexagram_id": 14,
+      "biangua_full_name": "火天大有",
       "yao_ci": "童牛之牿，元吉",
       "line_text": "童牛之牿，元吉",
       "market_judgement": "低位布局阶段，提前设置止损、严控单票仓位，不纵容追涨冲动；管住短线投机手，只拿核心长线筹码。提前风控，全程安稳无大回撤",
@@ -5553,6 +5617,7 @@
       "biangua": "小畜",
       "changed_hexagram_name": "小畜",
       "changed_hexagram_id": 9,
+      "biangua_full_name": "风天小畜",
       "yao_ci": "豮豕之牙，吉",
       "line_text": "豮豕之牙，吉",
       "market_judgement": "波动剧烈、容易冲高回落，不用一刀切清仓，分批滚动做 T、分散持仓对冲烈性；柔化操作节奏，不追暴涨、不恐慌割肉，长期持有仍有丰厚收益",
@@ -5588,6 +5653,7 @@
       "biangua": "泰",
       "changed_hexagram_name": "泰",
       "changed_hexagram_id": 11,
+      "biangua_full_name": "地天泰",
       "yao_ci": "何天之衢，亨",
       "line_text": "何天之衢，亨",
       "market_judgement": "长期蓄势主升末期，趋势完全打开，可放开仓位全力兑现；前期储备的筹码集中获利了结，适合做大波段离场。",
@@ -5623,6 +5689,7 @@
       "biangua": "剥",
       "changed_hexagram_name": "剥",
       "changed_hexagram_id": 23,
+      "biangua_full_name": "山地剥",
       "yao_ci": "舍尔灵龟，观我朵颐，凶",
       "line_text": "舍尔灵龟，观我朵颐，凶",
       "market_judgement": "舍弃价值追逐热点，必亏",
@@ -5658,6 +5725,7 @@
       "biangua": "损",
       "changed_hexagram_name": "损",
       "changed_hexagram_id": 41,
+      "biangua_full_name": "山泽损",
       "yao_ci": "颠颐，拂经，于丘颐，征凶",
       "line_text": "颠颐，拂经，于丘颐，征凶",
       "market_judgement": "本末倒置逆势操作，凶险",
@@ -5693,6 +5761,7 @@
       "biangua": "贲",
       "changed_hexagram_name": "贲",
       "changed_hexagram_id": 22,
+      "biangua_full_name": "山火贲",
       "yao_ci": "拂颐，贞凶，十年勿用，无攸利",
       "line_text": "拂颐，贞凶，十年勿用，无攸利",
       "market_judgement": "违背正道长期低迷，不可操作",
@@ -5728,6 +5797,7 @@
       "biangua": "噬嗑",
       "changed_hexagram_name": "噬嗑",
       "changed_hexagram_id": 21,
+      "biangua_full_name": "火雷噬嗑",
       "yao_ci": "颠颐，吉；虎视眈眈，其欲逐逐，无咎",
       "line_text": "颠颐，吉；虎视眈眈，其欲逐逐，无咎",
       "market_judgement": "反向操作获利紧盯目标，无咎",
@@ -5763,6 +5833,7 @@
       "biangua": "益",
       "changed_hexagram_name": "益",
       "changed_hexagram_id": 42,
+      "biangua_full_name": "风雷益",
       "yao_ci": "拂经，居贞吉，不可涉大川",
       "line_text": "拂经，居贞吉，不可涉大川",
       "market_judgement": "违背常理守仓则吉，不可冒险加仓",
@@ -5798,6 +5869,7 @@
       "biangua": "复",
       "changed_hexagram_name": "复",
       "changed_hexagram_id": 24,
+      "biangua_full_name": "地雷复",
       "yao_ci": "由颐，厉吉，利涉大川",
       "line_text": "由颐，厉吉，利涉大川",
       "market_judgement": "全局龙头高位有险但吉，可做大行情",
@@ -5833,6 +5905,7 @@
       "biangua": "夬",
       "changed_hexagram_name": "夬",
       "changed_hexagram_id": 43,
+      "biangua_full_name": "泽天夬",
       "yao_ci": "藉用白茅，无咎",
       "line_text": "藉用白茅，无咎",
       "market_judgement": "谨慎打底安全垫充足，无咎",
@@ -5847,8 +5920,7 @@
       "lower_alias": "风",
       "upper_symbol": "☱",
       "lower_symbol": "☴",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷪泽天夬"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 165,
@@ -5869,6 +5941,7 @@
       "biangua": "咸",
       "changed_hexagram_name": "咸",
       "changed_hexagram_id": 31,
+      "biangua_full_name": "泽山咸",
       "yao_ci": "枯杨生稊，老夫得其女妻，无不利",
       "line_text": "枯杨生稊，老夫得其女妻，无不利",
       "market_judgement": "老树发新芽超跌反弹，无往不利",
@@ -5883,8 +5956,7 @@
       "lower_alias": "风",
       "upper_symbol": "☱",
       "lower_symbol": "☴",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷞泽山咸"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 166,
@@ -5905,6 +5977,7 @@
       "biangua": "困",
       "changed_hexagram_name": "困",
       "changed_hexagram_id": 47,
+      "biangua_full_name": "泽水困",
       "yao_ci": "栋桡，凶",
       "line_text": "栋桡，凶",
       "market_judgement": "栋梁弯曲支撑崩塌，大跌凶险",
@@ -5919,8 +5992,7 @@
       "lower_alias": "风",
       "upper_symbol": "☱",
       "lower_symbol": "☴",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷮泽水困"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 167,
@@ -5941,6 +6013,7 @@
       "biangua": "井",
       "changed_hexagram_name": "井",
       "changed_hexagram_id": 48,
+      "biangua_full_name": "水风井",
       "yao_ci": "栋隆，吉，有它吝",
       "line_text": "栋隆，吉，有它吝",
       "market_judgement": "栋梁隆起反弹回升，有小波折",
@@ -5955,8 +6028,7 @@
       "lower_alias": "风",
       "upper_symbol": "☱",
       "lower_symbol": "☴",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷯水风井"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 168,
@@ -5977,6 +6049,7 @@
       "biangua": "恒",
       "changed_hexagram_name": "恒",
       "changed_hexagram_id": 32,
+      "biangua_full_name": "雷风恒",
       "yao_ci": "枯杨生华，老妇得其士夫，无咎无誉",
       "line_text": "枯杨生华，老妇得其士夫，无咎无誉",
       "market_judgement": "回光返照昙花一现，无大利",
@@ -5991,8 +6064,7 @@
       "lower_alias": "风",
       "upper_symbol": "☱",
       "lower_symbol": "☴",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷟雷风恒"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 169,
@@ -6013,6 +6085,7 @@
       "biangua": "姤",
       "changed_hexagram_name": "姤",
       "changed_hexagram_id": 44,
+      "biangua_full_name": "天风姤",
       "yao_ci": "过涉灭顶，凶，无咎",
       "line_text": "过涉灭顶，凶，无咎",
       "market_judgement": "暴跌灭顶凶险至极，无可挽回",
@@ -6027,8 +6100,7 @@
       "lower_alias": "风",
       "upper_symbol": "☱",
       "lower_symbol": "☴",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷫天风姤"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 170,
@@ -6049,6 +6121,7 @@
       "biangua": "节",
       "changed_hexagram_name": "节",
       "changed_hexagram_id": 60,
+      "biangua_full_name": "水泽节",
       "yao_ci": "习坎，入于坎窞，凶",
       "line_text": "习坎，入于坎窞，凶",
       "market_judgement": "重重陷阱越陷越深，凶险",
@@ -6084,6 +6157,7 @@
       "biangua": "比",
       "changed_hexagram_name": "比",
       "changed_hexagram_id": 8,
+      "biangua_full_name": "水地比",
       "yao_ci": "坎有险，求小得",
       "line_text": "坎有险，求小得",
       "market_judgement": "困境中有小机会，小赚即走，唯一可以小试的",
@@ -6119,6 +6193,7 @@
       "biangua": "井",
       "changed_hexagram_name": "井",
       "changed_hexagram_id": 48,
+      "biangua_full_name": "水风井",
       "yao_ci": "来之坎坎，险且枕，入于坎窞，勿用",
       "line_text": "来之坎坎，险且枕，入于坎窞，勿用",
       "market_judgement": "进退皆险不可操作，观望，井卦一般都观望为好",
@@ -6154,6 +6229,7 @@
       "biangua": "困",
       "changed_hexagram_name": "困",
       "changed_hexagram_id": 47,
+      "biangua_full_name": "泽水困",
       "yao_ci": "樽酒簋贰，用缶，纳约自牖，终无咎",
       "line_text": "樽酒簋贰，用缶，纳约自牖，终无咎",
       "market_judgement": "困境中转机低调操作，终无咎",
@@ -6189,6 +6265,7 @@
       "biangua": "师",
       "changed_hexagram_name": "师",
       "changed_hexagram_id": 7,
+      "biangua_full_name": "地水师",
       "yao_ci": "坎不盈，祗既平，无咎",
       "line_text": "坎不盈，祗既平，无咎",
       "market_judgement": "风险渐消趋于平稳，无咎",
@@ -6224,6 +6301,7 @@
       "biangua": "涣",
       "changed_hexagram_name": "涣",
       "changed_hexagram_id": 59,
+      "biangua_full_name": "风水涣",
       "yao_ci": "系用徽纆，寘于丛棘，三岁不得，凶",
       "line_text": "系用徽纆，寘于丛棘，三岁不得，凶",
       "market_judgement": "深度套牢长期难解，凶险",
@@ -6259,6 +6337,7 @@
       "biangua": "旅",
       "changed_hexagram_name": "旅",
       "changed_hexagram_id": 56,
+      "biangua_full_name": "火山旅",
       "yao_ci": "履错然，敬之，无咎",
       "line_text": "履错然，敬之，无咎",
       "market_judgement": "行情初动错综复杂，敬畏则无咎",
@@ -6294,6 +6373,7 @@
       "biangua": "大有",
       "changed_hexagram_name": "大有",
       "changed_hexagram_id": 14,
+      "biangua_full_name": "火天大有",
       "yao_ci": "黄离，元吉",
       "line_text": "黄离，元吉",
       "market_judgement": "大吉，最佳持仓区间操作：趋势多头排列、题材持续兑现，底仓安心持有；小幅回踩可低吸加仓，波段滚动，不频繁换股，吃完整段主升行情。",
@@ -6329,6 +6409,7 @@
       "biangua": "噬嗑",
       "changed_hexagram_name": "噬嗑",
       "changed_hexagram_id": 21,
+      "biangua_full_name": "火雷噬嗑",
       "yao_ci": "日昃之离，不鼓缶而歌，则大耋之嗟，凶",
       "line_text": "日昃之离，不鼓缶而歌，则大耋之嗟，凶",
       "market_judgement": "夕阳行情盛极而衰，凶险",
@@ -6364,6 +6445,7 @@
       "biangua": "贲",
       "changed_hexagram_name": "贲",
       "changed_hexagram_id": 22,
+      "biangua_full_name": "山火贲",
       "yao_ci": "突如其来如，焚如，死如，弃如",
       "line_text": "突如其来如，焚如，死如，弃如",
       "market_judgement": "突发暴涨后暴跌来去匆匆，避之",
@@ -6399,6 +6481,7 @@
       "biangua": "同人",
       "changed_hexagram_name": "同人",
       "changed_hexagram_id": 13,
+      "biangua_full_name": "天火同人",
       "yao_ci": "出涕沱若，戚嗟若，吉",
       "line_text": "出涕沱若，戚嗟若，吉",
       "market_judgement": "先跌后涨悲极生喜，最终吉利",
@@ -6434,6 +6517,7 @@
       "biangua": "丰",
       "changed_hexagram_name": "丰",
       "changed_hexagram_id": 55,
+      "biangua_full_name": "雷火丰",
       "yao_ci": "王用出征，有嘉折首，获匪其丑，无咎",
       "line_text": "王用出征，有嘉折首，获匪其丑，无咎",
       "market_judgement": "行情收官斩获主力，无咎",
@@ -6469,6 +6553,7 @@
       "biangua": "革",
       "changed_hexagram_name": "革",
       "changed_hexagram_id": 49,
+      "biangua_full_name": "泽火革",
       "yao_ci": "咸其拇",
       "line_text": "咸其拇",
       "market_judgement": "行情微动影响甚微，观望无吉凶，感应止于脚趾，微弱异动，心神向外急于进场\n简判：平，吉凶未定，只极小仓试错",
@@ -6504,6 +6589,7 @@
       "biangua": "大过",
       "changed_hexagram_name": "大过",
       "changed_hexagram_id": 28,
+      "biangua_full_name": "泽风大过",
       "yao_ci": "咸其腓，凶，居吉",
       "line_text": "咸其腓，凶，居吉",
       "market_judgement": "小幅波动动则凶，持仓不动则吉",
@@ -6539,6 +6625,7 @@
       "biangua": "萃",
       "changed_hexagram_name": "萃",
       "changed_hexagram_id": 45,
+      "biangua_full_name": "泽地萃",
       "yao_ci": "咸其股，执其随，往吝",
       "line_text": "咸其股，执其随，往吝",
       "market_judgement": "跟风上涨随波逐流，操作难获利 ，自身无主见，一味跟风旁人、小道消息、杂毛题材，盲从行动必有损耗遗憾\n简判：吝，跟风操作必亏",
@@ -6574,6 +6661,7 @@
       "biangua": "蹇",
       "changed_hexagram_name": "蹇",
       "changed_hexagram_id": 39,
+      "biangua_full_name": "水山蹇",
       "yao_ci": "贞吉悔亡，憧憧往来，朋从尔思",
       "line_text": "贞吉悔亡，憧憧往来，朋从尔思",
       "market_judgement": "震荡反复资金共识，最终获利",
@@ -6609,6 +6697,7 @@
       "biangua": "小过",
       "changed_hexagram_name": "小过",
       "changed_hexagram_id": 62,
+      "biangua_full_name": "雷山小过",
       "yao_ci": "咸其脢，无悔",
       "line_text": "咸其脢，无悔",
       "market_judgement": "上涨至核心区坚定持仓，无悔",
@@ -6644,6 +6733,7 @@
       "biangua": "遁",
       "changed_hexagram_name": "遁",
       "changed_hexagram_id": 33,
+      "biangua_full_name": "天山遁",
       "yao_ci": "咸其辅颊舌",
       "line_text": "咸其辅颊舌",
       "market_judgement": "口舌行情光说不练，无实质上涨",
@@ -6679,6 +6769,7 @@
       "biangua": "大壮",
       "changed_hexagram_name": "大壮",
       "changed_hexagram_id": 34,
+      "biangua_full_name": "雷天大壮",
       "yao_ci": "浚恒，贞凶，无攸利",
       "line_text": "浚恒，贞凶，无攸利",
       "market_judgement": "深挖恒道过犹不及，凶险无利",
@@ -6714,6 +6805,7 @@
       "biangua": "小过",
       "changed_hexagram_name": "小过",
       "changed_hexagram_id": 62,
+      "biangua_full_name": "雷山小过",
       "yao_ci": "悔亡",
       "line_text": "悔亡",
       "market_judgement": "懊悔消散行情平稳，持仓无忧",
@@ -6749,6 +6841,7 @@
       "biangua": "解",
       "changed_hexagram_name": "解",
       "changed_hexagram_id": 40,
+      "biangua_full_name": "雷水解",
       "yao_ci": "不恒其德，或承之羞，贞吝",
       "line_text": "不恒其德，或承之羞，贞吝",
       "market_judgement": "走势不稳反复无常，操作有辱",
@@ -6784,6 +6877,7 @@
       "biangua": "升",
       "changed_hexagram_name": "升",
       "changed_hexagram_id": 46,
+      "biangua_full_name": "地风升",
       "yao_ci": "田无禽",
       "line_text": "田无禽",
       "market_judgement": "劳而无获空涨无利，不宜操作，有道理，虽然涨但不利操作",
@@ -6819,6 +6913,7 @@
       "biangua": "大过",
       "changed_hexagram_name": "大过",
       "changed_hexagram_id": 28,
+      "biangua_full_name": "泽风大过",
       "yao_ci": "恒其德，贞，妇人吉，夫子凶",
       "line_text": "恒其德，贞，妇人吉，夫子凶",
       "market_judgement": "持久稳定守仓吉，激进操作凶",
@@ -6854,6 +6949,7 @@
       "biangua": "鼎",
       "changed_hexagram_name": "鼎",
       "changed_hexagram_id": 50,
+      "biangua_full_name": "火风鼎",
       "yao_ci": "振恒，凶",
       "line_text": "振恒，凶",
       "market_judgement": "剧烈震荡动摇不定，凶险",
@@ -6889,6 +6985,7 @@
       "biangua": "同人",
       "changed_hexagram_name": "同人",
       "changed_hexagram_id": 13,
+      "biangua_full_name": "天火同人",
       "yao_ci": "遁尾，厉，勿用有攸往",
       "line_text": "遁尾，厉，勿用有攸往",
       "market_judgement": "逃跑落后危险，不宜再操作",
@@ -6903,8 +7000,7 @@
       "lower_alias": "山",
       "upper_symbol": "☰",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷌天火同人"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 195,
@@ -6925,6 +7021,7 @@
       "biangua": "姤",
       "changed_hexagram_name": "姤",
       "changed_hexagram_id": 44,
+      "biangua_full_name": "天风姤",
       "yao_ci": "执之用黄牛之革，莫之胜说",
       "line_text": "执之用黄牛之革，莫之胜说",
       "market_judgement": "牢牢套住难以脱身，坚守等待",
@@ -6939,8 +7036,7 @@
       "lower_alias": "山",
       "upper_symbol": "☰",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷫天风姤"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 196,
@@ -6961,6 +7057,7 @@
       "biangua": "否",
       "changed_hexagram_name": "否",
       "changed_hexagram_id": 12,
+      "biangua_full_name": "天地否",
       "yao_ci": "系遁，有疾厉，畜臣妾吉",
       "line_text": "系遁，有疾厉，畜臣妾吉",
       "market_judgement": "牵绊难退带病下跌，轻仓避险",
@@ -6975,8 +7072,7 @@
       "lower_alias": "山",
       "upper_symbol": "☰",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷋天地否"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 197,
@@ -6997,6 +7093,7 @@
       "biangua": "渐",
       "changed_hexagram_name": "渐",
       "changed_hexagram_id": 53,
+      "biangua_full_name": "风山渐",
       "yao_ci": "好遁，君子吉，小人否",
       "line_text": "好遁，君子吉，小人否",
       "market_judgement": "果断离场君子获利，散户被套",
@@ -7011,8 +7108,7 @@
       "lower_alias": "山",
       "upper_symbol": "☰",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷴风山渐"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 198,
@@ -7033,6 +7129,7 @@
       "biangua": "旅",
       "changed_hexagram_name": "旅",
       "changed_hexagram_id": 56,
+      "biangua_full_name": "火山旅",
       "yao_ci": "嘉遁，贞吉",
       "line_text": "嘉遁，贞吉",
       "market_judgement": "完美撤退落袋为安，吉利",
@@ -7047,8 +7144,7 @@
       "lower_alias": "山",
       "upper_symbol": "☰",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷷火山旅"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 199,
@@ -7069,6 +7165,7 @@
       "biangua": "咸",
       "changed_hexagram_name": "咸",
       "changed_hexagram_id": 31,
+      "biangua_full_name": "泽山咸",
       "yao_ci": "肥遁，无不利",
       "line_text": "肥遁，无不利",
       "market_judgement": "全身而退满载而归，无往不利",
@@ -7083,8 +7180,7 @@
       "lower_alias": "山",
       "upper_symbol": "☰",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷞泽山咸"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 200,
@@ -7105,6 +7201,7 @@
       "biangua": "恒",
       "changed_hexagram_name": "恒",
       "changed_hexagram_id": 32,
+      "biangua_full_name": "雷风恒",
       "yao_ci": "壮于趾，征凶，有孚",
       "line_text": "壮于趾，征凶，有孚",
       "market_judgement": "底部逞强贸然进攻凶险，需有信心",
@@ -7119,8 +7216,7 @@
       "lower_alias": "天",
       "upper_symbol": "☳",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷟雷风恒"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 201,
@@ -7141,10 +7237,11 @@
       "biangua": "丰",
       "changed_hexagram_name": "丰",
       "changed_hexagram_id": 55,
+      "biangua_full_name": "雷火丰",
       "yao_ci": "贞吉",
       "line_text": "贞吉",
-      "market_judgement": "坚守仓位吉利",
-      "market_summary": "坚守仓位吉利",
+      "market_judgement": "多头环境有向上动能但不是疯狂暴涨，适合拿住优质持仓，慢涨优于急拉；不靠猛冲获利，靠持仓守正得收益\n- 风险：大壮整体易躁，此爻戒 “过壮”，**忌追高、忌满仓猛干**，市场容易出现冲高回撤洗盘。",
+      "market_summary": "多头环境有向上动能但不是疯狂暴涨，适合拿住优质持仓，慢涨优于急拉；不靠猛冲获利，靠持仓守正得收益\n- 风险：大壮整体易躁，此爻戒 “过壮”，**忌追高、忌满仓猛干**，市场容易出现冲高回撤洗盘。",
       "note": "",
       "action_signal": "持有",
       "upper": 4,
@@ -7155,8 +7252,7 @@
       "lower_alias": "天",
       "upper_symbol": "☳",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷶雷火丰"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 202,
@@ -7177,6 +7273,7 @@
       "biangua": "归妹",
       "changed_hexagram_name": "归妹",
       "changed_hexagram_id": 54,
+      "biangua_full_name": "雷泽归妹",
       "yao_ci": "小人用壮，君子用罔，贞厉；羝羊触藩，羸其角",
       "line_text": "小人用壮，君子用罔，贞厉；羝羊触藩，羸其角",
       "market_judgement": "盲目逞强必碰壁，君子智取谨防风险",
@@ -7191,8 +7288,7 @@
       "lower_alias": "天",
       "upper_symbol": "☳",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷵雷泽归妹"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 203,
@@ -7213,6 +7309,7 @@
       "biangua": "泰",
       "changed_hexagram_name": "泰",
       "changed_hexagram_id": 11,
+      "biangua_full_name": "地天泰",
       "yao_ci": "贞吉悔亡，藩决不羸，壮于大舆之輹",
       "line_text": "贞吉悔亡，藩决不羸，壮于大舆之輹",
       "market_judgement": "突破阻力行情大开，吉利",
@@ -7227,8 +7324,7 @@
       "lower_alias": "天",
       "upper_symbol": "☳",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷊地天泰"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 204,
@@ -7249,6 +7345,7 @@
       "biangua": "夬",
       "changed_hexagram_name": "夬",
       "changed_hexagram_id": 43,
+      "biangua_full_name": "泽天夬",
       "yao_ci": "丧羊于易，无悔",
       "line_text": "丧羊于易，无悔",
       "market_judgement": "高位回调丢失利润，但无悔",
@@ -7263,8 +7360,7 @@
       "lower_alias": "天",
       "upper_symbol": "☳",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷪泽天夬"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 205,
@@ -7285,6 +7381,7 @@
       "biangua": "大有",
       "changed_hexagram_name": "大有",
       "changed_hexagram_id": 14,
+      "biangua_full_name": "火天大有",
       "yao_ci": "羝羊触藩，不能退，不能遂，无攸利，艰则吉",
       "line_text": "羝羊触藩，不能退，不能遂，无攸利，艰则吉",
       "market_judgement": "进退两难无利可图，熬过艰难则吉",
@@ -7299,8 +7396,7 @@
       "lower_alias": "天",
       "upper_symbol": "☳",
       "lower_symbol": "☰",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷍火天大有"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 206,
@@ -7321,6 +7417,7 @@
       "biangua": "噬嗑",
       "changed_hexagram_name": "噬嗑",
       "changed_hexagram_id": 21,
+      "biangua_full_name": "火雷噬嗑",
       "yao_ci": "晋如摧如，贞吉；罔孚，裕无咎",
       "line_text": "晋如摧如，贞吉；罔孚，裕无咎",
       "market_judgement": "上涨受阻坚守则吉，放宽心态无咎",
@@ -7335,8 +7432,7 @@
       "lower_alias": "地",
       "upper_symbol": "☲",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷔火雷噬嗑"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 207,
@@ -7357,6 +7453,7 @@
       "biangua": "未济",
       "changed_hexagram_name": "未济",
       "changed_hexagram_id": 64,
+      "biangua_full_name": "火水未济",
       "yao_ci": "晋如愁如，贞吉；受兹介福，于其王母",
       "line_text": "晋如愁如，贞吉；受兹介福，于其王母",
       "market_judgement": "上涨带愁坚守终获大利",
@@ -7371,8 +7468,7 @@
       "lower_alias": "地",
       "upper_symbol": "☲",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷿火水未济"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 208,
@@ -7393,6 +7489,7 @@
       "biangua": "旅",
       "changed_hexagram_name": "旅",
       "changed_hexagram_id": 56,
+      "biangua_full_name": "火山旅",
       "yao_ci": "众允，悔亡",
       "line_text": "众允，悔亡",
       "market_judgement": "众人认可懊悔消散，继续上涨",
@@ -7407,8 +7504,7 @@
       "lower_alias": "地",
       "upper_symbol": "☲",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷷火山旅"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 209,
@@ -7429,6 +7525,7 @@
       "biangua": "剥",
       "changed_hexagram_name": "剥",
       "changed_hexagram_id": 23,
+      "biangua_full_name": "山地剥",
       "yao_ci": "晋如鼫鼠，贞厉",
       "line_text": "晋如鼫鼠，贞厉",
       "market_judgement": "上涨如硕鼠贪得无厌，谨防风险",
@@ -7443,8 +7540,7 @@
       "lower_alias": "地",
       "upper_symbol": "☲",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷖山地剥"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 210,
@@ -7465,6 +7561,7 @@
       "biangua": "否",
       "changed_hexagram_name": "否",
       "changed_hexagram_id": 12,
+      "biangua_full_name": "天地否",
       "yao_ci": "悔亡，失得勿恤，往吉，无不利",
       "line_text": "悔亡，失得勿恤，往吉，无不利",
       "market_judgement": "懊悔消散不计得失，继续上涨大吉",
@@ -7479,8 +7576,7 @@
       "lower_alias": "地",
       "upper_symbol": "☲",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷋天地否"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 211,
@@ -7501,6 +7597,7 @@
       "biangua": "豫",
       "changed_hexagram_name": "豫",
       "changed_hexagram_id": 16,
+      "biangua_full_name": "雷地豫",
       "yao_ci": "晋其角，维用伐邑，厉吉无咎，贞吝",
       "line_text": "晋其角，维用伐邑，厉吉无咎，贞吝",
       "market_judgement": "上涨至顶强攻有险，谨慎则吉",
@@ -7515,8 +7612,7 @@
       "lower_alias": "地",
       "upper_symbol": "☲",
       "lower_symbol": "☷",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷏雷地豫"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 212,
@@ -7537,6 +7633,7 @@
       "biangua": "谦",
       "changed_hexagram_name": "谦",
       "changed_hexagram_id": 15,
+      "biangua_full_name": "地山谦",
       "yao_ci": "明夷于飞，垂其翼；君子于行，三日不食，有攸往，主人有言",
       "line_text": "明夷于飞，垂其翼；君子于行，三日不食，有攸往，主人有言",
       "market_judgement": "下跌初期仓皇出逃，亏损离场",
@@ -7572,6 +7669,7 @@
       "biangua": "泰",
       "changed_hexagram_name": "泰",
       "changed_hexagram_id": 11,
+      "biangua_full_name": "地天泰",
       "yao_ci": "明夷，夷于左股，用拯马壮，吉",
       "line_text": "明夷，夷于左股，用拯马壮，吉",
       "market_judgement": "下跌受伤及时救场，减仓避险则吉",
@@ -7607,10 +7705,11 @@
       "biangua": "复",
       "changed_hexagram_name": "复",
       "changed_hexagram_id": 24,
+      "biangua_full_name": "地雷复",
       "yao_ci": "明夷于南狩，得其大首，不可疾贞",
       "line_text": "明夷于南狩，得其大首，不可疾贞",
-      "market_judgement": "南方寻机抓住龙头，不可急进",
-      "market_summary": "南方寻机抓住龙头，不可急进",
+      "market_judgement": "有强势主线 / 错杀龙头走出修复，可抓核心标的（得其大首），不可疾，不宜重仓猛打，节奏要慢，分批进退",
+      "market_summary": "有强势主线 / 错杀龙头走出修复，可抓核心标的（得其大首），不可疾，不宜重仓猛打，节奏要慢，分批进退",
       "note": "",
       "action_signal": "新开仓",
       "upper": 8,
@@ -7642,6 +7741,7 @@
       "biangua": "丰",
       "changed_hexagram_name": "丰",
       "changed_hexagram_id": 55,
+      "biangua_full_name": "雷火丰",
       "yao_ci": "入于左腹，获明夷之心，于出门庭",
       "line_text": "入于左腹，获明夷之心，于出门庭",
       "market_judgement": "深入腹地看清下跌本质，离场为上",
@@ -7677,6 +7777,7 @@
       "biangua": "既济",
       "changed_hexagram_name": "既济",
       "changed_hexagram_id": 63,
+      "biangua_full_name": "水火既济",
       "yao_ci": "箕子之明夷，利贞",
       "line_text": "箕子之明夷，利贞",
       "market_judgement": "深藏不露坚守正道，终会获利",
@@ -7712,6 +7813,7 @@
       "biangua": "贲",
       "changed_hexagram_name": "贲",
       "changed_hexagram_id": 22,
+      "biangua_full_name": "山火贲",
       "yao_ci": "不明晦，初登于天，后入于地",
       "line_text": "不明晦，初登于天，后入于地",
       "market_judgement": "先涨后跌从天堂到地狱，凶险",
@@ -7747,6 +7849,7 @@
       "biangua": "渐",
       "changed_hexagram_name": "渐",
       "changed_hexagram_id": 53,
+      "biangua_full_name": "风山渐",
       "yao_ci": "闲有家，悔亡",
       "line_text": "闲有家，悔亡",
       "market_judgement": "防守严密仓位稳固，懊悔消散",
@@ -7761,8 +7864,7 @@
       "lower_alias": "火",
       "upper_symbol": "☴",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷴风山渐"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 219,
@@ -7783,6 +7885,7 @@
       "biangua": "小畜",
       "changed_hexagram_name": "小畜",
       "changed_hexagram_id": 9,
+      "biangua_full_name": "风天小畜",
       "yao_ci": "无攸遂，在中馈，贞吉",
       "line_text": "无攸遂，在中馈，贞吉",
       "market_judgement": "不激进操作守好中军，吉利",
@@ -7797,8 +7900,7 @@
       "lower_alias": "火",
       "upper_symbol": "☴",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷈风天小畜"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 220,
@@ -7819,6 +7921,7 @@
       "biangua": "益",
       "changed_hexagram_name": "益",
       "changed_hexagram_id": 42,
+      "biangua_full_name": "风雷益",
       "yao_ci": "家人嗃嗃，悔厉吉；妇子嘻嘻，终吝",
       "line_text": "家人嗃嗃，悔厉吉；妇子嘻嘻，终吝",
       "market_judgement": "严格风控虽苦但吉，放松警惕终亏",
@@ -7833,8 +7936,7 @@
       "lower_alias": "火",
       "upper_symbol": "☴",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷩风雷益"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 221,
@@ -7855,6 +7957,7 @@
       "biangua": "同人",
       "changed_hexagram_name": "同人",
       "changed_hexagram_id": 13,
+      "biangua_full_name": "天火同人",
       "yao_ci": "富家，大吉",
       "line_text": "富家，大吉",
       "market_judgement": "资产增值财富增长，大吉",
@@ -7869,8 +7972,7 @@
       "lower_alias": "火",
       "upper_symbol": "☴",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷌天火同人"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 222,
@@ -7891,6 +7993,7 @@
       "biangua": "贲",
       "changed_hexagram_name": "贲",
       "changed_hexagram_id": 22,
+      "biangua_full_name": "山火贲",
       "yao_ci": "王假有家，勿恤，吉",
       "line_text": "王假有家，勿恤，吉",
       "market_judgement": "主力入驻无需担忧，吉利",
@@ -7905,8 +8008,7 @@
       "lower_alias": "火",
       "upper_symbol": "☴",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷕山火贲"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 223,
@@ -7927,6 +8029,7 @@
       "biangua": "既济",
       "changed_hexagram_name": "既济",
       "changed_hexagram_id": 63,
+      "biangua_full_name": "水火既济",
       "yao_ci": "有孚威如，终吉",
       "line_text": "有孚威如，终吉",
       "market_judgement": "有信心有威严，最终吉利",
@@ -7941,8 +8044,7 @@
       "lower_alias": "火",
       "upper_symbol": "☴",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷾水火既济"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 224,
@@ -7963,6 +8065,7 @@
       "biangua": "未济",
       "changed_hexagram_name": "未济",
       "changed_hexagram_id": 64,
+      "biangua_full_name": "火水未济",
       "yao_ci": "悔亡，丧马勿逐自复，见恶人无咎",
       "line_text": "悔亡，丧马勿逐自复，见恶人无咎",
       "market_judgement": "懊悔消散丢的筹码会回来，遇利空无咎",
@@ -7977,8 +8080,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☲",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷿火水未济"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 225,
@@ -7999,6 +8101,7 @@
       "biangua": "噬嗑",
       "changed_hexagram_name": "噬嗑",
       "changed_hexagram_id": 21,
+      "biangua_full_name": "火雷噬嗑",
       "yao_ci": "遇主于巷，无咎",
       "line_text": "遇主于巷，无咎",
       "market_judgement": "夹缝中遇主线，轻仓操作无咎",
@@ -8013,8 +8116,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☲",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷔火雷噬嗑"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 226,
@@ -8035,6 +8137,7 @@
       "biangua": "大有",
       "changed_hexagram_name": "大有",
       "changed_hexagram_id": 14,
+      "biangua_full_name": "火天大有",
       "yao_ci": "见舆曳，其牛掣，其人天且劓，无初有终",
       "line_text": "见舆曳，其牛掣，其人天且劓，无初有终",
       "market_judgement": "走势纠结开始不顺终有结果",
@@ -8049,8 +8152,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☲",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷍火天大有"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 227,
@@ -8071,6 +8173,7 @@
       "biangua": "损",
       "changed_hexagram_name": "损",
       "changed_hexagram_id": 41,
+      "biangua_full_name": "山泽损",
       "yao_ci": "睽孤，遇元夫，交孚，厉无咎",
       "line_text": "睽孤，遇元夫，交孚，厉无咎",
       "market_judgement": "孤立无援时遇主力互信合作，虽险无咎",
@@ -8085,8 +8188,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☲",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷨山泽损"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 228,
@@ -8107,6 +8209,7 @@
       "biangua": "履",
       "changed_hexagram_name": "履",
       "changed_hexagram_id": 10,
+      "biangua_full_name": "天泽履",
       "yao_ci": "悔亡，厥宗噬肤，往何咎",
       "line_text": "悔亡，厥宗噬肤，往何咎",
       "market_judgement": "懊悔消散主线吃肉，跟进无咎",
@@ -8121,8 +8224,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☲",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷉天泽履"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 229,
@@ -8143,6 +8245,7 @@
       "biangua": "归妹",
       "changed_hexagram_name": "归妹",
       "changed_hexagram_id": 54,
+      "biangua_full_name": "雷泽归妹",
       "yao_ci": "睽孤，见豕负涂，载鬼一车，先张之弧，后说之弧，匪寇婚媾，往遇雨则吉",
       "line_text": "睽孤，见豕负涂，载鬼一车，先张之弧，后说之弧，匪寇婚媾，往遇雨则吉",
       "market_judgement": "虚惊一场看似凶险实为机会，跟进则吉",
@@ -8157,8 +8260,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☲",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷵雷泽归妹"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 230,
@@ -8179,6 +8281,7 @@
       "biangua": "既济",
       "changed_hexagram_name": "既济",
       "changed_hexagram_id": 63,
+      "biangua_full_name": "水火既济",
       "yao_ci": "往蹇，来誉",
       "line_text": "往蹇，来誉",
       "market_judgement": "前进遇阻退守获誉，减仓为上",
@@ -8193,8 +8296,7 @@
       "lower_alias": "山",
       "upper_symbol": "☵",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷾水火既济"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 231,
@@ -8215,6 +8317,7 @@
       "biangua": "井",
       "changed_hexagram_name": "井",
       "changed_hexagram_id": 48,
+      "biangua_full_name": "水风井",
       "yao_ci": "王臣蹇蹇，匪躬之故",
       "line_text": "王臣蹇蹇，匪躬之故",
       "market_judgement": "艰难重重非自身原因，坚守岗位",
@@ -8229,8 +8332,7 @@
       "lower_alias": "山",
       "upper_symbol": "☵",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷯水风井"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 232,
@@ -8251,6 +8353,7 @@
       "biangua": "比",
       "changed_hexagram_name": "比",
       "changed_hexagram_id": 8,
+      "biangua_full_name": "水地比",
       "yao_ci": "往蹇，来反",
       "line_text": "往蹇，来反",
       "market_judgement": "进攻遇阻回撤休整，退守安全",
@@ -8265,8 +8368,7 @@
       "lower_alias": "山",
       "upper_symbol": "☵",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷇水地比"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 233,
@@ -8287,6 +8389,7 @@
       "biangua": "咸",
       "changed_hexagram_name": "咸",
       "changed_hexagram_id": 31,
+      "biangua_full_name": "泽山咸",
       "yao_ci": "往蹇，来连",
       "line_text": "往蹇，来连",
       "market_judgement": "前行艰难回来联动，抱团取暖",
@@ -8301,8 +8404,7 @@
       "lower_alias": "山",
       "upper_symbol": "☵",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷞泽山咸"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 234,
@@ -8323,6 +8425,7 @@
       "biangua": "谦",
       "changed_hexagram_name": "谦",
       "changed_hexagram_id": 15,
+      "biangua_full_name": "地山谦",
       "yao_ci": "大蹇，朋来",
       "line_text": "大蹇，朋来",
       "market_judgement": "极度艰难援军到来，转机出现",
@@ -8337,8 +8440,7 @@
       "lower_alias": "山",
       "upper_symbol": "☵",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷎地山谦"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 235,
@@ -8359,6 +8461,7 @@
       "biangua": "渐",
       "changed_hexagram_name": "渐",
       "changed_hexagram_id": 53,
+      "biangua_full_name": "风山渐",
       "yao_ci": "往蹇，来硕，吉，利见大人",
       "line_text": "往蹇，来硕，吉，利见大人",
       "market_judgement": "前行艰难回归硕果，吉利跟随主力",
@@ -8373,8 +8476,7 @@
       "lower_alias": "山",
       "upper_symbol": "☵",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷴风山渐"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 236,
@@ -8395,6 +8497,7 @@
       "biangua": "归妹",
       "changed_hexagram_name": "归妹",
       "changed_hexagram_id": 54,
+      "biangua_full_name": "雷泽归妹",
       "yao_ci": "无咎",
       "line_text": "无咎",
       "market_judgement": "风险解除无灾无难",
@@ -8409,8 +8512,7 @@
       "lower_alias": "水",
       "upper_symbol": "☳",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷵雷泽归妹"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 237,
@@ -8431,6 +8533,7 @@
       "biangua": "豫",
       "changed_hexagram_name": "豫",
       "changed_hexagram_id": 16,
+      "biangua_full_name": "雷地豫",
       "yao_ci": "田获三狐，得黄矢，贞吉",
       "line_text": "田获三狐，得黄矢，贞吉",
       "market_judgement": "捕获多个机会获利丰厚，吉利",
@@ -8445,8 +8548,7 @@
       "lower_alias": "水",
       "upper_symbol": "☳",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷏雷地豫"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 238,
@@ -8467,6 +8569,7 @@
       "biangua": "恒",
       "changed_hexagram_name": "恒",
       "changed_hexagram_id": 32,
+      "biangua_full_name": "雷风恒",
       "yao_ci": "负且乘，致寇至，贞吝",
       "line_text": "负且乘，致寇至，贞吝",
       "market_judgement": "持仓过重招贼招至大跌，谨防风险",
@@ -8481,8 +8584,7 @@
       "lower_alias": "水",
       "upper_symbol": "☳",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷟雷风恒"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 239,
@@ -8503,6 +8605,7 @@
       "biangua": "师",
       "changed_hexagram_name": "师",
       "changed_hexagram_id": 7,
+      "biangua_full_name": "地水师",
       "yao_ci": "解而拇，朋至斯孚",
       "line_text": "解而拇，朋至斯孚",
       "market_judgement": "解除束缚资金到来，信任建立",
@@ -8517,8 +8620,7 @@
       "lower_alias": "水",
       "upper_symbol": "☳",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷆地水师"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 240,
@@ -8539,6 +8641,7 @@
       "biangua": "困",
       "changed_hexagram_name": "困",
       "changed_hexagram_id": 47,
+      "biangua_full_name": "泽水困",
       "yao_ci": "君子维有解，吉，有孚于小人",
       "line_text": "君子维有解，吉，有孚于小人",
       "market_judgement": "君子解套获利，散户也信服",
@@ -8553,8 +8656,7 @@
       "lower_alias": "水",
       "upper_symbol": "☳",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷮泽水困"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 241,
@@ -8575,6 +8677,7 @@
       "biangua": "未济",
       "changed_hexagram_name": "未济",
       "changed_hexagram_id": 64,
+      "biangua_full_name": "火水未济",
       "yao_ci": "公用射隼于高墉之上，获之，无不利",
       "line_text": "公用射隼于高墉之上，获之，无不利",
       "market_judgement": "清除高位隐患一举成功，无往不利",
@@ -8589,8 +8692,7 @@
       "lower_alias": "水",
       "upper_symbol": "☳",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷿火水未济"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 242,
@@ -8611,6 +8713,7 @@
       "biangua": "蒙",
       "changed_hexagram_name": "蒙",
       "changed_hexagram_id": 4,
+      "biangua_full_name": "山水蒙",
       "yao_ci": "已事遄往，无咎，酌损之",
       "line_text": "已事遄往，无咎，酌损之",
       "market_judgement": "完事速去酌情减仓，无咎",
@@ -8625,8 +8728,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☶",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷃山水蒙"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 243,
@@ -8647,6 +8749,7 @@
       "biangua": "颐",
       "changed_hexagram_name": "颐",
       "changed_hexagram_id": 27,
+      "biangua_full_name": "山雷颐",
       "yao_ci": "利贞，征凶，弗损益之",
       "line_text": "利贞，征凶，弗损益之",
       "market_judgement": "守仓有利进攻则凶，不减反增",
@@ -8661,8 +8764,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☶",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷚山雷颐"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 244,
@@ -8683,6 +8785,7 @@
       "biangua": "大畜",
       "changed_hexagram_name": "大畜",
       "changed_hexagram_id": 26,
+      "biangua_full_name": "山天大畜",
       "yao_ci": "三人行则损一人，一人行则得其友",
       "line_text": "三人行则损一人，一人行则得其友",
       "market_judgement": "分散投资亏损，集中获利",
@@ -8697,8 +8800,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☶",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷙山天大畜"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 245,
@@ -8719,6 +8821,7 @@
       "biangua": "睽",
       "changed_hexagram_name": "睽",
       "changed_hexagram_id": 38,
+      "biangua_full_name": "火泽睽",
       "yao_ci": "损其疾，使遄有喜，无咎",
       "line_text": "损其疾，使遄有喜，无咎",
       "market_judgement": "减少弊病快速好转，无咎",
@@ -8733,8 +8836,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☶",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷥火泽睽"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 246,
@@ -8755,6 +8857,7 @@
       "biangua": "中孚",
       "changed_hexagram_name": "中孚",
       "changed_hexagram_id": 61,
+      "biangua_full_name": "风泽中孚",
       "yao_ci": "或益之十朋之龟，弗克违，元吉",
       "line_text": "或益之十朋之龟，弗克违，元吉",
       "market_judgement": "意外大赚无法拒绝，大吉",
@@ -8769,8 +8872,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☶",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷼风泽中孚"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 247,
@@ -8791,6 +8893,7 @@
       "biangua": "临",
       "changed_hexagram_name": "临",
       "changed_hexagram_id": 19,
+      "biangua_full_name": "地泽临",
       "yao_ci": "弗损益之，无咎，贞吉，利有攸往，得臣无家",
       "line_text": "弗损益之，无咎，贞吉，利有攸往，得臣无家",
       "market_judgement": "不减反增无咎大吉，获利丰厚",
@@ -8805,8 +8908,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☶",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷒地泽临"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 248,
@@ -8827,6 +8929,7 @@
       "biangua": "观",
       "changed_hexagram_name": "观",
       "changed_hexagram_id": 20,
+      "biangua_full_name": "风地观",
       "yao_ci": "利用为大作，元吉，无咎",
       "line_text": "利用为大作，元吉，无咎",
       "market_judgement": "适合大干一场，大吉无咎",
@@ -8841,8 +8944,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☴",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷓风地观"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 249,
@@ -8863,6 +8965,7 @@
       "biangua": "中孚",
       "changed_hexagram_name": "中孚",
       "changed_hexagram_id": 61,
+      "biangua_full_name": "风泽中孚",
       "yao_ci": "或益之十朋之龟，弗克违，永贞吉；王用享于帝，吉",
       "line_text": "或益之十朋之龟，弗克违，永贞吉；王用享于帝，吉",
       "market_judgement": "意外增益持久吉利",
@@ -8877,8 +8980,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☴",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷼风泽中孚"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 250,
@@ -8899,6 +9001,7 @@
       "biangua": "家人",
       "changed_hexagram_name": "家人",
       "changed_hexagram_id": 37,
+      "biangua_full_name": "风火家人",
       "yao_ci": "益之用凶事，无咎；有孚中行，告公用圭",
       "line_text": "益之用凶事，无咎；有孚中行，告公用圭",
       "market_judgement": "利空出尽是利好，无咎",
@@ -8913,8 +9016,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☴",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷤风火家人"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 251,
@@ -8935,6 +9037,7 @@
       "biangua": "无妄",
       "changed_hexagram_name": "无妄",
       "changed_hexagram_id": 25,
+      "biangua_full_name": "天雷无妄",
       "yao_ci": "中行告公从，利用为依迁国",
       "line_text": "中行告公从，利用为依迁国",
       "market_judgement": "顺势而为跟随主力，调整仓位",
@@ -8949,8 +9052,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☴",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷘天雷无妄"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 252,
@@ -8971,6 +9073,7 @@
       "biangua": "颐",
       "changed_hexagram_name": "颐",
       "changed_hexagram_id": 27,
+      "biangua_full_name": "山雷颐",
       "yao_ci": "有孚惠心，勿问元吉；有孚惠我德",
       "line_text": "有孚惠心，勿问元吉；有孚惠我德",
       "market_judgement": "诚心施惠大吉大利，回报丰厚",
@@ -8985,8 +9088,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☴",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷚山雷颐"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 253,
@@ -9007,6 +9109,7 @@
       "biangua": "屯",
       "changed_hexagram_name": "屯",
       "changed_hexagram_id": 3,
+      "biangua_full_name": "水雷屯",
       "yao_ci": "莫益之，或击之，立心勿恒，凶",
       "line_text": "莫益之，或击之，立心勿恒，凶",
       "market_judgement": "无人相助反被攻击，心态不稳凶险",
@@ -9021,8 +9124,7 @@
       "lower_alias": "雷",
       "upper_symbol": "☴",
       "lower_symbol": "☳",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷂水雷屯"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 254,
@@ -9043,6 +9145,7 @@
       "biangua": "大过",
       "changed_hexagram_name": "大过",
       "changed_hexagram_id": 28,
+      "biangua_full_name": "泽风大过",
       "yao_ci": "壮于前趾，往不胜为咎",
       "line_text": "壮于前趾，往不胜为咎",
       "market_judgement": "刚起势就心气浮躁，小资金盲目冲顶，力量单薄硬闯压力位简判：吝，贸然重仓必吃亏",
@@ -9078,6 +9181,7 @@
       "biangua": "革",
       "changed_hexagram_name": "革",
       "changed_hexagram_id": 49,
+      "biangua_full_name": "泽火革",
       "yao_ci": "惕号，莫夜有戎，勿恤",
       "line_text": "惕号，莫夜有戎，勿恤",
       "market_judgement": "常怀警惕，夜间突发利空、盘中急杀洗盘，有备无患简判：平吉，持底仓，设好止损",
@@ -9113,6 +9217,7 @@
       "biangua": "兑",
       "changed_hexagram_name": "兑",
       "changed_hexagram_id": 58,
+      "biangua_full_name": "兑为泽",
       "yao_ci": "壮于頄，有凶；君子夬夬独行，遇雨若濡，有愠无咎",
       "line_text": "壮于頄，有凶；君子夬夬独行，遇雨若濡，有愠无咎",
       "market_judgement": "一眼看多不加收敛，容易遭主力洗盘；独自坚守逻辑虽遇震荡回撤，守正可化解危机简判：先凶后平，忌满仓张扬，坚守逻辑可解套",
@@ -9148,6 +9253,7 @@
       "biangua": "需",
       "changed_hexagram_name": "需",
       "changed_hexagram_id": 5,
+      "biangua_full_name": "水天需",
       "yao_ci": "臀无肤，其行次且；牵羊悔亡，闻言不信",
       "line_text": "臀无肤，其行次且；牵羊悔亡，闻言不信",
       "market_judgement": "走势蹒跚跟随主力则无悔，不听劝告则亏",
@@ -9183,6 +9289,7 @@
       "biangua": "大壮",
       "changed_hexagram_name": "大壮",
       "changed_hexagram_id": 34,
+      "biangua_full_name": "雷天大壮",
       "yao_ci": "苋陆夬夬，中行无咎",
       "line_text": "苋陆夬夬，中行无咎",
       "market_judgement": "果断决绝中道而行，无咎 中正决断，温和清理浮筹，不极端追涨杀跌，进退有度，最佳操作区间",
@@ -9218,6 +9325,7 @@
       "biangua": "乾",
       "changed_hexagram_name": "乾",
       "changed_hexagram_id": 1,
+      "biangua_full_name": "乾为天",
       "yao_ci": "无号，终有凶",
       "line_text": "无号，终有凶",
       "market_judgement": "无力号叫最终凶险，大跌将至",
@@ -9253,6 +9361,7 @@
       "biangua": "乾",
       "changed_hexagram_name": "乾",
       "changed_hexagram_id": 1,
+      "biangua_full_name": "乾为天",
       "yao_ci": "系于金柅，贞吉；有攸往，见凶，羸豕孚蹢躅",
       "line_text": "系于金柅，贞吉；有攸往，见凶，羸豕孚蹢躅",
       "market_judgement": "刹车止跌守仓吉，前进则凶弱势震荡",
@@ -9288,6 +9397,7 @@
       "biangua": "遁",
       "changed_hexagram_name": "遁",
       "changed_hexagram_id": 33,
+      "biangua_full_name": "天山遁",
       "yao_ci": "包有鱼，无咎，不利宾",
       "line_text": "包有鱼，无咎，不利宾",
       "market_judgement": "内部有肉持仓无咎，外人勿入",
@@ -9323,6 +9433,7 @@
       "biangua": "讼",
       "changed_hexagram_name": "讼",
       "changed_hexagram_id": 6,
+      "biangua_full_name": "天水讼",
       "yao_ci": "臀无肤，其行次且，厉，无大咎",
       "line_text": "臀无肤，其行次且，厉，无大咎",
       "market_judgement": "走势蹒跚有风险但无大灾",
@@ -9358,6 +9469,7 @@
       "biangua": "巽",
       "changed_hexagram_name": "巽",
       "changed_hexagram_id": 57,
+      "biangua_full_name": "巽为风",
       "yao_ci": "包无鱼，起凶",
       "line_text": "包无鱼，起凶",
       "market_judgement": "内无实质空涨凶险",
@@ -9393,6 +9505,7 @@
       "biangua": "鼎",
       "changed_hexagram_name": "鼎",
       "changed_hexagram_id": 50,
+      "biangua_full_name": "火风鼎",
       "yao_ci": "以杞包瓜，含章，有陨自天",
       "line_text": "以杞包瓜，含章，有陨自天",
       "market_judgement": "高位包裹内含华美，意外下跌",
@@ -9428,6 +9541,7 @@
       "biangua": "大过",
       "changed_hexagram_name": "大过",
       "changed_hexagram_id": 28,
+      "biangua_full_name": "泽风大过",
       "yao_ci": "姤其角，吝，无咎",
       "line_text": "姤其角，吝，无咎",
       "market_judgement": "上涨至角小有遗憾，无大咎",
@@ -9463,6 +9577,7 @@
       "biangua": "随",
       "changed_hexagram_name": "随",
       "changed_hexagram_id": 17,
+      "biangua_full_name": "泽雷随",
       "yao_ci": "有孚不终，乃乱乃萃；若号，一握为笑，勿恤，往无咎",
       "line_text": "有孚不终，乃乱乃萃；若号，一握为笑，勿恤，往无咎",
       "market_judgement": "信心不足混乱聚集，最终一笑前往无咎",
@@ -9498,6 +9613,7 @@
       "biangua": "困",
       "changed_hexagram_name": "困",
       "changed_hexagram_id": 47,
+      "biangua_full_name": "泽水困",
       "yao_ci": "引吉，无咎，孚乃利用禴",
       "line_text": "引吉，无咎，孚乃利用禴",
       "market_judgement": "引导上涨吉利，薄祭也获利",
@@ -9533,6 +9649,7 @@
       "biangua": "咸",
       "changed_hexagram_name": "咸",
       "changed_hexagram_id": 31,
+      "biangua_full_name": "泽山咸",
       "yao_ci": "萃如嗟如，无攸利，往无咎，小吝",
       "line_text": "萃如嗟如，无攸利，往无咎，小吝",
       "market_judgement": "聚集叹息无利可图，前往无咎有小憾",
@@ -9568,6 +9685,7 @@
       "biangua": "比",
       "changed_hexagram_name": "比",
       "changed_hexagram_id": 8,
+      "biangua_full_name": "水地比",
       "yao_ci": "大吉，无咎",
       "line_text": "大吉，无咎",
       "market_judgement": "大吉大利无灾无咎",
@@ -9603,6 +9721,7 @@
       "biangua": "豫",
       "changed_hexagram_name": "豫",
       "changed_hexagram_id": 16,
+      "biangua_full_name": "雷地豫",
       "yao_ci": "萃有位，无咎，匪孚；元永贞，悔亡",
       "line_text": "萃有位，无咎，匪孚；元永贞，悔亡",
       "market_judgement": "聚集有位无咎但未全信，持久坚守懊悔消",
@@ -9638,6 +9757,7 @@
       "biangua": "否",
       "changed_hexagram_name": "否",
       "changed_hexagram_id": 12,
+      "biangua_full_name": "天地否",
       "yao_ci": "赍咨涕洟，无咎",
       "line_text": "赍咨涕洟，无咎",
       "market_judgement": "悲叹哭泣风险释放，无咎",
@@ -9673,6 +9793,7 @@
       "biangua": "泰",
       "changed_hexagram_name": "泰",
       "changed_hexagram_id": 11,
+      "biangua_full_name": "地天泰",
       "yao_ci": "允升，大吉",
       "line_text": "允升，大吉",
       "market_judgement": "阶段：底部反转启动、低位筹码筑底完毕\n行情简判：底部企稳，资金悄悄进场，小阳线持续推升，无大回撤；操作：轻仓布局最佳时机，拿得住就有波段收益，无套牢风险。",
@@ -9708,6 +9829,7 @@
       "biangua": "谦",
       "changed_hexagram_name": "谦",
       "changed_hexagram_id": 15,
+      "biangua_full_name": "地山谦",
       "yao_ci": "孚乃利用禴，无咎",
       "line_text": "孚乃利用禴，无咎",
       "market_judgement": "趋势确立，但量能温和，不会连续大阳线；基本面 / 政策逻辑扎实（孚 = 基本面可信），短暂回调不破坏上行通道；\n操作：持仓不动，回踩均线可加仓，不必频繁做 T。",
@@ -9743,6 +9865,7 @@
       "biangua": "师",
       "changed_hexagram_name": "师",
       "changed_hexagram_id": 7,
+      "biangua_full_name": "地水师",
       "yao_ci": "升虚邑",
       "line_text": "升虚邑",
       "market_judgement": "上方无密集套牢盘，拉升顺畅，涨幅放大、连阳增多；但虚邑中空，无强支撑，涨速快易短线透支；操作：持有吃主升，不新开重仓，冲高分批减仓降成本。",
@@ -9778,6 +9901,7 @@
       "biangua": "恒",
       "changed_hexagram_name": "恒",
       "changed_hexagram_id": 32,
+      "biangua_full_name": "雷风恒",
       "yao_ci": "王用亨于岐山，吉，无咎",
       "line_text": "王用亨于岐山，吉，无咎",
       "market_judgement": "段：上涨中期高位，机构 / 主力兑现、震荡横盘行情简判：趋势仍完好，但进入平台整理，涨跌互现，区间震荡为主，难创新高；有资金阶段性获利了结；操作：不追涨，高抛低吸做波段，底仓保留，浮盈落袋一部分。",
@@ -9813,6 +9937,7 @@
       "biangua": "井",
       "changed_hexagram_name": "井",
       "changed_hexagram_id": 48,
+      "biangua_full_name": "水风井",
       "yao_ci": "贞吉，升阶",
       "line_text": "贞吉，升阶",
       "market_judgement": "走势规整、趋势最强；贞 = 守正持有，忌频繁换股；操作：核心持仓阶段，以中长期均线为止盈，少操作，拿足主升利润。",
@@ -9848,6 +9973,7 @@
       "biangua": "蛊",
       "changed_hexagram_name": "蛊",
       "changed_hexagram_id": 18,
+      "biangua_full_name": "山风蛊",
       "yao_ci": "冥升，利于不息之贞",
       "line_text": "冥升，利于不息之贞",
       "market_judgement": "无量虚涨，看似还在爬升实则动能枯竭，随时大幅回调；冥 = 昏暗、盛极转衰；\n操作：只出不进，逐步清仓离场，仅剩极小底仓博弈余波，不可加仓。",
@@ -9883,6 +10009,7 @@
       "biangua": "兑",
       "changed_hexagram_name": "兑",
       "changed_hexagram_id": 58,
+      "biangua_full_name": "兑为泽",
       "yao_ci": "臀困于株木，入于幽谷，三岁不觌",
       "line_text": "臀困于株木，入于幽谷，三岁不觌",
       "market_judgement": "深度套牢长期不见天日",
@@ -9897,8 +10024,7 @@
       "lower_alias": "水",
       "upper_symbol": "☱",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷹兑为泽"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 279,
@@ -9919,10 +10045,11 @@
       "biangua": "萃",
       "changed_hexagram_name": "萃",
       "changed_hexagram_id": 45,
+      "biangua_full_name": "泽地萃",
       "yao_ci": "困于酒食，朱绂方来，利用享祀，征凶，无咎",
       "line_text": "困于酒食，朱绂方来，利用享祀，征凶，无咎",
-      "market_judgement": "富贵中被困利好将至，进攻凶但无咎",
-      "market_summary": "富贵中被困利好将至，进攻凶但无咎",
+      "market_judgement": "静守为主，回踩低吸，绝不追涨；脉冲拉升不追加，逢高减仓兑现浮盈",
+      "market_summary": "静守为主，回踩低吸，绝不追涨；脉冲拉升不追加，逢高减仓兑现浮盈",
       "note": "",
       "action_signal": "持有",
       "upper": 2,
@@ -9933,8 +10060,7 @@
       "lower_alias": "水",
       "upper_symbol": "☱",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷬泽地萃"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 280,
@@ -9955,6 +10081,7 @@
       "biangua": "大过",
       "changed_hexagram_name": "大过",
       "changed_hexagram_id": 28,
+      "biangua_full_name": "泽风大过",
       "yao_ci": "困于石，据于蒺藜，入于其宫，不见其妻，凶",
       "line_text": "困于石，据于蒺藜，入于其宫，不见其妻，凶",
       "market_judgement": "进退两难家破人亡，凶险",
@@ -9969,8 +10096,7 @@
       "lower_alias": "水",
       "upper_symbol": "☱",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷛泽风大过"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 281,
@@ -9991,6 +10117,7 @@
       "biangua": "坎",
       "changed_hexagram_name": "坎",
       "changed_hexagram_id": 29,
+      "biangua_full_name": "坎为水",
       "yao_ci": "来徐徐，困于金车，吝，有终",
       "line_text": "来徐徐，困于金车，吝，有终",
       "market_judgement": "缓慢到来被富贵所困，有憾但终成",
@@ -10005,8 +10132,7 @@
       "lower_alias": "水",
       "upper_symbol": "☱",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷜坎为水"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 282,
@@ -10027,6 +10153,7 @@
       "biangua": "解",
       "changed_hexagram_name": "解",
       "changed_hexagram_id": 40,
+      "biangua_full_name": "雷水解",
       "yao_ci": "劓刖，困于赤绂，乃徐有说，利用祭祀",
       "line_text": "劓刖，困于赤绂，乃徐有说，利用祭祀",
       "market_judgement": "受刑被困慢慢解脱，祭祀有利",
@@ -10041,8 +10168,7 @@
       "lower_alias": "水",
       "upper_symbol": "☱",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷧雷水解"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 283,
@@ -10063,12 +10189,13 @@
       "biangua": "讼",
       "changed_hexagram_name": "讼",
       "changed_hexagram_id": 6,
+      "biangua_full_name": "天水讼",
       "yao_ci": "困于葛藟，于臲卼，曰动悔有悔，征吉",
       "line_text": "困于葛藟，于臲卼，曰动悔有悔，征吉",
       "market_judgement": "被缠绕困于不安，动则悔反省后进攻吉",
       "market_summary": "被缠绕困于不安，动则悔反省后进攻吉",
-      "note": "",
-      "action_signal": "新开仓",
+      "note": "进退都不易，曾在金螳螂失",
+      "action_signal": "不碰",
       "upper": 2,
       "lower": 6,
       "upper_name": "兑",
@@ -10077,8 +10204,7 @@
       "lower_alias": "水",
       "upper_symbol": "☱",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷅天水讼"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 284,
@@ -10099,6 +10225,7 @@
       "biangua": "需",
       "changed_hexagram_name": "需",
       "changed_hexagram_id": 5,
+      "biangua_full_name": "水天需",
       "yao_ci": "井泥不食，旧井无禽",
       "line_text": "井泥不食，旧井无禽",
       "market_judgement": "底部污浊无人问津，远离为上 井底淤满污泥，井水污浊，废弃废井无人问津简判：大凶，标的无价值，不宜持仓操作：基本面恶化、赛道枯竭、长期阴跌垃圾股，果断清仓离场；切勿抄底摊平，越拿越耗本金",
@@ -10134,6 +10261,7 @@
       "biangua": "蹇",
       "changed_hexagram_name": "蹇",
       "changed_hexagram_id": 39,
+      "biangua_full_name": "水山蹇",
       "yao_ci": "井谷射鲋，瓮敝漏",
       "line_text": "井谷射鲋，瓮敝漏",
       "market_judgement": "井底小鱼桶破漏水，小利且损",
@@ -10169,6 +10297,7 @@
       "biangua": "坎",
       "changed_hexagram_name": "坎",
       "changed_hexagram_id": 29,
+      "biangua_full_name": "坎为水",
       "yao_ci": "井渫不食，为我心恻；可用汲，王明并受其福",
       "line_text": "井渫不食，为我心恻；可用汲，王明并受其福",
       "market_judgement": "清洁井水无人用可惜，遇明主则共享福",
@@ -10204,6 +10333,7 @@
       "biangua": "大过",
       "changed_hexagram_name": "大过",
       "changed_hexagram_id": 28,
+      "biangua_full_name": "泽风大过",
       "yao_ci": "井甃，无咎",
       "line_text": "井甃，无咎",
       "market_judgement": "修井加固整固阶段，无咎",
@@ -10239,6 +10369,7 @@
       "biangua": "升",
       "changed_hexagram_name": "升",
       "changed_hexagram_id": 46,
+      "biangua_full_name": "地风升",
       "yao_ci": "井冽，寒泉食",
       "line_text": "井冽，寒泉食",
       "market_judgement": "井水清澈甘泉可饮，优质标的可买",
@@ -10274,6 +10405,7 @@
       "biangua": "巽",
       "changed_hexagram_name": "巽",
       "changed_hexagram_id": 57,
+      "biangua_full_name": "巽为风",
       "yao_ci": "井收勿幕，有孚元吉",
       "line_text": "井收勿幕，有孚元吉",
       "market_judgement": "井水收获不加盖，诚信大吉",
@@ -10309,6 +10441,7 @@
       "biangua": "咸",
       "changed_hexagram_name": "咸",
       "changed_hexagram_id": 31,
+      "biangua_full_name": "泽山咸",
       "yao_ci": "巩用黄牛之革",
       "line_text": "巩用黄牛之革",
       "market_judgement": "巩固防守稳固不动，观望等待",
@@ -10344,6 +10477,7 @@
       "biangua": "夬",
       "changed_hexagram_name": "夬",
       "changed_hexagram_id": 43,
+      "biangua_full_name": "泽天夬",
       "yao_ci": "己日乃革之，征吉，无咎",
       "line_text": "己日乃革之，征吉，无咎",
       "market_judgement": "时机成熟再变革，进攻吉利无咎变革拐点成熟，政策落地、重组公告、新主线放量启动，市场形成一致预期。果断执行调仓，减持没落旧赛道，分批布局变革新主线；逢回踩支撑低吸，持有转型 / 政策受益标的，趋势刚起风险极低；",
@@ -10379,6 +10513,7 @@
       "biangua": "随",
       "changed_hexagram_name": "随",
       "changed_hexagram_id": 17,
+      "biangua_full_name": "泽雷随",
       "yao_ci": "征凶，贞厉；革言三就，有孚",
       "line_text": "征凶，贞厉；革言三就，有孚",
       "market_judgement": "进攻凶守也险，再三确认变革再行动，需三次放量确认突破，才算有效变革行情；未三次确认前只轻仓滚动",
@@ -10414,6 +10549,7 @@
       "biangua": "既济",
       "changed_hexagram_name": "既济",
       "changed_hexagram_id": 63,
+      "biangua_full_name": "水火既济",
       "yao_ci": "悔亡，有孚改命，吉",
       "line_text": "悔亡，有孚改命，吉",
       "market_judgement": "懊悔消散信心改变命运，吉利全卦核心转折爻，个股完成逻辑重塑、板块彻底完成新旧切换，资金全面认可新主线，下跌隐患消除。\n操作简判：彻底完成持仓更新，清仓弱势旧股，重仓坚守新变革龙头；基本面、量价、政策三重共振，旧亏损、踏空的懊悔全部消除",
@@ -10449,6 +10585,7 @@
       "biangua": "丰",
       "changed_hexagram_name": "丰",
       "changed_hexagram_id": 55,
+      "biangua_full_name": "雷火丰",
       "yao_ci": "大人虎变，未占有孚",
       "line_text": "大人虎变，未占有孚",
       "market_judgement": "主力大变不用占卜都可信，主升行情变革全盛阶段，核心龙头走出清晰主升，政策 / 重组重磅落地，行情辨识度极高，资金抱团拉升。\n操作简判：重仓持有核心标的，无需犹豫怀疑，拿住完整主升浪；“虎变” 走势凌厉、阳线清晰，不提前小幅止盈踏空；",
@@ -10484,6 +10621,7 @@
       "biangua": "同人",
       "changed_hexagram_name": "同人",
       "changed_hexagram_id": 13,
+      "biangua_full_name": "天火同人",
       "yao_ci": "君子豹变，小人革面；征凶，居贞吉",
       "line_text": "君子豹变，小人革面；征凶，居贞吉",
       "market_judgement": "行情收尾散户变脸，进攻凶守仓吉",
@@ -10519,6 +10657,7 @@
       "biangua": "大有",
       "changed_hexagram_name": "大有",
       "changed_hexagram_id": 14,
+      "biangua_full_name": "火天大有",
       "yao_ci": "鼎颠趾，利出否，得妾以其子，无咎",
       "line_text": "鼎颠趾，利出否，得妾以其子，无咎",
       "market_judgement": "鼎翻倒清垃圾，除旧布新无咎",
@@ -10554,6 +10693,7 @@
       "biangua": "旅",
       "changed_hexagram_name": "旅",
       "changed_hexagram_id": 56,
+      "biangua_full_name": "火山旅",
       "yao_ci": "鼎有实，我仇有疾，不我能即，吉",
       "line_text": "鼎有实，我仇有疾，不我能即，吉",
       "market_judgement": "鼎中有实货敌人害不了我，吉利",
@@ -10589,6 +10729,7 @@
       "biangua": "未济",
       "changed_hexagram_name": "未济",
       "changed_hexagram_id": 64,
+      "biangua_full_name": "火水未济",
       "yao_ci": "鼎耳革，其行塞，雉膏不食，方雨亏悔，终吉",
       "line_text": "鼎耳革，其行塞，雉膏不食，方雨亏悔，终吉",
       "market_judgement": "鼎耳脱落行动受阻，最终吉利",
@@ -10624,6 +10765,7 @@
       "biangua": "蛊",
       "changed_hexagram_name": "蛊",
       "changed_hexagram_id": 18,
+      "biangua_full_name": "山风蛊",
       "yao_ci": "鼎折足，覆公餗，其形渥，凶",
       "line_text": "鼎折足，覆公餗，其形渥，凶",
       "market_judgement": "鼎足折断翻倒大餐，崩盘凶险",
@@ -10659,6 +10801,7 @@
       "biangua": "姤",
       "changed_hexagram_name": "姤",
       "changed_hexagram_id": 44,
+      "biangua_full_name": "天风姤",
       "yao_ci": "鼎黄耳金铉，利贞",
       "line_text": "鼎黄耳金铉，利贞",
       "market_judgement": "黄金鼎耳品质优良，守仓获利",
@@ -10694,6 +10837,7 @@
       "biangua": "恒",
       "changed_hexagram_name": "恒",
       "changed_hexagram_id": 32,
+      "biangua_full_name": "雷风恒",
       "yao_ci": "鼎玉铉，大吉，无不利",
       "line_text": "鼎玉铉，大吉，无不利",
       "market_judgement": "玉质鼎杠完美收官，大吉无不利",
@@ -10729,6 +10873,7 @@
       "biangua": "豫",
       "changed_hexagram_name": "豫",
       "changed_hexagram_id": 16,
+      "biangua_full_name": "雷地豫",
       "yao_ci": "震来虩虩，后笑言哑哑，吉",
       "line_text": "震来虩虩，后笑言哑哑，吉",
       "market_judgement": "暴跌恐慌后欢笑，先跌后涨吉利首次突发震荡，盘中急杀 / 急拉，开盘剧烈波动，散户集体恐慌出逃；但标的基本面无硬伤，震荡只是洗盘，利空落地即企稳。突发急跌不恐慌割肉，突发脉冲不追高；轻仓持有底仓，等情绪消化完毕，企稳后反而有修复行情；",
@@ -10764,6 +10909,7 @@
       "biangua": "归妹",
       "changed_hexagram_name": "归妹",
       "changed_hexagram_id": 54,
+      "biangua_full_name": "雷泽归妹",
       "yao_ci": "震来厉，亿丧贝，跻于九陵，勿逐，七日得",
       "line_text": "震来厉，亿丧贝，跻于九陵，勿逐，七日得",
       "market_judgement": "暴跌凶险损失钱财，登高避险七日恢复 震动猛烈，单日大幅回撤，浮亏快速放大，短期账面大额亏损；属于中位突发大跌，套牢盘涌出。立刻减仓避险（跻于九陵 = 登高避险，降仓观望）；大忌勿逐：不要急于加仓",
@@ -10799,6 +10945,7 @@
       "biangua": "丰",
       "changed_hexagram_name": "丰",
       "changed_hexagram_id": 55,
+      "biangua_full_name": "雷火丰",
       "yao_ci": "震苏苏，震行无眚",
       "line_text": "震苏苏，震行无眚",
       "market_judgement": "震荡不安操作无大灾持续反复震荡，日日小涨小跌，持股心神不宁，反复磨人，但无单边暴跌大风险；板块持续轮动扰动。操作简判：\n不可躺平死拿，也不可空仓观望；要在震荡里主动做 T、调仓换股；小仓高抛低吸降低持仓成本，波段滚动操作；",
@@ -10834,6 +10981,7 @@
       "biangua": "复",
       "changed_hexagram_name": "复",
       "changed_hexagram_id": 24,
+      "biangua_full_name": "地雷复",
       "yao_ci": "震遂泥",
       "line_text": "震遂泥",
       "market_judgement": "暴跌陷入泥潭深套其中震动之后陷入横盘泥潭，涨跌无力，放量后快速缩量，上下两难；多为主力出货尾声、题材退潮，资金出逃后无量僵持。操作简判：泥潭行情无趋势，无主升空间，尽早分批离场，不格局等待拉升；禁止加仓补仓，越拿越耗时间，阴磨小幅持续亏损；",
@@ -10869,6 +11017,7 @@
       "biangua": "随",
       "changed_hexagram_name": "随",
       "changed_hexagram_id": 17,
+      "biangua_full_name": "泽雷随",
       "yao_ci": "震往来厉，亿无丧，有事",
       "line_text": "震往来厉，亿无丧，有事",
       "market_judgement": "震荡上下凶险但无大损失，有事件驱动上下反复剧烈波动，冲高回落、大跌反弹来回拉扯，全程风险不断；但个股核心逻辑稳固，不会深度套牢、本金无大幅亏损。全程严控仓位，不满仓博弈，来回震荡只做短线差价；不贪心长线持有，逢冲高减、逢急跌小吸，落袋为安为主；",
@@ -10904,6 +11053,7 @@
       "biangua": "噬嗑",
       "changed_hexagram_name": "噬嗑",
       "changed_hexagram_id": 21,
+      "biangua_full_name": "火雷噬嗑",
       "yao_ci": "震索索，视矍矍，征凶；震不于其躬于其邻，无咎；婚媾有言",
       "line_text": "震索索，视矍矍，征凶；震不于其躬于其邻，无咎；婚媾有言",
       "market_judgement": "恐慌至极进攻凶，邻股先跌预警则无咎震动到极致高位，连续大幅波动，人心极度惶恐；高位放量滞涨，板块集体大跌，风险全面释放。\n操作简判：\n征凶：此时再加仓、追涨、持股格局，必大幅回吐盈利甚至深套；\n立刻清仓离场，规避高位集体杀跌；\n区分：利空只在同板块其他个股（于其邻），自身标的无暴雷，可轻仓隔日博弈修复；若自身个股为主杀标的，必须彻底回避；",
@@ -10939,6 +11089,7 @@
       "biangua": "贲",
       "changed_hexagram_name": "贲",
       "changed_hexagram_id": 22,
+      "biangua_full_name": "山火贲",
       "yao_ci": "艮其趾，无咎，利永贞",
       "line_text": "艮其趾，无咎，利永贞",
       "market_judgement": "止住脚步管住操作，长久坚守无咎",
@@ -10953,8 +11104,7 @@
       "lower_alias": "山",
       "upper_symbol": "☶",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷕山火贲"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 309,
@@ -10975,6 +11125,7 @@
       "biangua": "蛊",
       "changed_hexagram_name": "蛊",
       "changed_hexagram_id": 18,
+      "biangua_full_name": "山风蛊",
       "yao_ci": "艮其腓，不拯其随，其心不快",
       "line_text": "艮其腓，不拯其随，其心不快",
       "market_judgement": "止住小腿不跟随乱动，心中不快",
@@ -10989,8 +11140,7 @@
       "lower_alias": "山",
       "upper_symbol": "☶",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷑山风蛊"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 310,
@@ -11011,6 +11161,7 @@
       "biangua": "剥",
       "changed_hexagram_name": "剥",
       "changed_hexagram_id": 23,
+      "biangua_full_name": "山地剥",
       "yao_ci": "艮其限，列其夤，厉薰心",
       "line_text": "艮其限，列其夤，厉薰心",
       "market_judgement": "止住腰部撕裂脊肉，风险烧心",
@@ -11025,8 +11176,7 @@
       "lower_alias": "山",
       "upper_symbol": "☶",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷖山地剥"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 311,
@@ -11047,6 +11197,7 @@
       "biangua": "旅",
       "changed_hexagram_name": "旅",
       "changed_hexagram_id": 56,
+      "biangua_full_name": "火山旅",
       "yao_ci": "艮其身，无咎",
       "line_text": "艮其身，无咎",
       "market_judgement": "约束自身管住仓位，无咎",
@@ -11061,8 +11212,7 @@
       "lower_alias": "山",
       "upper_symbol": "☶",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷷火山旅"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 312,
@@ -11083,10 +11233,11 @@
       "biangua": "渐",
       "changed_hexagram_name": "渐",
       "changed_hexagram_id": 53,
+      "biangua_full_name": "风山渐",
       "yao_ci": "艮其辅，言有序，悔亡",
       "line_text": "艮其辅，言有序，悔亡",
-      "market_judgement": "管住嘴巴说话有序，懊悔消散",
-      "market_summary": "管住嘴巴说话有序，懊悔消散",
+      "market_judgement": "行情由静转缓进，无暴起暴跌。震荡磨盘，忌听小道消息，宜守不宜猛攻，有序小操作则无咎，大动生悔",
+      "market_summary": "行情由静转缓进，无暴起暴跌。震荡磨盘，忌听小道消息，宜守不宜猛攻，有序小操作则无咎，大动生悔",
       "note": "",
       "action_signal": "持有",
       "upper": 7,
@@ -11097,8 +11248,7 @@
       "lower_alias": "山",
       "upper_symbol": "☶",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷴风山渐"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 313,
@@ -11119,6 +11269,7 @@
       "biangua": "谦",
       "changed_hexagram_name": "谦",
       "changed_hexagram_id": 15,
+      "biangua_full_name": "地山谦",
       "yao_ci": "敦艮，吉",
       "line_text": "敦艮，吉",
       "market_judgement": "敦厚止守最终吉利",
@@ -11133,8 +11284,7 @@
       "lower_alias": "山",
       "upper_symbol": "☶",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷎地山谦"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 314,
@@ -11155,6 +11305,7 @@
       "biangua": "家人",
       "changed_hexagram_name": "家人",
       "changed_hexagram_id": 37,
+      "biangua_full_name": "风火家人",
       "yao_ci": "鸿渐于干，小子厉，有言，无咎",
       "line_text": "鸿渐于干，小子厉，有言，无咎",
       "market_judgement": "鸿雁渐进到岸边，新手有险议论纷纷无咎",
@@ -11169,8 +11320,7 @@
       "lower_alias": "山",
       "upper_symbol": "☴",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷤风火家人"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 315,
@@ -11191,6 +11341,7 @@
       "biangua": "巽",
       "changed_hexagram_name": "巽",
       "changed_hexagram_id": 57,
+      "biangua_full_name": "巽为风",
       "yao_ci": "鸿渐于磐，饮食衎衎，吉",
       "line_text": "鸿渐于磐，饮食衎衎，吉",
       "market_judgement": "鸿雁落磐石安稳吃喝，吉利",
@@ -11205,8 +11356,7 @@
       "lower_alias": "山",
       "upper_symbol": "☴",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷸巽为风"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 316,
@@ -11227,6 +11377,7 @@
       "biangua": "观",
       "changed_hexagram_name": "观",
       "changed_hexagram_id": 20,
+      "biangua_full_name": "风地观",
       "yao_ci": "鸿渐于陆，夫征不复，妇孕不育，凶，利御寇",
       "line_text": "鸿渐于陆，夫征不复，妇孕不育，凶，利御寇",
       "market_judgement": "鸿雁到高地有去无回，凶险防守有利",
@@ -11241,8 +11392,7 @@
       "lower_alias": "山",
       "upper_symbol": "☴",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷓风地观"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 317,
@@ -11263,6 +11413,7 @@
       "biangua": "遁",
       "changed_hexagram_name": "遁",
       "changed_hexagram_id": 33,
+      "biangua_full_name": "天山遁",
       "yao_ci": "鸿渐于木，或得其桷，无咎",
       "line_text": "鸿渐于木，或得其桷，无咎",
       "market_judgement": "鸿雁上树找到枝桠落脚，无咎",
@@ -11277,8 +11428,7 @@
       "lower_alias": "山",
       "upper_symbol": "☴",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷠天山遁"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 318,
@@ -11299,6 +11449,7 @@
       "biangua": "艮",
       "changed_hexagram_name": "艮",
       "changed_hexagram_id": 52,
+      "biangua_full_name": "艮为山",
       "yao_ci": "鸿渐于陵，妇三岁不孕，终莫之胜，吉",
       "line_text": "鸿渐于陵，妇三岁不孕，终莫之胜，吉",
       "market_judgement": "鸿雁到山陵多年受阻终得胜，吉利",
@@ -11313,8 +11464,7 @@
       "lower_alias": "山",
       "upper_symbol": "☴",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷳艮为山"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 319,
@@ -11335,6 +11485,7 @@
       "biangua": "蹇",
       "changed_hexagram_name": "蹇",
       "changed_hexagram_id": 39,
+      "biangua_full_name": "水山蹇",
       "yao_ci": "鸿渐于陆，其羽可用为仪，吉",
       "line_text": "鸿渐于陆，其羽可用为仪，吉",
       "market_judgement": "鸿雁高飞羽毛可做装饰，完美收官吉利",
@@ -11349,8 +11500,7 @@
       "lower_alias": "山",
       "upper_symbol": "☴",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷦水山蹇"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 320,
@@ -11371,12 +11521,13 @@
       "biangua": "解",
       "changed_hexagram_name": "解",
       "changed_hexagram_id": 40,
+      "biangua_full_name": "雷水解",
       "yao_ci": "归妹以娣，跛能履，征吉",
       "line_text": "归妹以娣，跛能履，征吉",
       "market_judgement": "跟风支线低位轻仓套利，不追龙头小赚即走",
       "market_summary": "跟风支线低位轻仓套利，不追龙头小赚即走",
       "note": "归妹整体不吉利，多次买入后长阴，征凶之意以及归妹",
-      "action_signal": "新开仓",
+      "action_signal": "观察",
       "upper": 4,
       "lower": 2,
       "upper_name": "震",
@@ -11385,8 +11536,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☳",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷧雷水解"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 321,
@@ -11407,12 +11557,13 @@
       "biangua": "震",
       "changed_hexagram_name": "震",
       "changed_hexagram_id": 51,
+      "biangua_full_name": "震为雷",
       "yao_ci": "眇能视，利幽人之贞",
       "line_text": "眇能视，利幽人之贞",
       "market_judgement": "标的逻辑残缺，只适合潜伏观望不可重仓博弈拉升",
       "market_summary": "标的逻辑残缺，只适合潜伏观望不可重仓博弈拉升",
       "note": "",
-      "action_signal": "持有",
+      "action_signal": "观察",
       "upper": 4,
       "lower": 2,
       "upper_name": "震",
@@ -11421,8 +11572,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☳",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷲震为雷"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 322,
@@ -11443,6 +11593,7 @@
       "biangua": "大壮",
       "changed_hexagram_name": "大壮",
       "changed_hexagram_id": 34,
+      "biangua_full_name": "雷天大壮",
       "yao_ci": "归妹以须，反归以娣",
       "line_text": "归妹以须，反归以娣",
       "market_judgement": "垃圾题材强行冲高冒充主线，冲高就是出货窗口",
@@ -11457,8 +11608,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☳",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷡雷天大壮"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 323,
@@ -11479,6 +11629,7 @@
       "biangua": "临",
       "changed_hexagram_name": "临",
       "changed_hexagram_id": 19,
+      "biangua_full_name": "地泽临",
       "yao_ci": "归妹愆期，迟归有时",
       "line_text": "归妹愆期，迟归有时",
       "market_judgement": "题材有逻辑但风口未至，持币等待时机不提前抄底",
@@ -11493,8 +11644,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☳",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷒地泽临"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 324,
@@ -11515,12 +11665,13 @@
       "biangua": "兑",
       "changed_hexagram_name": "兑",
       "changed_hexagram_id": 58,
+      "biangua_full_name": "兑为泽",
       "yao_ci": "帝乙归妹，其君之袂不如其娣之袂良；月几望，吉",
       "line_text": "帝乙归妹，其君之袂不如其娣之袂良；月几望，吉",
       "market_judgement": "正宗主线龙头温和上涨不爆炒，长线持有吉利",
       "market_summary": "正宗主线龙头温和上涨不爆炒，长线持有吉利",
       "note": "",
-      "action_signal": "持有",
+      "action_signal": "观察",
       "upper": 4,
       "lower": 2,
       "upper_name": "震",
@@ -11529,8 +11680,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☳",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷹兑为泽"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 325,
@@ -11551,6 +11701,7 @@
       "biangua": "睽",
       "changed_hexagram_name": "睽",
       "changed_hexagram_id": 38,
+      "biangua_full_name": "火泽睽",
       "yao_ci": "女承筐无实，士刲羊无血，无攸利",
       "line_text": "女承筐无实，士刲羊无血，无攸利",
       "market_judgement": "行情末端纯炒作无实质支撑，参与必深度套牢",
@@ -11565,8 +11716,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☳",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷥火泽睽"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 326,
@@ -11587,6 +11737,7 @@
       "biangua": "小过",
       "changed_hexagram_name": "小过",
       "changed_hexagram_id": 62,
+      "biangua_full_name": "雷山小过",
       "yao_ci": "遇其配主，虽旬无咎，往有尚",
       "line_text": "遇其配主，虽旬无咎，往有尚",
       "market_judgement": "行情启动初期，主线资金同步进场，趋势刚起，供需匹配简判：小吉，顺势建仓操作：板块刚走强、个股放量突破，轻仓介入持有；短期震荡十日内无需恐慌，顺势加仓，不追高位，拿住主升第一段。",
@@ -11622,6 +11773,7 @@
       "biangua": "大壮",
       "changed_hexagram_name": "大壮",
       "changed_hexagram_id": 34,
+      "biangua_full_name": "雷天大壮",
       "yao_ci": "丰其蔀，日中见斗，往得疑疾，有孚发若，吉",
       "line_text": "丰其蔀，日中见斗，往得疑疾，有孚发若，吉",
       "market_judgement": "股价大涨后突现利空、资金分歧、盘面阴云，明明高位却暗藏出货，盲目加仓易被套简判：先吝后吉，不可追涨，持仓坚守逻辑操作：已有持仓不动，严禁新开重仓；",
@@ -11657,6 +11809,7 @@
       "biangua": "震",
       "changed_hexagram_name": "震",
       "changed_hexagram_id": 51,
+      "biangua_full_name": "震为雷",
       "yao_ci": "丰其沛，日中见沫，折其右肱，无咎",
       "line_text": "丰其沛，日中见沫，折其右肱，无咎",
       "market_judgement": "黑暗更甚折断右臂，无大咎，不操作，远离",
@@ -11671,9 +11824,7 @@
       "lower_alias": "火",
       "upper_symbol": "☳",
       "lower_symbol": "☲",
-      "biangua_source": "corrected",
-      "biangua_full_name": "䷲震为雷",
-      "correction_note": "excel=震雷 -> algorithm=震"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 329,
@@ -11694,6 +11845,7 @@
       "biangua": "明夷",
       "changed_hexagram_name": "明夷",
       "changed_hexagram_id": 36,
+      "biangua_full_name": "地火明夷",
       "yao_ci": "丰其蔀，日中见斗，遇其夷主，吉",
       "line_text": "丰其蔀，日中见斗，遇其夷主，吉",
       "market_judgement": "盘面同样有分歧阴影，但遇低位新主力、新资金承接，旧主力离场、新资金接力简判：转吉，换筹后可低吸操作：个股高位充分换手，放量洗盘后有增量资金进场；分歧低点轻仓低吸，旧仓逢高兑现，借资金切换重新做一波修复行情。",
@@ -11729,6 +11881,7 @@
       "biangua": "革",
       "changed_hexagram_name": "革",
       "changed_hexagram_id": 49,
+      "biangua_full_name": "泽火革",
       "yao_ci": "来章，有庆誉，吉",
       "line_text": "来章，有庆誉，吉",
       "market_judgement": "光彩彰显，业绩 / 政策利好落地，市场共识强，资金持续抱团，行情稳健丰盛简判：大吉，主升中段安心持有操作：趋势完好、量价匹配、利好不断，底仓不动，适度波段加仓；分批小幅止盈",
@@ -11764,6 +11917,7 @@
       "biangua": "离",
       "changed_hexagram_name": "离",
       "changed_hexagram_id": 30,
+      "biangua_full_name": "离为火",
       "yao_ci": "丰其屋，蔀其家，窥其户，阒其无人，三岁不觌，凶",
       "line_text": "丰其屋，蔀其家，窥其户，阒其无人，三岁不觌，凶",
       "market_judgement": "屋大空荡三年不见人，崩盘凶险",
@@ -11778,9 +11932,7 @@
       "lower_alias": "火",
       "upper_symbol": "☳",
       "lower_symbol": "☲",
-      "biangua_source": "corrected",
-      "biangua_full_name": "䷝离为火",
-      "correction_note": "excel=离火 -> algorithm=离"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 332,
@@ -11801,6 +11953,7 @@
       "biangua": "离",
       "changed_hexagram_name": "离",
       "changed_hexagram_id": 30,
+      "biangua_full_name": "离为火",
       "yao_ci": "旅琐琐，斯其所取灾",
       "line_text": "旅琐琐，斯其所取灾",
       "market_judgement": "旅途猥琐自招灾祸，小肚鸡肠必亏",
@@ -11815,8 +11968,7 @@
       "lower_alias": "山",
       "upper_symbol": "☲",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷝离为火"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 333,
@@ -11837,10 +11989,11 @@
       "biangua": "鼎",
       "changed_hexagram_name": "鼎",
       "changed_hexagram_id": 50,
+      "biangua_full_name": "火风鼎",
       "yao_ci": "旅即次，怀其资，得童仆贞",
       "line_text": "旅即次，怀其资，得童仆贞",
-      "market_judgement": "旅途中住店带足钱财，得可靠帮手吉利",
-      "market_summary": "旅途中住店带足钱财，得可靠帮手吉利",
+      "market_judgement": "震荡企稳，临时筑底，非大反转，临时做做，并非趋势根基",
+      "market_summary": "震荡企稳，临时筑底，非大反转，临时做做，并非趋势根基",
       "note": "",
       "action_signal": "新开仓",
       "upper": 3,
@@ -11851,8 +12004,7 @@
       "lower_alias": "山",
       "upper_symbol": "☲",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷱火风鼎"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 334,
@@ -11873,6 +12025,7 @@
       "biangua": "晋",
       "changed_hexagram_name": "晋",
       "changed_hexagram_id": 35,
+      "biangua_full_name": "火地晋",
       "yao_ci": "旅焚其次，丧其童仆，贞厉",
       "line_text": "旅焚其次，丧其童仆，贞厉",
       "market_judgement": "旅店被烧丢失帮手，守仓也险",
@@ -11887,8 +12040,7 @@
       "lower_alias": "山",
       "upper_symbol": "☲",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷢火地晋"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 335,
@@ -11909,6 +12061,7 @@
       "biangua": "艮",
       "changed_hexagram_name": "艮",
       "changed_hexagram_id": 52,
+      "biangua_full_name": "艮为山",
       "yao_ci": "旅于处，得其资斧，我心不快",
       "line_text": "旅于处，得其资斧，我心不快",
       "market_judgement": "暂时落脚得钱财工具，但心中不快",
@@ -11923,8 +12076,7 @@
       "lower_alias": "山",
       "upper_symbol": "☲",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷳艮为山"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 336,
@@ -11945,10 +12097,11 @@
       "biangua": "遁",
       "changed_hexagram_name": "遁",
       "changed_hexagram_id": 33,
+      "biangua_full_name": "天山遁",
       "yao_ci": "射雉，一矢亡，终以誉命",
       "line_text": "射雉，一矢亡，终以誉命",
-      "market_judgement": "射野鸡丢一箭，最终获荣誉",
-      "market_summary": "射野鸡丢一箭，最终获荣誉",
+      "market_judgement": "可以短线进出套利，多次验证，因为射雉后是遁",
+      "market_summary": "可以短线进出套利，多次验证，因为射雉后是遁",
       "note": "",
       "action_signal": "持有",
       "upper": 3,
@@ -11959,8 +12112,7 @@
       "lower_alias": "山",
       "upper_symbol": "☲",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷠天山遁"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 337,
@@ -11981,6 +12133,7 @@
       "biangua": "小过",
       "changed_hexagram_name": "小过",
       "changed_hexagram_id": 62,
+      "biangua_full_name": "雷山小过",
       "yao_ci": "鸟焚其巢，旅人先笑后号咷，丧牛于易，凶",
       "line_text": "鸟焚其巢，旅人先笑后号咷，丧牛于易，凶",
       "market_judgement": "巢被烧先笑后哭，丢牛于易凶险",
@@ -11995,8 +12148,7 @@
       "lower_alias": "山",
       "upper_symbol": "☲",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷽雷山小过"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 338,
@@ -12017,6 +12169,7 @@
       "biangua": "小畜",
       "changed_hexagram_name": "小畜",
       "changed_hexagram_id": 9,
+      "biangua_full_name": "风天小畜",
       "yao_ci": "进退，利武人之贞",
       "line_text": "进退，利武人之贞",
       "market_judgement": "犹豫不决利于武士般果断",
@@ -12031,8 +12184,7 @@
       "lower_alias": "风",
       "upper_symbol": "☴",
       "lower_symbol": "☴",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷈风天小畜"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 339,
@@ -12053,6 +12205,7 @@
       "biangua": "渐",
       "changed_hexagram_name": "渐",
       "changed_hexagram_id": 53,
+      "biangua_full_name": "风山渐",
       "yao_ci": "巽在床下，用史巫纷若，吉，无咎",
       "line_text": "巽在床下，用史巫纷若，吉，无咎",
       "market_judgement": "谦卑过度求神问卜，吉无咎",
@@ -12067,8 +12220,7 @@
       "lower_alias": "风",
       "upper_symbol": "☴",
       "lower_symbol": "☴",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷴风山渐"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 340,
@@ -12089,6 +12241,7 @@
       "biangua": "涣",
       "changed_hexagram_name": "涣",
       "changed_hexagram_id": 59,
+      "biangua_full_name": "风水涣",
       "yao_ci": "频巽，吝",
       "line_text": "频巽，吝",
       "market_judgement": "频繁顺从反复无常，有憾",
@@ -12103,8 +12256,7 @@
       "lower_alias": "风",
       "upper_symbol": "☴",
       "lower_symbol": "☴",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷺风水涣"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 341,
@@ -12125,6 +12277,7 @@
       "biangua": "姤",
       "changed_hexagram_name": "姤",
       "changed_hexagram_id": 44,
+      "biangua_full_name": "天风姤",
       "yao_ci": "悔亡，田获三品",
       "line_text": "悔亡，田获三品",
       "market_judgement": "懊悔消散打猎获多品，获利丰厚",
@@ -12139,8 +12292,7 @@
       "lower_alias": "风",
       "upper_symbol": "☴",
       "lower_symbol": "☴",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷫天风姤"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 342,
@@ -12161,6 +12313,7 @@
       "biangua": "蛊",
       "changed_hexagram_name": "蛊",
       "changed_hexagram_id": 18,
+      "biangua_full_name": "山风蛊",
       "yao_ci": "贞吉悔亡，无不利，无初有终；先庚三日，后庚三日，吉",
       "line_text": "贞吉悔亡，无不利，无初有终；先庚三日，后庚三日，吉",
       "market_judgement": "守吉悔消无不利，始差终好择时操作吉",
@@ -12175,8 +12328,7 @@
       "lower_alias": "风",
       "upper_symbol": "☴",
       "lower_symbol": "☴",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷑山风蛊"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 343,
@@ -12197,6 +12349,7 @@
       "biangua": "井",
       "changed_hexagram_name": "井",
       "changed_hexagram_id": 48,
+      "biangua_full_name": "水风井",
       "yao_ci": "巽在床下，丧其资斧，贞凶",
       "line_text": "巽在床下，丧其资斧，贞凶",
       "market_judgement": "谦卑过度丢失本钱，凶险",
@@ -12211,8 +12364,7 @@
       "lower_alias": "风",
       "upper_symbol": "☴",
       "lower_symbol": "☴",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷯水风井"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 344,
@@ -12233,6 +12385,7 @@
       "biangua": "困",
       "changed_hexagram_name": "困",
       "changed_hexagram_id": 47,
+      "biangua_full_name": "泽水困",
       "yao_ci": "和兑，吉",
       "line_text": "和兑，吉",
       "market_judgement": "温和喜悦平稳上涨，吉利",
@@ -12247,8 +12400,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☱",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷮泽水困"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 345,
@@ -12269,6 +12421,7 @@
       "biangua": "随",
       "changed_hexagram_name": "随",
       "changed_hexagram_id": 17,
+      "biangua_full_name": "泽雷随",
       "yao_ci": "孚兑，吉，悔亡",
       "line_text": "孚兑，吉，悔亡",
       "market_judgement": "诚信喜悦吉利，懊悔消散",
@@ -12283,8 +12436,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☱",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷐泽雷随"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 346,
@@ -12305,6 +12457,7 @@
       "biangua": "夬",
       "changed_hexagram_name": "夬",
       "changed_hexagram_id": 43,
+      "biangua_full_name": "泽天夬",
       "yao_ci": "来兑，凶",
       "line_text": "来兑，凶",
       "market_judgement": "前来讨好诱多凶险",
@@ -12319,8 +12472,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☱",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷪泽天夬"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 347,
@@ -12341,6 +12493,7 @@
       "biangua": "节",
       "changed_hexagram_name": "节",
       "changed_hexagram_id": 60,
+      "biangua_full_name": "水泽节",
       "yao_ci": "商兑未宁，介疾有喜",
       "line_text": "商兑未宁，介疾有喜",
       "market_judgement": "商议未定小病有喜，震荡后上涨",
@@ -12355,8 +12508,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☱",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷻水泽节"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 348,
@@ -12377,6 +12529,7 @@
       "biangua": "归妹",
       "changed_hexagram_name": "归妹",
       "changed_hexagram_id": 54,
+      "biangua_full_name": "雷泽归妹",
       "yao_ci": "孚于剥，有厉",
       "line_text": "孚于剥，有厉",
       "market_judgement": "信任剥落有风险，警惕",
@@ -12391,8 +12544,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☱",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷵雷泽归妹"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 349,
@@ -12413,6 +12565,7 @@
       "biangua": "履",
       "changed_hexagram_name": "履",
       "changed_hexagram_id": 10,
+      "biangua_full_name": "天泽履",
       "yao_ci": "引兑",
       "line_text": "引兑",
       "market_judgement": "引诱喜悦诱多行情，谨慎",
@@ -12427,8 +12580,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☱",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷉天泽履"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 350,
@@ -12449,6 +12601,7 @@
       "biangua": "中孚",
       "changed_hexagram_name": "中孚",
       "changed_hexagram_id": 61,
+      "biangua_full_name": "风泽中孚",
       "yao_ci": "用拯马壮，吉",
       "line_text": "用拯马壮，吉",
       "market_judgement": "救兵到来马力强壮，吉利",
@@ -12463,8 +12616,7 @@
       "lower_alias": "水",
       "upper_symbol": "☴",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷼风泽中孚"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 351,
@@ -12485,6 +12637,7 @@
       "biangua": "观",
       "changed_hexagram_name": "观",
       "changed_hexagram_id": 20,
+      "biangua_full_name": "风地观",
       "yao_ci": "涣奔其机，悔亡",
       "line_text": "涣奔其机，悔亡",
       "market_judgement": "涣散中奔到台阶，懊悔消散",
@@ -12499,8 +12652,7 @@
       "lower_alias": "水",
       "upper_symbol": "☴",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷓风地观"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 352,
@@ -12521,6 +12673,7 @@
       "biangua": "巽",
       "changed_hexagram_name": "巽",
       "changed_hexagram_id": 57,
+      "biangua_full_name": "巽为风",
       "yao_ci": "涣其躬，无悔",
       "line_text": "涣其躬，无悔",
       "market_judgement": "涣散自身调整仓位，无悔",
@@ -12535,8 +12688,7 @@
       "lower_alias": "水",
       "upper_symbol": "☴",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷸巽为风"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 353,
@@ -12557,6 +12709,7 @@
       "biangua": "讼",
       "changed_hexagram_name": "讼",
       "changed_hexagram_id": 6,
+      "biangua_full_name": "天水讼",
       "yao_ci": "涣其群，元吉；涣有丘，匪夷所思",
       "line_text": "涣其群，元吉；涣有丘，匪夷所思",
       "market_judgement": "分散群体大吉；聚沙成丘超乎想象",
@@ -12571,8 +12724,7 @@
       "lower_alias": "水",
       "upper_symbol": "☴",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷅天水讼"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 354,
@@ -12593,6 +12745,7 @@
       "biangua": "蒙",
       "changed_hexagram_name": "蒙",
       "changed_hexagram_id": 4,
+      "biangua_full_name": "山水蒙",
       "yao_ci": "涣汗其大号，涣王居，无咎",
       "line_text": "涣汗其大号，涣王居，无咎",
       "market_judgement": "发布号令疏散主力，无咎",
@@ -12607,8 +12760,7 @@
       "lower_alias": "水",
       "upper_symbol": "☴",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷃山水蒙"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 355,
@@ -12629,6 +12781,7 @@
       "biangua": "坎",
       "changed_hexagram_name": "坎",
       "changed_hexagram_id": 29,
+      "biangua_full_name": "坎为水",
       "yao_ci": "涣其血，去逖出，无咎",
       "line_text": "涣其血，去逖出，无咎",
       "market_judgement": "散去风险远离灾害，无咎",
@@ -12643,8 +12796,7 @@
       "lower_alias": "水",
       "upper_symbol": "☴",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷜坎为水"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 356,
@@ -12665,6 +12817,7 @@
       "biangua": "坎",
       "changed_hexagram_name": "坎",
       "changed_hexagram_id": 29,
+      "biangua_full_name": "坎为水",
       "yao_ci": "不出户庭，无咎",
       "line_text": "不出户庭，无咎",
       "market_judgement": "不走出家门轻仓观望无咎",
@@ -12679,8 +12832,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☵",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷜坎为水"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 357,
@@ -12701,6 +12853,7 @@
       "biangua": "屯",
       "changed_hexagram_name": "屯",
       "changed_hexagram_id": 3,
+      "biangua_full_name": "水雷屯",
       "yao_ci": "不出门庭，凶",
       "line_text": "不出门庭，凶",
       "market_judgement": "不敢出门错过机会，凶险",
@@ -12715,8 +12868,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☵",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷂水雷屯"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 358,
@@ -12737,6 +12889,7 @@
       "biangua": "需",
       "changed_hexagram_name": "需",
       "changed_hexagram_id": 5,
+      "biangua_full_name": "水天需",
       "yao_ci": "不节若，则嗟若，无咎",
       "line_text": "不节若，则嗟若，无咎",
       "market_judgement": "不节制则叹息反省无咎",
@@ -12751,8 +12904,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☵",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷄水天需"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 359,
@@ -12773,6 +12925,7 @@
       "biangua": "兑",
       "changed_hexagram_name": "兑",
       "changed_hexagram_id": 58,
+      "biangua_full_name": "兑为泽",
       "yao_ci": "安节，亨",
       "line_text": "安节，亨",
       "market_judgement": "安稳节制顺畅通达",
@@ -12787,8 +12940,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☵",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷹兑为泽"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 360,
@@ -12809,6 +12961,7 @@
       "biangua": "临",
       "changed_hexagram_name": "临",
       "changed_hexagram_id": 19,
+      "biangua_full_name": "地泽临",
       "yao_ci": "甘节，吉，往有尚",
       "line_text": "甘节，吉，往有尚",
       "market_judgement": "甜美节制吉利，前往受赏",
@@ -12823,8 +12976,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☵",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷒地泽临"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 361,
@@ -12845,6 +12997,7 @@
       "biangua": "中孚",
       "changed_hexagram_name": "中孚",
       "changed_hexagram_id": 61,
+      "biangua_full_name": "风泽中孚",
       "yao_ci": "苦节，贞凶，悔亡",
       "line_text": "苦节，贞凶，悔亡",
       "market_judgement": "节制过苦守也凶，懊悔消散",
@@ -12859,8 +13012,7 @@
       "lower_alias": "泽",
       "upper_symbol": "☵",
       "lower_symbol": "☱",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷼风泽中孚"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 362,
@@ -12881,6 +13033,7 @@
       "biangua": "涣",
       "changed_hexagram_name": "涣",
       "changed_hexagram_id": 59,
+      "biangua_full_name": "风水涣",
       "yao_ci": "虞吉，有它不燕",
       "line_text": "虞吉，有它不燕",
       "market_judgement": "安心则吉有变故则不安初起谋事，必先审慎掂量，专一守一才安稳；分心旁骛、另起念头必心神不宁",
@@ -12916,6 +13069,7 @@
       "biangua": "益",
       "changed_hexagram_name": "益",
       "changed_hexagram_id": 42,
+      "biangua_full_name": "风雷益",
       "yao_ci": "鸣鹤在阴，其子和之；我有好爵，吾与尔靡之",
       "line_text": "鸣鹤在阴，其子和之；我有好爵，吾与尔靡之",
       "market_judgement": "低位冷门价值标的，板块共振缓步拉升长线持有收益稳定",
@@ -12951,6 +13105,7 @@
       "biangua": "小畜",
       "changed_hexagram_name": "小畜",
       "changed_hexagram_id": 9,
+      "biangua_full_name": "风天小畜",
       "yao_ci": "得敌，或鼓或罢，或泣或歌",
       "line_text": "得敌，或鼓或罢，或泣或歌",
       "market_judgement": "多空分歧拉扯，大涨大跌交替心态极易失衡",
@@ -12986,6 +13141,7 @@
       "biangua": "履",
       "changed_hexagram_name": "履",
       "changed_hexagram_id": 10,
+      "biangua_full_name": "天泽履",
       "yao_ci": "月几望，马匹亡，无咎",
       "line_text": "月几望，马匹亡，无咎",
       "market_judgement": "临近阶段高位舍弃短线跟风小票，持有龙头无风险",
@@ -13021,6 +13177,7 @@
       "biangua": "损",
       "changed_hexagram_name": "损",
       "changed_hexagram_id": 41,
+      "biangua_full_name": "山泽损",
       "yao_ci": "有孚挛如，无咎",
       "line_text": "有孚挛如，无咎",
       "market_judgement": "长线资金抱团锁仓，主线逻辑稳固安心持仓，基本面 / 趋势逻辑扎实，资金共识强，持仓不动、顺势持有",
@@ -13056,6 +13213,7 @@
       "biangua": "节",
       "changed_hexagram_name": "节",
       "changed_hexagram_id": 60,
+      "biangua_full_name": "水泽节",
       "yao_ci": "翰音登于天，贞凶",
       "line_text": "翰音登于天，贞凶",
       "market_judgement": "标的过度炒作估值泡沫化，高位死拿必有回撤亏损",
@@ -13091,6 +13249,7 @@
       "biangua": "丰",
       "changed_hexagram_name": "丰",
       "changed_hexagram_id": 55,
+      "biangua_full_name": "雷火丰",
       "yao_ci": "飞鸟以凶",
       "line_text": "飞鸟以凶",
       "market_judgement": "飞鸟过高凶险，追高必亏",
@@ -13105,8 +13264,7 @@
       "lower_alias": "山",
       "upper_symbol": "☳",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷶雷火丰"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 369,
@@ -13127,6 +13285,7 @@
       "biangua": "恒",
       "changed_hexagram_name": "恒",
       "changed_hexagram_id": 32,
+      "biangua_full_name": "雷风恒",
       "yao_ci": "过其祖，遇其妣，不及其君，遇其臣，无咎",
       "line_text": "过其祖，遇其妣，不及其君，遇其臣，无咎",
       "market_judgement": "超过祖辈遇祖母，不及君王遇臣子无咎",
@@ -13141,8 +13300,7 @@
       "lower_alias": "山",
       "upper_symbol": "☳",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷟雷风恒"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 370,
@@ -13163,6 +13321,7 @@
       "biangua": "豫",
       "changed_hexagram_name": "豫",
       "changed_hexagram_id": 16,
+      "biangua_full_name": "雷地豫",
       "yao_ci": "弗过防之，从或戕之，凶",
       "line_text": "弗过防之，从或戕之，凶",
       "market_judgement": "不过度防守跟进可能被害，凶险",
@@ -13177,8 +13336,7 @@
       "lower_alias": "山",
       "upper_symbol": "☳",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷏雷地豫"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 371,
@@ -13199,6 +13357,7 @@
       "biangua": "谦",
       "changed_hexagram_name": "谦",
       "changed_hexagram_id": 15,
+      "biangua_full_name": "地山谦",
       "yao_ci": "无咎，弗过遇之，往厉必戒，勿用永贞",
       "line_text": "无咎，弗过遇之，往厉必戒，勿用永贞",
       "market_judgement": "无咎不过度则相遇，前往有险需戒不可久持",
@@ -13213,8 +13372,7 @@
       "lower_alias": "山",
       "upper_symbol": "☳",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷎地山谦"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 372,
@@ -13235,6 +13393,7 @@
       "biangua": "咸",
       "changed_hexagram_name": "咸",
       "changed_hexagram_id": 31,
+      "biangua_full_name": "泽山咸",
       "yao_ci": "密云不雨，自我西郊，公弋取彼在穴",
       "line_text": "密云不雨，自我西郊，公弋取彼在穴",
       "market_judgement": "密云无雨主力暗中取利，无实质上涨",
@@ -13249,8 +13408,7 @@
       "lower_alias": "山",
       "upper_symbol": "☳",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷞泽山咸"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 373,
@@ -13271,6 +13429,7 @@
       "biangua": "旅",
       "changed_hexagram_name": "旅",
       "changed_hexagram_id": 56,
+      "biangua_full_name": "火山旅",
       "yao_ci": "弗遇过之，飞鸟离之，凶，是谓灾眚",
       "line_text": "弗遇过之，飞鸟离之，凶，是谓灾眚",
       "market_judgement": "遇不到反超过飞鸟被网，凶险灾难",
@@ -13285,8 +13444,7 @@
       "lower_alias": "山",
       "upper_symbol": "☳",
       "lower_symbol": "☶",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷷火山旅"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 374,
@@ -13307,6 +13465,7 @@
       "biangua": "蹇",
       "changed_hexagram_name": "蹇",
       "changed_hexagram_id": 39,
+      "biangua_full_name": "水山蹇",
       "yao_ci": "曳其轮，濡其尾，无咎",
       "line_text": "曳其轮，濡其尾，无咎",
       "market_judgement": "拖车轮湿尾巴，谨慎前行无咎",
@@ -13321,8 +13480,7 @@
       "lower_alias": "火",
       "upper_symbol": "☵",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷦水山蹇"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 375,
@@ -13343,6 +13501,7 @@
       "biangua": "需",
       "changed_hexagram_name": "需",
       "changed_hexagram_id": 5,
+      "biangua_full_name": "水天需",
       "yao_ci": "妇丧其茀，勿逐，七日得",
       "line_text": "妇丧其茀，勿逐，七日得",
       "market_judgement": "丢了首饰不用找，七日失而复得",
@@ -13357,8 +13516,7 @@
       "lower_alias": "火",
       "upper_symbol": "☵",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷄水天需"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 376,
@@ -13379,6 +13537,7 @@
       "biangua": "屯",
       "changed_hexagram_name": "屯",
       "changed_hexagram_id": 3,
+      "biangua_full_name": "水雷屯",
       "yao_ci": "高宗伐鬼方，三年克之，小人勿用",
       "line_text": "高宗伐鬼方，三年克之，小人勿用",
       "market_judgement": "长期征战方胜，散户不可用",
@@ -13393,8 +13552,7 @@
       "lower_alias": "火",
       "upper_symbol": "☵",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷂水雷屯"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 377,
@@ -13415,6 +13573,7 @@
       "biangua": "革",
       "changed_hexagram_name": "革",
       "changed_hexagram_id": 49,
+      "biangua_full_name": "泽火革",
       "yao_ci": "繻有衣袽，终日戒",
       "line_text": "繻有衣袽，终日戒",
       "market_judgement": "华服变破衣终日警惕，谨防变脸",
@@ -13429,8 +13588,7 @@
       "lower_alias": "火",
       "upper_symbol": "☵",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷰泽火革"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 378,
@@ -13451,6 +13609,7 @@
       "biangua": "明夷",
       "changed_hexagram_name": "明夷",
       "changed_hexagram_id": 36,
+      "biangua_full_name": "地火明夷",
       "yao_ci": "东邻杀牛，不如西邻之禴祭，实受其福",
       "line_text": "东邻杀牛，不如西邻之禴祭，实受其福",
       "market_judgement": "盛大不如实在，实质受益",
@@ -13465,8 +13624,7 @@
       "lower_alias": "火",
       "upper_symbol": "☵",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷣地火明夷"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 379,
@@ -13487,6 +13645,7 @@
       "biangua": "家人",
       "changed_hexagram_name": "家人",
       "changed_hexagram_id": 37,
+      "biangua_full_name": "风火家人",
       "yao_ci": "濡其首，厉",
       "line_text": "濡其首，厉",
       "market_judgement": "水湿头顶高位危险，见顶信号",
@@ -13501,8 +13660,7 @@
       "lower_alias": "火",
       "upper_symbol": "☵",
       "lower_symbol": "☲",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷤风火家人"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 380,
@@ -13523,6 +13681,7 @@
       "biangua": "睽",
       "changed_hexagram_name": "睽",
       "changed_hexagram_id": 38,
+      "biangua_full_name": "火泽睽",
       "yao_ci": "濡其尾，吝",
       "line_text": "濡其尾，吝",
       "market_judgement": "抄底过早被二次回撤套牢，小幅亏损损耗心态",
@@ -13537,8 +13696,7 @@
       "lower_alias": "水",
       "upper_symbol": "☲",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷥火泽睽"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 381,
@@ -13559,6 +13717,7 @@
       "biangua": "晋",
       "changed_hexagram_name": "晋",
       "changed_hexagram_id": 35,
+      "biangua_full_name": "火地晋",
       "yao_ci": "曳其轮，贞吉",
       "line_text": "曳其轮，贞吉",
       "market_judgement": "控制仓位缓步布局不急于重仓，坚守正道获利",
@@ -13573,8 +13732,7 @@
       "lower_alias": "水",
       "upper_symbol": "☲",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷢火地晋"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 382,
@@ -13595,6 +13753,7 @@
       "biangua": "鼎",
       "changed_hexagram_name": "鼎",
       "changed_hexagram_id": 50,
+      "biangua_full_name": "火风鼎",
       "yao_ci": "未济，征凶，利涉大川",
       "line_text": "未济，征凶，利涉大川",
       "market_judgement": "单边进攻必亏，适合分批长线布局不做短线博弈",
@@ -13609,8 +13768,7 @@
       "lower_alias": "水",
       "upper_symbol": "☲",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷱火风鼎"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 383,
@@ -13631,6 +13789,7 @@
       "biangua": "蒙",
       "changed_hexagram_name": "蒙",
       "changed_hexagram_id": 4,
+      "biangua_full_name": "山水蒙",
       "yao_ci": "贞吉悔亡，震用伐鬼方，三年有赏于大国",
       "line_text": "贞吉悔亡，震用伐鬼方，三年有赏于大国",
       "market_judgement": "坚守主线逻辑，震荡后迎来一波主升兑现收益",
@@ -13645,8 +13804,7 @@
       "lower_alias": "水",
       "upper_symbol": "☲",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷃山水蒙"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 384,
@@ -13667,12 +13825,13 @@
       "biangua": "讼",
       "changed_hexagram_name": "讼",
       "changed_hexagram_id": 6,
+      "biangua_full_name": "天水讼",
       "yao_ci": "贞吉无悔，君子之光，有孚，吉",
       "line_text": "贞吉无悔，君子之光，有孚，吉",
       "market_judgement": "震荡慢涨良性多头逻辑扎实，长线持有无懊悔",
       "market_summary": "震荡慢涨良性多头逻辑扎实，长线持有无懊悔",
-      "note": "",
-      "action_signal": "持有",
+      "note": "哈药验证可以",
+      "action_signal": "持有或开仓",
       "upper": 3,
       "lower": 6,
       "upper_name": "离",
@@ -13681,8 +13840,7 @@
       "lower_alias": "水",
       "upper_symbol": "☲",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷅天水讼"
+      "biangua_source": "excel"
     },
     {
       "excel_row": 385,
@@ -13703,6 +13861,7 @@
       "biangua": "解",
       "changed_hexagram_name": "解",
       "changed_hexagram_id": 40,
+      "biangua_full_name": "雷水解",
       "yao_ci": "有孚于饮酒，无咎；濡其首，有孚失是",
       "line_text": "有孚于饮酒，无咎；濡其首，有孚失是",
       "market_judgement": "行情末端尚有余利止盈则平安，贪心重仓大幅回撤",
@@ -13717,120 +13876,105 @@
       "lower_alias": "水",
       "upper_symbol": "☲",
       "lower_symbol": "☵",
-      "biangua_source": "computed",
-      "biangua_full_name": "䷧雷水解"
+      "biangua_source": "excel"
     }
   ],
   "count_gua": 64,
   "count_yao": 384,
-  "action_signal_counts": {
-    "持有": 140,
-    "新开仓": 77,
-    "加仓": 14,
-    "清仓": 88,
-    "减仓": 65
-  },
-  "empty_biangua_count": 0,
   "headers": [
     "卦象卦名",
     "卦辞原文",
     "卦核心总纲",
     "爻位",
     "变卦",
+    "变卦全称",
     "爻辞原文",
     "个股行情简判",
     "备注&实操总结",
-    "操作信号",
-    null,
-    null
+    "操作信号"
   ],
+  "empty_biangua_count": 0,
   "biangua_fill": {
-    "filled_computed": 210,
-    "kept_excel": 174,
-    "failed": 0,
+    "filled_computed": 0,
+    "kept_excel": 384,
+    "excel_conflict": 0,
     "empty_left": 0,
-    "method": "line_flip_bottom_to_top"
+    "missing_full_name": 0,
+    "method": "excel_first_with_line_flip_check",
+    "excel_normalized": [
+      {
+        "state_id": "08-2",
+        "excel_biangua": "坎水",
+        "canonical": "坎",
+        "full_name": "坎为水"
+      },
+      {
+        "state_id": "08-5",
+        "excel_biangua": "坤地",
+        "canonical": "坤",
+        "full_name": "坤为地"
+      },
+      {
+        "state_id": "16-4",
+        "excel_biangua": "坤地",
+        "canonical": "坤",
+        "full_name": "坤为地"
+      },
+      {
+        "state_id": "21-6",
+        "excel_biangua": "雷",
+        "canonical": "震",
+        "full_name": "震为雷"
+      },
+      {
+        "state_id": "24-1",
+        "excel_biangua": "坤地",
+        "canonical": "坤",
+        "full_name": "坤为地"
+      },
+      {
+        "state_id": "55-3",
+        "excel_biangua": "震雷",
+        "canonical": "震",
+        "full_name": "震为雷"
+      },
+      {
+        "state_id": "55-6",
+        "excel_biangua": "离火",
+        "canonical": "离",
+        "full_name": "离为火"
+      }
+    ]
   },
+  "biangua_conflicts": [],
   "biangua_corrections": [
     {
       "state_id": "01-4",
       "full_name": "䷀乾为天",
       "yao_name": "九四",
       "excel_biangua": "中孚",
-      "excel_resolved": "风泽中孚",
       "correct": "风天小畜",
-      "correct_full": "䷈风天小畜",
-      "source": "excel"
-    },
-    {
-      "state_id": "08-2",
-      "full_name": "䷇水地比",
-      "yao_name": "六二",
-      "excel_biangua": "坎水",
-      "excel_resolved": "坎水",
-      "correct": "坎为水",
-      "correct_full": "䷜坎为水",
-      "source": "excel"
-    },
-    {
-      "state_id": "08-5",
-      "full_name": "䷇水地比",
-      "yao_name": "九五",
-      "excel_biangua": "坤地",
-      "excel_resolved": "坤地",
-      "correct": "坤为地",
-      "correct_full": "䷁坤为地",
-      "source": "excel"
-    },
-    {
-      "state_id": "16-4",
-      "full_name": "䷏雷地豫",
-      "yao_name": "九四",
-      "excel_biangua": "坤地",
-      "excel_resolved": "坤地",
-      "correct": "坤为地",
-      "correct_full": "䷁坤为地",
-      "source": "excel"
+      "status": "resolved_in_260911",
+      "note": "旧版 Excel 写「中孚」，动爻推算为「风天小畜」；20260911 稿源码已改为小畜"
     },
     {
       "state_id": "21-6",
       "full_name": "䷔火雷噬嗑",
       "yao_name": "上九",
       "excel_biangua": "雷",
-      "excel_resolved": "雷",
       "correct": "震为雷",
-      "correct_full": "䷲震为雷",
-      "source": "excel"
-    },
-    {
-      "state_id": "24-1",
-      "full_name": "䷗地雷复",
-      "yao_name": "初九",
-      "excel_biangua": "坤地",
-      "excel_resolved": "坤地",
-      "correct": "坤为地",
-      "correct_full": "䷁坤为地",
-      "source": "excel"
-    },
-    {
-      "state_id": "55-3",
-      "full_name": "䷶雷火丰",
-      "yao_name": "九三",
-      "excel_biangua": "震雷",
-      "excel_resolved": "震雷",
-      "correct": "震为雷",
-      "correct_full": "䷲震为雷",
-      "source": "excel"
-    },
-    {
-      "state_id": "55-6",
-      "full_name": "䷶雷火丰",
-      "yao_name": "上六",
-      "excel_biangua": "离火",
-      "excel_resolved": "离火",
-      "correct": "离为火",
-      "correct_full": "䷝离为火",
-      "source": "excel"
+      "status": "resolved_in_260911",
+      "note": "旧版 Excel 只写单字「雷」，20260911 稿「变卦全称」写全为「震为雷」"
     }
-  ]
+  ],
+  "action_signal_counts": {
+    "持有": 137,
+    "新开仓": 75,
+    "加仓": 14,
+    "清仓": 88,
+    "减仓": 65,
+    "不碰": 1,
+    "观察": 3,
+    "持有或开仓": 1
+  }
 }

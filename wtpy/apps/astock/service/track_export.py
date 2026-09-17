@@ -315,7 +315,7 @@ def export_tracking_xlsx(
             return None
         for a in track.get("rule_aggregates") or []:
             if str(a.get("rule_id")) == rid:
-                return a
+                return tr._with_exec_excess_stats(track, rid, a)
         return None
 
     # ---- 目录过滤 + 同指纹归并（2026-09-15：与跟踪页/只读 API 同口径）----
@@ -444,7 +444,8 @@ def export_tracking_xlsx(
         settled = [w for w in seg_weeks if w["settled"] and w["agg"] is not None]
         weekly_sig = [w["agg"].get("mean_ret_close_sig") for w in settled]
         weekly_exec = [w["agg"].get("mean_ret_close_exec") for w in settled]
-        weekly_excess = [w["agg"].get("mean_excess_sig") for w in settled]
+        weekly_excess_sig = [w["agg"].get("mean_excess_sig") for w in settled]
+        weekly_excess_exec = [w["agg"].get("mean_excess_exec") for w in settled]
         total_selected = sum(w["selected"] or 0 for w in seg_weeks)
         valid_sig_weeks = len([v for v in weekly_sig if v is not None])
         # 周等权胜率：各周 win_rate_sig 的均值（与 L0 API 的
@@ -461,7 +462,8 @@ def export_tracking_xlsx(
                 _pct(_mean(weekly_wr_sig)),
                 _pct(_mean(weekly_sig)),
                 _pct(_mean(weekly_exec)),
-                _pct(_mean(weekly_excess)),
+                _pct(_mean(weekly_excess_sig)),
+                _pct(_mean(weekly_excess_exec)),
                 valid_sig_weeks,
                 "样本不足" if total_selected < tr.MIN_SAMPLE_WARN else "样本充足",
             ]
@@ -488,6 +490,7 @@ def export_tracking_xlsx(
                 _pct(_agg_get(agg, "mean_ret_close_sig")),
                 _pct(_agg_get(agg, "mean_ret_close_exec")),
                 _pct(_agg_get(agg, "mean_excess_sig")),
+                _pct(_agg_get(agg, "mean_excess_exec")),
                 _pct(_mean_max_gain(wr["track"], wr["rid"], agg)),
                 _pct(_mean_giveback(wr["track"], wr["rid"], agg)),
                 wr["completion"],
@@ -613,7 +616,8 @@ def export_tracking_xlsx(
         [
             "规则ID", "版本指纹", "跟踪周数", "已结算周数", "总票次",
             f"近{int(weeks)}周胜率(周等权,%)",  # = 各周 win_rate_sig 均值（同 L0 API weekly_equal_win_rate_sig）
-            "平均收益(信号口径,%)", "平均收益(开盘口径,%)", "平均超额(%)",
+            "平均收益(信号收盘,%)", "平均收益(首日开盘,%)",
+            "平均超额(信号收盘,%)", "平均超额(首日开盘,%)",
             "有效周数", "样本是否充足",
         ],
         summary_out,
@@ -625,7 +629,8 @@ def export_tracking_xlsx(
             "规则ID", "信号日(week_id)", "数据日(asof)", "运行来源(run_kind)",
             "入选数", "有效信号口径数", "有效开盘口径数", "待结算数",
             "缺数据数", "不可成交数", "未知数",
-            "胜率(信号,%)", "平均收益(信号,%)", "平均收益(开盘,%)", "平均超额(%)",
+            "胜率(信号,%)", "平均收益(信号,%)", "平均收益(开盘,%)",
+            "平均超额(信号收盘,%)", "平均超额(首日开盘,%)",
             "平均最大涨幅(%)", "平均回吐(%)", "完成状态(completion)", "是否回填",
         ],
         week_out,

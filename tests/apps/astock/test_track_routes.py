@@ -524,3 +524,657 @@ class TestRuleCatalogSync:
         ).json()
         assert body["removed_from_catalog"] is True
         assert body["count"] == 1
+
+
+class TestTrackV11Metrics:
+    """V1.1 P0 数据口径测试：exec excess 聚合、trend_weeks、ui_summary。"""
+
+    def test_l0_exec_excess_and_trend_weeks(self, track_client):
+        client, cfg, _ = track_client
+        # 构造连续 3 周
+        for wid, exc1, exc2 in [
+            (20260828, 0.01, 0.03),
+            (20260904, -0.02, 0.00),
+            (20260911, 0.04, None),
+        ]:
+            sid = _publish_snap(cfg, wid, ["SZSE.000001.SZ", "SZSE.000002.SZ"])
+            rows = [
+                {
+                    "code": "SZSE.000001.SZ", "rule_id": "txt_测试规则A",
+                    "ret_close_sig": 0.02, "ret_close_exec": 0.02,
+                    "fill_status": "ok", "status": "ok",
+                    "excess_exec": exc1,
+                },
+                {
+                    "code": "SZSE.000002.SZ", "rule_id": "txt_测试规则A",
+                    "ret_close_sig": -0.01, "ret_close_exec": -0.01,
+                    "fill_status": "ok", "status": "ok",
+                    "excess_exec": exc2,
+                },
+            ]
+            _write_track(cfg, sid, wid, rows=rows)
+
+        r = client.get("/api/v1/bagua/track/rules")
+        assert r.status_code == 200
+        rule = r.json()["rules"][0]
+
+        # 检查 L0 exec excess
+        assert "weekly_equal_mean_excess_exec" in rule
+        assert "weekly_equal_valid_weeks_excess_exec" in rule
+        assert rule["weekly_equal_valid_weeks_excess_exec"] == 3
+        # 3 周的 mean_excess_exec:
+        # 第1周: (0.01 + 0.03)/2 = 0.02
+        # 第2周: (-0.02 + 0.00)/2 = -0.01
+        # 第3周: 0.04 (exc2 为 None，分母为 1)
+        # 等权均值 = (0.02 - 0.01 + 0.04) / 3 = 0.016667
+        assert rule["weekly_equal_mean_excess_exec"] == pytest.approx(0.016667, abs=1e-5)
+
+        # 检查 trend_weeks
+        tw = rule["trend_weeks"]
+        assert len(tw) == 3
+        # 时间升序
+        assert [w["week_id"] for w in tw] == [20260828, 20260904, 20260911]
+        assert tw[0]["settled"] is True
+        assert tw[0]["mean_ret_exec"] == pytest.approx(0.03)  # 来自 aggregate 的 mean_ret_close_exec
+        assert tw[0]["mean_excess_exec"] == pytest.approx(0.02)
+        assert tw[2]["mean_excess_exec"] == pytest.approx(0.04)
+
+    def test_l1_rule_weeks_has_exec_excess(self, track_client):
+        client, cfg, _ = track_client
+        sid = _publish_snap(cfg, 20260911, ["SZSE.000001.SZ", "SZSE.000002.SZ"])
+        rows = [
+            {
+                "code": "SZSE.000001.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": 0.03, "ret_close_exec": 0.03,
+                "fill_status": "ok", "status": "ok",
+                "excess_exec": 0.015,
+            },
+            {
+                "code": "SZSE.000002.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": 0.01, "ret_close_exec": 0.01,
+                "fill_status": "ok", "status": "ok",
+                "excess_exec": -0.005,
+            },
+        ]
+        _write_track(cfg, sid, 20260911, rows=rows)
+
+        r = client.get("/api/v1/bagua/track/rules/txt_测试规则A/weeks")
+        assert r.status_code == 200
+        week_entry = r.json()["weeks"][0]
+        agg = week_entry["aggregate"]
+        assert agg["excess_exec_valid_count"] == 2
+        assert agg["mean_excess_exec"] == pytest.approx(0.005)
+        assert agg["win_rate_excess_exec"] == 0.5
+
+    def test_l2_ui_summary_metrics_and_exclusions(self, track_client):
+        client, cfg, _ = track_client
+        # 4 只票: 1买入正收益且超额, 1买入负收益且基准缺(excess=None), 1涨停买不进, 1无K线
+        sid = _publish_snap(
+            cfg, 20260911,
+            ["SZSE.000001.SZ", "SZSE.000002.SZ", "SZSE.000003.SZ", "SZSE.000004.SZ"]
+        )
+        rows = [
+            {
+                "code": "SZSE.000001.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": 0.06, "ret_close_exec": 0.05,
+                "fill_status": "ok", "status": "ok",
+                "excess_exec": 0.03,
+            },
+            {
+                "code": "SZSE.000002.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": -0.01, "ret_close_exec": -0.02,
+                "fill_status": "ok", "status": "ok",
+                "excess_exec": None,  # 基准缺失
+            },
+            {
+                "code": "SZSE.000003.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": 0.09, "ret_close_exec": None,
+                "fill_status": "limit_up_unbuyable", "status": "ok",
+                "excess_exec": None,
+            },
+            {
+                "code": "SZSE.000004.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": None, "ret_close_exec": None,
+                "fill_status": "no_bar", "status": "no_bar",
+                "excess_exec": None,
+            },
+        ]
+        _write_track(cfg, sid, 20260911, rows=rows)
+
+        r = client.get("/api/v1/bagua/track/weeks/20260911")
+        assert r.status_code == 200
+        body = r.json()
+        assert "ui_summary" in body
+        s = body["ui_summary"]
+        assert s["selected_count"] == 4
+        # valid_exec_count 必须排除 limit_up_unbuyable 和 no_bar
+        assert s["valid_exec_count"] == 2
+        # win_rate_exec: 2 只中有 1 只 > 0 → 0.5
+        assert s["win_rate_exec"] == 0.5
+        # mean_ret_exec: (0.05 - 0.02)/2 = 0.015
+        assert s["mean_ret_exec"] == pytest.approx(0.015)
+        # mean_excess_exec: 只有 1 只有有效超额 0.03
+        assert s["mean_excess_exec"] == pytest.approx(0.03)
+        # coverage
+        assert s["return_coverage_exec"] == 0.5  # 2 / 4
+        assert s["excess_coverage_exec"] == 0.25  # 1 / 4
+
+    def test_l2_rows_carry_bagua_and_week_gua(self, track_client):
+        """V1.1.3：验证 L2 详情接口返回行均包含 week_gua 与 bagua 结构。"""
+        client, cfg, _ = track_client
+        sid = _publish_snap(cfg, 20260911, ["SZSE.000001.SZ", "SZSE.000002.SZ"])
+        _write_track(
+            cfg, sid, 20260911,
+            rows=[{"code": "SZSE.000001.SZ", "rule_id": "txt_测试规则A", "ret_close_sig": 0.05}],
+        )
+        r = client.get("/api/v1/bagua/track/weeks/20260911")
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["rows"]) == 1
+        r0 = body["rows"][0]
+        assert "week_gua" in r0
+        assert "bagua" in r0
+        # 待结算票也应挂载
+        assert len(body["pending_picks"]) == 1
+        p0 = body["pending_picks"][0]
+        assert "week_gua" in p0
+        assert "bagua" in p0
+
+
+
+def _fake_bagua_info(gua: str = "乾为天|1-天风姤"):
+    """确定性周/月卦信息（不依赖真实行情根，供接线测试用）。"""
+    return {
+        "week_gua": gua,
+        "bagua": {
+            "week": {
+                "combo": gua,
+                "yao_explain": "周爻辞",
+                "gaodao": "周高岛",
+                "consensus": "一般",
+                "action_signal": "持有",
+            },
+            "month": {
+                "combo": "坤为地|2-地雷复",
+                "yao_explain": "月爻辞",
+                "gaodao": "月高岛",
+                "consensus": "一般",
+                "action_signal": "加仓",
+            },
+        },
+        "state": "ok",
+        "adjust": "tushare_qfq",
+        "cached": False,
+    }
+
+
+class TestTrackWeekBaguaSplit:
+    """2026-09-16 性能整改：列表先行返回 + 周卦分批补齐。
+
+    契约：首屏只返回名单/价格/收益/统计卡片，卦象列打 pending 占位；
+    卦象由 /weeks/{asof}/bagua 分批补齐，且必须区分 ok/empty/error 三态，
+    未算出的卦象绝不能被渲染成已有结论。
+    """
+
+    def _one_week(self, cfg):
+        sid = _publish_snap(cfg, 20260911, ["SZSE.000001.SZ", "SZSE.000002.SZ"])
+        _write_track(
+            cfg, sid, 20260911,
+            rows=[{
+                "code": "SZSE.000001.SZ", "rule_id": "txt_测试规则A",
+                "ret_close_sig": 0.05, "ret_close_exec": 0.04,
+                "fill_status": "ok", "status": "ok",
+            }],
+        )
+        return sid
+
+    def test_defer_is_default_and_marks_pending(self, track_client):
+        client, cfg, _ = track_client
+        self._one_week(cfg)
+        r = client.get("/api/v1/bagua/track/weeks/20260911")
+        assert r.status_code == 200
+        b = r.json()
+        assert b["bagua_mode"] == "defer"
+        assert b["bagua_total"] == 2  # 1 已结算 + 1 待结算（去重后）
+        for row in b["rows"] + b["pending_picks"]:
+            assert row["bagua_state"] == "pending"
+            assert row["week_gua"] == ""
+            assert row["bagua"] is None
+        # 分段计时必须回传：线上排查「哪一段在等」靠它，而不是靠猜
+        for k in ("snapshot_ms", "track_ms", "rows_ms", "bagua_ms", "total_ms"):
+            assert isinstance(b["timings_ms"].get(k), (int, float))
+
+    def test_inline_still_computes_and_labels_state(self, track_client, monkeypatch):
+        from wtpy.apps.astock.service import bagua_query as bq
+
+        calls = []
+
+        def _fake(cfg, **kw):
+            calls.append(kw.get("code"))
+            return _fake_bagua_info()
+
+        monkeypatch.setattr(bq, "bagua_week_month_info", _fake)
+        client, cfg, _ = track_client
+        self._one_week(cfg)
+        r = client.get("/api/v1/bagua/track/weeks/20260911?bagua=inline")
+        assert r.status_code == 200
+        b = r.json()
+        assert b["bagua_mode"] == "inline"
+        assert calls == ["SZSE.000001.SZ", "SZSE.000002.SZ"]
+        row = b["rows"][0]
+        assert row["week_gua"] == "乾为天|1-天风姤"
+        assert row["bagua_state"] == "ok"
+        assert row["bagua"]["month"]["combo"] == "坤为地|2-地雷复"
+        assert b["pending_picks"][0]["bagua_state"] == "ok"
+
+    def test_invalid_bagua_param_400(self, track_client):
+        client, cfg, _ = track_client
+        self._one_week(cfg)
+        r = client.get("/api/v1/bagua/track/weeks/20260911?bagua=bogus")
+        assert r.status_code == 400
+        assert "defer" in r.json()["detail"]
+
+    def test_bagua_batch_matches_rows_and_carries_version(self, track_client, monkeypatch):
+        from wtpy.apps.astock.service import bagua_query as bq
+
+        monkeypatch.setattr(
+            bq, "bagua_week_month_info", lambda cfg, **kw: _fake_bagua_info()
+        )
+        client, cfg, _ = track_client
+        sid = self._one_week(cfg)
+        detail = client.get("/api/v1/bagua/track/weeks/20260911").json()
+        r = client.get(
+            "/api/v1/bagua/track/weeks/20260911/bagua"
+            "?codes=SZSE.000001.SZ,SZSE.000002.SZ"
+        )
+        assert r.status_code == 200
+        b = r.json()
+        # 版本字段必须回传：前端据此校验后才合并（防旧批数据落到新页面）
+        assert b["week_id"] == 20260911
+        assert b["snapshot_id"] == sid
+        assert b["tracking_revision_id"] == detail["tracking_revision_id"]
+        assert b["week_code_total"] == 2
+        assert b["count"] == 2
+        assert {i["code"]: i["week_gua"] for i in b["items"]} == {
+            "SZSE.000001.SZ": "乾为天|1-天风姤",
+            "SZSE.000002.SZ": "乾为天|1-天风姤",
+        }
+        assert all(i["state"] == "ok" for i in b["items"])
+        assert isinstance(b["timings_ms"].get("bagua_ms"), (int, float))
+
+    def test_bagua_batch_rejects_offweek_codes_and_oversize(self, track_client, monkeypatch):
+        from wtpy.apps.astock.service import bagua_query as bq
+
+        monkeypatch.setattr(
+            bq, "bagua_week_month_info", lambda cfg, **kw: _fake_bagua_info()
+        )
+        client, cfg, _ = track_client
+        self._one_week(cfg)
+        # 名单外代码不计算但原样回报，绝不静默丢弃
+        r = client.get(
+            "/api/v1/bagua/track/weeks/20260911/bagua?codes=SZSE.000001.SZ,SSE.STK.600000"
+        )
+        assert r.status_code == 200
+        b = r.json()
+        assert [i["code"] for i in b["items"]] == ["SZSE.000001.SZ"]
+        assert b["skipped_codes"] == ["SSE.STK.600000"]
+
+        assert client.get("/api/v1/bagua/track/weeks/20260911/bagua?codes=").status_code == 400
+        too_many = ",".join(f"X{i}" for i in range(201))
+        r2 = client.get(f"/api/v1/bagua/track/weeks/20260911/bagua?codes={too_many}")
+        assert r2.status_code == 400
+        assert "200" in r2.json()["detail"]
+
+    def test_bagua_batch_404_without_published_week(self, track_client):
+        client, _, _ = track_client
+        r = client.get("/api/v1/bagua/track/weeks/20260101/bagua?codes=SZSE.000001.SZ")
+        assert r.status_code == 404
+
+
+class TestWeekRuleIdentity:
+    """规则版本身份（2026-09-16 用户复核的 P0 问题）。
+
+    canonical id（L0 归并出来的 tn6_X）在本周快照里可能根本不存在——那一周记录
+    的是同指纹的兄弟 id（txt_X）。此时必须靠「历史快照指纹」认身份：
+    - 前端把 L0/L1 行的 fingerprint 传下来，或
+    - 后端回看历史快照反查该 id 的最近指纹（且该指纹要在本周快照里存在）。
+    绝不做 tn6_/txt_ 前缀替换，也不用当前规则目录去覆盖历史版本。
+    """
+
+    _publish_multi = staticmethod(TestRuleCatalogSync._publish_multi)
+
+    def _week(self, cfg, asof, snapshot_rules, track_rows, pending_rules=None):
+        sid = self._publish_multi(cfg, asof, snapshot_rules + (pending_rules or []))
+        _write_track(cfg, sid, asof, rows=track_rows)
+        return sid
+
+    def test_canonical_resolves_by_passed_fingerprint(self, track_client):
+        """带指纹：canonical id 命中该周记录的兄弟 id（原「有名单却显示没数据」）。"""
+        client, cfg, _ = track_client
+        self._week(
+            cfg, 20260911,
+            [("txt_735金叉及趋势", "fpSame", ["SZSE.000001.SZ"])],
+            [{"code": "SZSE.000001.SZ", "rule_id": "txt_735金叉及趋势",
+              "ret_close_sig": 0.05, "ret_close_exec": 0.04, "fill_status": "ok", "status": "ok"}],
+        )
+        body = client.get(
+            "/api/v1/bagua/track/weeks/20260911",
+            params={"rule_id": "tn6_735金叉及趋势", "fingerprint": "fpSame"},
+        ).json()
+        assert [r["code"] for r in body["rows"]] == ["SZSE.000001.SZ"]
+        assert body["fingerprint"] == "fpSame"
+        # 身份解析：指纹是硬约束；组内成员与「实际展示的代表规则」分别回报
+        ident = body["rule_identity"]
+        assert ident["source"] == "param"
+        assert ident["group_rule_ids"] == ["txt_735金叉及趋势"], "组只含本周快照记录的该指纹 id"
+        assert ident["representative_rule_id"] == "txt_735金叉及趋势"
+        assert body["rule_ids"] == ["txt_735金叉及趋势"], "rule_ids = 实际展示的代表规则"
+
+    def test_canonical_resolves_by_historical_lookup(self, track_client):
+        """不带指纹：按历史快照反查该 id 的最近指纹，且该指纹在本周快照里存在。"""
+        client, cfg, _ = track_client
+        # 更早的一周里 tn6_X 与 txt_X 同指纹并存（历史证据）
+        self._week(
+            cfg, 20260904,
+            [("tn6_735金叉及趋势", "fpSame", ["SZSE.000002.SZ"]),
+             ("txt_735金叉及趋势", "fpSame", ["SZSE.000002.SZ"])],
+            [{"code": "SZSE.000002.SZ", "rule_id": "txt_735金叉及趋势",
+              "ret_close_sig": 0.02, "fill_status": "ok", "status": "ok"}],
+        )
+        # 本周只发布了 txt_X
+        self._week(
+            cfg, 20260911,
+            [("txt_735金叉及趋势", "fpSame", ["SZSE.000001.SZ"])],
+            [{"code": "SZSE.000001.SZ", "rule_id": "txt_735金叉及趋势",
+              "ret_close_sig": 0.05, "fill_status": "ok", "status": "ok"}],
+        )
+        body = client.get(
+            "/api/v1/bagua/track/weeks/20260911",
+            params={"rule_id": "tn6_735金叉及趋势"},
+        ).json()
+        assert [r["code"] for r in body["rows"]] == ["SZSE.000001.SZ"]
+        assert body["fingerprint"] == "fpSame"
+
+    def test_no_prefix_guessing_when_identity_unknown(self, track_client):
+        """历史里也没有这个 id → 0 行：不得靠替换前缀去命中别的规则。"""
+        client, cfg, _ = track_client
+        self._week(
+            cfg, 20260911,
+            [("txt_735金叉及趋势_量比增强", "fpOther", ["SZSE.000001.SZ"])],
+            [{"code": "SZSE.000001.SZ", "rule_id": "txt_735金叉及趋势_量比增强",
+              "ret_close_sig": 0.05, "fill_status": "ok", "status": "ok"}],
+        )
+        body = client.get(
+            "/api/v1/bagua/track/weeks/20260911",
+            params={"rule_id": "tn6_735金叉及趋势"},
+        ).json()
+        assert body["rows"] == []
+
+    def test_same_fingerprint_siblings_counted_once(self, track_client):
+        """同指纹兄弟 id 都在产物里 → 每只票只留一行（入口 id 优先），不双计。"""
+        client, cfg, _ = track_client
+        rows = []
+        for rid in ("tn6_735金叉及趋势", "txt_735金叉及趋势"):
+            rows.append({"code": "SZSE.000001.SZ", "rule_id": rid,
+                         "ret_close_sig": 0.05, "ret_close_exec": 0.04,
+                         "fill_status": "ok", "status": "ok", "excess_exec": 0.01})
+        self._week(
+            cfg, 20260911,
+            [("txt_735金叉及趋势", "fpSame", ["SZSE.000001.SZ"]),
+             ("tn6_735金叉及趋势", "fpSame", ["SZSE.000001.SZ"])],
+            rows,
+        )
+        body = client.get(
+            "/api/v1/bagua/track/weeks/20260911",
+            params={"rule_id": "tn6_735金叉及趋势", "fingerprint": "fpSame"},
+        ).json()
+        assert len(body["rows"]) == 1, "同公式不得出现两行"
+        # 代表规则的选法与 L0 完全相同（同一个 pick_canonical_rule_id + 同一目录）
+        assert body["rows"][0]["rule_id"] == body["rule_identity"]["representative_rule_id"]
+        assert body["rule_ids"] == [body["rule_identity"]["representative_rule_id"]]
+        s = body["ui_summary"]
+        # 双计会让「有效样本 2 / 入选 1 / 覆盖率 200%」这种自相矛盾的展示出现
+        assert s["selected_count"] == 1
+        assert s["valid_exec_count"] == 1
+        assert s["return_coverage_exec"] == 1.0
+
+    def test_different_fingerprint_same_code_kept_separate(self, track_client):
+        """不同公式（不同指纹）的同一只票是真实的「同票多规则」，必须各留一行。"""
+        client, cfg, _ = track_client
+        rows = [
+            {"code": "SZSE.000001.SZ", "rule_id": "txt_规则甲", "ret_close_sig": 0.05,
+             "fill_status": "ok", "status": "ok"},
+            {"code": "SZSE.000001.SZ", "rule_id": "txt_规则乙", "ret_close_sig": -0.01,
+             "fill_status": "ok", "status": "ok"},
+        ]
+        self._week(
+            cfg, 20260911,
+            [("txt_规则甲", "fpA", ["SZSE.000001.SZ"]),
+             ("txt_规则乙", "fpB", ["SZSE.000001.SZ"])],
+            rows,
+        )
+        body = client.get("/api/v1/bagua/track/weeks/20260911").json()
+        assert sorted(r["rule_id"] for r in body["rows"]) == sorted(
+            ["txt_规则甲", "txt_规则乙"]
+        )
+
+    def test_l2_and_bagua_batch_share_same_identity(self, track_client, monkeypatch):
+        """明细与批量补齐共用同一名单：列表有的票，补齐接口必须也认。"""
+        from wtpy.apps.astock.service import bagua_query as bq
+
+        monkeypatch.setattr(
+            bq, "bagua_week_month_info", lambda cfg, **kw: _fake_bagua_info()
+        )
+        client, cfg, _ = track_client
+        self._week(
+            cfg, 20260911,
+            [("txt_735金叉及趋势", "fpSame", ["SZSE.000001.SZ"])],
+            [{"code": "SZSE.000001.SZ", "rule_id": "txt_735金叉及趋势",
+              "ret_close_sig": 0.05, "fill_status": "ok", "status": "ok"}],
+        )
+        # 带了身份 → 明细有名单，补齐也接受
+        detail = client.get(
+            "/api/v1/bagua/track/weeks/20260911",
+            params={"rule_id": "tn6_735金叉及趋势", "fingerprint": "fpSame"},
+        ).json()
+        codes = [r["code"] for r in detail["rows"]]
+        assert codes == ["SZSE.000001.SZ"]
+        ok = client.get(
+            "/api/v1/bagua/track/weeks/20260911/bagua",
+            params={"codes": ",".join(codes), "rule_id": "tn6_735金叉及趋势",
+                    "fingerprint": "fpSame"},
+        ).json()
+        assert ok["count"] == 1 and ok["skipped_codes"] == []
+
+        # 不带身份 → 明细就是 0 行、补齐也如实拒绝（两边口径一致，不各说各话）
+        empty = client.get(
+            "/api/v1/bagua/track/weeks/20260911",
+            params={"rule_id": "tn6_735金叉及趋势"},
+        ).json()
+        assert empty["rows"] == []
+        reject = client.get(
+            "/api/v1/bagua/track/weeks/20260911/bagua",
+            params={"codes": "SZSE.000001.SZ", "rule_id": "tn6_735金叉及趋势"},
+        ).json()
+        assert reject["count"] == 0
+        assert reject["skipped_codes"] == ["SZSE.000001.SZ"]
+
+
+class TestRuleVersionHardConstraint:
+    """显式指纹是硬约束（用户 2026-09-16 复核的反例）。
+
+    本周：R → new，S → old。请求 ``rule_id=R & fingerprint=old`` 时，旧实现无条件
+    保留入口 id R，于是把 new 版本的行混了进来；传不存在的指纹也照样返回 R 的名单。
+    """
+
+    _publish_multi = staticmethod(TestRuleCatalogSync._publish_multi)
+    _catalog = staticmethod(TestRuleCatalogSync._catalog)
+    _patch = staticmethod(TestRuleCatalogSync._patch)
+
+    def _two_versions(self, cfg, asof=20260911):
+        rows = [
+            {"code": "SZSE.000001.SZ", "rule_id": "R", "ret_close_sig": 0.05,
+             "fill_status": "ok", "status": "ok"},
+            {"code": "SZSE.000002.SZ", "rule_id": "S", "ret_close_sig": 0.01,
+             "fill_status": "ok", "status": "ok"},
+        ]
+        sid = self._publish_multi(cfg, asof, [
+            ("R", "new", ["SZSE.000001.SZ"]),
+            ("S", "old", ["SZSE.000002.SZ"]),
+        ])
+        _write_track(cfg, sid, asof, rows=rows)
+        return sid
+
+    def test_explicit_fingerprint_excludes_other_version(self, track_client):
+        client, cfg, _ = track_client
+        self._two_versions(cfg)
+        body = client.get(
+            "/api/v1/bagua/track/weeks/20260911",
+            params={"rule_id": "R", "fingerprint": "old"},
+        ).json()
+        # 只要 old 版本（S）的名单；R 是 new 版本，不得因为"是入口 id"被保留
+        assert [r["rule_id"] for r in body["rows"]] == ["S"]
+        assert body["rule_identity"]["source"] == "param"
+        assert body["rule_identity"]["group_rule_ids"] == ["S"]
+        assert body["rule_identity"]["representative_rule_id"] == "S"
+
+    def test_unknown_fingerprint_is_explicit_no_match(self, track_client):
+        client, cfg, _ = track_client
+        self._two_versions(cfg)
+        body = client.get(
+            "/api/v1/bagua/track/weeks/20260911",
+            params={"rule_id": "R", "fingerprint": "不存在的版本"},
+        ).json()
+        assert body["rows"] == [], "不存在的版本必须明确无匹配，不能回落到入口 id"
+        assert body["pending_picks"] == []
+        assert body["rule_identity"]["source"] == "param_unmatched"
+        assert body["rule_ids"] == []
+
+    def test_fingerprint_matching_entry_keeps_entry(self, track_client):
+        """指纹与入口一致时行为不变（回归保护）。"""
+        client, cfg, _ = track_client
+        self._two_versions(cfg)
+        body = client.get(
+            "/api/v1/bagua/track/weeks/20260911",
+            params={"rule_id": "R", "fingerprint": "new"},
+        ).json()
+        assert [r["rule_id"] for r in body["rows"]] == ["R"]
+
+    def test_l1_explicit_fingerprint_skips_conflicting_week(self, track_client):
+        """L1 同样按版本取数：入口 id 存在但指纹不同 → 标冲突周而非拿错版本数据。"""
+        client, cfg, _ = track_client
+        # 该周只有 R（new）：带 old 指纹来查时，不能把 R 当成 old 版本返回
+        sid = self._publish_multi(cfg, 20260911, [("R", "new", ["SZSE.000001.SZ"])])
+        _write_track(cfg, sid, 20260911, rows=[
+            {"code": "SZSE.000001.SZ", "rule_id": "R", "ret_close_sig": 0.05,
+             "fill_status": "ok", "status": "ok"},
+        ])
+        body = client.get(
+            "/api/v1/bagua/track/rules/R/weeks",
+            params={"fingerprint": "old"},
+        ).json()
+        assert body["count"] == 1
+        wk = body["weeks"][0]
+        assert wk["version_conflict"] is True
+        assert wk["aggregate"] is None
+        assert wk["selected_count"] is None
+        # 未传指纹时仍按 id 取数（历史行为，不受影响）
+        plain = client.get("/api/v1/bagua/track/rules/R/weeks").json()
+        assert plain["weeks"][0]["version_conflict"] is False
+        assert plain["weeks"][0]["selected_count"] == 1
+
+
+class TestRepresentativeRulePerWeek:
+    """每周每指纹组只取代表规则的名单（用户 2026-09-16 复核的反例）。
+
+    同指纹 R 命中 A、S 命中 A、B：L0 选 R → 1 只；旧实现把兄弟名单并集再逐票去重
+    → 2 只。两者口径不等价，且并集是"默默"发生的。
+    """
+
+    _publish_multi = staticmethod(TestRuleCatalogSync._publish_multi)
+    _catalog = staticmethod(TestRuleCatalogSync._catalog)
+    _patch = staticmethod(TestRuleCatalogSync._patch)
+
+    def _divergent(self, cfg, asof=20260911):
+        rows = [
+            {"code": "SZSE.000001.SZ", "rule_id": "R", "ret_close_sig": 0.05,
+             "fill_status": "ok", "status": "ok"},
+            {"code": "SZSE.000001.SZ", "rule_id": "S", "ret_close_sig": 0.05,
+             "fill_status": "ok", "status": "ok"},
+            {"code": "SZSE.000002.SZ", "rule_id": "S", "ret_close_sig": 0.02,
+             "fill_status": "ok", "status": "ok"},
+        ]
+        sid = self._publish_multi(cfg, asof, [
+            ("R", "fpSame", ["SZSE.000001.SZ"]),
+            ("S", "fpSame", ["SZSE.000001.SZ", "SZSE.000002.SZ"]),
+        ])
+        _write_track(cfg, sid, asof, rows=rows)
+        return sid
+
+    def test_takes_representative_not_union(self, track_client, monkeypatch):
+        client, cfg, _ = track_client
+        self._divergent(cfg)
+        # 目录里 R 可见可执行、S 被隐藏 → 代表规则 = R（与 L0 的 canonical 同源）
+        self._patch(monkeypatch, self._catalog(
+            ("R", "规则R", True, False), ("S", "规则S", True, True)
+        ))
+        body = client.get(
+            "/api/v1/bagua/track/weeks/20260911",
+            params={"rule_id": "R", "fingerprint": "fpSame"},
+        ).json()
+        assert body["rule_identity"]["representative_rule_id"] == "R"
+        # 只取代表规则的名单：A 一只（不是并集 A+B）
+        assert [r["code"] for r in body["rows"]] == ["SZSE.000001.SZ"]
+        assert body["ui_summary"]["selected_count"] == 1
+        # 兄弟产物不一致必须显式暴露，不能静默取并集
+        div = body["rule_identity"]["sibling_divergence"]
+        assert div, "兄弟名单不一致必须暴露"
+        assert div[0]["representative"] == "R"
+        assert div[0]["fingerprint"] == "fpSame"
+        assert div[0]["sibling_counts"]["R"]["rows"] == 1
+        assert div[0]["sibling_counts"]["S"]["rows"] == 2
+
+    def test_matching_siblings_do_not_flag_divergence(self, track_client, monkeypatch):
+        """兄弟名单一致（同名单同数量）时不误报差异。"""
+        client, cfg, _ = track_client
+        rows = [
+            {"code": "SZSE.000001.SZ", "rule_id": "R", "ret_close_sig": 0.05,
+             "fill_status": "ok", "status": "ok"},
+            {"code": "SZSE.000001.SZ", "rule_id": "S", "ret_close_sig": 0.05,
+             "fill_status": "ok", "status": "ok"},
+        ]
+        sid = self._publish_multi(cfg, 20260911, [
+            ("R", "fpSame", ["SZSE.000001.SZ"]),
+            ("S", "fpSame", ["SZSE.000001.SZ"]),
+        ])
+        _write_track(cfg, sid, 20260911, rows=rows)
+        self._patch(monkeypatch, self._catalog(
+            ("R", "规则R", True, False), ("S", "规则S", True, True)
+        ))
+        body = client.get(
+            "/api/v1/bagua/track/weeks/20260911",
+            params={"rule_id": "R", "fingerprint": "fpSame"},
+        ).json()
+        assert body["rule_identity"]["sibling_divergence"] is None
+        assert body["ui_summary"]["selected_count"] == 1
+
+    def test_canonical_without_rows_falls_back_to_sibling(self, track_client, monkeypatch):
+        """canonical 本周没有产物行时用兄弟 id 补位（否则会出现"有名单却显示没数据"）。"""
+        client, cfg, _ = track_client
+        sid = self._publish_multi(cfg, 20260911, [
+            ("R", "fpSame", ["SZSE.000001.SZ"]),
+            ("S", "fpSame", ["SZSE.000001.SZ"]),
+        ])
+        _write_track(cfg, sid, 20260911, rows=[
+            {"code": "SZSE.000001.SZ", "rule_id": "S", "ret_close_sig": 0.05,
+             "fill_status": "ok", "status": "ok"},
+        ])
+        self._patch(monkeypatch, self._catalog(
+            ("R", "规则R", True, False), ("S", "规则S", True, True)
+        ))
+        body = client.get(
+            "/api/v1/bagua/track/weeks/20260911",
+            params={"rule_id": "R", "fingerprint": "fpSame"},
+        ).json()
+        assert [r["code"] for r in body["rows"]] == ["SZSE.000001.SZ"]
+        assert body["rule_identity"]["representative_rule_id"] == "S"

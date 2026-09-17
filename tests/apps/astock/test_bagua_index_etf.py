@@ -603,14 +603,21 @@ def test_batch_query_mixed_index_stock(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _write_fake_tdx(tmp_path, spec_lines=None, block_lines=None):
-    hq = tmp_path / "T0002" / "hq_cache"
+def _write_fake_tdx(tmp_path, spec_lines=None, block_lines=None, subdir=None):
+    """写一个假通达信根目录（默认直接用 tmp_path）。
+
+    ``subdir`` 让调用方拿到**独立的根目录**：`load_block_constituents` 的缓存键是
+    (路径, st_mtime_ns)，Windows 时间戳粒度 ~15.6ms，同一目录里"写→读→再写→再读"
+    可能因为同 tick 拿到相同 mtime 而读到旧内容（见 test_index_constituents 的说明）。
+    """
+    root = tmp_path / subdir if subdir else tmp_path
+    hq = root / "T0002" / "hq_cache"
     hq.mkdir(parents=True, exist_ok=True)
     if spec_lines is not None:
         (hq / "specetfdata.txt").write_text("\n".join(spec_lines), encoding="gbk")
     if block_lines is not None:
         (hq / "infoharbor_block.dat").write_text("\n".join(block_lines), encoding="gbk")
-    return make_cfg(tdx_root=tmp_path)
+    return make_cfg(tdx_root=root)
 
 
 def _fake_stock_names(cfg, disp, std_code=""):
@@ -698,9 +705,14 @@ def test_index_constituents(tmp_path, monkeypatch):
     # limit slices
     assert len(ie.index_constituents(cfg, "SSE.IDX.000300", limit=2)["constituents"]) == 2
     # block missing -> helpful note, empty constituents
+    # 注意：这里必须换一个独立的 tdx 根目录，**不能**复用 tmp_path 重写同一个
+    # infoharbor_block.dat——`load_block_constituents` 的缓存键是 (路径, st_mtime_ns)，
+    # 而 Windows 的文件时间戳粒度约为 15.6ms：同一 tick 内"写→读→再写→再读"会命中
+    # 旧缓存，第二次读到第一次的内容（本机实测同 tick 概率约 66%，该用例曾因此随机失败）。
     cfg2 = _write_fake_tdx(
         tmp_path,
         block_lines=["#ZS_上证50,50,000016,20040102,20260512,,", "1#600000"],
+        subdir="tdx_no_hs300",
     )
     out2 = ie.index_constituents(cfg2, "SSE.IDX.000300")
     assert out2["count"] == 0

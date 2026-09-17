@@ -99,8 +99,10 @@ class TestExportNormal:
         assert srow["跟踪周数"] == 1 and srow["已结算周数"] == 1
         assert srow["总票次"] == 2
         # 百分数换算：mean_ret_close_sig=0.015 → 1.5
-        assert srow["平均收益(信号口径,%)"] == pytest.approx(1.5)
-        assert srow["平均收益(开盘口径,%)"] == pytest.approx(3.0)
+        assert srow["平均收益(信号收盘,%)"] == pytest.approx(1.5)
+        assert srow["平均收益(首日开盘,%)"] == pytest.approx(3.0)
+        assert "平均超额(信号收盘,%)" in srow
+        assert "平均超额(首日开盘,%)" in srow
         # 周等权胜率 = 各周 win_rate_sig 的均值（与 L0 API 同口径；
         # 单周 win_rate_sig=0.5 → 50%——不是"正收益周占比"那种 100%）
         assert srow["近12周胜率(周等权,%)"] == pytest.approx(50.0)
@@ -113,6 +115,8 @@ class TestExportNormal:
         assert wrow["完成状态(completion)"] == "complete"
         assert wrow["入选数"] == 2
         assert wrow["是否回填"] == "否"
+        assert "平均超额(信号收盘,%)" in wrow
+        assert "平均超额(首日开盘,%)" in wrow
         assert wrow["平均最大涨幅(%)"] == pytest.approx(8.0)
 
         _, details = _sheet_dicts(body["path"], "周明细")
@@ -167,8 +171,11 @@ class TestExportNormal:
         assert summary[0]["近12周胜率(周等权,%)"] == pytest.approx(
             l0["weekly_equal_win_rate_sig"] * 100.0
         )
-        assert summary[0]["平均收益(信号口径,%)"] == pytest.approx(
+        assert summary[0]["平均收益(信号收盘,%)"] == pytest.approx(
             l0["weekly_equal_mean_ret_sig"] * 100.0
+        )
+        assert summary[0]["平均收益(首日开盘,%)"] == pytest.approx(
+            l0["weekly_equal_mean_ret_exec"] * 100.0
         )
 
 
@@ -195,8 +202,10 @@ class TestEmptySemantics:
         assert srow["有效周数"] == 0
         # 空仓周：胜率/均值是 null（无有效样本），不能写成 0
         assert srow["近12周胜率(周等权,%)"] is None
-        assert srow["平均收益(信号口径,%)"] is None
-        assert srow["平均超额(%)"] is None
+        assert srow["平均收益(信号收盘,%)"] is None
+        assert srow["平均收益(首日开盘,%)"] is None
+        assert srow["平均超额(信号收盘,%)"] is None
+        assert srow["平均超额(首日开盘,%)"] is None
 
         _, weeks = _sheet_dicts(body["path"], "周汇总")
         assert weeks[0]["胜率(信号,%)"] is None
