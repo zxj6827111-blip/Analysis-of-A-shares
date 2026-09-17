@@ -925,20 +925,8 @@ def _load_week_rows(
     )
     keep_rids = selection["keep_rids"]
     timings["rule_filter_ms"] = _ms_since(t0)
-    t0 = perf_counter()
-    # 浅拷贝加展示字段（daily 等大字段共享引用，不复制）
-    rows = [
-        dict(r, code_disp=_short_code(str(r.get("code") or "")))
-        for r in rows_all
-        if str(r.get("rule_id")) in keep_rids
-    ]
-    rows = _dedupe_rows_by_identity(rows, fps_all, selection["representative"])
-    timings["rows_ms"] = _ms_since(t0)
-
-    # 快照里命中但 track 还没有的票 → 待结算清单（前端显示 pending 态）
-    settled_codes = {str(r.get("code")) for r in rows}
     # 待结算票不来自产物（无 name 字段），读取时补名称：来源与结算层同一
-    # 函数（stock_names），逐票解析有全局缓存，量级=单周入选票数，成本可忽略。
+    # 函数（stock_names），逐票解析有进程级缓存，量级=单周入选票数，成本可忽略。
     _name_cache: dict = {}
 
     def _name_of(c: str) -> str:
@@ -958,6 +946,29 @@ def _load_week_rows(
             except Exception:  # noqa: BLE001 — 缺名如实留空，不影响接口
                 _name_cache[c] = ""
         return _name_cache[c]
+
+    t0 = perf_counter()
+    # 浅拷贝加展示字段（daily 等大字段共享引用，不复制）
+    rows = [
+        dict(r, code_disp=_short_code(str(r.get("code") or "")))
+        for r in rows_all
+        if str(r.get("rule_id")) in keep_rids
+    ]
+    rows = _dedupe_rows_by_identity(rows, fps_all, selection["representative"])
+    timings["rows_ms"] = _ms_since(t0)
+
+    t0 = perf_counter()
+    # 产物是不可变快照，但历史产物的 name 可能整列为空：结算发生在缺本地
+    # 导入产物（无 TDX / 无 universe.json / 无周报快照）的部署上时名称源全缺，
+    # name 被写成 ""。产物不回写（不可变），改为读取时按当前名称源补齐展示名；
+    # 补不到仍留空，前端显示「—」，绝不拿代码冒充。导出层同一函数。
+    from ..service.stock_names import fill_missing_names
+
+    fill_missing_names(ctx.cfg, rows)
+    timings["name_fill_ms"] = _ms_since(t0)
+
+    # 快照里命中但 track 还没有的票 → 待结算清单（前端显示 pending 态）
+    settled_codes = {str(r.get("code")) for r in rows}
 
     t0 = perf_counter()
     pending = []

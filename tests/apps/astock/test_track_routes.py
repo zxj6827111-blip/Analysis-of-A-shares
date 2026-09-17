@@ -313,6 +313,9 @@ class TestTrackWeekDetail:
             "resolve_stock_name",
             lambda _cfg, code, **_kw: {"000003": "国农科技"}.get(str(code), ""),
         )
+        # 已结算行缺 name 时也会走名称源补齐，这里整体置空以锁定「补不到就
+        # 如实留空」——否则断言会随机器是否装了通达信而变（CI 与本地不一致）
+        monkeypatch.setattr(sn, "ensure_name_cache", lambda _cfg, **_kw: {})
         client, cfg, _ = track_client
         sid = _publish_snap(cfg, 20260911, ["SZSE.000001.SZ", "SZSE.000003.SZ"])
         # track 只结算第一只 → 第二只（000003）进 pending
@@ -325,8 +328,58 @@ class TestTrackWeekDetail:
         picks = body["pending_picks"]
         assert [p["code"] for p in picks] == ["SZSE.000003.SZ"]
         assert picks[0]["name"] == "国农科技"
-        # 已结算行缺 name（手写的是 v1 形态产物）→ 如实回 None，不编造
+        # 已结算行缺 name（手写的是 v1 形态产物）+ 名称源解析不到 → 如实留空，不编造
         assert body["rows"][0].get("name") is None
+
+    def test_l2_fills_empty_product_name_from_tushare_cache(
+        self, track_client, monkeypatch
+    ):
+        """空名产物 + 只有 Tushare 元数据缓存 → 读取时补齐（复现 Tushare-only 部署）。
+
+        线上场景：服务器无通达信、无 universe.json、无周报快照，结算时名称源
+        全缺，产物 rows[].name 写成 ""，页面名称列整列「—」。修复后读取按当前
+        名称源补齐展示名（产物不可变，不回写）。
+        """
+        from wtpy.apps.astock.service import stock_names as sn
+
+        client, cfg, storage = track_client
+        # 关掉本机可能存在的 TDX 名称源，只留 Tushare 元数据缓存
+        monkeypatch.setattr(cfg, "tdx_root", None)
+        monkeypatch.setattr(sn, "_cache", {})
+        monkeypatch.setattr(sn, "_loaded_for", None)
+        (storage / "rizhu_list_dates.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "fetched_at": "2026-09-12",
+                    "stocks": {}, "etfs": {},
+                    "stock_names": {"000001": "平安银行", "000003": "国农科技"},
+                    "etf_names": {},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        sid = _publish_snap(cfg, 20260911, ["SZSE.000001.SZ", "SZSE.000003.SZ"])
+        _write_track(
+            cfg, sid, 20260911,
+            rows=[
+                {"code": "SZSE.000001.SZ", "rule_id": "txt_测试规则A",
+                 "name": "", "ret_close_sig": 0.05, "fill_status": "ok"},
+                {"code": "SZSE.000003.SZ", "rule_id": "txt_测试规则A",
+                 "name": "", "ret_close_sig": 0.02, "fill_status": "ok"},
+            ],
+        )
+        body = client.get("/api/v1/bagua/track/weeks/20260911").json()
+        assert {r["code"]: r.get("name") for r in body["rows"]} == {
+            "SZSE.000001.SZ": "平安银行",
+            "SZSE.000003.SZ": "国农科技",
+        }
+        # 产物本身没有被回写（不可变快照）
+        prod_path = sc.track_path(Path(storage), sid, "rev1")
+        assert all(not r.get("name") for r in json.loads(
+            prod_path.read_text(encoding="utf-8")
+        )["rows"])
 
     def test_l2_rule_filter(self, track_client):
         client, cfg, _ = track_client

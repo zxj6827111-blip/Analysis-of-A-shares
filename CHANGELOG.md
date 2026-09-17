@@ -8,6 +8,26 @@
 - 每次发版递增版本号（如 2.0 → 2.1 → 2.2），并打 `v{版本号}` 的 git tag
 - 提交后右上角版本号自动显示新版本
 
+## [3.1.1] - 2026-09-17
+
+### 修复
+- **跟踪页名称列整列显示「—」（Tushare-only 部署）**：股票名称解析原先只认三个
+  通达信导入时代的本地来源（TDX infoharbor、`universe.json`、预测周报快照），
+  纯 Tushare 部署三者全无，导致结算时把空名写进产物（`rows[].name` 为空串），
+  跟踪页 L2 名称列、导出 xlsx 的「周明细」名称列整列为空。
+  - `service/stock_names.py` 新增第 4 个名称来源：读 `rizhu_list_dates.json` 的
+    `stock_names`/`etf_names`（Tushare `stock_basic` 缓存）。**只补前面三源缺失的
+    代码、不覆盖本地来源、只读本地文件不联网**（该路径会被表格读取调用）；
+    来源指纹纳入该文件，缓存随内容变化失效。
+  - 新增 `fill_missing_names()` 公共函数：把 `name` 为空的记录按当前名称源补齐。
+  - `api_routes/tracking.py`：L2 明细读取时补齐历史空名行，**不回写不可变产物**
+    （已结算的周无需重算）。
+  - `service/track_export.py`：导出前同样补齐，避免「页面有名字、导出空列」的口径割裂。
+  - 补不到名称仍如实留空，绝不拿代码冒充。
+- **测试**：新增 `tests/apps/astock/test_stock_names.py`（9 例）；补跟踪读取路径与
+  导出路径各 1 例。修掉 `test_l2_pending_picks_carry_name` 隐含依赖「本机安装通达信」
+  的断言（改为显式隔离名称源，CI 与本地结论一致）。
+
 ## [2.9] - 2026-08-15
 
 ### 新增
