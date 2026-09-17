@@ -49,6 +49,11 @@ from .study import (
 )
 from .strategy import PortfolioBacktester
 from .reports import write_backtest_csv, write_signals_csv, write_stats_csv
+# 阶段 1/2 契约模块：track-weekly 与 review-weekly 快照层共用枚举/原语，
+# 不得在调用方自造同义词（docs/plans/auto-screen-track/contract.md）
+from .service import screen_contract as sc
+from .service import screen_snapshots as ss
+from .service import screen_tracking as tracksvc
 
 
 def _astock_code_sha() -> str:
@@ -521,7 +526,19 @@ def cmd_build_signals(args: argparse.Namespace) -> int:
 
 
 def cmd_review_weekly(args: argparse.Namespace) -> int:
-    """周五链全市场指标复核（735 / 5日外），结果 JSON 供导出侧读取。"""
+    """周五链全市场指标复核（735 / 5日外），结果 JSON 供导出侧读取。
+
+    --rules all 时对全部可执行规则跑一次全市场扫描，并同时产出不可变
+    快照 + 发布指针（契约见 docs/plans/auto-screen-track/contract.md）。
+
+    --publish-scope subset（2026-09-16「指定规则补算」）：只对 --rules
+    指定的几条规则跑全市场扫描并产出**子集快照**（rules_scope=subset）。
+    全市场扫描成本与规则数近似线性（实测单规则约为全量的 1/6~1/10），
+    用于"验证某条规则在过去某周选出了什么"。两条硬约束：
+    - persist=False：绝不写 ``review_{asof}.json``（那是周五链/导出共享的
+      全规则结果，被子集覆盖会让该周导出直接错数据）；
+    - 发布走契约的子集护栏（只允许补早于最近发布周的历史空周）。
+    """
     import logging
 
     from .service.indicator_review import run_weekly_review
@@ -535,23 +552,758 @@ def cmd_review_weekly(args: argparse.Namespace) -> int:
     cfg = _cfg_from_args(args)
     cfg.ensure_dirs()
     asof = int(args.asof) if getattr(args, "asof", None) else None
+    rules_arg = str(getattr(args, "rules", None) or "").strip()
+    scope_req = str(getattr(args, "publish_scope", None) or "auto").strip().lower()
+    if scope_req not in ("auto", "all", "subset"):
+        print(f"[REVIEW] --publish-scope 非法：{scope_req!r}（auto/all/subset）")
+        return 2
+    # --publish-scope all 只能配 --rules all：子集规则被当全量发布的话，
+    # 读取方（跟踪列表/导出）无法分辨「部分名单」与「全部名单」。
+    if scope_req == "all" and rules_arg.lower() != "all":
+        print("[REVIEW] --publish-scope all 必须与 --rules all 同时使用")
+        return 2
+    subset_snapshot = scope_req == "subset"
     rule_ids = (
-        [r.strip() for r in str(args.rules).split(",") if r.strip()]
-        if getattr(args, "rules", None)
+        [r.strip() for r in rules_arg.split(",") if r.strip()]
+        if rules_arg and rules_arg.lower() != "all"
         else None
     )
+    if subset_snapshot and not rule_ids:
+        print(
+            "[REVIEW] --publish-scope subset 必须显式指定 --rules"
+            "（逗号分隔规则 ID；--rules all 请改用默认全量快照）"
+        )
+        return 2
+    snapshot_all = rules_arg.lower() == "all"
+    snapshot_mode = snapshot_all or subset_snapshot
+    if snapshot_all:
+        # --rules all：全部可执行规则（含预置两条），供快照层预筛
+        from .service.screen_snapshots import list_screenable_rule_ids
+
+        rule_ids = list_screenable_rule_ids(cfg)
+        if not rule_ids:
+            print("没有可执行的筛选规则（指标目录为空？），退出")
+            return 2
+    elif subset_snapshot:
+        # 规则 ID 白名单校验（fail-closed）：拼错的规则名绝不能静默产出一份
+        # "什么都没有"的子集快照。注册表不可用（allowed 为空）时不预判，
+        # 交给 run_weekly_review 的 reg.get 抛错（不静默）。
+        from .service.screen_snapshots import list_screenable_rule_ids
+
+        allowed = {str(r) for r in list_screenable_rule_ids(cfg)}
+        unknown = [r for r in rule_ids or [] if allowed and r not in allowed]
+        if unknown:
+            print(
+                "[REVIEW] 规则不可执行或不存在："
+                + ", ".join(unknown)
+                + "（--publish-scope subset 只接受可筛选规则）"
+            )
+            return 2
     codes = args.codes or None
-    summary = run_weekly_review(
-        cfg,
-        asof=asof,
-        rule_ids=rule_ids,
-        codes=codes,
-        force=bool(getattr(args, "force", False)),
-    )
+    from .service import heavy_job as _hj
+
+    def _run_review() -> Dict[str, Any]:
+        return run_weekly_review(
+            cfg,
+            asof=asof,
+            rule_ids=rule_ids,
+            codes=codes,
+            force=bool(getattr(args, "force", False)),
+            # 子集快照绝不写 review_{asof}.json（全规则共享数据源）
+            persist=not subset_snapshot,
+        )
+
+    if snapshot_mode:
+        # --rules all 是全市场重任务（契约 §7）：持 heavy-job 全局锁执行，
+        # 与手动 CLI/网页现算互斥（9/13 OOM 教训：重任务绝不并发）。
+        # 锁同线程可重入 → backfill 循环内进程内调用本函数不会自我阻塞。
+        _snapshot_asof = asof or 0
+        # 子集补算单独记待办键：它的重跑命令与全量不同，待办映射里不猜
+        # 命令（api._heavy_job_command 对它返回 None → 标欠账不再自动重试）。
+        # 这符合子集补算的定位：用户交互式发起的一次性验证任务，被锁挡住时
+        # 如实告知重跑即可，不需要进自动重试队列。
+        _lock_key = (
+            f"review_subset_{_snapshot_asof}" if subset_snapshot
+            else f"review_all_{_snapshot_asof}"
+        )
+        _locked = _hj.run_with_heavy_lock(cfg, _lock_key, fn=_run_review)
+        if _locked.get("skipped_locked"):
+            print(
+                "[REVIEW] 另一个重任务正在运行（heavy-job 锁被占用），"
+                f"本次跳过并记入待办（attempts="
+                f"{(_locked.get('pending') or {}).get('attempts')}）"
+            )
+            if subset_snapshot:
+                print(
+                    "[REVIEW] 子集补算不进自动重试队列（命令含规则清单，"
+                    "待办映射不猜命令）：请在重任务结束后手动重跑本命令。"
+                )
+            print(json.dumps(
+                {"status": "skipped_locked", "reason": "heavy_job_lock_held",
+                 "asof": _snapshot_asof},
+                ensure_ascii=False, indent=2))
+            return 3  # 可重试：待办会由服务运行期退避重试/手动补跑
+        summary = _locked.get("value") or {}
+    else:
+        summary = _run_review()
+    # 快照层：全量/子集的复核结果写不可变快照并按契约发布
+    # （后台重试/已有指针不自动替换；no_go 不产快照）
+    if snapshot_mode and summary.get("status") == "ok":
+        from .service import screen_contract as _sc
+        from .service.screen_snapshots import build_snapshot_payload, write_and_publish_snapshot
+
+        run_kind = str(getattr(args, "run_kind", None) or "") or (
+            "backfill" if subset_snapshot else "weekly_chain"
+        )
+        payload = build_snapshot_payload(
+            cfg, summary, rule_ids=rule_ids or [],
+            run_kind=run_kind,
+            rules_scope=(
+                _sc.RULES_SCOPE_SUBSET if subset_snapshot else _sc.RULES_SCOPE_ALL
+            ),
+        )
+        try:
+            pub = write_and_publish_snapshot(cfg, payload)
+            summary["snapshot"] = pub
+            print("[SNAPSHOT] " + json.dumps(pub, ensure_ascii=False))
+        except FileExistsError:
+            # 理论不可达（snapshot_id 毫秒+pid+随机）；即便撞上也不失败
+            summary["snapshot"] = {"published": False, "reason": "id_collision"}
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     # no_go 是合法结论（复权未就绪），退出码仍为 0；异常路径自然非零
     return 0
 
+
+# track-weekly 退出码映射（契约 §1）：
+#   0 = complete（含合法排除样本）或 no_trading_week
+#   3 = pending / blocked_benchmark / data_version_changed（自动重试一次）
+#   2 = 配置/快照缺失类（可读错误，不是计算事故）
+#   1 = 计算异常（fail-closed，不吞栈）
+_TRACK_EXIT_OK = 0
+_TRACK_EXIT_CONFIG = 2
+_TRACK_EXIT_RETRYABLE = 3
+_TRACK_EXIT_FAILED = 1
+
+
+def track_exit_code_for_completion(completion: str) -> int:
+    """服务返回 completion → CLI 退出码（契约 §1，供测试直接断言映射）。"""
+    if completion == sc.TRACK_COMPLETE or completion == sc.TRACK_NO_TRADING_WEEK:
+        return _TRACK_EXIT_OK
+    if completion in (
+        sc.TRACK_PENDING,
+        sc.TRACK_BLOCKED_BENCHMARK,
+        sc.TRACK_DATA_VERSION_CHANGED,
+    ):
+        return _TRACK_EXIT_RETRYABLE
+    if completion == "no_snapshot":
+        return _TRACK_EXIT_CONFIG
+    return _TRACK_EXIT_FAILED
+
+
+def _append_missing_rules(cfg, wk: int, subset_rules, args) -> Dict[str, Any]:
+    """把 ``subset_rules`` 里该周还没覆盖的规则并进该周名单。
+
+    用户口径（2026-09-16）：补算单位是 **周 × 规则**。一条规则补过某周，只说明
+    这条规则那一周有数据了，不代表这一周归它——别的规则同样要能补这一周。
+    所以该周已有名单时不再整单拒绝，而是：只扫描缺的那几条规则（成本与规则数
+    线性，不重跑已有规则）→ 合并进该周名单 → 显式替换指针（审计记录原/新指针）。
+
+    返回 ``{"ok", "reason", "added", ...}``；``reason=rules_already_present``
+    表示该周已有全部请求规则（无需扫描）。
+    """
+    pub = ss.load_published_snapshot_for_week(cfg, wk)
+    have = {str(r.get("rule_id")) for r in (pub or {}).get("rules") or []}
+    want = [str(r) for r in subset_rules]
+    missing = [r for r in want if r not in have]
+    if not missing:
+        return {
+            "ok": True,
+            "reason": "rules_already_present",
+            "added": [],
+            "present": [r for r in want if r in have],
+        }
+    print(
+        f"[TRACK] {wk}: 该周已有名单（{len(have)} 条规则），"
+        f"追加缺失的 {len(missing)} 条：{','.join(missing)}"
+    )
+    rc = cmd_review_weekly(
+        argparse.Namespace(
+            asof=str(wk),
+            rules=",".join(missing),
+            publish_scope="subset",
+            codes=None, force=False,
+            run_kind="backfill",
+            tdx_root=getattr(args, "tdx_root", None),
+            storage=getattr(args, "storage", None),
+            indicator_dir=getattr(args, "indicator_dir", None),
+        )
+    )
+    if rc != 0:
+        return {"ok": False, "reason": "review_failed", "review_exit_code": rc}
+    # 该周已有指针 → 复核产出的子集快照不会自动发布，按文件名前缀找回最新那份
+    extra_id = ss.find_latest_snapshot_id_for_week(
+        cfg, wk,
+        require_any_rule_ids=missing,
+        exclude=[str((pub or {}).get("snapshot_id") or "")],
+    )
+    if not extra_id:
+        return {"ok": False, "reason": "extra_snapshot_not_found", "missing": missing}
+    res = ss.append_rules_to_week(
+        cfg, week_id=wk, extra_snapshot_id=extra_id,
+        reason="追加" + ",".join(missing),
+    )
+    if not res.get("appended"):
+        return {
+            "ok": False,
+            "reason": str(res.get("reason") or "append_failed"),
+            "missing": missing,
+            "detail": {k: v for k, v in res.items() if k != "appended"},
+        }
+    return {
+        "ok": True,
+        "reason": "appended",
+        "added": list(res.get("added_rule_ids") or []),
+        "merged_snapshot_id": res.get("merged_snapshot_id"),
+        "previous_snapshot_id": res.get("previous_snapshot_id"),
+        "scoped_rule_ids": res.get("scoped_rule_ids"),
+    }
+
+
+def _resolve_track_week(
+    cfg, args, *, calendar=None, default_previous: bool = False
+) -> int:
+    """--week 解析。
+
+    显式 --week：8 位数字直用（用法错误由服务层 natural_week_window 的
+    anomaly fail-closed 兜住）。
+    缺省 + default_previous=False（手动跑）：最近发布快照周。
+    缺省 + default_previous=True（周五链/链尾语义）：最近发布快照周的
+    **上一信号周**——周五晚刚发布本周新名单，要结算的是上周（本周新
+    名单「待下周结算」，契约 §2；审查 B-2：锚 latest 会把窗口未结束
+    的本周跑成恒 pending）。
+    """
+    raw = str(getattr(args, "week", None) or "").strip().replace("-", "")
+    if raw:
+        if not raw.isdigit() or len(raw) != 8:
+            raise ValueError(f"--week 格式无效：{raw!r}（需要 YYYYMMDD）")
+        return int(raw)
+    snap = ss.latest_published_snapshot(cfg)
+    if snap is None:
+        raise ValueError("没有已发布快照：先跑 review-weekly --rules all，或显式传 --week")
+    week = int(snap.get("week_id") or snap.get("asof") or 0)
+    if default_previous:
+        prev = tracksvc.previous_signal_week(calendar, week)
+        if prev is None:
+            raise ValueError("无法定位上一信号周（日历不可用或耗尽），请显式传 --week")
+        return prev
+    return week
+
+
+def _record_retryable_pending(cfg, week_id: int, out: Dict[str, Any]) -> None:
+    """可重试结果（exit 3）按真实 completion 记待办（唯一记账方 = 本进程）。
+
+    此前由服务端重试循环对 rc=3 一律补记 reason="skipped_locked"：一是与
+    子进程内 run_with_heavy_lock 的抢锁记账**重复**（一次失败 attempts +2、
+    退避跳档、重试预算减半）；二是 pending/blocked_benchmark/
+    data_version_changed 根本不是锁占用，待办原因会误导排查。改由持锁方按
+    真实 completion 记账，服务端 runner 对 rc=3 不再补记。
+    """
+    from .service import screen_contract as _sc
+
+    completion = str(out.get("completion") or "")
+    reason = str(out.get("reason") or completion) or "retryable"
+    try:
+        _sc.record_pending_job(
+            Path(cfg.storage_root),
+            tracksvc.week_task_key(int(week_id)),
+            reason=reason,
+        )
+        print(
+            f"[TRACK] {week_id}: 可重试（{completion}/{reason}），已记入待办"
+        )
+    except Exception as e:  # noqa: BLE001 — 记账失败不改变退出码语义
+        print(f"[TRACK] {week_id}: 待办记账失败（{e}）")
+
+
+def _run_one_track_week(
+    cfg, week_id: int, args, *, hold_lock: bool = True
+) -> Tuple[int, Dict[str, Any]]:
+    """单周跟踪 + data_version_changed 自动重试一次（契约 §4）。
+
+    重试用同一 cfg：第一次失败说明读版本期间数据面在变，第二次启动时
+    捕获的就是新版本；连读两次都不一致才认输返回 3。
+
+    契约 §7：整个计算在 heavy-job 全局锁内执行（与网页现算/其他 CLI
+    互斥）；抢锁失败 → 记持久化待办 + 返回 3（可重试），不静默丢弃。
+    """
+    kwargs = dict(
+        run_kind=str(getattr(args, "run_kind", None) or "weekly_chain"),
+        force=bool(getattr(args, "force", False)),
+    )
+    from .service import heavy_job as _hj
+
+    task_key = tracksvc.week_task_key(week_id)
+
+    def _compute() -> Dict[str, Any]:
+        out = tracksvc.compute_weekly_tracking(cfg, week_id, **kwargs)
+        if out.get("completion") == sc.TRACK_DATA_VERSION_CHANGED:
+            print("[TRACK] 数据版本变化，自动重试一次…")
+            out = tracksvc.compute_weekly_tracking(cfg, week_id, **kwargs)
+        return out
+
+    if not hold_lock:
+        # 调用方（backfill）已持锁：同线程重入放行，直接算
+        out = _compute()
+        rc = track_exit_code_for_completion(str(out.get("completion")))
+        if rc == _TRACK_EXIT_RETRYABLE:
+            _record_retryable_pending(cfg, week_id, out)
+        return rc, out
+    locked = _hj.run_with_heavy_lock(cfg, task_key, fn=_compute)
+    if locked.get("skipped_locked"):
+        # 锁被占用：本周任务不丢——待办已由 run_with_heavy_lock 记账
+        # （reason=skipped_locked，单一记账方），服务运行期按 5/15/30 分钟
+        # 有界退避重试（或手动重跑），退出码 3 = 可重试
+        print(
+            f"[TRACK] {week_id}: 另一个重任务正在运行（heavy-job 锁被占用），"
+            f"已记入待办（attempts={locked.get('pending', {}).get('attempts')}）"
+        )
+        return _TRACK_EXIT_RETRYABLE, {
+            "completion": "skipped_locked",
+            "week_id": int(week_id),
+            "task_key": task_key,
+            "reason": "heavy_job_lock_held",
+            "holder": locked.get("holder"),
+        }
+    out = locked.get("value") or {}
+    rc = track_exit_code_for_completion(str(out.get("completion")))
+    if rc == _TRACK_EXIT_RETRYABLE:
+        _record_retryable_pending(cfg, week_id, out)
+    return rc, out
+
+
+def _resolve_backfill_rules(cfg, args) -> Optional[List[str]]:
+    """``--backfill`` 的规则范围：None = 全部规则（现状）或指定规则 ID 列表。
+
+    校验 fail-closed：拼错/不可执行的规则名绝不放行——否则会静默产出一份
+    "该周什么都没有"的子集快照，用户还以为规则当周确实无入选。
+    注册表不可用（allowed 为空）时不预判，交由 review 层抛错（不静默）。
+    """
+    raw = str(getattr(args, "rules", None) or "").strip()
+    if not raw:
+        return None
+    if int(getattr(args, "backfill", 0) or 0) <= 0:
+        raise ValueError(
+            "--rules 仅与 --backfill 同用（单周跟踪只读已发布快照，"
+            "规则范围由该周快照决定）"
+        )
+    ids: List[str] = []
+    for r in (x.strip() for x in raw.split(",")):
+        if r and r not in ids:  # 去重保序（同一规则写两遍不该跑两遍）
+            ids.append(r)
+    if not ids:
+        raise ValueError("--rules 为空")
+    from .service.screen_snapshots import list_screenable_rule_ids
+
+    allowed = {str(r) for r in list_screenable_rule_ids(cfg)}
+    unknown = [r for r in ids if allowed and r not in allowed]
+    if unknown:
+        raise ValueError("规则不可执行或不存在：" + ", ".join(unknown))
+    return ids
+
+
+def _latest_signal_week(cfg, cal) -> int:
+    """数据面最新可得交易日所属的信号周（子集补算护栏；实现见服务层）。
+
+    包装一层只为在 CLI 侧固定参数顺序（日历由调用方一次性加载复用）。
+    """
+    return tracksvc.latest_signal_week(cfg, cal)
+
+
+def cmd_track_publish(args: argparse.Namespace) -> int:
+    """显式替换某周的发布指针（契约 docs/plans/auto-screen-track/contract.md §0）。
+
+    为什么需要它（2026-09-16 用户实操反馈）：``backfill`` 只在**完全没有指针**
+    的周补位——某周一旦有了发布快照（哪怕是「指定规则补算」的部分名单），
+    自动路径一律不替换。可契约早就写明"转正走显式 track-publish"，却一直没有
+    实现，于是"某周已经有 A 规则的名单，想再补上 B 规则"在页面上只有 400，
+    在 CLI 上只会安静跳过，用户无路可走。
+
+    本命令就是那条显式路径：把指定快照转成该周的正式指针，原指针/新指针/
+    时间/来源全部记进索引审计（``source=manual:<原因>``）。门槛与周归属照旧
+    校验（``publish_snapshot`` 内做）：快照必须属于该周、必须过发布门槛。
+
+    退出码：0 成功；2 用法/快照不存在/门槛不过/锁被占；1 其他异常。
+    """
+    import re as _re
+
+    cfg = _cfg_from_args(args)
+    cfg.ensure_dirs()
+    raw_week = str(getattr(args, "week", "") or "").strip()
+    week_s = raw_week.replace("-", "").replace("/", "")
+    snapshot_id = str(getattr(args, "snapshot", "") or "").strip()
+    reason = str(getattr(args, "reason", "") or "").strip()
+    if not _re.fullmatch(r"\d{8}", week_s):
+        print("[PUBLISH] --week 需为 8 位日期（YYYYMMDD），例如 20260814")
+        return _TRACK_EXIT_CONFIG
+    if not snapshot_id:
+        print("[PUBLISH] --snapshot 必填（要转正的快照 id）")
+        return _TRACK_EXIT_CONFIG
+    if not reason:
+        print("[PUBLISH] --reason 必填：替换已发布周的名单需要写明原因并留审计")
+        return _TRACK_EXIT_CONFIG
+
+    from .service import heavy_job as _hj
+    from .service import screen_contract as sc
+
+    root = Path(cfg.storage_root)
+    week = int(week_s)
+    idx = sc.load_week_index(root)
+    prev = (idx.get("weeks") or {}).get(str(week)) or {}
+    print(
+        f"[PUBLISH] 目标周 {week} 原指针: "
+        f"{prev.get('published_snapshot_id') or '（无）'}"
+        f"（run_kind={prev.get('run_kind') or '—'}, "
+        f"scope={prev.get('rules_scope') or '—'}）"
+    )
+
+    # 快照自带 run_kind 更如实（索引里的「数据来源」标签按它渲染）：
+    snap_run_kind = "recompute"
+    try:
+        snap_payload = json.loads(
+            sc.snapshot_path(root, snapshot_id).read_text(encoding="utf-8")
+        )
+        snap_run_kind = str(snap_payload.get("run_kind") or "recompute")
+        print(
+            f"[PUBLISH] 本次转正快照: week_id={snap_payload.get('week_id')} "
+            f"run_kind={snap_run_kind} "
+            f"scope={sc.snapshot_rules_scope(snap_payload)} "
+            f"scoped_rules={sc.scoped_rule_ids(snap_payload)}"
+        )
+    except FileNotFoundError:
+        print(f"[PUBLISH] 快照不存在: {sc.snapshot_path(root, snapshot_id)}")
+        return _TRACK_EXIT_CONFIG
+    except Exception as e:  # noqa: BLE001 — 读取失败不阻塞（后面 publish 还会校验）
+        print(f"[PUBLISH] 快照读取异常（继续尝试发布）: {e}")
+
+    def _do_publish() -> int:
+        try:
+            entry = sc.publish_snapshot(
+                root, week, snapshot_id, snap_run_kind,
+                source=f"manual:{reason}",
+            )
+        except FileNotFoundError as e:
+            print(f"[PUBLISH] 快照不存在: {e}")
+            return _TRACK_EXIT_CONFIG
+        except ValueError as e:
+            # 周归属不符 / 未过发布门槛
+            print(f"[PUBLISH] 拒绝替换: {e}")
+            return _TRACK_EXIT_CONFIG
+        print(
+            f"[PUBLISH] 已替换: {week} → {entry.get('published_snapshot_id')}"
+            f"（scope={entry.get('rules_scope')}, scoped={entry.get('scoped_rule_ids')}, "
+            f"published_at={entry.get('published_at')}）"
+        )
+        audit = entry.get("audit") or {}
+        print(
+            f"[PUBLISH] 审计: 原指针={audit.get('previous_snapshot_id') or '（无）'} "
+            f"来源={entry.get('published_by')}"
+        )
+        print("[PUBLISH] 提示：周内名单已变，需要重新结算跟踪时请紧接着跑 "
+              f"track-weekly --week {week}")
+        return _TRACK_EXIT_OK
+
+    # 与链条/补算互斥：指针更新必须在没有重任务写索引时进行（契约 §0「索引锁内更新」。
+    # 仓库没有独立的索引文件锁，实际的互斥手段就是这把 heavy-job 锁）。
+    locked = _hj.run_with_heavy_lock(cfg, f"publish_{week}", fn=_do_publish)
+    if locked.get("skipped_locked"):
+        print("[PUBLISH] 另一个重任务正在运行（heavy-job 锁被占用），未替换指针；"
+              "请等它结束后重跑本命令。")
+        return _TRACK_EXIT_CONFIG
+    return int(locked.get("value") or 0)
+
+
+def cmd_track_weekly(args: argparse.Namespace) -> int:
+    """入选股票次周跟踪（契约 docs/plans/auto-screen-track/contract.md）。
+
+    stdout 打 JSON 摘要；退出码语义见 track_exit_code_for_completion。
+    --backfill N 对过去 N 个周五逐周补：先 review-weekly 补快照
+    （run_kind=backfill，仅无指针周），再结算跟踪；已有快照+track 的周
+    跳过（断点续跑）。
+
+    --backfill N --rules A,B（2026-09-16）：只补指定规则（子集快照），
+    用于"验证某条规则在过去某周选出的股票与表现"；全市场扫描成本与规则数
+    近似线性，单规则约全量的 1/6~1/10。硬约束：
+    - 只能补**早于数据面最新信号周**且**完全没有发布指针**的周（护栏，
+      不抢周五链的地盘）；
+    - 子集快照不写 ``review_{asof}.json``（那是全规则共享数据源，被子集
+      覆盖会让该周导出直接错数据）。
+    """
+    import logging as _logging
+
+    # 周五链把 stdout/stderr 重定向到日志文件：不配 logging 全程静默
+    _logging.basicConfig(
+        level=_logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    from .service.screen_snapshots import latest_published_snapshot as _latest_snap
+
+    cfg = _cfg_from_args(args)
+    cfg.ensure_dirs()
+    backfill = int(getattr(args, "backfill", 0) or 0)
+    try:
+        # 规则范围（子集补算）解析先于日历：用法错误要立刻失败，不白跑
+        subset_rules = _resolve_backfill_rules(cfg, args)
+    except ValueError as e:
+        print(f"[TRACK] 配置错误: {e}")
+        return _TRACK_EXIT_CONFIG
+
+    from .service import heavy_job as _hj
+
+    try:
+        # 日历：服务层统一加载（内含 calendar.json 过期检查——数据面
+        # 已到 X 但 calendar.json 只到 Y → 自动从数据集推导并并入 delta
+        # 交易日；外层若只读 calendar.json 会拿陈旧日历，回填锚点周
+        # 不在日历内 → past_signal_weeks 返回空 → "无法枚举回填周"）
+        cal = tracksvc._load_calendar_or_none(cfg)
+
+        if backfill > 0:
+            # 整轮回填持锁（契约 §7）：一次持锁覆盖 N 周，避免与周五链/
+            # 其他 CLI 穿插（锁同线程可重入，循环内的进程内 review-weekly
+            # 调用与 _run_one_track_week(hold_lock=False) 不会自我阻塞）
+            _lock_key = (
+                f"backfill_subset_{backfill}" if subset_rules
+                else f"backfill_{backfill}"
+            )
+            _bf_lock = _hj.HeavyJobLock(Path(cfg.storage_root), task_key=_lock_key)
+            try:
+                _bf_lock.acquire()
+            except _hj.HeavyJobLockHeld as _e:
+                _info = _hj.record_lock_skip(Path(cfg.storage_root), _lock_key)
+                print(
+                    "[TRACK] 另一个重任务正在运行（heavy-job 锁被占用），"
+                    f"回填已记入待办（attempts={_info.get('attempts')}）"
+                )
+                return _TRACK_EXIT_RETRYABLE
+            try:
+                overall = _cmd_track_backfill(
+                    args, cfg, cal, backfill, subset_rules=subset_rules
+                )
+                if overall == _TRACK_EXIT_RETRYABLE:
+                    # 整轮回填未完成（存在 pending 周等）：伞键 re-arm，
+                    # 否则它的 recorded_at 仍是旧的 → 立即又到期 → 服务端
+                    # 重试循环每 120s 重触发一次整轮回填（含全市场读）。
+                    # 子集伞键不做 re-arm：它的重跑命令含规则清单，待办
+                    # 映射不猜命令（自动重试不适用），re-arm 只会空转。
+                    if not subset_rules:
+                        from .service import screen_contract as _sc
+
+                        _info = _sc.record_pending_job(
+                            Path(cfg.storage_root), f"backfill_{backfill}",
+                            reason="backfill_incomplete_retryable",
+                        )
+                        print(
+                            f"[TRACK] 回填未完成（可重试），伞待办 re-arm"
+                            f"（attempts={_info.get('attempts')}，"
+                            f"下次 {(_info.get('next_retry_in_minutes') or '耗尽')} 分钟后）"
+                        )
+                return overall
+            finally:
+                _bf_lock.release()
+
+        # 单周模式（周五链/链尾调用走 default_previous=True 锚上一信号周；
+        # 手动单跑缺省 --week 保持"最近发布快照周"便于即时查看）
+        try:
+            week_id = _resolve_track_week(
+                cfg, args, calendar=cal,
+                default_previous=bool(getattr(args, "previous_week", False)),
+            )
+        except ValueError as e:
+            print(f"[TRACK] {e}")
+            return _TRACK_EXIT_CONFIG
+        rc, out = _run_one_track_week(cfg, week_id, args)
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return rc
+    except ValueError as e:
+        # 配置/日历/日期类可读错误：2（fail-closed 但不冒充异常）
+        print(f"[TRACK] 配置错误: {e}")
+        return _TRACK_EXIT_CONFIG
+    except Exception as e:  # noqa: BLE001 — 计算事故如实记栈后退出 1
+        import traceback
+
+        traceback.print_exc()
+        print(f"[TRACK] 计算异常: {e}")
+        return _TRACK_EXIT_FAILED
+
+
+def _cmd_track_backfill(
+    args, cfg, cal, backfill: int, *, subset_rules: Optional[List[str]] = None
+) -> int:
+    """回填主体（外层已持 heavy-job 锁；锁同线程可重入）。
+
+    逐周：无发布快照 → 先 review-weekly 补快照（run_kind=backfill）再结算
+    跟踪；已有快照+track → 跳过（断点续跑）；单周失败不中断后续周。
+
+    ``subset_rules`` 非空 = 子集补算（只跑这些规则，产出 rules_scope=subset
+    的快照），逐周加一道历史周护栏（见 _latest_signal_week）。
+    """
+    # 锚定周：显式 --week 或最近发布快照周
+    try:
+        anchor = _resolve_track_week(cfg, args)
+    except ValueError:
+        anchor = None
+    if anchor is None:
+        # 一个快照都没有：从数据面最新交易日回退（backfill 冷启动）。
+        # 审查 A-1：surface_max_date 是票级 min 水位（周二/停牌日都
+        # 可能），必须先归一到"其 ISO 周内最后交易日"再入周枚举——
+        # 否则该周产出的 week_id 与将来正式周五链发布的周身份不一致
+        # （同周双产物、统计双计）。
+        raw_anchor = tracksvc.surface_max_date(cfg)
+        anchor = 0
+        if raw_anchor and raw_anchor > 0:
+            cal_dates = list(cal.dates) if cal else []
+            week_of = tracksvc.past_signal_weeks(cal, int(raw_anchor), 1)
+            anchor = int(week_of[0]) if week_of else 0
+    if anchor <= 0:
+        print("无法确定回填锚点（无快照且数据面不可用）")
+        return _TRACK_EXIT_CONFIG
+    weeks = tracksvc.past_signal_weeks(cal, anchor, backfill)
+    if not weeks:
+        print("日历不可用，无法枚举回填周")
+        return _TRACK_EXIT_CONFIG
+    # 子集护栏依据只算一次（surface_max_date 要读 manifest，逐周重复无谓）
+    latest_signal_week = _latest_signal_week(cfg, cal) if subset_rules else 0
+    if subset_rules:
+        print(
+            f"[TRACK] 指定规则补算：{len(subset_rules)} 条规则 "
+            f"({', '.join(subset_rules)})；历史周护栏上限={latest_signal_week or '未知'}"
+            "（该周及之后归周五链）"
+        )
+    results = []
+    overall = _TRACK_EXIT_OK
+    for wk in weeks:
+        if subset_rules and latest_signal_week and int(wk) >= latest_signal_week:
+            # 子集快照是部分名单：占住链条会发布的周 = 该周永久只剩这几条
+            # 规则的数据（全量快照被"已有指针不替换"挡住），必须拒绝
+            print(
+                f"[TRACK] {wk}: 跳过（子集补算只支持历史周；数据面最新信号周 "
+                f"{latest_signal_week} 及之后归周五链，请用整周补算）"
+            )
+            results.append({
+                "week": wk, "completion": "skipped_subset_scope",
+                "reason": "subset_scope_not_historical_week",
+                "latest_signal_week": latest_signal_week,
+            })
+            continue
+        # --force 跳过断点续跑短路（审查 🟡-7：此前 force 是死参，
+        # 用户以为强制重算实际什么都不做）；同 revision 产物仍不覆盖
+        force_flag = bool(getattr(args, "force", False))
+        if force_flag:
+            need, reason = True, "forced"
+        else:
+            # 此断点续跑判定本身处理 data_version 捕获，轻量可行
+            need, reason = tracksvc.should_recompute(
+                cfg, wk, calendar=cal,
+                algo_version=tracksvc.TRACKING_ALGO_VERSION,
+            )
+        # ── 追加规则（2026-09-16 用户口径：补算单位 = 周 × 规则）─────────────
+        # 该周已有发布名单、但请求的规则还没覆盖 → 只扫缺的那几条，合并进该周名单；
+        # 一条规则补过某周不代表这一周归它，别的规则同样要能补这一周。
+        if subset_rules and reason != "no_published_snapshot":
+            append_res = _append_missing_rules(cfg, wk, subset_rules, args)
+            if append_res.get("reason") == "rules_already_present" and not force_flag:
+                print(
+                    f"[TRACK] {wk}: 跳过（该周已有这些规则的名单，无需补算；"
+                    "如需重算请用 track-publish 显式转正）"
+                )
+                results.append({
+                    "week": wk, "completion": "skipped_rules_already_present",
+                    "reason": "rules_already_present",
+                    "present_rule_ids": append_res.get("present") or [],
+                })
+                continue
+            if not append_res.get("ok") and append_res.get("reason") != "rules_already_present":
+                print(f"[TRACK] {wk}: 追加规则失败（{append_res.get('reason')}）")
+                results.append({"week": wk, "completion": "append_failed", **append_res})
+                overall = _TRACK_EXIT_RETRYABLE
+                continue
+            if append_res.get("ok") and append_res.get("reason") == "appended":
+                print(
+                    f"[TRACK] {wk}: 已追加 {append_res.get('added')} 到该周名单"
+                    f"（新快照 {append_res.get('merged_snapshot_id')}），继续结算…"
+                )
+                need, reason = tracksvc.should_recompute(
+                    cfg, wk, calendar=cal,
+                    algo_version=tracksvc.TRACKING_ALGO_VERSION,
+                )
+        if not need and reason == "no_published_snapshot":
+            # 无快照 → 先补快照（run_kind=backfill 仅补无指针周）
+            if subset_rules:
+                print(
+                    f"[TRACK] {wk}: 无发布快照，先跑 review-weekly 指定规则"
+                    f"（{len(subset_rules)} 条，persist=False）…"
+                )
+            else:
+                print(f"[TRACK] {wk}: 无发布快照，先跑 review-weekly 全规则…")
+            rc_snap = cmd_review_weekly(
+                argparse.Namespace(
+                    asof=str(wk),
+                    rules=(",".join(subset_rules) if subset_rules else "all"),
+                    publish_scope=("subset" if subset_rules else "auto"),
+                    codes=None, force=False,
+                    run_kind="backfill",
+                    tdx_root=getattr(args, "tdx_root", None),
+                    storage=getattr(args, "storage", None),
+                    indicator_dir=getattr(args, "indicator_dir", None),
+                )
+            )
+            if rc_snap != 0:
+                results.append(
+                    {"week": wk, "completion": "review_failed",
+                     "review_exit_code": rc_snap}
+                )
+                overall = _TRACK_EXIT_RETRYABLE
+                continue
+            # 复核退出 0 不等于"已发布"：发布门槛（partial/error 规则、
+            # no_data 超阈）与契约护栏（已有指针/子集历史周）都可能拒绝。
+            # 不校验的话该周会被下一行的 should_recompute 报成
+            # no_published_snapshot → "skipped"，用户看不到真实原因。
+            if ss.load_published_snapshot_for_week(cfg, wk) is None:
+                print(
+                    f"[TRACK] {wk}: 复核完成但未发布快照"
+                    "（门槛/护栏拒绝，见上面 [SNAPSHOT] 行的 reason）"
+                )
+                results.append({
+                    "week": wk, "completion": "review_not_published",
+                    "reason": "no_published_snapshot_after_review",
+                })
+                overall = _TRACK_EXIT_RETRYABLE
+                continue
+            need, reason = tracksvc.should_recompute(
+                cfg, wk, calendar=cal,
+                algo_version=tracksvc.TRACKING_ALGO_VERSION,
+            )
+        if not need:
+            results.append({"week": wk, "completion": "skipped",
+                            "reason": reason})
+            print(f"[TRACK] {wk}: 跳过（{reason}）")
+            continue
+        rc, out = _run_one_track_week(cfg, wk, args, hold_lock=False)
+        results.append({"week": wk, **out})
+        if rc != _TRACK_EXIT_OK:
+            # 3（pending/blocked/版本变化）不中断后续周：每周期独立。
+            # 聚合优先级（审查 A-12）：1（计算事故，需人看栈）必须
+            # 压过 3（可自动重试）——否则失败被 retryable 掩盖，
+            # 调用方只会徒劳重试。1 出现即 overall=1。
+            if rc == _TRACK_EXIT_FAILED:
+                overall = _TRACK_EXIT_FAILED
+            elif overall == _TRACK_EXIT_OK:
+                overall = rc
+        print(f"[TRACK] {wk}: {out.get('completion')}（exit={rc}）")
+    print(json.dumps(
+        {"completion": "backfill_done", "weeks": results,
+         "overall_exit_code": overall},
+        ensure_ascii=False, indent=2))
+    return overall
 
 def cmd_backtest(args: argparse.Namespace) -> int:
     """Backtest via service layer (shared with web API)."""
@@ -925,10 +1677,64 @@ def build_parser() -> argparse.ArgumentParser:
         help="周五链全市场指标复核（735/5日外），产出 review_{asof}.json 供导出读取",
     )
     sp.add_argument("--asof", default=None, help="YYYYMMDD，默认取数据面最新可得交易日")
-    sp.add_argument("--rules", default=None, help="逗号分隔规则 ID，默认两条复核规则")
+    sp.add_argument("--rules", default=None, help="逗号分隔规则 ID；all=全部可执行规则（产出不可变快照+发布指针）")
+    sp.add_argument(
+        "--publish-scope", default="auto", dest="publish_scope",
+        choices=["auto", "all", "subset"],
+        help="快照规则范围：auto=按 --rules 推断（现状）；all=--rules all 全量快照；"
+             "subset=只对 --rules 指定规则产出子集快照（历史周单规则补算，"
+             "不写 review_{asof}.json）",
+    )
     sp.add_argument("--codes", default=None, help="逗号分隔代码（默认 universe.json 全市场）")
     sp.add_argument("--force", action="store_true", help="忽略已有结果强制重算")
+    sp.add_argument(
+        "--run-kind", default=None, dest="run_kind",
+        choices=["weekly_chain", "backfill", "recompute"],
+        help="快照来源标识（快照模式下生效；缺省全量=weekly_chain、子集=backfill；"
+             "recompute 永不自动发布）",
+    )
     sp.set_defaults(func=cmd_review_weekly)
+
+    sp = sub.add_parser(
+        "track-weekly",
+        help="入选股票次周跟踪（双口径收益/胜率/覆盖率/沪深300超额），产物不可变",
+    )
+    sp.add_argument("--week", default=None,
+                    help="YYYYMMDD 信号日，缺省=最近发布快照周")
+    sp.add_argument("--previous-week", action="store_true", dest="previous_week",
+                    help="缺省锚定改为上一信号周（周五链语义：结算上周名单）")
+    sp.add_argument("--force", action="store_true",
+                    help="忽略断点续跑短路强制重算（同 revision 产物仍不覆盖；"
+                         "backfill 场景即跳过 should_recompute 直接算）")
+    sp.add_argument("--backfill", type=int, default=0, dest="backfill",
+                    help="对过去 N 个周五逐周补：先 review-weekly 全规则补快照再结算跟踪")
+    sp.add_argument(
+        "--rules", default=None,
+        help="仅与 --backfill 同用：逗号分隔规则 ID，只补这些规则（子集快照）。"
+             "缺省=全部可执行规则。单规则约为全量的 1/6~1/10 耗时，"
+             "用于验证某条规则在过去某周选出的股票与表现。",
+    )
+    sp.add_argument(
+        "--run-kind", default="weekly_chain",
+        choices=["weekly_chain", "backfill", "recompute"],
+        help="跟踪运行来源标识（写入产物，与快照 run_kind 对齐）",
+    )
+    sp.set_defaults(func=cmd_track_weekly)
+
+    sp = sub.add_parser(
+        "track-publish",
+        help="显式替换某周的发布指针（契约 §0：source=manual，门槛与周归属照旧校验，"
+             "索引内记录原指针/新指针/时间/来源审计）",
+    )
+    sp.add_argument("--week", required=True,
+                    help="YYYYMMDD 信号日（该周要替换成哪一周）")
+    sp.add_argument("--snapshot", required=True,
+                    help="要转正的快照 id（服务端产物文件名里的 snap_<id>.json）")
+    # 不用 argparse 的 required：缺原因时给出"为什么要写原因"的自解释文案，
+    # 比 argparse 的 "the following arguments are required" 有用
+    sp.add_argument("--reason", default=None,
+                    help="替换原因（必填；写入审计的 published_by，例如「追加短线强势启动规则」）")
+    sp.set_defaults(func=cmd_track_publish)
 
     sp = sub.add_parser("backtest")
     sp.add_argument("--indicator", action="append", required=True)

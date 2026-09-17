@@ -2671,6 +2671,8 @@ def test_export_review_request_beyond_data_falls_back(monkeypatch, tmp_path):
         "review_asof_used": 20240115,
         "review_fallback": True,
         "review_note": note,
+        # 阶段 1e：info_out 新增快照身份键；本用例无发布快照 → None
+        "review_snapshot_id": None,
     }
 
 

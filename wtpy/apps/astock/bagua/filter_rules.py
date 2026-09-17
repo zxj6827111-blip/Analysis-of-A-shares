@@ -34,9 +34,21 @@ MODE_EXACT = "exact_line"
 MODE_ACTION = "action_signal"
 MODE_COMBINED = "combined"
 
-KNOWN_ACTION_SIGNALS = ("新开仓", "加仓", "持有", "减仓", "清仓")
+# 384 爻知识库（bagua_384.json）中实际存在的操作信号取值。20260911 稿新增
+# 观察/不碰/持有或开仓；筛选按字面比对，未知取值不会命中任何勾选项，故此处
+# 必须与知识库保持同步（顺序即前端展示顺序：偏多 → 中性 → 偏空）。
+KNOWN_ACTION_SIGNALS = (
+    "新开仓",
+    "加仓",
+    "持有或开仓",
+    "持有",
+    "观察",
+    "减仓",
+    "不碰",
+    "清仓",
+)
 
-DEFAULT_RULE_VERSION = "gua_rules_v20260721"
+DEFAULT_RULE_VERSION = "gua_rules_v20260911"
 
 
 def strip_gua(name: str) -> str:

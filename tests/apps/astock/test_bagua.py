@@ -70,14 +70,17 @@ def test_fixed_sample_shanshuimeng(calc):
 
 
 def test_excel_row_consistency(calc):
-    from pathlib import Path
-    ind_dir = Path(__file__).resolve().parents[3] / '指标'
-    preferred = list(ind_dir.glob('*操作信号*.xlsx'))
-    xlsxs = preferred or list(ind_dir.glob('*.xlsx'))
-    if not xlsxs:
-        import pytest
+    """KB 与权威 Excel 逐行一致。
+
+    走 default_excel_path()（唯一路径来源）——原先用 "*操作信号*.xlsx" 自行 glob，
+    260911 稿换名后仍会抓到旧文件，拿旧稿比对必然全线不一致。
+    """
+    from wtpy.apps.astock.bagua.rebuild_from_excel import default_excel_path
+
+    try:
+        xlsx = default_excel_path(Path(__file__).resolve().parents[3])
+    except FileNotFoundError:
         pytest.skip('excel missing')
-    xlsx = xlsxs[0]
     issues = calc.knowledge.excel_consistency_check(xlsx)
     assert issues == [], issues[:5]
 

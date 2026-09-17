@@ -14,11 +14,13 @@ Price plane selectable:
 
 from __future__ import annotations
 
+import copy
 import logging
 import re
 import threading
 import time as _bq_time
 import uuid as _bq_uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date as _ymd_date, timedelta as _ymd_delta
 from pathlib import Path
@@ -3063,6 +3065,317 @@ def _query_bagua_periods_for_code(
     return out
 
 
+# ---------------------------------------------------------------------------
+# 跟踪页周/月卦展示信息（结果缓存 + 状态语义）
+# ---------------------------------------------------------------------------
+#
+# 背景（2026-09-16 性能整改）：L2 周明细接口原先在返回前逐票现算周卦+月卦，
+# 实测 739 行的一周 26.7s 里 99.7% 花在这里，整张列表（连同只有价格与收益
+# 的字段）都被挡在卦象计算后面。除了把卦象拆到列表之后补齐，还需要一个
+# 「重复进入 / 多规则命中同一票 / 反复切周」可复用的结果缓存。
+#
+# 缓存失效边界（用户明确要求「缓存随数据版本失效」）：
+#   键含两个价格面各自解析出的 **materialize_key**（虚拟 manifest 的
+#   dataset_id + manifest_sha256 + blob_sha256）。overlay_v1 下 dataset_id 内嵌
+#   delta watermark 与提交序号，每次行情更新都会换代 → 旧卦象自然失效；
+#   知识库（bagua_384.json）按 路径+大小+mtime 指纹入键，语料更新同样失效。
+#   两个面都解析不出符号时不写缓存（无行情/测试环境走原路径，不产出脏条目）。
+_BAGUA_INFO_CACHE_MAX = 4096
+_bagua_info_cache: "OrderedDict[tuple, Dict[str, Any]]" = OrderedDict()
+_bagua_info_cache_lock = threading.Lock()
+_bagua_info_cache_stats: Dict[str, int] = {"hit": 0, "miss": 0}
+
+# 知识库计算器缓存：bagua_384.json 约 500KB，进程内不必按请求/按股票重复解析
+_CALC_CACHE: Dict[str, BaguaCalculator] = {}
+_CALC_CACHE_MAX = 4
+
+#: 跟踪页周/月卦的价格口径尝试顺序（正式 L1 前复权优先，缺数据回退正式 L2）
+BAGUA_INFO_ADJUST_ATTEMPTS: Tuple[str, ...] = ("tushare_qfq", "raw")
+
+
+def _file_fingerprint(path: Any) -> str:
+    """文件指纹（大小 + mtime 秒）：语料替换后缓存必须失效。"""
+    try:
+        st = Path(path).stat()
+    except (OSError, TypeError, ValueError):
+        return f"{path}:missing"
+    return f"{path}:{st.st_size}:{int(st.st_mtime)}"
+
+
+def get_bagua_calculator(cfg: AStockConfig) -> Optional[BaguaCalculator]:
+    """知识库计算器（按文件指纹缓存）；未配置知识库返回 None。
+
+    语料损坏/缺失时 fail-soft 返回 None（记 warning）：调用方据此把该票标成
+    「计算失败」，而不是让整张明细页 500。知识库本身在导入/同步环节校验。
+    """
+    path = getattr(cfg, "bagua_json", None)
+    if not path:
+        return None
+    fp = _file_fingerprint(path)
+    hit = _CALC_CACHE.get(fp)
+    if hit is not None:
+        return hit
+    try:
+        calc = BaguaCalculator.from_json(path)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bagua knowledge base unreadable (%s): %s", path, e)
+        return None
+    if len(_CALC_CACHE) >= _CALC_CACHE_MAX:
+        _CALC_CACHE.clear()
+    _CALC_CACHE[fp] = calc
+    return calc
+
+
+def bagua_period_asof_map(asof: int) -> Dict[str, int]:
+    """周/月卦各自的起卦锚点（月卦 = 目标周所在自然月的上一自然月月末）。"""
+    a = int(asof)
+    attrs = _month_attributions(a)
+    return {"WEEK": a, "MONTH": int(attrs[0]["cast_asof"]) if attrs else a}
+
+
+def _plane_version_keys(
+    cfg: AStockConfig, std_code: str, asof_map: Dict[str, int]
+) -> Optional[Tuple[tuple, ...]]:
+    """两个价格面 × 各周期锚点解析出的数据版本键。
+
+    返回 None = 无法确定版本（面不可用/符号不可解析）：此时不读也不写缓存，
+    宁可多算一次，也不能让版本不明的结果进缓存并在行情更新后继续被复用。
+    """
+    keys: list = []
+    for plane in BAGUA_INFO_ADJUST_ATTEMPTS:
+        try:
+            session = _get_plane_session(cfg, plane)
+        except Exception:  # noqa: BLE001 — 面无该符号/无可读仓库 → 不缓存
+            return None
+        for per in ("WEEK", "MONTH"):
+            per_asof = int(asof_map.get(per, asof_map.get("WEEK") or 0))
+            try:
+                res = session.resolve_symbol(std_code, asof=per_asof)
+            except FileNotFoundError:
+                # 该面没有这只票（新上市/退市/停牌）——是确定的版本事实，
+                # 记进键里：将来这个面补齐了数据，键会变，缓存自然失效。
+                keys.append((plane, per, "no_symbol"))
+                continue
+            except Exception:  # noqa: BLE001
+                return None
+            keys.append((plane, per) + tuple(res.materialize_key))
+    return tuple(keys)
+
+
+def _period_state_and_combo(row: Optional[Dict[str, Any]]) -> Tuple[str, str]:
+    """单周期行的状态与卦象组合：``(ok|empty|error, combo)``。
+
+    - ``error``：行缺失/查询抛错（``data_status`` 非 no_data），如实标失败；
+    - ``empty``：数据面正常但该锚点算不出卦（no_data、缺语料条目）；
+    - ``ok``   ：拿到非空组合。
+    """
+    if not row or not row.get("ok"):
+        if row is None or row.get("data_status") != "no_data":
+            return "error", ""
+        return "empty", ""
+    combo = _bagua_combo(row)
+    return ("ok", combo) if combo else ("empty", "")
+
+
+def _bagua_week_month_info_uncached(
+    cfg: AStockConfig,
+    *,
+    code: str,
+    asof: int,
+    asof_map: Dict[str, int],
+    calc: Optional[BaguaCalculator],
+) -> Dict[str, Any]:
+    """逐口径尝试计算周卦+月卦（缓存未命中时的唯一计算入口）。
+
+    state 语义（前端据此区分「加载中/无数据/失败」，绝不含糊）：
+    - ``ok``    拿到周卦组合，bagua 有周/月面板数据；
+    - ``empty`` 数据面正常但算不出周卦（该锚点无 K 线/新上市/长期停牌）；
+    - ``error`` 口径查询本身抛错（数据缺失或查询失败），如实标失败而非无数据。
+
+    **周与月各自记账**（用户 2026-09-16 复核）：``week_state`` / ``month_state``
+    独立返回，月卦查询失败时不得把整体标成 ok——那会把「只拿到周卦」当成完整
+    成功并写进缓存，用户重试也只能看到同一个残缺结论。周卦成功、月卦失败时：
+    state=ok（周卦是真的）、month_state=error（前端的月卦面板如实标失败），
+    且调用方不得缓存（见 ``bagua_week_month_info``）。
+    """
+    info: Dict[str, Any] = {
+        "week_gua": "",
+        "bagua": None,
+        "state": "empty",
+        "week_state": "empty",
+        "month_state": "empty",
+        "adjust": "",
+    }
+    saw_week_error = False
+    saw_month_error = False
+    fallback_month = None  # 周卦没算出来、但月卦成功的兜底（如实展示月卦）
+    for adj in BAGUA_INFO_ADJUST_ATTEMPTS:
+        try:
+            session = _get_plane_session(cfg, adj)
+        except Exception:  # noqa: BLE001 — 该价格面不可用，换下一口径
+            saw_week_error = True
+            saw_month_error = True
+            continue
+        try:
+            res = _query_bagua_periods_for_code(
+                cfg,
+                code=code,
+                asof=asof,
+                periods=["WEEK", "MONTH"],
+                adjust=adj,
+                session=session,
+                calc=calc,
+                asof_map=asof_map,
+            )
+        except Exception:  # noqa: BLE001
+            saw_week_error = True
+            saw_month_error = True
+            continue
+        m = res.get("MONTH")
+        month_state, month_combo = _period_state_and_combo(m)
+        if month_state == "error":
+            saw_month_error = True
+        week_state, week_combo = _period_state_and_combo(res.get("WEEK"))
+        if week_state == "error":
+            saw_week_error = True
+        if week_state != "ok" or not week_combo:
+            # 周卦这次没出来：月卦若成功先留底（不因周卦缺失就丢掉真实拿到的月卦）
+            if month_state == "ok" and month_combo and fallback_month is None:
+                fallback_month = (adj, m, month_combo)
+            continue
+        info["week_gua"] = week_combo
+        info["adjust"] = adj
+        info["week_state"] = "ok"
+        info["month_state"] = month_state
+        info["bagua"] = {
+            "week": {
+                "combo": week_combo,
+                "yao_explain": _bagua_yao_explain(res.get("WEEK")),
+                "gaodao": _bagua_gaodao_explain(res.get("WEEK")),
+                "consensus": _bagua_consensus_label(res.get("WEEK")) or "一般",
+                "action_signal": str(
+                    (res["WEEK"].get("bagua") or {}).get("action_signal") or ""
+                ),
+            },
+            "month": (
+                {
+                    "combo": month_combo,
+                    "yao_explain": _bagua_yao_explain(m),
+                    "gaodao": _bagua_gaodao_explain(m),
+                    "consensus": _bagua_consensus_label(m) or "一般",
+                    "action_signal": str((m.get("bagua") or {}).get("action_signal") or ""),
+                }
+                if month_combo
+                else None
+            ),
+        }
+        info["state"] = "ok"
+        return info
+    info["week_state"] = "error" if saw_week_error else "empty"
+    info["state"] = info["week_state"]
+    info["month_state"] = "error" if saw_month_error else "empty"
+    if fallback_month is not None:
+        fb_adj, m, month_combo = fallback_month
+        info["month_state"] = "ok"
+        info["adjust"] = fb_adj
+        info["bagua"] = {
+            "week": None,
+            "month": {
+                "combo": month_combo,
+                "yao_explain": _bagua_yao_explain(m),
+                "gaodao": _bagua_gaodao_explain(m),
+                "consensus": _bagua_consensus_label(m) or "一般",
+                "action_signal": str((m.get("bagua") or {}).get("action_signal") or ""),
+            },
+        }
+    return info
+
+
+def bagua_week_month_info(
+    cfg: AStockConfig,
+    *,
+    code: str,
+    asof: int,
+    asof_map: Optional[Dict[str, int]] = None,
+    calc: Optional[BaguaCalculator] = None,
+    use_cache: bool = True,
+) -> Dict[str, Any]:
+    """单票在 asof 锚点下的周卦/月卦展示信息（跟踪页与批量补齐接口唯一实现）。
+
+    与每周导出 Excel 同源口径：正式 L1（tushare_qfq）优先，无数据回退正式 L2
+    （raw）；周卦与月卦共享一次物化（``_query_bagua_periods_for_code`` 快路径）。
+
+    返回 dict：``{"week_gua", "bagua", "state", "adjust", "cached"}``。
+    指数/ETF 走各自的价格面解析（锚点钉定），不参与本缓存。
+    """
+    a = int(asof)
+    amap = asof_map if asof_map is not None else bagua_period_asof_map(a)
+    calc = calc if calc is not None else get_bagua_calculator(cfg)
+
+    std = ""
+    cache_key: Optional[tuple] = None
+    if use_cache:
+        try:
+            std = normalize_query_code(code)
+            if classify_symbol(code) not in ("index", "etf"):
+                version_keys = _plane_version_keys(cfg, std, amap)
+                if version_keys is not None:
+                    cache_key = (
+                        std,
+                        a,
+                        int(amap.get("MONTH", a)),
+                        version_keys,
+                        _file_fingerprint(getattr(cfg, "bagua_json", "")),
+                    )
+        except Exception:  # noqa: BLE001 — 键不可确定则退化为不缓存
+            cache_key = None
+
+    if cache_key is not None:
+        with _bagua_info_cache_lock:
+            hit = _bagua_info_cache.get(cache_key)
+            if hit is not None:
+                _bagua_info_cache.move_to_end(cache_key)
+                _bagua_info_cache_stats["hit"] += 1
+        if hit is not None:
+            out = dict(hit)
+            out["cached"] = True
+            out["bagua"] = copy.deepcopy(hit.get("bagua"))
+            return out
+
+    info = _bagua_week_month_info_uncached(
+        cfg, code=code, asof=a, asof_map=amap, calc=calc
+    )
+    info["cached"] = False
+    # 失败结果不入缓存：否则前端「重试」只是回放同一个失败结论，而失败多半是
+    # 瞬时 IO/数据面问题（无数据 empty 是版本确定的事实，可以缓存）。
+    # 月卦失败同样算失败——只拿到周卦不能缓存成「完整成功」，否则月卦永远
+    # 不会被重算（用户 2026-09-16 复核指出的问题）。
+    cacheable = info.get("state") != "error" and info.get("month_state") != "error"
+    if cache_key is not None and cacheable:
+        with _bagua_info_cache_lock:
+            _bagua_info_cache_stats["miss"] += 1
+            _bagua_info_cache[cache_key] = copy.deepcopy(info)
+            _bagua_info_cache.move_to_end(cache_key)
+            while len(_bagua_info_cache) > _BAGUA_INFO_CACHE_MAX:
+                _bagua_info_cache.popitem(last=False)
+    return info
+
+
+def clear_bagua_info_cache() -> None:
+    """清空周/月卦结果缓存与知识库计算器缓存（测试与手工排查用）。"""
+    with _bagua_info_cache_lock:
+        _bagua_info_cache.clear()
+        _bagua_info_cache_stats["hit"] = 0
+        _bagua_info_cache_stats["miss"] = 0
+    _CALC_CACHE.clear()
+
+
+def bagua_info_cache_stats() -> Dict[str, int]:
+    """缓存命中/未命中计数（供排查与计时接口透出）。"""
+    with _bagua_info_cache_lock:
+        return dict(_bagua_info_cache_stats)
+
+
 def _note_reason(text: Any, limit: int = 80) -> str:
     """把异常/失败原因压缩为 meta note 安全的单行文本。
 
@@ -3272,6 +3585,104 @@ def _export_sheet_rows(
     return sheet_rows, first_week_row, first_month_rows
 
 
+def _snapshot_rules_to_review_form(snap: Dict[str, Any]) -> Dict[str, Any]:
+    """把契约快照结构转换成导出链路的「review 形态」。
+
+    为什么需要这层转换（阶段 1e 双路径分离，评审第 7 条）：导出侧
+    _append_rule_sheet / covered 判定的既有输入是 review_{asof}.json 的
+    规则 dict（rule_id / sheet / matched[{code, close}]），快照的逐规则
+    结构与之同构但多了 status / failed_codes 字段。写适配层而不是改
+    _append_rule_sheet 的签名，是为了让「review JSON 兼容层」一条路径
+    保持字节级不动（其他调用方在用），快照只通过本函数进入导出链路——
+    两条路径最终汇到同一个交集计算（matched ∩ stock_pool），不引入
+    第二种命中语义（契约验收口径：导出与筛选接口同快照同规则必然一致）。
+
+    status=error 的规则不进入转换结果：快照里它是「规则级失败」而非
+    「零命中」，端出会冒充完整空结果（screen_snapshots.snapshot_covers
+    同口径——缺规则/失败规则必须走现算，不得静默丢 sheet 也不得顶替）。
+
+    status=partial 的规则保留但**携带标注字段**（审查 C-1）：partial =
+    部分票评估失败，命中集合非全量——导出侧绝不能静默端出，让用户以为
+    名单完整。下游 _append_rule_sheet / meta 需要能看到该状态。
+    """
+    rules = []
+    for r in snap.get("rules") or []:
+        if str(r.get("status")) == "error":
+            continue
+        failed_n = len(r.get("failed_codes") or [])
+        rules.append(
+            {
+                "rule_id": str(r.get("rule_id") or ""),
+                "sheet": r.get("sheet", ""),
+                "count": int(r.get("count") or 0),
+                "matched": [
+                    {"code": str(m.get("code")), "close": m.get("close")}
+                    for m in (r.get("matched") or [])
+                ],
+                # partial 标注（审查 C-1）：failed 数量透传，下游可据此在
+                # sheet 说明区/meta 标注"命中非全量"
+                "snapshot_status": str(r.get("status") or "ok"),
+                "snapshot_failed_count": failed_n,
+            }
+        )
+    return {
+        "asof": int(snap.get("asof") or 0),
+        "generated_at": snap.get("generated_at"),
+        "status": str(snap.get("status") or ""),
+        "rules": rules,
+    }
+
+
+def _snapshot_covers_export_request(
+    snap: Dict[str, Any],
+    rule_ids: Sequence[str],
+    *,
+    current_rule_fps: Optional[Dict[str, str]],
+) -> Dict[str, Any]:
+    """导出侧快照覆盖判定：直接委托 screen_snapshots.snapshot_covers。
+
+    为什么不自己写判定：覆盖语义（缺规则 / status=error / 指纹不符 →
+    不可用）必须与筛选接口的 cache-first 路由完全一致，两个实现会漂移。
+    指纹参数 current_rule_fps 由调用方从 screening._current_rule_fingerprints
+    取（当前注册表的唯一指纹来源）；这里只做纯函数转发，便于导出单测。
+    """
+    from . import screen_snapshots as ss
+
+    return ss.snapshot_covers(
+        snap, [str(x) for x in rule_ids], current_rule_fps=current_rule_fps
+    )
+
+
+def _load_export_snapshot_for_week(
+    cfg: AStockConfig, asof: int
+) -> Optional[Dict[str, Any]]:
+    """导出侧读取「信号周已发布快照」，带健全性预检。
+
+    为什么预检而不是直接用：契约 §0 统计/读取只认 published 指针，但指针
+    指向的文件也可能 status 非 ok（发布门槛历史上未过/手工修复中途）或
+    week_id 与信号日不符——这些都不是导出侧的错误，按「当作无快照」落回
+    旧路径（review JSON 兼容层），导出绝不因此失败。
+    """
+    from . import screen_snapshots as ss
+
+    try:
+        snap = ss.load_published_snapshot_for_week(cfg, int(asof))
+    except Exception:  # noqa: BLE001  快照读不出来 = 没有快照，不阻断导出
+        return None
+    if snap is None:
+        return None
+    if str(snap.get("status") or "") != "ok":
+        return None
+    try:
+        if int(snap.get("asof") or 0) != int(asof):
+            return None
+        if int(snap.get("week_id") or 0) != int(asof):
+            return None
+    except (TypeError, ValueError):
+        return None
+    return snap
+
+
 def _compute_rules_for_export(
     cfg: AStockConfig,
     asof: int,
@@ -3336,6 +3747,7 @@ _RULE_SOURCE_CN = {
 _RULE_ASOF_LABEL = {
     "precomputed": "周五链预计算复核日",
     "computed": "导出时即时计算日",
+    "snapshot": "已发布快照信号日",
     "placeholder": "占位空表（无命中数据）",
 }
 
@@ -3437,6 +3849,10 @@ def _rule_brief_rows(cfg: AStockConfig, brief: Dict[str, Any]) -> List[Tuple[str
     rows.append(("命中只数", count_text))
     if brief.get("placeholder"):
         rows.append(("占位原因", str(brief["placeholder"])))
+    # 快照 partial 规则的完整性警示（审查 C-1）：命中非全量必须在
+    # sheet 说明区可见，不能只藏在 meta 的 source 后缀里
+    if brief.get("note"):
+        rows.append(("完整性提示", str(brief["note"])))
     if meta.get("description"):
         rows.append(("规则说明", meta["description"]))
     elif meta.get("formula_note"):
@@ -3675,6 +4091,10 @@ def export_bagua_multi_period_xlsx(
     review_note = ""
     review_fallback = False
     review_rules_selected: Optional[List[str]] = None
+    # 快照路径（阶段 1e 双路径分离）专用：用了已发布快照时记录其身份，
+    # meta 的 indicator_review_snapshot_id 行与各规则 source=snapshot:{asof}
+    # 都从这里取；None = 本次导出没有可用的发布快照。
+    review_snapshot_id: Optional[str] = None
     review_rule_sources: Dict[str, str] = {}  # rule_id -> precomputed:{asof} / computed:{asof}
     review_placeholders: Dict[str, str] = {}  # sheet -> 占位原因（error/no_go 兜底）
     review_rule_briefs: Dict[str, Dict[str, Any]] = {}  # sheet -> 说明区内容
@@ -3746,6 +4166,19 @@ def export_bagua_multi_period_xlsx(
             "raw_count": len(hit),
             "placeholder": "",
         }
+        # 快照 partial 规则的非全量性必须可见（审查 C-1）：命中集合缺
+        # failed_codes 里的票，绝不能静默端出让人误以为名单完整
+        snap_status = str(rule.get("snapshot_status") or "")
+        failed_n = int(rule.get("snapshot_failed_count") or 0)
+        if snap_status == "partial" and failed_n > 0:
+            review_rule_briefs[sheet]["note"] = (
+                f"注意：该规则本次评估有 {failed_n} 只股票未完成（失败/缺数据），"
+                "命中名单非全量，详见指标复核日志"
+            )
+            # 来源标注加 partial 后缀：meta 逐 sheet 来源可分辨
+            review_rule_sources[rid or sheet] = (
+                f"{source}:{src_asof}:partial"
+            )
         if rid:
             review_sheets_done.add(rid)
 
@@ -3823,24 +4256,86 @@ def export_bagua_multi_period_xlsx(
             # 信号基准日先收敛到真实数据面（请求日超出数据覆盖时回退到
             # 最后可用日）；主表/文件名仍按请求 asof，只有信号 sheet 回退。
             resolved_asof, rv_fallback_note = resolve_review_asof(cfg, asof)
-            review, rv_note = load_review_for_export(cfg, resolved_asof)
-            review_ok = review is not None and review.get("status") == "ok"
-            if review_ok:
-                review_asof_used = int(review.get("asof") or 0) or resolved_asof
-                review_note = rv_note or "ok"
-                known_ids = {str(r.get("rule_id")) for r in review.get("rules") or []}
-                for _rule in review.get("rules", []):
-                    _rid = str(_rule.get("rule_id") or "")
-                    if select_ids is not None and _rid not in select_ids:
-                        continue  # JSON 有但未勾选
-                    _append_rule_sheet(_rule, "precomputed", review_asof_used)
-                missing_ids = [rid for rid in (select_ids or []) if rid not in known_ids]
+            # ---------------------------------------------------------
+            # 双路径分离（阶段 1e，评审第 7 条）：
+            # 显式勾选规则（review_rules 非 None）的请求，先尝试「已发布
+            # 快照」（契约 §0：统计/读取只认 published 指针）。covered 部分
+            # 直接从快照出 sheet（零计算），uncovered/stale 部分合并到
+            # missing_ids 走既有即时计算，**绝不**因快照缺规则而失败或
+            # 静默丢 sheet；快照完全不可用/一个规则都没覆盖时才落回下面的
+            # 旧路径（review JSON 全量/7 天回看，兼容层一行不改）。
+            # review_rules=None（CLI/旧调用）不进快照路径——语义是「读
+            # 周五链 review JSON 全量」，改走快照会改变其输出规则集。
+            # ---------------------------------------------------------
+            snap_used_ids: List[str] = []
+            snap_missing_ids: List[str] = list(select_ids or [])
+            if select_ids is not None:
+                snap = _load_export_snapshot_for_week(cfg, resolved_asof)
+                if snap is not None:
+                    try:
+                        from .screening import _current_rule_fingerprints
+
+                        cur_fps = _current_rule_fingerprints(cfg, select_ids)
+                    except Exception:  # noqa: BLE001
+                        cur_fps = None  # 指纹不可验证 → fail-closed 全部现算
+                    cov = _snapshot_covers_export_request(
+                        snap, select_ids, current_rule_fps=cur_fps
+                    )
+                    snap_used_ids = list(cov["covered"])
+                    snap_missing_ids = list(
+                        dict.fromkeys([*cov["uncovered"], *cov["stale"]])
+                    )
+                    if snap_used_ids:
+                        # covered 规则全部来自快照：经 _snapshot_rules_to_review_form
+                        # 转成 review 形态后复用 _append_rule_sheet（命中 ∩
+                        # 票池的交集语义与筛选接口同一实现），meta 逐规则标
+                        # source=snapshot。
+                        review_snapshot_id = str(snap.get("snapshot_id") or "")
+                        review_asof_used = int(snap.get("asof") or 0) or resolved_asof
+                        snap_review = _snapshot_rules_to_review_form(snap)
+                        snap_ids_set = set(snap_used_ids)
+                        for _rule in snap_review.get("rules", []):
+                            _rid = str(_rule.get("rule_id") or "")
+                            if _rid and _rid not in snap_ids_set:
+                                continue  # 覆盖判定之外的快照规则不出 sheet
+                            _append_rule_sheet(_rule, "snapshot", review_asof_used)
+                        review_note = (
+                            f"snapshot:已发布快照 {review_snapshot_id}"
+                            f"（asof={review_asof_used}，覆盖 "
+                            f"{len(snap_used_ids)}/{len(select_ids)} 条勾选规则）"
+                        )
+            if select_ids is not None and snap_used_ids:
+                # 快照命中至少一条：缺失部分即时计算补齐，不再读 review
+                # JSON（避免同一次导出三路混叠口径）。note 与旧路径一致
+                # 追加说明，方便人工核对每张 sheet 的来源。
+                review, review_ok = None, False
+                missing_ids = list(snap_missing_ids)
+                if snap_missing_ids:
+                    review_note = (
+                        f"{review_note}；快照未覆盖 {len(snap_missing_ids)} 条"
+                        "（缺失/规则已更新），走即时计算"
+                    ).strip("；")
             else:
-                # 复核文件缺失/no_go/过期：仍先记下收敛后的基准日，供即时
-                # 计算与 meta 使用（修复即时计算时 indicator_review_asof 为空）
-                review_asof_used = resolved_asof
-                review_note = rv_note or "missing"
-                missing_ids = list(select_ids or [])
+                # 旧路径完全保留（review_rules=None 的兼容层 / 无快照或快照
+                # 未覆盖任何勾选规则的显式请求）：读 review_{asof}.json。
+                review, rv_note = load_review_for_export(cfg, resolved_asof)
+                review_ok = review is not None and review.get("status") == "ok"
+                if review_ok:
+                    review_asof_used = int(review.get("asof") or 0) or resolved_asof
+                    review_note = rv_note or "ok"
+                    known_ids = {str(r.get("rule_id")) for r in review.get("rules") or []}
+                    for _rule in review.get("rules", []):
+                        _rid = str(_rule.get("rule_id") or "")
+                        if select_ids is not None and _rid not in select_ids:
+                            continue  # JSON 有但未勾选
+                        _append_rule_sheet(_rule, "precomputed", review_asof_used)
+                    missing_ids = [rid for rid in (select_ids or []) if rid not in known_ids]
+                else:
+                    # 复核文件缺失/no_go/过期：仍先记下收敛后的基准日，供即时
+                    # 计算与 meta 使用（修复即时计算时 indicator_review_asof 为空）
+                    review_asof_used = resolved_asof
+                    review_note = rv_note or "missing"
+                    missing_ids = list(select_ids or [])
             missing_ids = list(dict.fromkeys(missing_ids))
             if missing_ids and stock_pool:
                 computed = _compute_rules_for_export(
@@ -3851,7 +4346,10 @@ def export_bagua_multi_period_xlsx(
                     comp_asof = computed.get("asof")
                     for _rule in computed.get("rules", []):
                         _append_rule_sheet(_rule, "computed", comp_asof)
-                    if not review_ok:
+                    if not review_ok and not review_snapshot_id:
+                        # 快照路径下 review_asof_used 已锚定快照信号日（主导
+                        # 来源），不被即时计算日覆盖；只有旧路径完全无预
+                        # 计算时才用计算日补 meta。
                         review_asof_used = int(comp_asof or resolved_asof)
                     # 整体 ok 但某已选规则未产 sheet（缺行/名字被跳过等）：
                     # 同样补占位空表，保证「勾了就有一张表」。
@@ -3864,11 +4362,20 @@ def export_bagua_multi_period_xlsx(
                             reason="computed_ok_no_sheet",
                             src_asof=comp_asof or resolved_asof,
                         )
-                    # 口径注明：预计算命中按周五链复核日（7 天回看），即时计算
-                    # 按导出日；两者不同天时明确写出，防跨日误读
+                    # 口径注明：预计算/快照命中按其基准日，即时计算按导出日；
+                    # 两者不同天时明确写出，防跨日误读
                     if review_ok and review_asof_used is not None and comp_asof != review_asof_used:
                         review_note = (
                             f"{review_note}；预计算规则按复核日 {review_asof_used}，"
+                            f"即时计算规则按导出日 {comp_asof}"
+                        )
+                    elif (
+                        review_snapshot_id
+                        and review_asof_used is not None
+                        and int(comp_asof or 0) != int(review_asof_used)
+                    ):
+                        review_note = (
+                            f"{review_note}；快照规则按信号日 {review_asof_used}，"
                             f"即时计算规则按导出日 {comp_asof}"
                         )
                     else:
@@ -3907,8 +4414,12 @@ def export_bagua_multi_period_xlsx(
             if rv_fallback_note:
                 review_fallback = True
                 review_note = f"{review_note}；{rv_fallback_note}"
-            # 复核文件按回看窗口命中更早日期（周末导出场景）也算回退
-            if review_ok and review_asof_used and int(review_asof_used) != int(asof):
+            # 复核文件按回看窗口命中更早日期（周末导出场景）也算回退；
+            # 快照路径同口径：快照信号日 ≠ 请求日（如请求日被收敛到数据面
+            # 最后交易日）时也如实标注 fallback，meta 不谎称「当日快照」。
+            if (
+                review_ok or review_snapshot_id
+            ) and review_asof_used and int(review_asof_used) != int(asof):
                 review_fallback = True
     except Exception as _re:  # noqa: BLE001
         review_note = f"error:{_re}"
@@ -4123,6 +4634,17 @@ def export_bagua_multi_period_xlsx(
             "indicator_review_asof",
             review_asof_used if review_asof_used is not None else "",
         ),
+        (
+            # 阶段 1e：用了已发布快照时记录其身份（契约 §0 快照身份三元组
+            # 之一）；未用快照（旧路径/无快照）写空串，保持行存在让列对齐，
+            # 便于下游脚本按行解析。
+            "indicator_review_snapshot_id",
+            review_snapshot_id or "",
+        ),
+        (
+            "indicator_review_snapshot_asof",
+            (int(review_asof_used) if (review_snapshot_id and review_asof_used) else ""),
+        ),
         ("indicator_review_query_date", asof),
         ("indicator_review_sheets", ",".join(review_sheets)),
         (
@@ -4171,7 +4693,8 @@ def export_bagua_multi_period_xlsx(
         ),
         (
             "consensus_method",
-            "卦象侧取 384 爻人工标注的 action_signal（新开仓·加仓=好，减仓·清仓=差，持有=中）；"
+            "卦象侧取 384 爻人工标注的 action_signal（新开仓·加仓=好，减仓·不碰·清仓=差，"
+            "持有·观察·持有或开仓=中）；"
             "高岛侧为文言关键词推断（褒贬词并存的转折句判为不明、不归类），精度有限",
         ),
         ("exported_at", stamp),
@@ -4188,6 +4711,9 @@ def export_bagua_multi_period_xlsx(
                     "review_asof_used": review_asof_used,
                     "review_fallback": bool(review_fallback),
                     "review_note": review_note,
+                    # 快照路径专用：任务记录侧可据此展示「命中名单来自已发布
+                    # 快照」；None = 本次导出没有用快照（与 meta 行同源）。
+                    "review_snapshot_id": review_snapshot_id or None,
                 }
             )
         except Exception:  # noqa: BLE001

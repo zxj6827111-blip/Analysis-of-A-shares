@@ -172,6 +172,8 @@ def _match_search(e: dict, q: str) -> bool:
         str(e.get("biangua") or ""),
         str(e.get("market_judgement") or ""),
         str(e.get("action_signal") or ""),
+        # 备注&实操总结（如「哈药验证可以」）也要能搜到，否则人工经验没法检索
+        str(e.get("note") or ""),
         str(go),
         f"{go:02d}",
         f"第{go}卦",

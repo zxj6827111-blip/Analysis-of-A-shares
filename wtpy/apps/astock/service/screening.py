@@ -391,6 +391,70 @@ def screen_rule_reasons(spec_pub: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# 跟踪模块共用的「当前规则目录」与归并打分（2026-09-15）
+#
+# 跟踪 L0/L1（api_routes/tracking.py）与跟踪导出（service/track_export.py）
+# 都要做两件事：规则删除同步过滤、同指纹多 id 归并成一行。目录来源与
+# canonical 打分**必须同源**——两处若各自实现，将来改一处忘另一处，页面
+# 与导出就会对同一组选出不同代表，行数对不上账（契约：UI 与导出一致）。
+# ---------------------------------------------------------------------------
+
+
+def current_rule_catalog(cfg) -> Dict[str, Dict[str, Any]]:
+    """当前规则目录（规则中心可见 ∪ 周五链预置复核规则）：id -> 判定信息。
+
+    与 list_screen_rules 同数据源（规则中心口径），但以 id 索引直接返回
+    name/executable/hidden/source，供跟踪 L0/L1 与跟踪导出共用。
+    """
+    from .indicator_review import DEFAULT_REVIEW_RULES
+    from .rules import RuleService
+
+    rs = RuleService(cfg)
+    out: Dict[str, Dict[str, Any]] = {}
+    for r in rs.list_rules(include_archived=False, include_hidden=False):
+        out[str(r["id"])] = {
+            "id": str(r["id"]),
+            "name": str(r.get("name") or ""),
+            "executable": screen_rule_reasons(r) is None,
+            "hidden": bool(r.get("hidden")),
+            "source": str(r.get("source") or ""),
+        }
+    for rid, _sheet in DEFAULT_REVIEW_RULES:
+        out.setdefault(
+            str(rid),
+            {
+                "id": str(rid), "name": str(rid), "executable": True,
+                "hidden": True, "source": "builtin",
+            },
+        )
+    return out
+
+
+def pick_canonical_rule_id(
+    ids: List[str], catalog: Optional[Dict[str, Dict[str, Any]]]
+) -> str:
+    """同指纹的多个 rule_id 里选一个代表身份（确定性，避免每次刷新换行）。
+
+    优先级：目录内存在 > 可执行 > 未被隐藏 > 来源（user > builtin > system）
+    > id 字典序。catalog 为空（降级）时退化为「来源 > id」，仍保证稳定。
+    """
+
+    def score(rid: str):
+        info = (catalog or {}).get(rid)
+        return (
+            0 if info is not None else 1,
+            0 if (info and info.get("executable")) else 1,
+            0 if (info and not info.get("hidden")) else 1,
+            {"user": 0, "builtin": 1, "system": 2}.get(
+                str((info or {}).get("source") or ""), 3
+            ),
+            rid,
+        )
+
+    return sorted(ids, key=score)[0]
+
+
 def list_screen_rules(ctx) -> Dict[str, Any]:
     """筛选规则目录 = 规则中心当前可见的规则 ∪ 周五链预置复核规则。
 
@@ -490,6 +554,144 @@ def resolve_screen_asof(
         suggested = max(prior) if prior else latest
         raise ScreenDateNotAvailable(req, suggested, "非交易日")
     return req, surface
+
+
+# ---------------------------------------------------------------------------
+# cache-first：快照服务筛选请求（契约 §规则组②）
+# ---------------------------------------------------------------------------
+
+
+def _current_rule_fingerprints(
+    cfg: AStockConfig, rule_ids: Sequence[str]
+) -> Optional[Dict[str, str]]:
+    """请求规则的当前指纹（规则公式已改 → 快照 stale 不得复用）。
+
+    fail-closed 语义（审查 🔴B3 修正）：**逐规则**解析——单个规则解析
+    失败（如已被删除）时该规则指纹记 None（判 stale，落回现算），
+    绝不让一个 KeyError 使整组校验失效；只有注册表整体不可用才返回
+    None（调用方视为无法覆盖，走现算）。
+    """
+    try:
+        from .indicator_review import _spec_fingerprint, user_registry_file
+
+        from ..indicators.registry import IndicatorRegistry
+
+        reg = IndicatorRegistry.bootstrap(
+            cfg.indicator_dir,
+            cfg.mapping_path,
+            user_registry_path=user_registry_file(cfg),
+        )
+    except Exception:  # noqa: BLE001
+        return None  # 注册表整体不可用 → 无法验证 → 不允许快照覆盖
+    out: Dict[str, Optional[str]] = {}
+    for r in rule_ids:
+        try:
+            spec = reg.get(str(r))
+        except KeyError:
+            out[str(r)] = None  # 规则已删除：旧快照对它是陈旧结果
+            continue
+        out[str(r)] = _spec_fingerprint(spec)
+    return out
+
+
+def try_screen_from_snapshot(
+    cfg: AStockConfig,
+    *,
+    rule_ids: Sequence[str],
+    match_mode: str,
+    asof: Optional[Any],
+    codes: Optional[Sequence[str]],
+) -> Optional[Dict[str, Any]]:
+    """尝试用已发布快照直接组装筛选结果；不可完整服务时返回 None。
+
+    只读**发布快照**（契约 §0：统计与筛选只认 published 指针）。
+    覆盖判定逐规则做（指纹+状态），缺规则/规则失败/公式已改 → None
+    落回现算，绝不把 partial 冒充完整结果。
+    picked 范围：快照 universe 内按 codes 过滤；越界票逐票 not_in_universe
+    （partial），由调用方决定是否接受（当前策略：越界即落回现算，保证
+    指定范围的每一只票都有真实评估）。
+    """
+    from . import screen_snapshots as ss
+
+    rid_list = [str(r).strip() for r in rule_ids if str(r).strip()]
+    if not rid_list:
+        return None
+    # asof 归一化（审查 🔴B2）：与 submit_screen_job 的 params 归一同口径——
+    # "latest"/空串 = 缺省语义，绝不能把原始字面量直通 _parse_asof（会 400）
+    asof_norm = (
+        None if asof is None or str(asof).strip() in ("", "latest") else asof
+    )
+    try:
+        eff_asof, _surface = resolve_screen_asof(cfg, asof_norm)
+    except (ScreenDataUnavailable, ScreenDateNotAvailable, ScreenError):
+        return None  # 日期/数据面问题交给原路径抛给用户
+    snap = ss.load_published_snapshot_for_week(cfg, eff_asof)
+    if snap is None:
+        return None
+    cov = ss.snapshot_covers(
+        snap, rid_list, current_rule_fps=_current_rule_fingerprints(cfg, rid_list)
+    )
+    if cov["uncovered"] or cov["stale"]:
+        return None
+    code_list = None
+    if codes is not None:
+        stk, _non_stk, _unknown = _classify_codes(codes)
+        code_list = _dedup_keep_order(stk)
+        universe = set(snap.get("universe_codes") or [])
+        out_of = [c for c in code_list if c not in universe]
+        if out_of:
+            return None  # 越界票需要真实评估 → 现算
+    combined = ss.combine_snapshot_hits(
+        snap, rule_ids=rid_list, match_mode=match_mode, codes=code_list
+    )
+    # 组合语义带回的 incomplete（error/no_data 票）如实透出
+    name_map: Dict[str, str] = {}
+    if combined["hits"]:
+        try:
+            from .stock_names import ensure_name_cache
+
+            name_map = ensure_name_cache(cfg) or {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("快照筛选名称缓存不可用（仅显示代码）: %s", e)
+    hits = combined["hits"]
+    for e in hits:
+        e["name"] = name_map.get(str(e["code"]).split(".")[-1], "")
+    result = {
+        "status": "ok",
+        "source": "cache",
+        "snapshot_id": snap.get("snapshot_id"),
+        "asof": combined["asof"],
+        "requested_asof": _parse_asof(asof_norm) if asof_norm else None,
+        "match_mode": match_mode,
+        "rule_ids": rid_list,
+        # 两条路径字段对齐（前端 wbRenderScreenJob 统一渲染）：
+        # 缓存路径没有全局 error_count 概念——逐规则失败已进
+        # incomplete_count；scope_size = 快照 universe（all）或指定范围
+        "scope_size": (
+            len(code_list) if code_list else combined["universe_size"]
+        ),
+        "codes_scoped": codes is not None,
+        "formal_l1_id": snap.get("data_version", {}).get("base_dataset_id"),
+        "universe_size": combined["universe_size"],
+        "evaluated": max(
+            0, combined["universe_size"]
+            - int(snap.get("missing_count") or 0)
+            - combined["incomplete_count"]
+        ),
+        "missing_count": int(snap.get("missing_count") or 0),
+        "error_count": 0,
+        "incomplete_codes": sorted(
+            {i["code"] for i in combined["indeterminate"]}
+        )[:2000],
+        "incomplete_count": combined["incomplete_count"],
+        "rules": combined["rules"],
+        "hits": hits,
+        "matched_count": len(hits),
+        "complete": combined["complete"],
+        "generated_at": snap.get("generated_at"),
+        "duration_sec": 0.0,
+    }
+    return result
 
 
 def _dedup_keep_order(items: Sequence[str]) -> List[str]:

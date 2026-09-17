@@ -216,11 +216,13 @@ def test_bq_export_bar_locally_balanced(v3_html: str):
 
 
 # ---------------------------------------------------------------------------
-# 主导航（UX 精简）：隐藏「预测」，栏目名统一为 回测/卦象/规则/实验/任务/数据
+# 主导航（UX 精简）：隐藏「预测」，栏目名统一为
+# 回测/跟踪/卦象/规则/实验/任务/数据
+# 「跟踪」= 2026-09-15 从卦象工作台页签提升的一级栏目（用户要求插在回测与卦象之间）
 # ---------------------------------------------------------------------------
 
-NAV_VIEWS = ("backtest", "bagua-query", "rules", "experiment", "tasks", "datastore")
-NAV_LABELS = ("回测", "卦象", "规则", "实验", "任务", "数据")
+NAV_VIEWS = ("backtest", "track", "bagua-query", "rules", "experiment", "tasks", "datastore")
+NAV_LABELS = ("回测", "跟踪", "卦象", "规则", "实验", "任务", "数据")
 
 
 def test_main_nav_hides_forecast_and_unifies_labels(v3_html: str):
