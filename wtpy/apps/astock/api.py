@@ -80,6 +80,59 @@ def _body_size_limit(path: str) -> int:
     return _MAX_REQUEST_BODY_BYTES
 
 
+def eod_sync_day_gate(
+    *,
+    now,
+    sync_time: str = "18:30",
+    sync_weekday: int = 4,
+    schedule_mode: str = "weekday",
+    trading_days=None,
+) -> tuple:
+    """日期/时刻门（不看数据新鲜度），返回 ``(eligible, reason, effective_mode)``。
+
+    与 :func:`eod_sync_decide` 共用同一套口径；调度线程先用它低成本判断
+    「今天是不是候选日」，通过后再算昂贵的全链路 lag。
+
+    ``schedule_mode``：
+    - ``weekday``（旧行为）：固定每周 ``sync_weekday`` 触发；
+    - ``last_trading_day``：本周**最后一个交易日**触发——节假日前移时自动
+      提前（如 2026-09-25 中秋休市，则本周触发日 = 9-24 周四）。需要
+      ``trading_days``（前瞻交易日历，含未来开市日）；日历缺失或不覆盖
+      本周日时退化为 ``weekday`` 规则（effective_mode 返回实际采用值），
+      绝不静默停更。
+    """
+    from .service import eod_schedule as _sch
+
+    mode = _sch.normalize_schedule_mode(schedule_mode, default=_sch.SCHEDULE_WEEKDAY)
+    if mode == _sch.SCHEDULE_LAST_TRADING_DAY and trading_days:
+        today_key = int(now.strftime("%Y%m%d"))
+        verdict = _sch.is_last_trading_day_of_week(trading_days, today_key)
+        if verdict is False:
+            last = _sch.week_last_trading_day(trading_days, today_key)
+            if last is None:
+                return (
+                    False,
+                    "本周全周休市（按前瞻交易日历），跳过",
+                    _sch.SCHEDULE_LAST_TRADING_DAY,
+                )
+            return (
+                False,
+                f"今日非本周最后交易日（本周末交易日={last}）",
+                _sch.SCHEDULE_LAST_TRADING_DAY,
+            )
+        if verdict is None:
+            # 日历覆盖不到本周日：退化为固定周几规则（文档承诺的兜底）。
+            mode = _sch.SCHEDULE_WEEKDAY
+    else:
+        mode = _sch.SCHEDULE_WEEKDAY
+
+    if mode == _sch.SCHEDULE_WEEKDAY and now.weekday() != sync_weekday:
+        return False, f"非计划更新日（weekday={sync_weekday}）", mode
+    if now.strftime("%H:%M") < sync_time:
+        return False, f"未到自动同步时间（{sync_time}）", mode
+    return True, "", mode
+
+
 def eod_sync_decide(
     *,
     lag: Optional[int],
@@ -88,6 +141,8 @@ def eod_sync_decide(
     sync_weekday: int = 4,
     min_lag: int = 1,
     last_trigger_day=None,
+    schedule_mode: str = "weekday",
+    trading_days=None,
 ) -> tuple:
     """Decide whether an automatic EOD sync should fire.
 
@@ -95,13 +150,22 @@ def eod_sync_decide(
     is the date the caller should remember as the last trigger day (None when
     not triggering). Weekends, pre-``sync_time`` hours, unknown lag, a lag
     below ``min_lag`` and an already-triggered day all short-circuit to False.
+    日期/时刻门口径见 :func:`eod_sync_day_gate`（含 last_trading_day 模式
+    的前瞻日历判定与退化规则）。
     """
     import datetime as _dt
 
-    if now.weekday() != sync_weekday:
-        return False, f"非计划更新日（weekday={sync_weekday}）", None
-    if now.strftime("%H:%M") < sync_time:
-        return False, f"未到自动同步时间（{sync_time}）", None
+    from .service import eod_schedule as _sch
+
+    eligible, reason, mode = eod_sync_day_gate(
+        now=now,
+        sync_time=sync_time,
+        sync_weekday=sync_weekday,
+        schedule_mode=schedule_mode,
+        trading_days=trading_days,
+    )
+    if not eligible:
+        return False, reason, None
     today = now.date()
     if last_trigger_day is not None and last_trigger_day == today:
         return False, "今日已触发过自动同步", None
@@ -109,7 +173,12 @@ def eod_sync_decide(
         return False, "无法判断数据新鲜度（跳过）", None
     if lag < min_lag:
         return False, f"数据已最新（lag={lag}）", None
-    return True, f"raw 数据滞后 {lag} 个交易日", today
+    basis = (
+        "本周最后交易日"
+        if mode == _sch.SCHEDULE_LAST_TRADING_DAY
+        else f"周历日（weekday={sync_weekday}）"
+    )
+    return True, f"{basis}，raw 数据滞后 {lag} 个交易日", today
 
 
 def _effective_data_lag(health: dict) -> Optional[int]:
@@ -144,14 +213,20 @@ def _effective_data_lag(health: dict) -> Optional[int]:
 def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
     """Startup + scheduled EOD auto-sync of Tushare market data.
 
-    Scheduling: it sleeps to the configured weekday
-    (``ASTOCK_EOD_SYNC_WEEKDAY``, Friday by default) and
-    ``ASTOCK_EOD_SYNC_TIME``; at/after the time it checks freshness and
-    spawns the same incremental sync the UI button uses
-    (``--source tushare --mode incremental``) plus ``--fresh``. If the data
-    is not yet lagged (Tushare publishes late) it retries every
-    ``ASTOCK_EOD_SYNC_POLL_SECONDS`` (default 30 min); once fired, the day is
-    done and it sleeps to the next configured weekly sync time.
+    Scheduling: by default it fires on the **last trading day of each week**
+    (``ASTOCK_EOD_SYNC_SCHEDULE=last_trading_day``, 2026-09 起默认——周界
+    由 Tushare 前瞻交易日历判定，节假日前移自动提前，如中秋节前周四）；
+    ``ASTOCK_EOD_SYNC_SCHEDULE=weekday`` 退回旧的固定周几口径
+    （``ASTOCK_EOD_SYNC_WEEKDAY``, Friday by default)。前瞻日历不可用时
+    同样退化为固定周几，绝不静默停更。触发时刻
+    (``ASTOCK_EOD_SYNC_TIME``) 之后检查新鲜度，滞后则 spawn 与 UI 按钮相同
+    的增量同步（``--source tushare --mode incremental``）加 ``--fresh``。如果
+    数据尚未滞后（Tushare 发布晚）每 ``ASTOCK_EOD_SYNC_POLL_SECONDS``
+    （默认 30 分钟）重试；当天触发成功后睡到下一个候选日。
+
+    last_trading_day 模式下调度线程每个工作日（周一~周五）在 sync_time
+    醒来一次做日历判定，成本是一次本地 JSON 读取；真正的数据健康检查只
+    在「今日 = 本周最后交易日」候选判定通过后才执行。
 
     The trigger record is persisted to ``storage/astock/eod_sync_state.json``
     so the UI can show "上次自动同步时间".
@@ -160,13 +235,20 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
       ASTOCK_EOD_SYNC_ENABLED=0|1        (default 1)
       ASTOCK_EOD_SYNC_INDEX_ETF=0|1      (default 1: 股票链后顺序执行
                                          指数/ETF 增量同步)
+      ASTOCK_EOD_SYNC_INCLUDE_BSE=0|1    (default 1: 股票链票池含北交所，
+                                         新票（含首批北交所）拉全历史入库)
       ASTOCK_EOD_SYNC_STARTUP=0|1        (default 1, run once on startup)
       ASTOCK_EOD_SYNC_TIME=HH:MM         (default 18:30)
-      ASTOCK_EOD_SYNC_WEEKDAY=0..6       (default 4: Friday)
+      ASTOCK_EOD_SYNC_SCHEDULE=last_trading_day|weekday
+                                         (default last_trading_day)
+      ASTOCK_EOD_SYNC_WEEKDAY=0..6       (default 4: Friday；schedule=weekday
+                                         或日历退化兜底时生效)
       ASTOCK_EOD_SYNC_MIN_LAG_DAYS=N     (default 1)
       ASTOCK_EOD_SYNC_POLL_SECONDS=N     (default 1800, min 60)
       ASTOCK_EOD_SYNC_MAX_RETRIES=N      (default 2, same-day retries after
                                          a failed run, poll_seconds apart)
+      ASTOCK_EOD_AUTO_EXPORT_ENABLED=0|1 (default 1: 链尾自动生成全市场
+                                         数据表供前端下载)
     """
     import datetime as _dt
     import json as _json
@@ -196,6 +278,12 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         )
     except ValueError:
         sync_weekday = 4
+    from .service import eod_schedule as _sch
+
+    schedule_mode = _sch.normalize_schedule_mode(
+        _os.environ.get("ASTOCK_EOD_SYNC_SCHEDULE"),
+        default=_sch.SCHEDULE_LAST_TRADING_DAY,
+    )
     try:
         min_lag = max(0, int(_os.environ.get("ASTOCK_EOD_SYNC_MIN_LAG_DAYS", "1")))
     except ValueError:
@@ -242,7 +330,10 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                     "enabled": True,
                     "sync_time": sync_time,
                     "sync_weekday": sync_weekday,
-                    "schedule_mode": "weekly",
+                    "schedule_mode": schedule_mode,
+                    "schedule_text": _sch.schedule_mode_label(
+                        schedule_mode, sync_weekday, sync_time
+                    ),
                     "min_lag_days": min_lag,
                     "poll_seconds": poll_sec,
                     "updated_at": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -332,6 +423,10 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         ]
         if overlay_mode:
             cmd += ["--write-mode", "delta"]
+        # 北交所纳入例行票池（默认开）：delta 链遇新票（首批北交所/新上市）
+        # 会逐票拉全历史播种；关闭后退回沪深-only（旧行为）。
+        if _env_flag("ASTOCK_EOD_SYNC_INCLUDE_BSE", "1"):
+            cmd += ["--include-bse"]
         token = _os.environ.get("TUSHARE_TOKEN", "").strip()
         if token:
             cmd += ["--token", token]
@@ -611,6 +706,59 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                         f"可手动 track-weekly --previous-week 补）"
                     )
 
+            # 链尾自动生成全市场数据表（2026-09-23 需求）：大盘指数/ETF/所有A股，
+            # 不含指标筛选 sheet；产物与状态文件落 storage/astock/，前端直接下载。
+            # gating 只看 stock_rc（行情面成功即可；review/track 失败不影响导出
+            # 的输入依赖，且变卦/高岛列只依赖卦象库与行情，不依赖跟踪产物）。
+            auto_export_rc = None
+            auto_export_finished_at = None
+            if stock_rc == 0 and _env_flag("ASTOCK_EOD_AUTO_EXPORT_ENABLED", "1"):
+                export_cmd = [
+                    sys.executable, "-u", "-m", "wtpy.apps.astock",
+                    "--storage", str(cfg.storage_root),
+                    "export-weekly", "--date", str(today),
+                ]
+                export_log = None
+                try:
+                    export_log = open(
+                        cfg.market_data_root / "sync_logs"
+                        / f"auto_export_{today}.log",
+                        "a",
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    export_log = None
+                try:
+                    print("[EOD_SYNC] 启动全市场数据表自动生成（可下载）…")
+                    export_proc = subprocess.Popen(
+                        export_cmd,
+                        stdout=export_log or subprocess.DEVNULL,
+                        stderr=(
+                            subprocess.STDOUT if export_log else subprocess.DEVNULL
+                        ),
+                        env=env,
+                        cwd=str(Path(__file__).resolve().parents[3]),
+                    )
+                    auto_export_rc = export_proc.wait()
+                except Exception as e:
+                    auto_export_rc = -1
+                    print(f"[EOD_SYNC] 自动导出启动失败: {e}")
+                finally:
+                    if export_log:
+                        export_log.close()
+                auto_export_finished_at = _dt.datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                if auto_export_rc == 0:
+                    print("[EOD_SYNC] 全市场数据表已生成")
+                else:
+                    # 附属产物失败不影响本次同步的成功记账（重试语义只在
+                    # 行情主链上）；可手动 export-weekly 补跑。
+                    print(
+                        f"[EOD_SYNC] 全市场数据表生成失败（exit={auto_export_rc}，"
+                        f"产物留旧；可手动 export-weekly 补）"
+                    )
+
             st = _load_state()
             prev_retry = int(st.get("retry_count") or 0)
             finished = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -631,6 +779,9 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                 "last_tracking_exit_code": tracking_rc,
                 "last_tracking_finished_at": tracking_finished_at,
                 "last_tracking_week": tracking_week,
+                # 链尾自动导出记账（附属产物：失败不改变 rc 的重试语义）
+                "last_auto_export_exit_code": auto_export_rc,
+                "last_auto_export_finished_at": auto_export_finished_at,
             }
             if rc == 0:
                 extra["retry_count"] = 0
@@ -718,6 +869,24 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         except (ValueError, TypeError):
             return True
 
+    def _forward_days() -> Optional[List[int]]:
+        """前瞻交易日历（开市日升序）；last_trading_day 模式下惰性刷新。
+
+        与本周判定无关的日子不联网：仅当缓存缺失/过期/覆盖不到下周时，
+        由 refresh_forward_calendar 联网拉取（限速重试在 provider 层）。
+        任何失败返回已有缓存或 None——调用方按 None 退化到固定周几。
+        """
+        if schedule_mode != _sch.SCHEDULE_LAST_TRADING_DAY:
+            return None
+        try:
+            token = _os.environ.get("TUSHARE_TOKEN", "").strip() or None
+            # storage_root 即 cfg.storage_root（storage/astock），与状态文件
+            # 同目录；测试用 SimpleNamespace(cfg) 也具备该属性。
+            _sch.refresh_forward_calendar(Path(cfg.storage_root), token=token)
+        except Exception as e:  # noqa: BLE001 — 日历不可用时日历即 None
+            print(f"[EOD_SYNC] 前瞻交易日历刷新跳过: {type(e).__name__}: {e}")
+        return _sch.load_forward_open_dates(Path(cfg.storage_root))
+
     def _check(label: str) -> bool:
         """Returns True when a sync was triggered."""
         now = _dt.datetime.now()
@@ -741,6 +910,19 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                 f"[EOD_SYNC] previous run failed (exit={last_rc}); "
                 f"retry {retry_number}/{max_retries}"
             )
+        trading_days = _forward_days()
+        # 低成本日期/时刻门先行：不占健康检查（全链路 lag 计算）给非候选日。
+        # 同日重试只在触发日当天发生，门恒通过，无需特判。
+        eligible, day_reason, _mode_eff = eod_sync_day_gate(
+            now=now,
+            sync_time=sync_time,
+            sync_weekday=sync_weekday,
+            schedule_mode=schedule_mode,
+            trading_days=trading_days,
+        )
+        if not eligible:
+            print(f"[EOD_SYNC] {label}：{day_reason}")
+            return False
         trigger, reason, today_key = eod_sync_decide(
             lag=_lag_days(),
             now=now,
@@ -748,6 +930,8 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             sync_weekday=sync_weekday,
             min_lag=min_lag,
             last_trigger_day=effective_last,
+            schedule_mode=schedule_mode,
+            trading_days=trading_days,
         )
         if trigger:
             if _sync_in_progress():
@@ -773,8 +957,22 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
             target += _dt.timedelta(days=1)
         _time.sleep(max(1.0, (target - now).total_seconds()))
 
+    def _candidate_weekdays() -> frozenset:
+        """调度线程需要醒来的工作日集合。
+
+        last_trading_day 模式：周一~周五都可能是本周最后交易日（节假日前移），
+        每天 sync_time 醒一次做日历判定；weekday 模式只醒 sync_weekday。
+        """
+        if schedule_mode == _sch.SCHEDULE_LAST_TRADING_DAY:
+            return frozenset({0, 1, 2, 3, 4})
+        return frozenset({sync_weekday})
+
     def _next_sync_target(now) -> _dt.datetime:
-        """Next configured weekly sync time, strictly after ``now``."""
+        """Next candidate check time, strictly after ``now``.
+
+        last_trading_day 模式 = 下一个工作日（周一~周五）的 sync_time；
+        weekday 模式 = 下一个 sync_weekday 的 sync_time。
+        """
         try:
             hour, minute = int(sync_time[:2]), int(sync_time[3:5])
         except (ValueError, IndexError):
@@ -785,6 +983,10 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
         )
         if target <= now:
             target += _dt.timedelta(days=7)
+        if schedule_mode == _sch.SCHEDULE_LAST_TRADING_DAY:
+            target = _sch.next_candidate_at(
+                now, sync_time, weekdays=set(_candidate_weekdays())
+            )
         return target
 
     def _today_trigger_record() -> dict:
@@ -804,7 +1006,7 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
     while True:
         try:
             now = _dt.datetime.now()
-            if now.weekday() != sync_weekday:
+            if now.weekday() not in _candidate_weekdays():
                 target = _next_sync_target(now)
                 wake_event.wait(
                     timeout=max(1.0, (target - now).total_seconds())
@@ -815,6 +1017,26 @@ def _auto_eod_sync(cfg: AStockConfig, ctx: "ApiContext") -> None:
                 continue
             st = _today_trigger_record()
             if not st:
+                # 非触发日快速通道（last_trading_day 模式）：今天不是本周最后
+                # 交易日时直接睡到下一个候选日，不进入 30 分钟轮询（那是留给
+                # 触发日当天「Tushare 数据迟到」的重试节奏）。
+                if schedule_mode == _sch.SCHEDULE_LAST_TRADING_DAY:
+                    day_ok, day_reason, _mode_eff = eod_sync_day_gate(
+                        now=now,
+                        sync_time=sync_time,
+                        sync_weekday=sync_weekday,
+                        schedule_mode=schedule_mode,
+                        trading_days=_forward_days(),
+                    )
+                    if not day_ok:
+                        print(f"[EOD_SYNC] 收盘后定时检查：{day_reason}")
+                        wake_event.clear()
+                        wake_event.wait(
+                            timeout=max(
+                                1.0, (_next_sync_target(now) - now).total_seconds()
+                            )
+                        )
+                        continue
                 # nothing fired today: normal scheduled check
                 fired = _check("收盘后定时检查")
                 wake_event.clear()
@@ -1250,6 +1472,7 @@ def _heavy_job_command(task_key: str, storage_root: Path) -> Optional[List[str]]
       track_<YYYYMMDD>     → track-weekly --week <D>
       backfill_<N>         → track-weekly --backfill <N>
       review_all_<YYYYMMDD>→ review-weekly --rules all --asof <D>
+      auto_export_<YYYYMMDD>→ export-weekly --date <D>
     未知类型 / 参数不合法 → None（调用方跳过并保留欠账，绝不猜命令）。
     格式校验防"另一个体系的 key 被解析成非法命令"（如 tracking_task_key
     产生的 track_snap_xxx 会被当 --week 传给 CLI → exit 2 误标 exhausted）。
@@ -1262,6 +1485,11 @@ def _heavy_job_command(task_key: str, storage_root: Path) -> Optional[List[str]]
     def _is_date(s: str) -> bool:
         return len(s) == 8 and s.isdigit()
 
+    if task_key.startswith("auto_export_"):
+        arg = task_key.split("_", 2)[2]
+        if not _is_date(arg):
+            return None
+        return cmd + ["export-weekly", "--date", arg]
     if task_key.startswith("track_"):
         arg = task_key.split("_", 1)[1]
         if not _is_date(arg):

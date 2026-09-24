@@ -8,6 +8,53 @@
 - 每次发版递增版本号（如 2.0 → 2.1 → 2.2），并打 `v{版本号}` 的 git tag
 - 提交后右上角版本号自动显示新版本
 
+## [3.2.0] - 2026-09-23
+
+### 新增
+- **数据自动更新改为「每周最后一个交易日」触发**（原固定周五）：节假日前移自动
+  提前——如 2026-09-25（周五，中秋节）休市，更新改在 9-24（周四）18:30 触发。
+  判定依据 Tushare `trade_cal` 前瞻交易日历（交易所级 SSE 日历，沪深北节假日
+  一致），按年/周缓存在 `storage/astock/trade_cal_forward.json`；日历缺失或覆盖
+  不到本周时**自动退化为固定周五**（`ASTOCK_EOD_SYNC_WEEKDAY`），绝不静默停更。
+  - `ASTOCK_EOD_SYNC_SCHEDULE=last_trading_day|weekday`（默认 last_trading_day，
+    显式设 `weekday` 可完全退旧行为）；
+  - 调度线程工作日每日在触发时点醒来一次做日历判定（日历读写均为本地 JSON）。
+- **北交所（BSE）股票数据接入**（`ASTOCK_EOD_SYNC_INCLUDE_BSE=1` 默认开）：
+  - EOD delta 链开启「新票发现」：Tushare 现行上市名单与 overlay 池做差，
+    新上市票/首批北交所**逐票拉全历史播种入库**（raw + adj_factor 同批），
+    consolidation 时自然并进 base；名单拉取失败回退 base 票池，不停更。
+  - **池可见性闭环**：overlay 每次发布后链尾写 `eod_universe_latest.json`
+    （现役全市场名单），`_universe_from_data_root`/`select_universe` 优先读它
+    （TDX 时代 `universe.json` 退为兜底），`BaguaPlaneSession` 把 delta-only
+    票合成记录纳入解析索引——新票「入库即入池」，不必等 consolidation
+    （~60 交易日）。导出/复核/卦象查询同源生效。
+  - `sync_tushare_incremental`（非 delta 路径）补齐 `--include-bse` 透传；
+    名称/上市日期元数据缓存（`rizhu_list_dates.json`）同源纳入北交所；
+    涨跌幅规则支持北交所 30%（`*ST` 亦是 30%，无 5% 特例）。
+  - 卦象查询/筛选/导出票池与数据面同源，北交所票自动可查询、可导出
+    （`stock-all` 含 BSE，代码列展示 `bj920xxx`）。
+- **EOD 链尾自动生成「全市场数据表」供前端一键下载**（`ASTOCK_EOD_AUTO_EXPORT_ENABLED`
+  默认开）：内容为大盘指数（index-all）、ETF（etf-all）、所有 A 股（stock-all，
+  含北交所），**不含指标筛选 sheet**（显式 `review_rules=[]`）。
+  - 产物落 `storage/astock/bagua_exports/auto_weekly_<date>_*.xlsx`（独立前缀，
+    保留最近 `ASTOCK_AUTO_EXPORT_KEEP` 份，默认 4）；
+  - 状态写 `storage/astock/auto_export_state.json`（原子），新增
+    `GET /api/v1/bagua/export/auto/latest|download`（重启后可下载，路径越界 403）；
+  - CLI 补跑：`python -m wtpy.apps.astock export-weekly [--date YYYYMMDD]`；
+    重任务走 heavy-job 全局锁，抢锁失败记待办自动退避重试
+    （`api._heavy_job_command` 新增 `auto_export_<YYYYMMDD>` 映射）；
+  - 数据页新增「📊 全市场数据表」卡片：状态 + 生成时间 + 下载按钮。
+
+### 修复
+- 调度链各编排单测补 day-gate 桩并固定 `weekday` 模式（避免单测触网拉日历）。
+
+### 测试
+- `test_eod_last_trading_day.py`（17 例：周界判定/退化/缓存刷新）、
+  `test_bse_support.py`（BSE 归一/显示/涨跌幅/元数据）、
+  `test_auto_export.py`（状态文件/保留期/CLI 接线/下载 API 越界防护）、
+  `test_delta_chain_bse.py`（delta 链新票发现与全历史播种、失败回退）；
+  EOD 链编排测试断言链尾五段新增自动导出段。
+
 ## [3.1.1] - 2026-09-17
 
 ### 修复

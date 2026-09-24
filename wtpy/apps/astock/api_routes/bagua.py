@@ -981,6 +981,69 @@ def api_bagua_export_job(job_id: str, ctx: ApiContext = Depends(get_ctx)) -> dic
             if k != "path"
         }
 
+@router.get("/api/v1/bagua/export/auto/latest")
+def api_bagua_export_auto_latest(ctx: ApiContext = Depends(get_ctx)) -> dict:
+    """最近一份「全市场数据表」（EOD 链尾自动生成）的状态。
+
+    产物元数据落在 ``storage/astock/auto_export_state.json``（北交所含在
+    stock-all 里；不含指标筛选 sheet）。服务重启后状态仍可恢复
+    （与进程内 job 容器无关）。
+    """
+    cfg = ctx.cfg
+    from ..service.auto_export import load_auto_export_state
+
+    state = load_auto_export_state(cfg)
+    if not state:
+        return {"ok": True, "available": False}
+    path = state.get("path")
+    file_ok = bool(path) and Path(path).is_file()
+    payload = {k: v for k, v in state.items() if k != "path"}
+    payload.update(
+        {
+            "ok": True,
+            "available": state.get("status") == "done" and file_ok,
+            # 磁盘路径不下发前端（布局不外泄；下载由 download 端点代理）。
+            "file_exists": file_ok,
+        }
+    )
+    return payload
+
+
+@router.get("/api/v1/bagua/export/auto/download")
+def api_bagua_export_auto_download(ctx: ApiContext = Depends(get_ctx)) -> FileResponse:
+    """下载最近一份自动生成的全市场数据表。"""
+    from ..service.auto_export import auto_export_dir, load_auto_export_state
+
+    cfg = ctx.cfg
+    state = load_auto_export_state(cfg)
+    if not state or state.get("status") != "done":
+        raise HTTPException(
+            409, f"auto export not ready: {state.get('status') or 'none'}"
+        )
+    path_s = str(state.get("path") or "")
+    filename = str(state.get("filename") or "market_data.xlsx")
+    if not path_s:
+        raise HTTPException(404, "auto export file missing")
+    path = Path(path_s)
+    if not path.is_file():
+        raise HTTPException(404, "auto export file missing")
+    # 只允许发放导出目录内、自动前缀的产物（状态文件被窜改时的最后防线）
+    try:
+        export_root = auto_export_dir(cfg).resolve()
+        resolved = path.resolve()
+        if resolved.parent != export_root or not resolved.name.startswith(
+            "auto_weekly_"
+        ):
+            raise HTTPException(403, "forbidden")
+    except OSError:
+        raise HTTPException(404, "auto export file missing") from None
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=filename,
+    )
+
+
 @router.get("/api/v1/bagua/export/jobs/{job_id}/download")
 def api_bagua_export_download(job_id: str, ctx: ApiContext = Depends(get_ctx)) -> FileResponse:
     cfg = ctx.cfg

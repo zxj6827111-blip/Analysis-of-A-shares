@@ -1074,6 +1074,12 @@ def data_sync_start(payload: SyncStartBody, ctx: ApiContext = Depends(get_ctx)) 
                "--mode", "incremental", "--end-date", str(end_date)]
         if overlay_mode:
             cmd += ["--write-mode", "delta"]
+        # 与 EOD 链同一口径：北交所默认纳入例行票池（delta 链遇新票逐票
+        # 拉全历史播种）；ASTOCK_EOD_SYNC_INCLUDE_BSE=0 关闭。
+        if _os.environ.get("ASTOCK_EOD_SYNC_INCLUDE_BSE", "1").strip().lower() in (
+            "1", "true", "yes", "on",
+        ):
+            cmd += ["--include-bse"]
         if start_date:
             cmd += ["--start-date", str(start_date)]
     elif payload.task == "factor":
@@ -1259,7 +1265,17 @@ def eod_sync_status(ctx: ApiContext = Depends(get_ctx)) -> dict:
         "sync_weekday": _int_setting(
             "ASTOCK_EOD_SYNC_WEEKDAY", 4, maximum=6
         ),
-        "schedule_mode": "weekly",
+        # 调度口径：last_trading_day=每周最后交易日（默认，2026-09 起）；
+        # 与调度线程写回的 schedule_mode/schedule_text 对齐，UI 直接展示文案。
+        "schedule_mode": (
+            state.get("schedule_mode")
+            or _os.environ.get("ASTOCK_EOD_SYNC_SCHEDULE")
+            or "last_trading_day"
+        ),
+        "schedule_text": (
+            state.get("schedule_text")
+            or f"每周最后一个交易日 {_os.environ.get('ASTOCK_EOD_SYNC_TIME', '18:30')}"
+        ),
         "governance_enabled": _flag("ASTOCK_MARKET_GOVERNANCE_ENABLED", "1"),
         "min_lag_days": _int_setting("ASTOCK_EOD_SYNC_MIN_LAG_DAYS", 1),
         "poll_seconds": _int_setting(

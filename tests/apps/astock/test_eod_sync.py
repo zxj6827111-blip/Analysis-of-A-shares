@@ -12,6 +12,22 @@ import pytest
 
 from wtpy.apps.astock.api import _effective_data_lag, eod_sync_decide
 
+import wtpy.apps.astock.api as _api_mod
+
+
+def _stub_day_gate(monkeypatch):
+    """调度链测试专用：把「今日是否候选日」的门直接放行，让重点仍落在
+    eod_sync_decide（多数用例 mock 了它）与链尾编排上；门逻辑本身由
+    test_eod_last_trading_day.py 单测覆盖。
+
+    同时把调度切到 weekday 模式：last_trading_day 模式下 _check 会先惰性
+    刷新前瞻交易日历（联网），这些编排用例不该触网（单测环境网/时钟不定）。
+    """
+    monkeypatch.setenv("ASTOCK_EOD_SYNC_SCHEDULE", "weekday")
+    monkeypatch.setattr(
+        _api_mod, "eod_sync_day_gate", lambda **k: (True, "", "weekday")
+    )
+
 
 # ------------------------------------------------------------ decide (pure)
 
@@ -160,6 +176,7 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
         if decide_n["n"] == 1:
             return (True, "lag=3 个交易日", tmp_path)
         return (False, "今日已触发过自动同步", None)
+    _stub_day_gate(monkeypatch)
     monkeypatch.setattr(api_mod, "eod_sync_decide", _fake_decide)
 
     calls = []
@@ -195,9 +212,10 @@ def test_auto_eod_sync_triggers_and_builds_command(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="stop-loop"):
         _auto_eod_sync(cfg, ctx)
 
-    # 股票链 + 指数/ETF 链（默认开启）+ 指标复核链 + 跟踪结算链；
-    # 治理被本用例显式关闭
-    assert len(calls) == 4, calls
+    # 股票链 + 指数/ETF 链（默认开启）+ 指标复核链 + 跟踪结算链
+    # + 链尾全市场数据表自动生成（默认开启）；治理被本用例显式关闭
+    assert len(calls) == 5, calls
+    assert "export-weekly" in " ".join(calls[4][0])
     cmd = calls[0][0]
     assert "--source" in cmd and "tushare" in cmd
     mode_index = cmd.index("--mode")
@@ -265,6 +283,7 @@ def test_auto_eod_sync_success_runs_governance(monkeypatch, tmp_path):
             return True, "weekly lag", _dt.date.today()
         return False, "already handled", None
 
+    _stub_day_gate(monkeypatch)
     monkeypatch.setattr(api_mod, "eod_sync_decide", _fake_decide)
     calls = []
 
@@ -304,7 +323,8 @@ def test_auto_eod_sync_success_runs_governance(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="stop-loop"):
         _auto_eod_sync(cfg, ctx)
 
-    assert len(calls) == 4
+    # 股票链（IE 被本用例关闭）+ 治理 + 复核 + 跟踪 + 自动导出
+    assert len(calls) == 5, calls
     sync_cmd = calls[0][0]
     governance_cmd = calls[1][0]
     review_cmd = calls[2][0]
@@ -345,6 +365,7 @@ def test_auto_eod_sync_skips_when_fresh(monkeypatch, tmp_path):
     monkeypatch.setenv("ASTOCK_EOD_STATE_PATH", str(tmp_path / "eod_sync_state.json"))
 
     cfg, ctx = _make_cfg_ctx(tmp_path)
+    _stub_day_gate(monkeypatch)
     monkeypatch.setattr(
         api_mod, "eod_sync_decide", lambda **k: (False, "数据已最新（lag=0）", None)
     )
@@ -399,6 +420,7 @@ def test_auto_eod_sync_spawn_failure_records_failed_state(monkeypatch, tmp_path)
     monkeypatch.setenv("ASTOCK_EOD_STATE_PATH", str(state_path))
 
     cfg, ctx = _make_cfg_ctx(tmp_path)
+    _stub_day_gate(monkeypatch)
     monkeypatch.setattr(
         api_mod, "eod_sync_decide", lambda **k: (True, "lag=3 个交易日", tmp_path)
     )
@@ -455,6 +477,7 @@ def test_auto_eod_sync_retry_respects_pending_interval(monkeypatch, tmp_path):
     def _capture_decide(**k):
         captured["last_trigger_day"] = k.get("last_trigger_day")
         return (False, "no-trigger", None)
+    _stub_day_gate(monkeypatch)
     monkeypatch.setattr(api_mod, "eod_sync_decide", _capture_decide)
 
     # drive the scheduler loop: let the pending-wait branch run once, then stop
@@ -513,6 +536,7 @@ def test_auto_eod_sync_runs_second_retry_then_exhausts_budget(
         "pending_retry_at": "2000-01-01 00:00:00",
     }), encoding="utf-8")
 
+    _stub_day_gate(monkeypatch)
     monkeypatch.setattr(
         api_mod,
         "eod_sync_decide",
@@ -616,7 +640,7 @@ def test_eod_sync_status_api(tmp_path, monkeypatch):
     assert j.get("enabled") is True
     assert j.get("sync_time") == "18:30"
     assert j.get("sync_weekday") == 4
-    assert j.get("schedule_mode") == "weekly"
+    assert j.get("schedule_mode") == "last_trading_day"
     assert j.get("min_lag_days") == 1
     assert j.get("poll_seconds") == 60
     assert j.get("last_sync_started_at") == past_at
@@ -874,6 +898,7 @@ def test_auto_eod_sync_index_etf_chain_default_on(monkeypatch, tmp_path):
     monkeypatch.delenv("ASTOCK_EOD_SYNC_INDEX_ETF", raising=False)
 
     cfg, ctx = _make_cfg_ctx(tmp_path)
+    _stub_day_gate(monkeypatch)
     monkeypatch.setattr(
         api_mod,
         "eod_sync_decide",
@@ -912,8 +937,8 @@ def test_auto_eod_sync_index_etf_chain_default_on(monkeypatch, tmp_path):
     with pytest.raises(SystemExit, match="stop-loop"):
         _auto_eod_sync(cfg, ctx)
 
-    # 股票链 + 指数/ETF 链 + 治理链 + 复核链 + 跟踪结算链
-    assert len(calls) == 5, calls
+    # 股票链 + 指数/ETF 链 + 治理链 + 复核链 + 跟踪结算链 + 自动导出
+    assert len(calls) == 6, calls
     ie_cmd = calls[1]
     ie_txt = " ".join(ie_cmd)
     assert "sync_market_data.py" in ie_txt
@@ -951,6 +976,7 @@ def _drive_eod_chain(monkeypatch, tmp_path, exit_codes):
     monkeypatch.setenv("ASTOCK_EOD_STATE_PATH", str(state_path))
 
     cfg, ctx = _make_cfg_ctx(tmp_path)
+    _stub_day_gate(monkeypatch)
     monkeypatch.setattr(
         api_mod,
         "eod_sync_decide",
@@ -1008,14 +1034,15 @@ def test_auto_eod_sync_ie_warning_partial_still_runs_governance(monkeypatch, tmp
     治理只作用于股票 overlay 层；同时总退出码保持 2，同晚重试与状态
     可观测性不受影响。跟踪链同样不受 IE warning 影响（只看股票链 rc）。
     """
-    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 2, 0, 0, 0])
+    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 2, 0, 0, 0, 0])
 
-    # 股票链 -> IE 链 -> 治理链 -> 复核链 -> 跟踪链，五段都执行
-    assert len(calls) == 5, calls
+    # 股票链 -> IE 链 -> 治理链 -> 复核链 -> 跟踪链 -> 自动导出，六段都执行
+    assert len(calls) == 6, calls
     assert "govern_market_data.py" in " ".join(calls[2])
     assert calls[2][-2:] == ["--maintain", "--apply"]
     assert "review-weekly" in calls[3]
     assert "track-weekly" in calls[4]
+    assert "export-weekly" in " ".join(calls[5])
 
     assert state["last_sync_exit_code"] == 2
     assert state["last_governance_exit_code"] == 0
@@ -1031,14 +1058,15 @@ def test_auto_eod_sync_ie_warning_partial_still_runs_governance(monkeypatch, tmp
 
 def test_auto_eod_sync_ie_hard_fail_blocks_governance(monkeypatch, tmp_path):
     """IE 链 exit=1（硬失败）维持"同步不干净就不治理"的既有语义。"""
-    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 1, 0, 0])
+    calls, state = _drive_eod_chain(monkeypatch, tmp_path, [0, 1, 0, 0, 0])
 
     # 治理被 IE 硬失败阻塞，但复核只依赖股票链（rc=0）照常执行，
-    # 跟踪链在复核成功后继续（与治理互不阻塞，各段独立门控）
-    assert len(calls) == 4, calls
+    # 跟踪链/自动导出各自独立门控（股票链 rc=0）继续执行
+    assert len(calls) == 5, calls
     assert "govern_market_data.py" not in " ".join(map(" ".join, calls))
     assert "review-weekly" in calls[2]
     assert "track-weekly" in calls[3]
+    assert "export-weekly" in " ".join(calls[4])
     assert state["last_sync_exit_code"] == 1
     assert state["last_governance_exit_code"] is None
     assert state["last_indicator_review_exit_code"] == 0
@@ -1049,7 +1077,7 @@ def test_auto_eod_sync_stocks_partial_blocks_governance(monkeypatch, tmp_path):
     """股票链自身 exit=2 仍跳过 IE 链与治理（既有语义回归保护）。"""
     calls, state = _drive_eod_chain(monkeypatch, tmp_path, [2])
 
-    # 股票链失败同样跳过指标复核与跟踪结算（两者的门控都看 stock_rc）
+    # 股票链失败同样跳过指标复核/跟踪结算/自动导出（门控都看 stock_rc）
     assert len(calls) == 1, calls
     assert state["last_sync_exit_code"] == 2
     assert state["last_governance_exit_code"] is None

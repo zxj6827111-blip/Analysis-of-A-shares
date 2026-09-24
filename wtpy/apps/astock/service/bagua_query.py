@@ -202,16 +202,17 @@ def normalize_adjust_mode(mode: Optional[str]) -> str:
 
 
 def normalize_query_code(raw: str) -> str:
-    """Accept 600000 / sh600000 / SSE.STK.600000 -> WonderTrader std code.
+    """Accept 600000 / sh600000 / SSE.STK.600000 / BSE.STK.920001 -> WonderTrader std code.
 
     Index/ETF codes (sh000001 上证指数, sh510300 ETF, sz399001 深证成指,
     sz159915 ETF) map to SSE.IDX.* / SZSE.IDX.* / SSE.ETF.* / SZSE.ETF.*.
+    北交所股票（BSE.STK.920001 / bj430047 / 92xxxx）归一 BSE.STK.*。
     """
     t = (raw or "").strip()
     if not t:
         raise ValueError("code is required")
     t = t.split()[0].split("　")[0]
-    if t.startswith("SSE.") or t.startswith("SZSE."):
+    if t.startswith(("SSE.", "SZSE.", "BSE.")):
         return t
     idx_etf = to_index_etf_std_code(t)
     if idx_etf:
@@ -229,6 +230,8 @@ def display_code(std_code: str) -> str:
         return "sh" + std_code.split(".")[-1]
     if std_code.startswith("SZSE.STK."):
         return "sz" + std_code.split(".")[-1]
+    if std_code.startswith("BSE.STK."):
+        return "bj" + std_code.split(".")[-1]
     return display_index_etf_code(std_code)
 
 
@@ -556,6 +559,30 @@ class BaguaPlaneSession:
                         idx[v] = r
                     elif getattr(r, "quality", None) == "ok" and getattr(prev, "quality", None) != "ok":
                         idx[v] = r
+            # overlay_v1：把 delta-only 票（consolidation 前的新上市/首批北交所）
+            # 合成 record 纳入索引——``view.delta_only_symbols()`` 只出 delta 有
+            # 行情、pool 无记录的票；``merged_raw_arrays``/``qfq_arrays`` 对
+            # record.blob_sha256 为空的 delta-only 票本就按 delta 行服务。
+            if getattr(m, "storage_mode", "") == "overlay_v1":
+                try:
+                    from ..data.dataset_store import SymbolRecord
+                    from ..data.overlay import OverlayView
+
+                    _ov_view = OverlayView.for_manifest(self.store, m)
+                    known = {r.symbol for r in m.symbols}
+                    for sym in _ov_view.delta_only_symbols():
+                        if sym in known:
+                            continue
+                        synth = SymbolRecord(
+                            symbol=sym, blob_sha256="", quality="ok",
+                        )
+                        known.add(sym)
+                        for v in _symbol_variants(sym):
+                            idx.setdefault(v, synth)
+                except Exception as _eidx:  # noqa: BLE001 — 索引增强失败不降级
+                    logger = logging.getLogger(__name__)
+                    logger.warning("overlay delta-only 索引扩展失败 %s: %s",
+                                   m.dataset_id, _eidx)
             self._indexed.append((m, idx, self.pair_rank[pair]))
         # Scan order does NOT rank by vendor priority: freshness and history
         # depth decide within the product role (plan 8.2).
@@ -2464,7 +2491,9 @@ def _fetch_symbol_meta_from_tushare(
         etfs: Dict[str, int] = {}
         stock_names: Dict[str, str] = {}
         etf_names: Dict[str, str] = {}
-        for e in provider.fetch_universe():
+        # 含北交所：名称/上市日期元数据缓存与数据面（EOD 链 --include-bse）
+        # 同口径——否则北交所票日柱/名称列整列空，只能靠 Excel 日柱表凑。
+        for e in provider.fetch_universe(include_bse=True):
             c6 = _code6_from_entry(e, "STK")
             if not c6:
                 continue

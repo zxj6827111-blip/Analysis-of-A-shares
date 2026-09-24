@@ -700,6 +700,40 @@ def track_exit_code_for_completion(completion: str) -> int:
     return _TRACK_EXIT_FAILED
 
 
+def cmd_export_weekly(args: argparse.Namespace) -> int:
+    """全市场数据表（EOD 链尾/手动）：index-all + etf-all + stock-all。
+
+    周五（或周最后交易日）链自动调用；手动补跑同路径。不带指标筛选 sheet。
+    持 heavy-job 锁执行（契约 §7：全市场重任务互斥）；抢锁失败记待办，
+    由服务运行期重试补跑（api._heavy_job_command 认 auto_export_* 键）。
+    """
+    from .service import heavy_job as _hj
+    from .service.auto_export import PENDING_TASK_PREFIX, run_auto_export
+
+    cfg = _cfg_from_args(args)
+    cfg.ensure_dirs()
+    date = str(getattr(args, "date", "") or "").strip() or None
+    keep = getattr(args, "keep", None)
+    task_key = f"{PENDING_TASK_PREFIX}{date or time.strftime('%Y%m%d')}"
+    _locked = _hj.run_with_heavy_lock(
+        cfg, task_key, fn=lambda: run_auto_export(cfg, date=date, keep=keep)
+    )
+    if _locked.get("skipped_locked"):
+        print(
+            "[AUTO_EXPORT] 另一个重任务正在运行（heavy-job 锁被占用），"
+            f"本次跳过并记入待办（attempts="
+            f"{(_locked.get('pending') or {}).get('attempts')}）"
+        )
+        print(json.dumps(
+            {"status": "skipped_locked", "reason": "heavy_job_lock_held",
+             "task_key": task_key},
+            ensure_ascii=False, indent=2))
+        return 3
+    summary = _locked.get("value") or {}
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0 if summary.get("status") == "done" else 1
+
+
 def _append_missing_rules(cfg, wk: int, subset_rules, args) -> Dict[str, Any]:
     """把 ``subset_rules`` 里该周还没覆盖的规则并进该周名单。
 
@@ -1735,6 +1769,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--reason", default=None,
                     help="替换原因（必填；写入审计的 published_by，例如「追加短线强势启动规则」）")
     sp.set_defaults(func=cmd_track_publish)
+
+    sp = sub.add_parser(
+        "export-weekly",
+        help="全市场数据表（大盘指数/ETF/所有A股，不含指标筛选 sheet）；"
+             "EOD 链尾自动生成，也可手动补跑",
+    )
+    sp.add_argument("--date", default=None,
+                    help="YYYYMMDD，缺省=今天（导出查询日）")
+    sp.add_argument("--keep", type=int, default=None,
+                    help="自动导出文件保留份数（缺省读 ASTOCK_AUTO_EXPORT_KEEP，默认 4）")
+    sp.set_defaults(func=cmd_export_weekly)
 
     sp = sub.add_parser("backtest")
     sp.add_argument("--indicator", action="append", required=True)

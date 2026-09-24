@@ -578,7 +578,10 @@ def sync_tushare_incremental(
 
     symbols = _resolve_symbols(args, provider)
     if not symbols:
-        universe = provider.fetch_universe(include_delisted=args.include_delisted)
+        universe = provider.fetch_universe(
+            include_delisted=args.include_delisted,
+            include_bse=args.include_bse,
+        )
         symbols = [e.symbol for e in universe]
 
     print(f"Incremental sync for {len(symbols)} symbols from Tushare...")
@@ -4292,7 +4295,7 @@ def _fetch_raw_window_rows(
     provider,
     symbols: List[str],
     *,
-    start_date: int,
+    start_date: Optional[int],
     end_date: int,
     batch_size: int = 10,
 ) -> Tuple[Dict[str, List[Tuple]], Dict[str, str]]:
@@ -4360,6 +4363,54 @@ def _fetch_raw_window_rows(
     return rows, failed_symbols
 
 
+def _fresh_market_stock_symbols(
+    provider, *, include_bse: bool
+) -> Optional[List[str]]:
+    """从 Tushare stock_basic 拉一次现行上市名单（可选含北交所）。
+
+    例行 EOD 用它做「新票发现」：名单里不在 overlay 池的票本是**永不入库**
+    的（delta 链只迭代 base 票池，新股要等下次 consolidation 才出现），
+    --include-bse 开启后改为显式发现 + 全历史播种。拉取失败返回 None，
+    调用方回退 base 票池（不因一次元数据失败让全链停更）。
+    """
+    try:
+        uni = provider.fetch_universe(include_delisted=False, include_bse=include_bse)
+        syms = sorted({_normalize_symbol(e.symbol) for e in uni})
+    except Exception as e:
+        print(f"  [delta] 现行上市名单拉取失败（沿用 base 票池）: {e}", flush=True)
+        return None
+    if not syms:
+        print("  [delta] 现行上市名单为空（沿用 base 票池）", flush=True)
+        return None
+    return syms
+
+
+def _write_eod_universe_snapshot(store: DatasetStore, symbols: List[str]) -> None:
+    """把本次同步确认的现役股票名单落盘（overlay_v1 池可见性的桥梁）。
+
+    背景（2026-09-23 北交所接入）：overlay 架构下导出/复核/卦象的票池默认
+    只认**base manifest 的票单**——新上市票与首批北交所已经入 delta，
+    但要等下一次 consolidation（~60 交易日）才进 base、才对读取侧可见。
+    本文件每链写一次现役名单（详见服务侧 `_overlay_eod_universe`），让
+    delta-only 票「入库即入池」，不依赖 consolidation 节奏。
+    """
+    from wtpy.apps.astock.data.io_util import atomic_write_json
+
+    syms = sorted({s for s in symbols if isinstance(s, str) and ".STK." in s})
+    if not syms:
+        return
+    atomic_write_json(
+        store.root / "eod_universe_latest.json",
+        {
+            "schema": 1,
+            "fetched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "source": "tushare_stock_basic",
+            "count": len(syms),
+            "symbols": syms,
+        },
+    )
+
+
 def sync_tushare_incremental_delta(args, store: DatasetStore) -> dict:
     """Raw-bar EOD delta update for an enabled overlay warehouse.
 
@@ -4367,6 +4418,13 @@ def sync_tushare_incremental_delta(args, store: DatasetStore) -> dict:
     delta (no full-history blobs rewritten, no new manifest). The overlay
     watermark is NOT advanced here — ``sync_tushare_chain_delta`` commits the
     factor surface too and publishes both watermarks atomically.
+
+    ``--include-bse``（EOD 链默认开）时先做「新票发现」：Tushare 现行上市
+    名单（含北交所）与 overlay 池（base 票 ⨿ delta 票）做差，差集即
+    新上市票/首批北交所——它们**逐票拉全历史**而不是 20 天窗口（否则
+    北交所只有近一个月行情，周线/月线卦象全算不出来）；已在池内的票
+    仍走原窗口逻辑。结果随同一 delta batch 提交，consolidation 时自然
+    收敛进 base（pool = base ∪ delta 的规则已经认 delta-only 新票）。
     """
     from wtpy.apps.astock.data.providers.tushare import TushareProvider
     from wtpy.apps.astock.data.delta_writer import DeltaEodWriter
@@ -4378,9 +4436,30 @@ def sync_tushare_incremental_delta(args, store: DatasetStore) -> dict:
         return {"status": "failed", "error": "api_unavailable"}
 
     symbols = _resolve_symbols(args, provider)
+    new_pool_symbols: List[str] = []
+    current_listed: Optional[List[str]] = None
     if not symbols:
         base = view.active_base()
         symbols = [r.symbol for r in base.symbols if r.blob_sha256]
+        # --symbol 手动小范围同步不触发全市场名单重拉（不放大调用方意图）。
+        if getattr(args, "include_bse", False):
+            fresh = _fresh_market_stock_symbols(provider, include_bse=True)
+            if fresh is not None:
+                current_listed = fresh  # 全名单要带回去：供链尾刷新现役池快照
+                pool_now = {
+                    _normalize_symbol(s) for s in view.pool_symbols()
+                }
+                fresh_set = set(fresh)
+                # fresh ∩ 已入池：base 上的现行票 + 上次进来还没合并进
+                # base 的 delta-only 票（否则 delta-only 票拿不到本周窗口）。
+                symbols = sorted(set(symbols) | (fresh_set & pool_now))
+                new_pool_symbols = sorted(fresh_set - pool_now)
+                if new_pool_symbols:
+                    print(
+                        f"  [delta] 新票发现：{len(new_pool_symbols)} 只不在"
+                        f" overlay 池（含北交所首批时正常），逐票拉全历史播种",
+                        flush=True,
+                    )
     symbols = sorted(set(_normalize_symbol(s) for s in symbols))
     if not symbols:
         return {"status": "failed", "error": "no_symbols"}
@@ -4408,6 +4487,27 @@ def sync_tushare_incremental_delta(args, store: DatasetStore) -> dict:
             start_date=window_start, end_date=requested_cutoff,
             batch_size=int(getattr(args, "batch_size", None) or 10),
         )
+        if new_pool_symbols:
+            # 新票（含首批北交所）不在 overlay 池里：逐票拉全历史播种。
+            # provider 侧失败同样 fail-closed（与窗口批次一致），避免发布
+            # 半拉历史的水线。
+            new_rows, new_failed = _fetch_raw_window_rows(
+                provider, new_pool_symbols,
+                start_date=None, end_date=requested_cutoff,
+                batch_size=1,
+            )
+            if new_failed:
+                failed_symbols.update(new_failed)
+            for sym, rws in new_rows.items():
+                if rws:
+                    window_rows.setdefault(sym, []).extend(rws)
+            if new_pool_symbols:
+                seeded = sum(1 for s in new_pool_symbols if new_rows.get(s))
+                print(
+                    f"  [delta] 新票全历史播种：{seeded}/{len(new_pool_symbols)}"
+                    f" 只有数据（其余视为停牌/未上市）",
+                    flush=True,
+                )
         if failed_symbols:
             return {
                 "status": "failed",
@@ -4462,6 +4562,12 @@ def sync_tushare_incremental_delta(args, store: DatasetStore) -> dict:
             "symbols_with_rows": len(rows),
             "new_rows": batch["new_rows"],
             "skipped_rows": batch["skipped_rows"],
+            # 新入池票（含首批北交所）带回给 factor 链：窗口批量只覆盖
+            # fac_start 之后，历史因子要靠逐票全历史补齐。
+            "pool_new_symbols": new_pool_symbols,
+            # 现役名单（base 现行票 + delta-only 存续票 + 新票）供链尾落
+            # eod_universe_latest.json——None = 本次未重拉名单（沿用旧快照）。
+            "current_listed_symbols": current_listed,
             "dataset_id": base.dataset_id,
             "base_cutoff": base_cutoff,
             "delta_watermark_published": False,
@@ -4535,8 +4641,15 @@ def _sync_tushare_chain_delta_locked(args, store: DatasetStore) -> dict:
         )
     )
     symbols = _resolve_symbols(args, provider)
+    new_pool_symbols: List[str] = []
     if not symbols:
         symbols = view.pool_symbols()
+        # raw 链刚播种的新票（首批北交所/新上市）此刻尚未发布进 overlay
+        # 水线，pool_symbols() 看不到：从 raw_step 结果带回，逐票补全历史
+        # 因子（窗口批量只覆盖 fac_start 之后的行情日）。
+        new_pool_symbols = list(raw_step.get("pool_new_symbols") or [])
+        if new_pool_symbols:
+            symbols = sorted(set(symbols) | set(new_pool_symbols))
 
     sync_run_id = make_sync_run_id("tsfactor_delta")
     lock = SyncTaskLock(store.root, source="tushare", adjustment="adj_factor",
@@ -4555,9 +4668,31 @@ def _sync_tushare_chain_delta_locked(args, store: DatasetStore) -> dict:
         )
         factor_rows: Dict[str, List[Tuple]] = {}
         done_count = 0
+        new_pool_set = set(new_pool_symbols)
+        if new_pool_symbols:
+            print(
+                f"  [delta] 新票因子全历史逐票补齐：{len(new_pool_symbols)} 只",
+                flush=True,
+            )
         for sym in symbols:
             df = None
-            if window_map is not None:
+            if sym in new_pool_set:
+                # 新票（raw 链刚播种，尚未发布进水线）：逐票拉全历史因子。
+                # 与窗口路径同样丢弃空/非正因子行，不写半成品。
+                try:
+                    df = provider.fetch_adj_factor(
+                        provider._to_ts_code(sym),
+                        start_date=None,
+                        end_date=requested_factor_cutoff,
+                    )
+                except Exception as e:
+                    print(
+                        f"  [delta] 新票因子拉取失败 {sym}: "
+                        f"{type(e).__name__}: {e}",
+                        flush=True,
+                    )
+                    continue
+            elif window_map is not None:
                 # --symbol 可能传 tushare 格式(600519.SH),而批量窗口的
                 # key 是内部格式(SSE.STK.600519):两种都尝试,避免手动
                 # 小范围同步时 factor 链误报 factor_window_empty。
@@ -4627,6 +4762,18 @@ def _sync_tushare_chain_delta_locked(args, store: DatasetStore) -> dict:
             f"{out['publish']['factor_watermark']}",
             flush=True,
         )
+        # 水线已发布：把本周确认的现役名单落盘，让 delta-only 票（新上市/
+        # 北交所首批）即刻进入导出/复核/卦象票池，不等 consolidation。
+        # 快照失败只告警不阻塞链成功（下周链会再写）。
+        current_listed = raw_step.get("current_listed_symbols")
+        if current_listed:
+            try:
+                merged = sorted(
+                    set(current_listed) | set(raw_step.get("pool_new_symbols") or [])
+                )
+                _write_eod_universe_snapshot(store, merged)
+            except Exception as e:
+                print(f"  [chain] 现役池快照写入失败（不影响本次发布）: {e}")
         return {
             "status": "success",
             "sync_run_id": raw_step.get("sync_run_id"),
