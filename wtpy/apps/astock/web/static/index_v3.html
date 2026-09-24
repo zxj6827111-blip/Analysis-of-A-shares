@@ -4068,11 +4068,20 @@ body.wbt-scroll-locked {
     <div id="eodSyncCard" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px;padding:9px 14px;background:rgba(47,128,255,.07);border:1px solid rgba(47,128,255,.28);border-radius:8px">
       <div style="font-size:12px;font-weight:800;color:var(--blue2)">🤖 收盘后自动更新</div>
       <div style="font-size:12px"><span id="eodSyncEnabled" class="tag">—</span></div>
-      <div class="muted" style="font-size:12px">每日定时 <b id="eodSyncTime">—</b> 自动增量同步</div>
+      <div class="muted" style="font-size:12px" title="每周最后一个交易日收盘后自动增量同步（遇节假日自动提前）"><b id="eodSyncSchedule">—</b></div>
       <div class="muted" style="font-size:12px">上次自动同步 <b id="eodSyncLast">—</b></div>
       <div class="muted" style="font-size:12px">上次结果 <span id="eodSyncResult">—</span></div>
       <div class="muted" style="font-size:12px">数据状态 <b id="eodSyncDataStatus">—</b></div>
       <button type="button" class="btn" id="btnEodSyncRefresh" title="刷新自动更新状态" style="font-size:12px;padding:3px 10px">↻</button>
+    </div>
+    <!-- 全市场数据表（更新完成后自动生成）：大盘指数/ETF/所有A股 -->
+    <div id="autoExportCard" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px;padding:9px 14px;background:rgba(120,220,150,.05);border:1px solid rgba(120,220,150,.25);border-radius:8px">
+      <div style="font-size:12px;font-weight:800;color:#6fd08c">📊 全市场数据表</div>
+      <div class="muted" style="font-size:11px" title="更新完成后自动生成：大盘指数、ETF、所有A股（北交所已含在内）：不含指标筛选页">大盘指数 · ETF · 所有A股</div>
+      <div class="muted" style="font-size:12px">状态 <b id="autoExportStatus">—</b></div>
+      <div class="muted" style="font-size:12px">生成时间 <b id="autoExportTime">—</b></div>
+      <button type="button" class="btn btn-primary" id="btnAutoExportDl" style="font-size:12px;padding:3px 12px" disabled title="暂无可用文件">⬇ 下载最新表格</button>
+      <button type="button" class="btn" id="btnAutoExportRefresh" title="刷新数据表状态" style="font-size:12px;padding:3px 10px">↻</button>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
       <span class="src-fresh-group-title" style="margin:0">📥 拉取源</span>
@@ -7260,6 +7269,7 @@ async function expCreateAndStart() {
     // market-data/status scan to finish first.
     try { loadCAStatus(); } catch (eCa) {}
     try { loadEodSyncStatus(); } catch (eEod) {}
+    try { loadAutoExportStatus(); } catch (eAx) {}
     try {
       const data = await api("/api/v1/market-data/status");
       window.__mdStatus = data || null;
@@ -7361,7 +7371,10 @@ async function expCreateAndStart() {
         en.className = "tag " + (st.enabled ? "tag-green" : "tag-orange");
         en.textContent = st.enabled ? "已开启" : "已关闭";
       }
-      if ($("eodSyncTime")) $("eodSyncTime").textContent = st.sync_time || "—";
+      // 调度口径文案直接取后端（last_trading_day=每周最后交易日 / weekday=每周X）
+      if ($("eodSyncSchedule")) {
+        $("eodSyncSchedule").textContent = st.schedule_text || ((st.schedule_mode === "last_trading_day" ? "每周最后一个交易日 " : "每周 " ) + (st.sync_time || ""));
+      }
       const last = st.last_sync_started_at || st.last_trigger_date || "尚未自动同步";
       if ($("eodSyncLast")) {
         $("eodSyncLast").textContent = last;
@@ -7405,6 +7418,41 @@ async function expCreateAndStart() {
     }
   }
   if ($("btnEodSyncRefresh")) $("btnEodSyncRefresh").onclick = loadEodSyncStatus;
+
+  /* ---------- 全市场数据表（更新完成后自动生成） ---------- */
+  async function loadAutoExportStatus() {
+    const statusEl = $("autoExportStatus");
+    const timeEl = $("autoExportTime");
+    const dl = $("btnAutoExportDl");
+    try {
+      const st = await api("/api/v1/bagua/export/auto/latest");
+      const avail = !!st.available;
+      if (statusEl) {
+        if (st.status === "running") {
+          statusEl.innerHTML = '<span class="tag tag-blue">生成中</span>';
+        } else if (st.status === "error") {
+          statusEl.innerHTML = '<span class="tag tag-red" title="' + esc(st.error || "") + '">生成失败</span>';
+        } else if (avail) {
+          const mb = st.size_bytes ? " · " + (st.size_bytes / 1048576).toFixed(1) + "MB" : "";
+          statusEl.innerHTML = '<span class="tag tag-green" title="' + esc((st.sheet_names || []).join(" / ")) + '">可下载' + mb + "</span>";
+        } else {
+          statusEl.textContent = "—";
+        }
+      }
+      if (timeEl) timeEl.textContent = st.finished_at || "—";
+      if (dl) {
+        dl.disabled = !avail;
+        dl.title = avail ? "数据日 " + (st.query_date || st.export_date || "—") : "暂无可用文件";
+        dl.onclick = avail
+          ? function() { window.open("/api/v1/bagua/export/auto/download", "_blank"); }
+          : null;
+      }
+    } catch (e) {
+      if (statusEl) statusEl.textContent = "未知";
+      if (dl) dl.disabled = true;
+    }
+  }
+  if ($("btnAutoExportRefresh")) $("btnAutoExportRefresh").onclick = loadAutoExportStatus;
 
   /* ---------- 数据更新 ---------- */
   let _syncPollTimer = null;

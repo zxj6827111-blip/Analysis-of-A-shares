@@ -356,6 +356,27 @@ class OverlayView:
         )
         return sorted(syms)
 
+    def delta_only_symbols(self) -> List[str]:
+        """delta 里有可见行情、但 base/退市池都没有记录的票（排序列表）。
+
+        典型是 consolidation 之前的新上市票与本仓库 2026-09 引入的首批北交所
+        票：它们只在 delta 批次里。读取路径（merged_raw_arrays / qfq_arrays）
+        对 delta-only 票本就支持，本接口供池解析/会话索引把这些票纳入可见
+        范围，不必等 consolidation。
+        """
+        self._ensure_delta_store()
+        if self.delta is None:
+            return []
+        pool_known = {r.symbol for r in self._pool_records()}
+        extra = self.delta.distinct_symbols(
+            self.delta_watermark,
+            KIND_BARS,
+            commit_seq=(
+                None if self.delta_commit_seq < 0 else self.delta_commit_seq
+            ),
+        )
+        return sorted(extra - pool_known)
+
     def _pool_state_key(self) -> tuple:
         """Pool cache key from the pinned overlay state fields directly.
 

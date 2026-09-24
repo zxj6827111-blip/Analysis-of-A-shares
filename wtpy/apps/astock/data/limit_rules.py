@@ -65,23 +65,31 @@ class LimitRuleProvider(ABC):
 
 
 class DefaultAShareLimitRule(LimitRuleProvider):
-    """Default 10%/20% rules with explicit metadata gap.
+    """Default 10%/20%/30% rules with explicit metadata gap.
 
     Historical ST status and board classification are incomplete in v1;
     when unknown we assume main-board 10%. This is documented as a boundary.
+    北交所（BSE）30% 涨跌幅不设 ST 特例（北交所 *ST 仍执行 30%）。
     """
 
     BOUNDARY_NOTE = (
         "ST/board history incomplete: when is_st/board unknown, assume 10% main-board "
-        "limit. ChiNext/STAR 20% only applied when board is known. Results near limits "
-        "are approximate."
+        "limit. ChiNext/STAR 20% / BSE(北交所) 30% only applied when board is known. "
+        "Results near limits are approximate."
     )
 
     def limit_pct(self, ctx: LimitContext) -> float:
-        if ctx.is_st is True:
-            return 0.05
         board = (ctx.board or "").lower()
         code = ctx.std_code.split(".")[-1]
+        # 北交所全代码段（43/83/87 老段 + 920 迁移段）30%，无 ST 5% 特例
+        if (
+            board in ("bse", "bjse", "bjs")
+            or ctx.std_code.startswith("BSE.")
+            or code.startswith(("92", "43", "83", "87"))
+        ):
+            return 0.30
+        if ctx.is_st is True:
+            return 0.05
         if board in ("chinext", "cyb") or code.startswith(("300", "301")):
             return 0.20
         if board in ("star", "kcb") or code.startswith(("688", "689")):
@@ -90,9 +98,13 @@ class DefaultAShareLimitRule(LimitRuleProvider):
 
 
 def infer_board(std_code: str) -> str:
+    if std_code.startswith("BSE."):
+        return "bse"
     code = std_code.split(".")[-1]
     if code.startswith(("300", "301")):
         return "chinext"
     if code.startswith(("688", "689")):
         return "star"
+    if code.startswith(("92", "43", "83", "87")):
+        return "bse"
     return "main"

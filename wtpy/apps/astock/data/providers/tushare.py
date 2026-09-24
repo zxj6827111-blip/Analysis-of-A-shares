@@ -491,6 +491,38 @@ class TushareProvider:
 
         return entries
 
+    def fetch_trade_calendar(
+        self,
+        start_date: Optional[int] = None,
+        end_date: Optional[int] = None,
+    ) -> List[int]:
+        """交易所交易日历中的开市日期（YYYYMMDD 升序，含未来日期）。
+
+        供 EOD 调度判断「本周最后一个交易日」：Tushare trade_cal
+        （exchange=SSE）会提前发布全年节假日安排（如 2026-09-25 中秋
+        休市、2026-10-01~07 国庆休市），因此可以前瞻判定周界。沪深北
+        交易所节假日安排一致，SSE 日历即全市场口径（北京交易所首个
+        交易日 2021-11-15 起与沪深同步）。
+        """
+        self._ensure_initialized()
+        kwargs = {}
+        if start_date:
+            kwargs["start_date"] = str(int(start_date))
+        if end_date:
+            kwargs["end_date"] = str(int(end_date))
+        df = self._call_with_retry(self._pro.trade_cal, exchange="SSE", **kwargs)
+        if df is None or df.empty:
+            return []
+        out: List[int] = []
+        for _, row in df.iterrows():
+            try:
+                if int(row.get("is_open") or 0) != 1:
+                    continue
+                out.append(int(str(row.get("cal_date") or "0")))
+            except (TypeError, ValueError):
+                continue
+        return sorted(set(out))
+
     @staticmethod
     def _coerce_sync_end(end_date) -> int:
         """把同步截止日参数归一为 YYYYMMDD 整数，缺省取今天。"""

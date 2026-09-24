@@ -71,10 +71,17 @@ def select_universe(cfg: AStockConfig, codes: Optional[Union[Sequence[str], str]
 
     - None / empty / full-market token -> entire universe.json (all A-shares)
     - otherwise parse comma list or sequence of codes
+
+    overlay_v1 仓库 + 例行链已写 ``eod_universe_latest.json`` 时优先取它：
+    名单每周同步刷新（含北交所与 delta-only 新票），TDX 时代的静态
+    ``universe.json`` 退为兜底（见 ``_overlay_eod_universe``）。
     """
     from ..data.universe import to_std_code
 
     def _full() -> List[str]:
+        live = _overlay_eod_universe(cfg)
+        if live:
+            return live
         if cfg.universe_path.exists():
             return AShareUniverse.load(cfg.universe_path).codes()
         return _universe_from_data_root(cfg)
@@ -98,16 +105,64 @@ def select_universe(cfg: AStockConfig, codes: Optional[Union[Sequence[str], str]
     return out if out else _full()
 
 
+# overlay 例行链现役名单快照的最长龄期：EOD 链每周写一次，隔周导出仍沿用；
+# 超时视为失联（服务停更/全新部署），回退 universe.json / manifest 扫描。
+_OVERLAY_EOD_UNIVERSE_MAX_AGE_DAYS = 14
+
+
+def _overlay_eod_universe(cfg: AStockConfig) -> List[str]:
+    """overlay_v1 现役名单快照（``eod_universe_latest.json``）。
+
+    为什么需要（2026-09-23 北交所接入审查发现）：overlay 架构下导出/复核/
+    卦象的票池走 base manifest 票单，delta-only 票（新上市、首批北交所）
+    要等下次 consolidation 才可见——而例行 delta 链每次同步后都会重写这份
+    快照（``_write_eod_universe_snapshot``），它才是「当下全市场」的权威
+    口径。文件缺失/过期/明显不是全市场（防夹具面冒充）时返回空列表，
+    调用方回退到原有 manifest/universe.json 路径，绝不静默缩池。
+    """
+    import json as _json
+    import time as _time
+
+    try:
+        from ..data.delta_store import load_overlay_state
+
+        if not load_overlay_state(cfg.market_data_root).enabled:
+            return []
+        path = cfg.market_data_root / "eod_universe_latest.json"
+        if not path.exists():
+            return []
+        raw = _json.loads(path.read_text(encoding="utf-8"))
+        if int(raw.get("schema") or 0) != 1:
+            return []
+        fetched = str(raw.get("fetched_at") or "")
+        if fetched:
+            age = _time.time() - _time.mktime(
+                _time.strptime(fetched, "%Y-%m-%d %H:%M:%S")
+            )
+            if age > _OVERLAY_EOD_UNIVERSE_MAX_AGE_DAYS * 86400:
+                return []
+        syms = [str(s) for s in (raw.get("symbols") or []) if ".STK." in str(s)]
+        if len(syms) < 1000:  # 全市场名单不可能只有几百只，防止夹具面冒充
+            return []
+        return syms
+    except Exception:  # noqa: BLE001 — 任何读取异常回退旧路径
+        return []
+
+
 def _universe_from_data_root(cfg: AStockConfig) -> List[str]:
     """Derive the full-market list from the Tushare raw baseline.
 
     Tushare-only deployments never produce the TDX-era ``universe.json``;
     without this fallback every "全市场" scope silently degrades to the two
-    demo codes (600000/000001). The raw manifest is content-addressed, so the
-    symbol set only changes when a new baseline is published; a short TTL
-    cache keeps repeated calls (export / same-gua scans) off the manifest
-    walk. Returns DEMO_CODES when the data root has no usable baseline.
+    demo codes (600000/000001). overlay_v1 仓库优先取 EOD 现役名单快照
+    （``_overlay_eod_universe``，delta-only 新票不等 consolidation）；
+    否则用 raw manifest 基线（content-addressed，快照间不变）。短 TTL
+    缓存让导出/同卦扫描的重复调用不必重扫 manifest。无可用基线时返回
+    DEMO_CODES。
     """
+    live = _overlay_eod_universe(cfg)
+    if live:
+        return live
     import time as _time
 
     try:
